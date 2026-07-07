@@ -30,7 +30,21 @@
 - [ ] Retry policy for failed stages
 - [ ] Manual approval gate
 
-**Blockers**: None — Phase 0 is complete. Phase 1 can begin.
+**Blockers**: Agent Workflow Phase 1 is blocked until Agent Host contract baseline is reviewed and approved.
+
+## Phase 0.1: Host Integration Hardening 📋
+
+Phase 0.1 tracks the review follow-ups needed before Agent Workflow becomes the Agent Host `workflow.engine` plugin. See [docs/reviews/phase0-followups.md](docs/reviews/phase0-followups.md) for the detailed list.
+
+- [ ] WF-01: Package schema resources for wheel installs
+- [ ] WF-02: Route CLI validation through semantic checks
+- [ ] WF-03: Add the Agent Host architecture layer
+- [ ] WF-04: Decide schema strictness
+- [ ] WF-05: Separate version domains
+- [ ] WF-06: Define the plugin adapter entry point
+- [ ] WF-07: Add formal install smoke tests
+
+**Blockers**: Agent Host contract baseline review and approval.
 
 ## Phase 2: Agent Bus Adapter 📋
 

@@ -186,6 +186,8 @@ agent-workflow/
 - ✅ AI Memory integration contract
 - ✅ Local adapter stubs
 
+Agent Workflow is planned to integrate with Agent Host as the `workflow.engine` plugin. It remains independently runnable today; plugin integration has not been implemented yet.
+
 ## What Agent Workflow Is Not
 
 Agent Workflow is **not**:
