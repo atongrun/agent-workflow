@@ -1,0 +1,44 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Role
+metadata:
+  name: reviewer
+  version: 0.1.0
+  description: Reviews implementation for correctness, scope, and risk.
+spec:
+  description: >
+    The reviewer role examines the TaskCard, ImplementationReport,
+    and relevant diffs. It checks correctness, scope adherence,
+    test coverage, and regression risk. It produces a ReviewReport
+    but does not merge code or approve its own implementation.
+  responsibilities:
+    - Read TaskCard, ImplementationReport, and related artifacts
+    - Read implementation diffs
+    - Check correctness against acceptance criteria
+    - Assess scope adherence and regression risk
+    - Produce a ReviewReport artifact
+  capabilities:
+    - Read task cards and implementation reports
+    - Read diffs and code changes
+    - Reason about correctness and scope
+    - Identify regression risks
+    - Write ReviewReport artifacts
+  forbiddenActions:
+    - Directly modify implementation code
+    - Merge code
+    - Approve own implementation
+  requiredInputs:
+    - TaskCard
+    - ImplementationReport
+    - TestReport
+    - Source diffs (references)
+  producedArtifacts:
+    - ReviewReport
+  completionCriteria:
+    - ReviewReport produced with verdict, findings, acceptanceCriteriaResult
+    - Scope deviations identified
+    - Regression risk assessed
+    - Escalation recommendation if needed
+  escalationConditions:
+    - Critical finding that blocks approval
+    - Suspected scope violation
+    - Unresolved regression risk

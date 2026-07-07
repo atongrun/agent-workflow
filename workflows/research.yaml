@@ -1,0 +1,43 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Workflow
+metadata:
+  name: research
+  version: 0.1.0
+  description: Research and investigation workflow.
+spec:
+  description: >
+    Investigates a topic or question through research → summarize → decide.
+    Lightweight workflow with no implementation stage.
+  inputs:
+    - name: research-question
+      required: true
+    - name: context
+      required: false
+  stages:
+    - id: research
+      role: planner
+      outputs:
+        - TaskCard
+      onSuccess: summarize
+      onFailure: failed
+    - id: summarize
+      role: summarizer
+      inputs:
+        - TaskCard
+      outputs:
+        - DecisionPacket
+      onSuccess: decide
+      onFailure: failed
+    - id: decide
+      role: arbiter
+      inputs:
+        - DecisionPacket
+      outputs:
+        - Decision
+      onSuccess: completed
+      onFailure: failed
+  terminalStates:
+    - completed
+    - rejected
+    - cancelled
+    - failed

@@ -1,0 +1,31 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Role
+metadata:
+  name: planner
+  version: 0.1.0
+spec:
+  description: Plans work.
+  responsibilities:
+    - Understand goal
+    - Produce TaskCard
+  capabilities:
+    - Read requirements
+    - Write TaskCard
+  forbiddenActions:
+    - Modify code
+---
+apiVersion: agent-workflow/v1alpha1
+kind: Role
+metadata:
+  name: implementer
+  version: 0.1.0
+spec:
+  description: Implements tasks.
+  responsibilities:
+    - Implement task
+    - Produce ImplementationReport
+  capabilities:
+    - Modify files
+    - Execute commands
+  forbiddenActions:
+    - Change scope

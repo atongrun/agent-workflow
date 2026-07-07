@@ -1,0 +1,70 @@
+apiVersion: agent-workflow/v1alpha1
+kind: BindingProfile
+metadata:
+  name: personal-dev-example
+  version: 0.1.0
+  description: >
+    Example multi-agent dev setup. Each role is mapped to a specific agent runner.
+    THIS IS AN EXAMPLE ONLY. The core does not depend on any specific agent.
+spec:
+  bindings:
+    planner:
+      runner: codex
+      model: claude-sonnet-4
+      mode: planning-only
+      capabilities:
+        - read-files
+        - write-artifacts
+      limits:
+        maxTokens: 8192
+        timeoutSeconds: 300
+    implementer:
+      runner: hermes
+      model: deepseek-v4-flash
+      mode: write
+      capabilities:
+        - modify-files
+        - execute-commands
+        - run-tests
+      limits:
+        maxTokens: 16384
+        timeoutSeconds: 600
+    tester:
+      runner: hermes
+      model: deepseek-v4-flash
+      mode: test
+      capabilities:
+        - execute-tests
+        - write-test-code
+      limits:
+        maxTokens: 8192
+        timeoutSeconds: 300
+    reviewer:
+      runner: configurable-reviewer
+      model: any
+      mode: read-only
+      capabilities:
+        - read-diffs
+        - read-artifacts
+      limits:
+        maxTokens: 8192
+        timeoutSeconds: 300
+    summarizer:
+      runner: configurable-summarizer
+      model: any
+      mode: read-only
+      capabilities:
+        - read-artifacts
+      limits:
+        maxTokens: 4096
+        timeoutSeconds: 120
+    arbiter:
+      runner: codex
+      model: claude-sonnet-4
+      mode: decision-only
+      capabilities:
+        - read-decision-packet
+        - make-decisions
+      limits:
+        maxTokens: 4096
+        timeoutSeconds: 120

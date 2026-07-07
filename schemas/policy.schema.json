@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow.dev/schemas/policy.schema.json",
+  "title": "Policy",
+  "description": "Stage-level policy constraints and rules.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "agent-workflow/v1alpha1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Policy"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string" },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "effect"],
+            "properties": {
+              "id": { "type": "string" },
+              "effect": {
+                "type": "string",
+                "enum": ["allow", "deny", "warn"]
+              },
+              "description": { "type": "string" },
+              "conditions": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "scope": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

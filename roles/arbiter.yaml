@@ -1,0 +1,36 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Role
+metadata:
+  name: arbiter
+  version: 0.1.0
+  description: Makes final workflow decisions based on the DecisionPacket.
+spec:
+  description: >
+    The arbiter role reads the DecisionPacket and makes the final
+    decision: approve, request_changes, reject, or escalate.
+    It handles architecture and policy disputes but does not write
+    implementation code or read full diffs by default.
+  responsibilities:
+    - Read DecisionPacket and referenced artifacts
+    - Make approve, request_changes, reject, or escalate decision
+    - Handle architecture and policy disputes
+    - Produce a Decision artifact
+  capabilities:
+    - Read DecisionPacket
+    - Reason about architecture and policy decisions
+    - Make final workflow verdicts
+    - Write Decision artifacts
+  forbiddenActions:
+    - Write implementation code
+    - Read full implementation diffs by default (may read on escalate)
+    - Fix implementation issues directly
+  requiredInputs:
+    - DecisionPacket
+  producedArtifacts:
+    - Decision
+  completionCriteria:
+    - Decision produced with verdict, rationale, mandatoryActions, optionalActions, nextStage
+  escalationConditions:
+    - DecisionPacket is insufficient for decision
+    - Architecture or policy conflict beyond current workflow scope
+    - Suspected violation of project boundaries

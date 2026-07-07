@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow.dev/schemas/artifact.schema.json",
+  "title": "Artifact",
+  "description": "Structured handoff artifact between workflow stages.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "agent-workflow/v1alpha1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Artifact"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["artifactId", "artifactType", "schemaVersion", "workflowRunId", "createdAt", "createdBy", "content"],
+      "properties": {
+        "artifactId": { "type": "string" },
+        "artifactType": {
+          "type": "string",
+          "enum": [
+            "TaskCard",
+            "ImplementationReport",
+            "TestReport",
+            "ReviewReport",
+            "DecisionPacket",
+            "Decision",
+            "MemoryWriteCandidate"
+          ]
+        },
+        "schemaVersion": { "type": "string" },
+        "workflowRunId": { "type": "string" },
+        "stageRunId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": {
+          "type": "object",
+          "required": ["role", "runner"],
+          "properties": {
+            "role": { "type": "string" },
+            "runner": { "type": "string" }
+          }
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "content": { "type": "object" }
+      }
+    }
+  }
+}

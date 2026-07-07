@@ -1,0 +1,38 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Role
+metadata:
+  name: tester
+  version: 0.1.0
+  description: Validates implementation against acceptance criteria.
+spec:
+  description: >
+    The tester role executes tests, supplements missing test coverage,
+    checks acceptance criteria, and produces a TestReport artifact.
+    It does not change product scope or make final approval decisions.
+  responsibilities:
+    - Execute existing test suites
+    - Supplement missing test cases for acceptance criteria
+    - Verify implementation against acceptance criteria
+    - Produce a TestReport artifact
+  capabilities:
+    - Execute test commands
+    - Write and run additional test cases
+    - Read acceptance criteria from TaskCard
+    - Read implementation artifacts
+    - Write TestReport artifacts
+  forbiddenActions:
+    - Change product scope
+    - Make final approval decisions (Arbiter role only)
+    - Modify implementation code
+  requiredInputs:
+    - TaskCard
+    - ImplementationReport
+  producedArtifacts:
+    - TestReport
+  completionCriteria:
+    - All acceptance criteria tested
+    - TestReport produced with testScope, commands, passed, failed, skipped, acceptanceCriteriaResult
+  escalationConditions:
+    - Tests cannot be executed due to environment issues
+    - Acceptance criteria are untestable
+    - Critical failures not addressed by implementer

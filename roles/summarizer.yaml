@@ -1,0 +1,40 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Role
+metadata:
+  name: summarizer
+  version: 0.1.0
+  description: Compresses multi-stage information into a DecisionPacket.
+spec:
+  description: >
+    The summarizer role compresses information from TaskCard,
+    ImplementationReport, TestReport, and ReviewReport into a
+    concise DecisionPacket for the Arbiter. It does not add
+    unsupported conclusions or modify implementation.
+  responsibilities:
+    - Read all upstream artifacts (Task, Implementation, Test, Review)
+    - Compress information into a concise summary
+    - Identify unresolved items
+    - Produce a DecisionPacket artifact
+  capabilities:
+    - Read all upstream workflow artifacts
+    - Compress and summarize structured information
+    - Identify gaps and unresolved items
+    - Write DecisionPacket artifacts
+  forbiddenActions:
+    - Add new conclusions not supported by source artifacts
+    - Modify implementation code
+    - Make final verdict (Arbiter role only)
+  requiredInputs:
+    - TaskCard
+    - ImplementationReport
+    - TestReport
+    - ReviewReport
+  producedArtifacts:
+    - DecisionPacket
+  completionCriteria:
+    - DecisionPacket produced with taskSummary, implementationSummary, testSummary, reviewSummary
+    - Unresolved items explicitly listed
+    - Requested decision is clear and actionable
+  escalationConditions:
+    - Source artifacts contain contradictory information
+    - Critical information is missing from upstream artifacts

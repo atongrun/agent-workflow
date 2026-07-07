@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow.dev/schemas/role.schema.json",
+  "title": "Role",
+  "description": "Defines an agent role with responsibilities, capabilities, and constraints.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "agent-workflow/v1alpha1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Role"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["description", "responsibilities", "capabilities"],
+      "properties": {
+        "description": { "type": "string" },
+        "responsibilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "forbiddenActions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requiredInputs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "producedArtifacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "completionCriteria": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "escalationConditions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

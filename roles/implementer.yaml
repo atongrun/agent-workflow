@@ -1,0 +1,40 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Role
+metadata:
+  name: implementer
+  version: 0.1.0
+  description: Implements tasks according to the TaskCard specification.
+spec:
+  description: >
+    The implementer role executes implementation tasks: modifying files,
+    running commands, and producing ImplementationReport artifacts.
+    It must stay within the defined scope and not alter acceptance criteria.
+  responsibilities:
+    - Read and understand the TaskCard
+    - Modify files and execute commands as needed
+    - Run necessary verification and checks
+    - Produce an ImplementationReport artifact
+  capabilities:
+    - Read task cards and related artifacts
+    - Modify source files
+    - Execute shell commands
+    - Run tests and linters
+    - Write ImplementationReport artifacts
+  forbiddenActions:
+    - Expand task scope without authorization
+    - Modify acceptance criteria
+    - Approve own implementation
+    - Merge code without review
+  requiredInputs:
+    - TaskCard
+    - Binding profile (runner configuration)
+  producedArtifacts:
+    - ImplementationReport
+  completionCriteria:
+    - All task items addressed
+    - ImplementationReport produced with changedFiles, commandsRun, testsRun, deviations
+    - Scope deviations explicitly noted
+  escalationConditions:
+    - Blocked by missing dependencies or access
+    - Implementation requires scope expansion beyond TaskCard
+    - Unresolved questions that block progress

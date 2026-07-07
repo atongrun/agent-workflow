@@ -1,0 +1,26 @@
+apiVersion: agent-workflow/v1alpha1
+kind: Workflow
+metadata:
+  name: minimal
+  version: 0.1.0
+  description: Minimal two-stage workflow for validation testing.
+spec:
+  description: A minimal workflow with plan and implement stages only.
+  stages:
+    - id: plan
+      role: planner
+      outputs:
+        - TaskCard
+      onSuccess: implement
+      onFailure: failed
+    - id: implement
+      role: implementer
+      inputs:
+        - TaskCard
+      outputs:
+        - ImplementationReport
+      onSuccess: completed
+      onFailure: failed
+  terminalStates:
+    - completed
+    - failed

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow.dev/schemas/workflow.schema.json",
+  "title": "Workflow",
+  "description": "Defines a multi-stage workflow with role assignments and stage transitions.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "agent-workflow/v1alpha1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Workflow"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["description", "stages", "terminalStates"],
+      "properties": {
+        "description": { "type": "string" },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "required"],
+            "properties": {
+              "name": { "type": "string" },
+              "required": { "type": "boolean" }
+            }
+          }
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "role"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]*$"
+              },
+              "role": { "type": "string" },
+              "needs": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "inputs": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "outputs": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "policy": { "type": "string" },
+              "onSuccess": { "type": "string" },
+              "onFailure": { "type": "string" },
+              "memory": {
+                "type": "object",
+                "properties": {
+                  "read": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": { "type": "boolean" },
+                      "queryTemplate": { "type": "string" },
+                      "maxItems": { "type": "integer" }
+                    }
+                  },
+                  "write": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": { "type": "boolean" },
+                      "candidateTypes": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "terminalStates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["completed", "rejected", "cancelled", "failed"]
+          }
+        }
+      }
+    }
+  }
+}
