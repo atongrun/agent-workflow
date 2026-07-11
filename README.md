@@ -1,8 +1,8 @@
 # Agent Workflow
 
-**A model-agnostic workflow contract and orchestration core for AI agents.**
+**An opinionated, model-agnostic development method for AI-assisted projects.**
 
-Agent Workflow defines *who does what, in what order, handing off what artifacts, under whose authority*. It does not run models or send messages — it provides the control plane that coordinates those systems.
+Agent Workflow codifies progressive planning, limited architecture challenge, task closure, layered review, information compression, and forced convergence. Contracts are its internal representation, not the product's primary user interface.
 
 ## Why This Exists
 
@@ -13,6 +13,16 @@ Multi-agent systems today suffer from three problems:
 3. **No boundaries**: Control logic, event transport, and memory management are tangled — change one and you break the others.
 
 Agent Workflow solves this by separating concerns into three independent projects.
+
+## Product Direction
+
+**Use first, abstract second.** Requirements that have not been validated in a real project do not enter the core architecture. The first target is a local or semi-automatic loop that can continue an existing project from its verified baseline; generic engines, remote scheduling, UI, and plugin systems are deferred.
+
+For brownfield projects, the default path is:
+
+`Current Baseline → Next Milestone → Incremental Plan → Current TaskCard → Execute and Verify`
+
+See [Development Workflow MVP](docs/development-workflow-mvp.md) for the usage contract and [Agent Bus Brownfield Dogfood](examples/agent-bus-dogfood/README.md) for the complete real example.
 
 ## Architecture
 
@@ -73,14 +83,17 @@ Per-stage rules that constrain behavior. Policies can allow, deny, or warn on sp
 ### Runner
 A Runner executes a stage. Runners can be local shell commands, remote agents (Codex, Hermes, OpenCode), or mock implementations for testing.
 
-## Quick Start
+## Phase 0 Validation Quick Start
 
 ```bash
 # Install
 pip install -e .
 
 # Validate all resources
-awf validate roles workflows profiles examples
+awf validate roles
+awf validate workflows
+awf validate profiles
+awf validate examples
 
 # Inspect a resource
 awf inspect workflows/feature-delivery.yaml
@@ -88,6 +101,28 @@ awf inspect workflows/feature-delivery.yaml
 # Check version
 awf version
 ```
+
+These commands validate and inspect contracts; they do not start a development Workflow Run.
+
+## MVP Run Quick Start
+
+The usable MVP must support this path:
+
+```bash
+awf init \
+  --project ../agent-bus \
+  --goal examples/agent-bus-dogfood/goal.md \
+  --mode dual \
+  --executor manual \
+  --reviewer manual \
+  --decider manual
+
+awf status --project ../agent-bus
+awf next --project ../agent-bus
+awf submit --project ../agent-bus --artifact /path/to/result.md
+```
+
+The current Phase 0 CLI does not implement these run commands yet. They are the acceptance contract for Phase 1; the project is not considered usable for development work until this Quick Start completes end to end.
 
 ## CLI Examples
 
@@ -102,12 +137,11 @@ awf validate roles
 # PASS roles/implementer.yaml
 # ...
 
-# Recursive validation
-awf validate .
-# PASS roles/planner.yaml
-# FAIL examples/broken/workflow.yaml: spec.stages[0].role is required
-# ...
-# 42/44 passed, 2 failed
+# Validate each resource directory
+awf validate roles
+awf validate workflows
+awf validate profiles
+awf validate examples
 
 # Inspect a workflow
 awf inspect workflows/feature-delivery.yaml
@@ -171,7 +205,7 @@ agent-workflow/
 
 ## Current Status
 
-**Phase 0 — Contract Bootstrap** (current)
+**Phase 0 — Contract Bootstrap** (current; validation-only)
 
 - ✅ Repository and project structure
 - ✅ JSON Schema definitions for all resource kinds
@@ -187,6 +221,8 @@ agent-workflow/
 - ✅ Local adapter stubs
 
 Agent Workflow is planned to integrate with Agent Host as the `workflow.engine` plugin. It remains independently runnable today; plugin integration has not been implemented yet.
+
+Phase 0 is not yet a usable development workflow: it cannot initialize a run, establish a brownfield baseline, produce architecture/phase/task artifacts, or import execution results.
 
 ## What Agent Workflow Is Not
 
@@ -206,10 +242,10 @@ See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Contract Bootstrap | ✅ Current |
-| 1 | Local Workflow Runtime | 📋 Planned |
-| 2 | Agent Bus Adapter | 📋 Planned |
-| 3 | AI Memory Adapter | 📋 Planned |
-| 4 | Runner Adapters | 📋 Planned |
+| 1 | Minimum usable development loop | 📋 Planned |
+| 2 | Agent Bus brownfield dogfood | 📋 Planned |
+| 3 | Evidence-driven hardening | 📋 Deferred until dogfood |
+| Later | Optional mature-runtime and integration adapters | 📋 Deferred |
 
 ## License
 

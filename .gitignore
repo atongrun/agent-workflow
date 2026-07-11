@@ -11,3 +11,8 @@ venv/
 *.swp
 .DS_Store
 .env
+.omx/
+
+# Local AI assistant guides (not shared)
+CLAUDE.md
+AGENTS.md

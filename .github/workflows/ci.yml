@@ -29,4 +29,8 @@ jobs:
         run: python -m pytest -v
 
       - name: Validate resources
-        run: awf validate roles workflows profiles examples
+        run: |
+          awf validate roles
+          awf validate workflows
+          awf validate profiles
+          awf validate examples

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Reframed Agent Workflow around a use-first personal development method rather than generic orchestration completeness.
+- Defined the target Workflow Run Quick Start and brownfield project defaults.
+- Added a complete Agent Bus dogfood example covering baseline, goal, manual handoff, review, decision, and phase continuation.
+- Deferred UI, cross-machine automation, generic plugins, and complex runtime work until a real project completes the workflow.
+
 ## [0.1.0] — 2026-07-07
 
 ### Added

@@ -1,101 +1,79 @@
 # Roadmap
 
-## Phase 0: Contract Bootstrap ✅ (Current)
+## Product Gate
+
+**Use first, abstract second.** Agent Workflow must complete one real brownfield development loop before expanding generic infrastructure. Requirements that have not appeared in real use do not enter the core architecture.
+
+The first proof project is Agent Bus. Until its baseline-to-decision run completes, do not expand UI, cross-machine automation, a generic plugin system, complex runtime machinery, arbitrary DAGs, or generalized retry/retrieval protocols.
+
+## Phase 0: Contract Bootstrap ✅ Current
 
 - [x] Repository and project structure
-- [x] JSON Schema definitions
-- [x] Role definitions (6 roles)
-- [x] Workflow definitions (4 workflows)
-- [x] Artifact templates (7 templates)
-- [x] Validation CLI (`awf validate`, `awf inspect`)
-- [x] Schema + semantic validation
-- [x] Port interfaces (Protocols)
-- [x] Local adapter stubs
-- [x] Agent Bus integration contract
-- [x] AI Memory integration contract
-- [x] Documentation (architecture, concepts, lifecycle, ADRs)
-- [x] Tests (schema, semantic, CLI)
-- [x] GitHub Actions CI
+- [x] JSON Schema and semantic validation
+- [x] Initial roles, workflows, profiles, and artifact templates
+- [x] Validation/inspection CLI
+- [x] Port boundaries and local adapter stubs
+- [x] Architecture, lifecycle, integration, and ADR documentation
+- [x] Tests and CI
 
-## Phase 1: Local Workflow Runtime 📋
+Phase 0 is validation-only. It is not a usable development workflow because a user cannot initialize a run, establish a brownfield baseline, obtain architecture/phase/task artifacts, or submit execution results.
 
-- [ ] Workflow Run engine — create, start, track runs
-- [ ] Stage state machine with full lifecycle transitions
-- [ ] Local ShellRunner — execute stages via shell commands
-- [ ] Stage input resolution — read artifacts from upstream stages
-- [ ] Rework loop handling (test failure → re-implement)
-- [ ] `awf run <workflow>` CLI command
-- [ ] Pause, resume, cancel workflow runs
-- [ ] Artifact lifecycle management
-- [ ] Retry policy for failed stages
-- [ ] Manual approval gate
+## Phase 1: Minimum Usable Development Loop 📋
 
-**Blockers**: Agent Workflow Phase 1 is blocked until Agent Host contract baseline is reviewed and approved.
+The acceptance path is documented in [Development Workflow MVP](docs/development-workflow-mvp.md).
 
-## Phase 0.1: Host Integration Hardening 📋
+- [ ] `awf init` accepts a project, goal, architecture mode, executor, reviewer, and decider
+- [ ] Brownfield initialization records verified capabilities, constraints, unfinished work, next milestone, blockers, and test evidence
+- [ ] Generated Workflow/Profile YAML remains internal output rather than required user input
+- [ ] `awf status`, `awf next`, and `awf submit` support resumable manual handoff
+- [ ] Single-architect self-challenge and dual-architect one-primary/one-challenger modes
+- [ ] Three-round hard stop: freeze, freeze with known risk, or wait for user
+- [ ] Separate project `ArchitectureRecord`, current `PhasePlan`, and executable `TaskCard`
+- [ ] Only deterministic failures may return to execution; optional improvements cannot block
+- [ ] Compressed DecisionPacket excludes full diffs by default
+- [ ] Next TaskCard or next-phase refinement follows a completed decision
+- [ ] Quick Start runs end to end in a temporary fixture
 
-Phase 0.1 tracks the review follow-ups needed before Agent Workflow becomes the Agent Host `workflow.engine` plugin. See [docs/reviews/phase0-followups.md](docs/reviews/phase0-followups.md) for the detailed list.
+Keep the controller limited to these method-specific gates. Generic execution or scheduling mechanics may later be replaced by mature projects.
 
-- [ ] WF-01: Package schema resources for wheel installs
-- [ ] WF-02: Route CLI validation through semantic checks
-- [ ] WF-03: Add the Agent Host architecture layer
-- [ ] WF-04: Decide schema strictness
-- [ ] WF-05: Separate version domains
-- [ ] WF-06: Define the plugin adapter entry point
-- [ ] WF-07: Add formal install smoke tests
+## Phase 2: Agent Bus Brownfield Dogfood 📋
 
-**Blockers**: Agent Host contract baseline review and approval.
+Run the complete [Agent Bus example](examples/agent-bus-dogfood/README.md) before broader hardening.
 
-## Phase 2: Agent Bus Adapter 📋
+- [ ] Regenerate and verify the existing Agent Bus baseline
+- [ ] Freeze only the architecture needed for the next diagnostic milestone
+- [ ] Produce the current phase plan and `ABUS-DIAG-001` TaskCard
+- [ ] Implement and test the non-mutating `agent-bus doctor --json` slice
+- [ ] Complete first-line review and compressed final decision
+- [ ] Record architecture rounds, manual handoffs, deterministic rework, optional suggestions, packet size, and targeted context requests
+- [ ] Continue to the next task or next phase from the same run
 
-- [ ] `AgentBusAdapter` — map workflow events to agent-bus wire format
-- [ ] Publish stage events (`workflow.stage.*`) via `POST /events`
-- [ ] Remote worker dispatch — assign stages to remote agents
-- [ ] Status callback — remote agent reports stage completion
-- [ ] Idempotent event processing with `eventId` deduplication
-- [ ] Retry with backoff for publish failures
-- [ ] Cross-machine workflow execution
+Success means the artifact chain is complete and Agent Bus made a verified increment—not that Agent Workflow supports every project shape.
 
-**Blockers**:
-- Requires alignment between Agent Workflow event types and Agent Bus wire format
-- Agent Bus v0.1 uses `from_agent`/`to_agent` — need mapping layer
+## Phase 3: Evidence-Driven Hardening 📋
 
-## Phase 3: AI Memory Adapter 📋
+- [ ] Fix only failures or repeated manual burden observed in dogfood
+- [ ] Run a second bounded Agent Bus task
+- [ ] Promote behavior into a reusable core capability only after repeated evidence
+- [ ] Package schemas and add install smoke tests when needed by real use
+- [ ] Improve recovery or automation only where the run proves value
 
-- [ ] `AIMemoryAdapter` — subprocess integration with `memory.py`
-- [ ] Stage pre-execution context request via `memory.py recall`
-- [ ] Stage post-execution candidate submission via `memory.py log`
-- [ ] Memory reference in workflow artifacts (pointer, not copy)
-- [ ] Workflow history reuse — suggest relevant past decisions
-- [ ] Graceful degradation when AI Memory is unavailable
+## Later: Optional Integrations
 
-**Blockers**:
-- `memory.py recall` output format needs stable contract for programmatic parsing
-- No programmatic write-candidate API — must use `memory.py log`
+Consider these only after the real-project gate:
 
-## Phase 4: Runner Adapters 📋
+- Agent Bus transport adapter and cross-machine dispatch
+- Agent Host `workflow.engine` integration
+- AI Memory adapter
+- Codex, Claude Code, Hermes, and OpenCode runner conveniences
+- UI or tray experience
+- Generic plugin/runtime integration using a mature implementation where practical
 
-- [ ] Codex runner adapter
-- [ ] Hermes runner adapter
-- [ ] OpenCode runner adapter
-- [ ] Claude Code runner adapter
-- [ ] Generic Shell runner (full implementation)
-- [ ] Generic HTTP runner
-- [ ] Runner capability discovery
-- [ ] Runner health checks
+## Explicit Non-Roadmap
 
-**Blockers**: None specific — each adapter is independent.
-
----
-
-## Non-Roadmap
-
-These are explicitly excluded from the roadmap:
-
-- Web UI or dashboard
-- Visual workflow builder (drag-and-drop)
 - Hosted multi-tenant SaaS
-- Database migration from files to SQL/NoSQL
+- Visual drag-and-drop workflow builder
+- Database migration without demonstrated need
 - Kubernetes operator
-- MCP Server integration
-- Cloud provider SDKs (AWS, GCP, Azure)
+- Cloud-provider SDKs
+- Reimplementing a general-purpose multi-agent framework for completeness

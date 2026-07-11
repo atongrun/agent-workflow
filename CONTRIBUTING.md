@@ -33,7 +33,10 @@ pip install -e ".[dev]"
 ```bash
 python -m pytest
 ruff check .
-awf validate roles workflows profiles examples
+awf validate roles
+awf validate workflows
+awf validate profiles
+awf validate examples
 ```
 
 ## Code Style
@@ -46,7 +49,7 @@ awf validate roles workflows profiles examples
 ## Pull Request Process
 
 1. Ensure tests pass locally.
-2. Run `awf validate .` from project root.
+2. Run the four directory-specific `awf validate` commands from project root.
 3. Keep PRs focused — one concern per PR.
 4. Update CHANGELOG.md if the change is user-facing.
 
