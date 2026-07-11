@@ -18,10 +18,7 @@ SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
 KIND_TO_SCHEMA: dict[str, str] = {
     "Role": "role.schema.json",
     "Workflow": "workflow.schema.json",
-    "BindingProfile": "binding.schema.json",
-    "Policy": "policy.schema.json",
     "Artifact": "artifact.schema.json",
-    "Event": "event.schema.json",
 }
 
 _schema_cache: dict[str, dict[str, Any]] = {}
@@ -134,12 +131,14 @@ def parse_all_resources(path: Path) -> list[Resource]:
     docs = _parse_yaml_or_json(path)
     resources = []
     for doc in docs:
-        resources.append(Resource(
-            apiVersion=doc.get("apiVersion", ""),
-            kind=doc.get("kind", ""),
-            metadata=doc.get("metadata", {}),
-            spec=doc.get("spec", {}),
-        ))
+        resources.append(
+            Resource(
+                apiVersion=doc.get("apiVersion", ""),
+                kind=doc.get("kind", ""),
+                metadata=doc.get("metadata", {}),
+                spec=doc.get("spec", {}),
+            )
+        )
     return resources
 
 
@@ -237,10 +236,7 @@ def validate_role_semantics(role: dict[str, Any]) -> list[str]:
     # Check for conflicts: same action in both capabilities and forbidden
     conflicts = capabilities & forbidden
     for c in conflicts:
-        msg = (
-            f"role '{role_name}': action '{c}'"
-            " appears in both capabilities and forbiddenActions"
-        )
+        msg = f"role '{role_name}': action '{c}' appears in both capabilities and forbiddenActions"
         errors.append(msg)
 
     return errors

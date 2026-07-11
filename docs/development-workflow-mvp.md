@@ -6,6 +6,8 @@ Agent Workflow codifies one practical development method: establish the current 
 
 **Use first, abstract second.** A requirement does not enter the core architecture until a real project demonstrates it. Generic runtimes, remote scheduling, UI, and plugin systems may reuse mature projects later.
 
+**Stateless by design.** `awf` renders the next packet and validates submitted artifacts — it does **not** hold run state, execute models, or decide transitions. The human plus the chosen agent client drive progression. Any run scaffolding on disk (see below) is inspectable output the user owns, not a controller's private state machine. See the root [`constitution.md`](../constitution.md) for the full method rules.
+
 ## What “Usable” Means
 
 The MVP is not usable until a user can start from a goal, receive the next actionable packet, submit an artifact, and continue through architecture, phase planning, TaskCard execution, review, and decision. `awf validate` and `awf inspect` alone do not satisfy this bar.
@@ -66,7 +68,7 @@ awf next --project ../agent-bus
 awf submit --project ../agent-bus --artifact /path/to/result.md
 ```
 
-Repeat `awf next` and `awf submit`. The controller validates the artifact, advances the run, rejects stale or illegal transitions, and writes the next packet.
+Repeat `awf next` and `awf submit`. `awf submit` validates the artifact's structure against its schema and writes the next packet based on the workflow definition. It does not run models or maintain a private state machine — progression is a function of which artifacts exist on disk, which the user can inspect and edit directly.
 
 After architecture convergence, `awf status` must expose the frozen `ArchitectureRecord`, detailed current `PhasePlan`, and current `TaskCard`. After execution, local verification, and first-line review, it must expose the `ImplementationReport`, `TestReport`, `ReviewReport`, compressed `DecisionPacket`, and final `Decision`.
 

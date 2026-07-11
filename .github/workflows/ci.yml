@@ -32,5 +32,4 @@ jobs:
         run: |
           awf validate roles
           awf validate workflows
-          awf validate profiles
           awf validate examples

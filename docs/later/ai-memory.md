@@ -1,6 +1,12 @@
-# AI Memory Integration
+# AI Memory Integration (Later — Not in Core)
 
-This document defines how Agent Workflow integrates with [AI Memory](https://github.com/atongrun/ai-memory) — the Markdown + Git based shared agent memory repository.
+> **Status: deferred.** This is a future, optional external integration. The Agent
+> Workflow core does **not** reserve interfaces for it and ships no memory port or
+> adapter. The method runs with only local files. This document is retained as a
+> boundary record: when a real project needs shared long-term memory, a fresh adapter
+> is written against AI Memory's actual API — not a pre-built stub.
+
+This document describes how Agent Workflow *would* integrate with [AI Memory](https://github.com/atongrun/ai-memory) — the Markdown + Git based shared agent memory repository.
 
 ## Integration Model
 

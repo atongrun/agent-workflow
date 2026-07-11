@@ -6,8 +6,8 @@ metadata:
   description: Complete feature-delivery example with realistic stage configuration.
 spec:
   description: >
-    Demonstrates the full feature-delivery workflow with memory hints enabled
-    on the plan and implement stages.
+    Demonstrates the full feature-delivery workflow: plan → implement → test →
+    review → summarize → decide, with rework loops back to implement.
   inputs:
     - name: task
       required: true
@@ -18,16 +18,6 @@ spec:
         - TaskCard
       onSuccess: implement
       onFailure: failed
-      memory:
-        read:
-          enabled: true
-          queryTemplate: "project context and past decisions for {{ task }}"
-          maxItems: 3
-        write:
-          enabled: true
-          candidateTypes:
-            - decision
-            - project-fact
     - id: implement
       role: implementer
       inputs:

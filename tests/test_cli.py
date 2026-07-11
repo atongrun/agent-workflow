@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -10,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def run_awf(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["python", "-m", "agent_workflow.cli", *args],
+        [sys.executable, "-m", "agent_workflow.cli", *args],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
@@ -41,10 +42,6 @@ class TestCLIValidate:
 
     def test_validate_workflows_passes(self):
         result = run_awf("validate", "workflows")
-        assert result.returncode == 0
-
-    def test_validate_profiles_passes(self):
-        result = run_awf("validate", "profiles")
         assert result.returncode == 0
 
     def test_validate_examples_passes(self):
@@ -84,9 +81,3 @@ class TestCLIInspect:
         assert result.returncode == 0
         assert "kind: Role" in result.stdout
         assert "capabilities" in result.stdout
-
-    def test_inspect_binding_profile_shows_bindings(self):
-        result = run_awf("inspect", "profiles/local-example.yaml")
-        assert result.returncode == 0
-        assert "kind: BindingProfile" in result.stdout
-        assert "runner" in result.stdout

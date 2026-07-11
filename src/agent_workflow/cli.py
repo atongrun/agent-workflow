@@ -136,20 +136,6 @@ def _print_resource(resource) -> None:
             for a in produced:
                 print(f"  - {a}")
 
-    elif resource.kind == "BindingProfile":
-        bindings = spec.get("bindings", {})
-        print(f"bindings ({len(bindings)}):")
-        for role_name, binding in bindings.items():
-            runner = binding.get("runner", "(none)")
-            model = binding.get("model", "")
-            mode = binding.get("mode", "")
-            detail = f"runner: {runner}"
-            if model:
-                detail += f", model: {model}"
-            if mode:
-                detail += f", mode: {mode}"
-            print(f"  - {role_name}: {detail}")
-
     else:
         # Generic: print spec keys
         if isinstance(spec, dict):
@@ -159,7 +145,8 @@ def _print_resource(resource) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="awf",
-        description="Agent Workflow — model-agnostic workflow contracts for AI agents.",
+        description="Agent Workflow — a portable personal development method: "
+        "role, workflow, and artifact contracts for AI coding agents.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

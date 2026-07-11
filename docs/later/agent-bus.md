@@ -1,6 +1,12 @@
-# Agent Bus Integration
+# Agent Bus Integration (Later — Not in Core)
 
-This document defines how Agent Workflow integrates with [Agent Bus](https://github.com/atongrun/agent-bus) — the cross-machine durable event relay.
+> **Status: deferred.** This is a future, optional external integration. The Agent
+> Workflow core does **not** reserve interfaces for it and ships no adapter or event
+> port. The method runs with only local files. This document is retained as a
+> boundary record: when a real project needs cross-machine transport, a fresh adapter
+> is written against Agent Bus's actual API — not a pre-built stub.
+
+This document describes how Agent Workflow *would* integrate with [Agent Bus](https://github.com/atongrun/agent-bus) — the cross-machine durable event relay.
 
 ## Integration Model
 

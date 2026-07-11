@@ -6,13 +6,18 @@ Agent Workflow codifies progressive planning, limited architecture challenge, ta
 
 ## Why This Exists
 
-Multi-agent systems today suffer from three problems:
+Every AI coding agent — Claude Code, Codex, OpenCode, Hermes — has its own planner,
+architect, reviewer, sub-agents, and inner loop. What they lack is a **shared, portable
+rule for how a project is developed**: when to freeze architecture, what may be delegated,
+what must escalate, and what each stage must hand off.
 
-1. **No standard handoff**: Agents pass free-form chat messages with no structure, audit trail, or machine-readable state.
-2. **Tight coupling**: Workflow logic is baked into specific agent implementations (Codex, Hermes, OpenCode, etc.), making it impossible to swap runners.
-3. **No boundaries**: Control logic, event transport, and memory management are tangled — change one and you break the others.
+Agent Workflow is that rule layer. It defines **what to do, who is responsible, what the
+inputs and outputs are, and when to stop** — as plain contracts any tool can follow. It
+does **not** re-implement planning, execution, review, or orchestration; those stay inside
+each agent's own runner. The point is to put every tool under the same development method
+and let you swap tools freely — not to compete with them.
 
-Agent Workflow solves this by separating concerns into three independent projects.
+The whole method lives in one file: [`constitution.md`](constitution.md).
 
 ## Product Direction
 
@@ -24,64 +29,41 @@ For brownfield projects, the default path is:
 
 See [Development Workflow MVP](docs/development-workflow-mvp.md) for the usage contract and [Agent Bus Brownfield Dogfood](examples/agent-bus-dogfood/README.md) for the complete real example.
 
-## Architecture
+## What It Is (and Isn't)
 
-```mermaid
-flowchart LR
-    U[Task / Goal] --> W[Agent Workflow]
-    W --> B[Agent Bus]
-    W --> M[AI Memory]
-    W --> R[Runner Adapters]
+Agent Workflow ships as a small set of markdown/YAML contracts plus a thin, stateless
+validation CLI. It never executes, schedules, or orchestrates anything.
 
-    B --> A1[Remote Agent]
-    B --> A2[CI / Worker]
-    M --> C[Context and Memory]
-    R --> X1[Codex]
-    R --> X2[Hermes]
-    R --> X3[OpenCode]
-    R --> X4[Other Runners]
-```
+**Boundaries**
 
-### The Three-Project Stack
-
-| Project | Plane | Responsibility |
-|---------|-------|---------------|
-| **Agent Workflow** | Control Plane | Roles, stages, state, policy, artifact-based handoff |
-| **Agent Bus** | Event / Transport Plane | Cross-machine event relay, durable delivery, remote notification |
-| **AI Memory** | Context / Memory Plane | Long-term context, memory lifecycle, shared knowledge |
-
-### Boundaries
-
-1. Agent Workflow **does not** implement a cross-machine messaging system. That is Agent Bus.
-2. Agent Workflow **does not** implement long-term memory. That is AI Memory.
-3. Agent Workflow **does not** bind to Codex, Hermes, OpenCode, Claude Code, or any single model.
-4. Agent Bus and AI Memory are **optional adapters** — upgrades, not requirements.
-5. The core must run with only local files and a local shell runner.
-6. **No circular dependencies** between the three projects.
-7. Agents hand off via **structured Artifacts**, not free-form chat logs.
+1. It **does not** run models, spawn sub-agents, or drive an inner loop — each agent
+   client does that internally.
+2. It **does not** implement cross-machine transport or long-term memory. Those are
+   external, optional concerns recorded under [`docs/later/`](docs/later/) — the core
+   reserves no interfaces for them and runs with only local files.
+3. It **does not** bind to any single model or tool. A tool may be swapped at any stage
+   boundary without changing the contract.
+4. Agents hand off via **structured Artifacts**, not free-form chat logs.
 
 ## Core Concepts
 
 ### Role
-A role defines *responsibilities*, *capabilities*, and *constraints*. It does not bind to a model, tool, or runner. Example roles: `planner`, `implementer`, `tester`, `reviewer`, `summarizer`, `arbiter`.
+A role defines *responsibilities*, *capabilities*, and *constraints* — and, crucially,
+authority boundaries (e.g. a reviewer may only flag deterministic failures). It binds to
+no model, tool, or runner. Default roles: `planner`, `implementer`, `tester`, `reviewer`,
+`summarizer`, `arbiter`.
 
 ### Workflow
-A workflow defines *stages* and their *transitions*. Each stage is assigned a role. Example: `plan → implement → test → review → summarize → decide`.
-
-### Stage
-A stage is a single unit of work within a workflow. Stages have defined inputs, outputs, policies, success/failure transitions, and optional memory hints.
-
-### Binding
-A Binding Profile maps roles to concrete runners. A `planner` can be bound to `shell` locally or `codex` remotely — the workflow definition does not change.
+A workflow declares *stages* and their *transitions*. Each stage is assigned a role and
+declares its inputs, outputs, and `onSuccess`/`onFailure` targets. Example:
+`plan → implement → test → review → summarize → decide`. It is a description of *what
+happens and when to stop* — not an execution engine.
 
 ### Artifact
-Structured handoff documents between stages. Types include `TaskCard`, `ImplementationReport`, `TestReport`, `ReviewReport`, `DecisionPacket`, `Decision`, and `MemoryWriteCandidate`. Artifacts carry machine-readable data and human-readable summaries.
-
-### Policy
-Per-stage rules that constrain behavior. Policies can allow, deny, or warn on specific actions.
-
-### Runner
-A Runner executes a stage. Runners can be local shell commands, remote agents (Codex, Hermes, OpenCode), or mock implementations for testing.
+Structured handoff documents between stages: `TaskCard`, `ImplementationReport`,
+`TestReport`, `ReviewReport`, `DecisionPacket`, `Decision`. Each carries machine-readable
+data and a human-readable summary. The artifact chain — not chat history — is the portable
+state any client reads to produce the next step.
 
 ## Phase 0 Validation Quick Start
 
@@ -92,7 +74,6 @@ pip install -e .
 # Validate all resources
 awf validate roles
 awf validate workflows
-awf validate profiles
 awf validate examples
 
 # Inspect a resource
@@ -140,7 +121,6 @@ awf validate roles
 # Validate each resource directory
 awf validate roles
 awf validate workflows
-awf validate profiles
 awf validate examples
 
 # Inspect a workflow
@@ -186,20 +166,18 @@ spec:
 
 ```
 agent-workflow/
-├── docs/               # Architecture, concepts, ADRs, integration guides
-├── schemas/            # JSON Schema definitions for all resource kinds
-├── roles/              # Default role definitions
-├── workflows/          # Default workflow definitions
-├── profiles/           # Example binding profiles
-├── templates/          # Artifact templates
-├── examples/           # Complete example configurations
-├── src/agent_workflow/ # Python package
-│   ├── cli.py          # CLI entry point (awf)
+├── constitution.md    # The development method — the single source of truth
+├── docs/              # Concepts, ADRs; docs/later/ holds deferred integrations
+├── schemas/           # JSON Schema for Role, Workflow, Artifact
+├── roles/             # Default role definitions
+├── workflows/         # Default workflow definitions
+├── templates/         # Artifact templates
+├── examples/          # Complete example configurations
+├── src/agent_workflow/ # Thin validation CLI (awf)
+│   ├── cli.py          # CLI entry point (validate, inspect)
 │   ├── validation.py   # Schema + semantic validation
 │   ├── models.py       # Data models
-│   ├── errors.py       # Error types
-│   ├── ports/          # Abstract interfaces (Protocols)
-│   └── adapters/       # Local implementations
+│   └── errors.py       # Error types
 └── tests/              # Test suite
 ```
 
@@ -207,20 +185,16 @@ agent-workflow/
 
 **Phase 0 — Contract Bootstrap** (current; validation-only)
 
-- ✅ Repository and project structure
-- ✅ JSON Schema definitions for all resource kinds
-- ✅ Default role definitions (planner, implementer, tester, reviewer, summarizer, arbiter)
-- ✅ Default workflow definitions (feature-delivery, bugfix, documentation, research)
+- ✅ The development method in one file (`constitution.md`)
+- ✅ JSON Schema for Role, Workflow, Artifact
+- ✅ Default roles (planner, implementer, tester, reviewer, summarizer, arbiter)
+- ✅ Default workflows (feature-delivery, bugfix, documentation, research)
 - ✅ Artifact templates for all handoff types
 - ✅ Validation CLI (`awf validate`, `awf inspect`)
-- ✅ Schema validation tests
-- ✅ Semantic validation tests
+- ✅ Schema and semantic validation tests
 - ✅ CI pipeline (GitHub Actions)
-- ✅ Agent Bus integration contract
-- ✅ AI Memory integration contract
-- ✅ Local adapter stubs
 
-Agent Workflow is planned to integrate with Agent Host as the `workflow.engine` plugin. It remains independently runnable today; plugin integration has not been implemented yet.
+Cross-machine transport (Agent Bus) and shared long-term memory (AI Memory) are deferred, external, and optional — recorded under [`docs/later/`](docs/later/). The core reserves no interfaces for them.
 
 Phase 0 is not yet a usable development workflow: it cannot initialize a run, establish a brownfield baseline, produce architecture/phase/task artifacts, or import execution results.
 
@@ -245,7 +219,7 @@ See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 | 1 | Minimum usable development loop | 📋 Planned |
 | 2 | Agent Bus brownfield dogfood | 📋 Planned |
 | 3 | Evidence-driven hardening | 📋 Deferred until dogfood |
-| Later | Optional mature-runtime and integration adapters | 📋 Deferred |
+| Later | Optional external integrations (Agent Bus, AI Memory) | 📋 Deferred |
 
 ## License
 

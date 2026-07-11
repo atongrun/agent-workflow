@@ -1,6 +1,16 @@
 # Phase 0 Follow-ups
 
-This review records the hardening work that must happen before Agent Workflow Phase 1 runtime implementation starts. It does not change Agent Workflow behavior.
+> **Superseded (2026-07-11).** This review was written when Agent Workflow was still
+> planned as a control-plane runtime with internal Port abstractions and an Agent Host
+> `workflow.engine` plugin. The project has since been refocused as a portable
+> development **method + handoff protocol**: the Runner/EventBus/Memory/ArtifactStore
+> ports were removed, and execution/transport/memory are no longer core concerns. The
+> items below that assume port abstractions or a plugin adapter (esp. the System
+> Position section and the port ↔ capability mapping) no longer reflect the direction.
+> Kept for history. Current direction: [`constitution.md`](../../constitution.md),
+> [`ROADMAP.md`](../../ROADMAP.md), and deferred integrations under [`docs/later/`](../later/).
+
+This review records hardening work that was considered before the refocus. It does not change Agent Workflow behavior.
 
 ## System Position
 

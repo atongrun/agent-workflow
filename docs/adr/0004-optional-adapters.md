@@ -1,7 +1,15 @@
 # ADR-0004: Optional Adapters
 
-**Status:** Accepted  
+**Status:** Superseded (2026-07-11) — see note below  
 **Date:** 2026-07-07
+
+> **Superseded.** The project was refocused as a portable development method + handoff
+> protocol. The Port/Adapter layer (`RunnerPort`, `EventBusPort`, `MemoryPort`,
+> `ShellRunner`, `LocalEventBus`, `LocalMemory`) was **removed**: the core no longer
+> executes, transports, or stores memory, so there are no adapters to make optional.
+> Execution belongs to each agent client's own runner; cross-machine transport and shared
+> memory are deferred external concerns recorded under `docs/later/`, and the core reserves
+> no interfaces for them. The record below is kept for history only.
 
 ## Context
 

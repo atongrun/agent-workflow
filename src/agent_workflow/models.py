@@ -55,4 +55,4 @@ class Resource:
     spec: dict[str, Any]
 
 
-VALID_KINDS = {"Role", "Workflow", "BindingProfile", "Policy", "Artifact", "Event"}
+VALID_KINDS = {"Role", "Workflow", "Artifact"}

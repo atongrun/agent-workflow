@@ -12,7 +12,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 ROLES_DIR = PROJECT_ROOT / "roles"
 WORKFLOWS_DIR = PROJECT_ROOT / "workflows"
-PROFILES_DIR = PROJECT_ROOT / "profiles"
 EXAMPLES_DIR = PROJECT_ROOT / "examples"
 SCHEMAS_DIR = PROJECT_ROOT / "schemas"
 
@@ -25,7 +24,7 @@ def collect_yaml_files(directory: Path) -> list[Path]:
 
 
 class TestSchemaValidation:
-    """All role/workflow/profile files must pass JSON Schema validation."""
+    """All role/workflow files must pass JSON Schema validation."""
 
     @pytest.mark.parametrize("role_file", collect_yaml_files(ROLES_DIR))
     def test_role_passes_schema(self, role_file: Path):
@@ -36,11 +35,6 @@ class TestSchemaValidation:
     def test_workflow_passes_schema(self, wf_file: Path):
         errors = validate_file(wf_file)
         assert not errors, f"Schema validation failed for {wf_file.name}: {errors}"
-
-    @pytest.mark.parametrize("profile_file", collect_yaml_files(PROFILES_DIR))
-    def test_profile_passes_schema(self, profile_file: Path):
-        errors = validate_file(profile_file)
-        assert not errors, f"Schema validation failed for {profile_file.name}: {errors}"
 
 
 class TestExampleValidation:
@@ -58,10 +52,7 @@ class TestSchemaFilesExist:
     REQUIRED_SCHEMAS = [
         "role.schema.json",
         "workflow.schema.json",
-        "binding.schema.json",
-        "event.schema.json",
         "artifact.schema.json",
-        "policy.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", REQUIRED_SCHEMAS)

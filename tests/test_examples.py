@@ -49,9 +49,7 @@ class TestWorkflowSemanticValidation:
             "metadata": {"name": "test", "version": "0.1.0"},
             "spec": {
                 "description": "test",
-                "stages": [
-                    {"id": "s1", "role": "nonexistent-role", "onSuccess": "completed"}
-                ],
+                "stages": [{"id": "s1", "role": "nonexistent-role", "onSuccess": "completed"}],
                 "terminalStates": ["completed"],
             },
         }
@@ -84,9 +82,7 @@ class TestWorkflowSemanticValidation:
             "metadata": {"name": "test", "version": "0.1.0"},
             "spec": {
                 "description": "test",
-                "stages": [
-                    {"id": "plan", "role": "planner", "onSuccess": "nonexistent"}
-                ],
+                "stages": [{"id": "plan", "role": "planner", "onSuccess": "nonexistent"}],
                 "terminalStates": ["completed"],
             },
         }

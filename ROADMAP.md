@@ -9,14 +9,16 @@ The first proof project is Agent Bus. Until its baseline-to-decision run complet
 ## Phase 0: Contract Bootstrap ✅ Current
 
 - [x] Repository and project structure
-- [x] JSON Schema and semantic validation
-- [x] Initial roles, workflows, profiles, and artifact templates
+- [x] The development method in one file (`constitution.md`)
+- [x] JSON Schema and semantic validation (Role, Workflow, Artifact)
+- [x] Initial roles, workflows, and artifact templates
 - [x] Validation/inspection CLI
-- [x] Port boundaries and local adapter stubs
-- [x] Architecture, lifecycle, integration, and ADR documentation
+- [x] Concepts, handoff-semantics, and ADR documentation
 - [x] Tests and CI
 
 Phase 0 is validation-only. It is not a usable development workflow because a user cannot initialize a run, establish a brownfield baseline, obtain architecture/phase/task artifacts, or submit execution results.
+
+> The earlier Phase 0 shipped Runner/EventBus/Memory ports, local adapter stubs, and BindingProfile/Policy/Event schemas. These were removed when the project was refocused as a portable method + handoff protocol; execution, transport, and memory belong to each agent client or to deferred external projects (`docs/later/`), not the core.
 
 ## Phase 1: Minimum Usable Development Loop 📋
 
@@ -24,8 +26,8 @@ The acceptance path is documented in [Development Workflow MVP](docs/development
 
 - [ ] `awf init` accepts a project, goal, architecture mode, executor, reviewer, and decider
 - [ ] Brownfield initialization records verified capabilities, constraints, unfinished work, next milestone, blockers, and test evidence
-- [ ] Generated Workflow/Profile YAML remains internal output rather than required user input
-- [ ] `awf status`, `awf next`, and `awf submit` support resumable manual handoff
+- [ ] Any generated Workflow YAML remains internal output rather than required user input
+- [ ] `awf status`, `awf next`, and `awf submit` support resumable manual handoff **statelessly** — progression is a function of which artifacts exist on disk, not a private state machine
 - [ ] Single-architect self-challenge and dual-architect one-primary/one-challenger modes
 - [ ] Three-round hard stop: freeze, freeze with known risk, or wait for user
 - [ ] Separate project `ArchitectureRecord`, current `PhasePlan`, and executable `TaskCard`
@@ -34,7 +36,7 @@ The acceptance path is documented in [Development Workflow MVP](docs/development
 - [ ] Next TaskCard or next-phase refinement follows a completed decision
 - [ ] Quick Start runs end to end in a temporary fixture
 
-Keep the controller limited to these method-specific gates. Generic execution or scheduling mechanics may later be replaced by mature projects.
+Keep `awf` limited to these method-specific, stateless helpers: render the next packet, validate submitted artifacts. It must not execute models, hold run state, or decide transitions — the human plus the chosen agent client drive progression.
 
 ## Phase 2: Agent Bus Brownfield Dogfood 📋
 

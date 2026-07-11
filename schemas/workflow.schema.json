@@ -72,32 +72,8 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
-              "policy": { "type": "string" },
               "onSuccess": { "type": "string" },
-              "onFailure": { "type": "string" },
-              "memory": {
-                "type": "object",
-                "properties": {
-                  "read": {
-                    "type": "object",
-                    "properties": {
-                      "enabled": { "type": "boolean" },
-                      "queryTemplate": { "type": "string" },
-                      "maxItems": { "type": "integer" }
-                    }
-                  },
-                  "write": {
-                    "type": "object",
-                    "properties": {
-                      "enabled": { "type": "boolean" },
-                      "candidateTypes": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      }
-                    }
-                  }
-                }
-              }
+              "onFailure": { "type": "string" }
             }
           }
         },
