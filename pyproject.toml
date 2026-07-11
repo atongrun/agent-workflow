@@ -1,7 +1,7 @@
 [project]
 name = "agent_workflow"
-version = "0.1.0"
-description = "A model-agnostic workflow contract and orchestration core for AI agents."
+version = "0.2.0"
+description = "A portable personal development method and handoff protocol for AI coding agents."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
