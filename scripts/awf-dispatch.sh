@@ -1,36 +1,40 @@
 #!/usr/bin/env bash
 # awf-dispatch — lightweight, safe task dispatcher for Agent Workflow.
 #
-# Hands a self-contained TaskCard to an executor (a coding CLI) over Agent Bus.
-# Design goals (learned from real dogfood):
-#   - The card/prompt travel as FILES, never inlined into a shell string (an em-dash once
-#     corrupted an SSE event and crash-looped the listener). Fill only what changes.
-#   - The executor CLI is pluggable via scripts/adapters/<tool>.sh (tool-agnostic core).
-#   - The card is shared via git (committed to a PR branch), so any executor can pull it;
-#     the Agent Bus event carries only a pointer (branch + card path), not the card body.
+# Puts a self-contained TaskCard on a PR branch and announces it on Agent Bus as a
+# POINTER event. It does NOT execute anything: a long-running role listener
+# (scripts/awf-listen.sh) running somewhere — possibly on another machine — picks up
+# the event and runs the executor. This "dispatch = announce, listener = execute"
+# split is what makes execution pluggable across roles and machines.
 #
-# This version: executor = local; tool adapters pluggable (opencode shipped).
-# Windows/SSH executor is a planned follow-up.
+# Design goals (learned from real dogfood):
+#   - The card travels as a FILE via git (committed to a PR branch), never inlined into
+#     a shell string or an event payload (an em-dash once corrupted an SSE event and
+#     crash-looped the listener; a 200-line card also does not fit a payload).
+#   - The Agent Bus event carries only a POINTER: {branch, card, commit, tool, model}.
+#     The listener's handler reads those via agent-bus template placeholders.
+#   - Tokens are read from the environment (sourced from a gitignored file), never CLI args.
 #
 # Usage:
 #   scripts/awf-dispatch.sh \
 #     --repo   /path/to/target-repo \
 #     --card   relative/path/to/taskcard.md   (relative to --repo) \
 #     --branch awf/<task-id> \
-#     [--tool  opencode]           (default: opencode) \
+#     [--to    coder]              (recipient role; default: coder) \
+#     [--tool  opencode]           (executor CLI hint for the listener; default: opencode) \
 #     [--model opencode-go/deepseek-v4-flash] \
-#     [--executor local]           (default: local; windows: TODO) \
-#     [--no-push]                  (skip git push; local-only validation)
+#     [--report .awf/artifacts/NN-implementation-report.md]  (impl-report path hint) \
+#     [--type  task:awf-impl]      (event type; default: task:awf-impl) \
+#     [--no-push]                  (skip git push — LOCAL-ONLY; cross-machine needs push) \
+#     [--dry-run]                  (print the event that WOULD be sent, send nothing)
 #
-# Required environment (for the Agent Bus leg):
-#   AGENT_BUS_URL, AWF_ARCH_TOKEN, AWF_CODER_TOKEN   (tokens read from env, never CLI args)
+# Required environment for the Agent Bus leg (source ~/.config/awf/dispatch.env):
+#   AGENT_BUS_URL, AWF_ARCH_TOKEN         (tokens read from env, never CLI args)
+#   Optional: AWF_BUS_BIN                 (path to the agent-bus binary; default: agent-bus)
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROMPT_FILE="$SCRIPT_DIR/executor-prompt.md"
-
 # ---- defaults ----
-REPO="" CARD="" BRANCH="" TOOL="opencode" MODEL="" EXECUTOR="local" DO_PUSH=1
+REPO="" CARD="" BRANCH="" TO="coder" TOOL="opencode" MODEL="" REPORT="" DO_PUSH=1 DRY_RUN=0
 EVENT_TYPE="task:awf-impl"
 
 die() { echo "awf-dispatch: $*" >&2; exit 2; }
@@ -40,10 +44,13 @@ while [ $# -gt 0 ]; do
     --repo) REPO="$2"; shift 2;;
     --card) CARD="$2"; shift 2;;
     --branch) BRANCH="$2"; shift 2;;
+    --to) TO="$2"; shift 2;;
     --tool) TOOL="$2"; shift 2;;
     --model) MODEL="$2"; shift 2;;
-    --executor) EXECUTOR="$2"; shift 2;;
+    --report) REPORT="$2"; shift 2;;
+    --type) EVENT_TYPE="$2"; shift 2;;
     --no-push) DO_PUSH=0; shift;;
+    --dry-run) DRY_RUN=1; shift;;
     *) die "unknown arg: $1";;
   esac
 done
@@ -53,12 +60,9 @@ done
 [ -n "$BRANCH" ] || die "need --branch"
 [ -d "$REPO" ] || die "repo not found: $REPO"
 [ -f "$REPO/$CARD" ] || die "card not found: $REPO/$CARD"
-ADAPTER="$SCRIPT_DIR/adapters/$TOOL.sh"
-[ -f "$ADAPTER" ] || die "no adapter for tool '$TOOL' (expected $ADAPTER)"
-[ "$EXECUTOR" = "local" ] || die "executor '$EXECUTOR' not supported yet (only local)"
 
-# ---- 1. Put the card on a PR branch and push (card travels via git, not the event) ----
-echo "[dispatch] repo=$REPO card=$CARD branch=$BRANCH tool=$TOOL model=${MODEL:-<default>}"
+# ---- 1. Put the card on a PR branch and push (the card travels via git, not the event) ----
+echo "[dispatch] repo=$REPO card=$CARD branch=$BRANCH to=$TO tool=$TOOL model=${MODEL:-<default>}"
 git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "repo is not a git work tree"
 
 cur_branch="$(git -C "$REPO" branch --show-current)"
@@ -71,37 +75,33 @@ if ! git -C "$REPO" diff --cached --quiet; then
 fi
 COMMIT="$(git -C "$REPO" rev-parse HEAD)"
 if [ "$DO_PUSH" -eq 1 ]; then
-  git -C "$REPO" push -u origin "$BRANCH" >/dev/null 2>&1 || echo "[dispatch] WARN: push failed (continuing; executor is local and reads the card directly)"
+  # Cross-machine executors can ONLY get the card by pulling this branch from origin.
+  git -C "$REPO" push -u origin "$BRANCH" >/dev/null 2>&1 \
+    || echo "[dispatch] WARN: push failed. A remote executor will not see the card until this branch is pushed."
+else
+  echo "[dispatch] --no-push: LOCAL-ONLY. A remote (e.g. Windows) executor cannot pull this card."
 fi
 echo "[dispatch] card committed at $COMMIT on $BRANCH"
 
 # ---- 2. Send the Agent Bus event (pointer only) ----
-: "${AGENT_BUS_URL:?set AGENT_BUS_URL}"
-: "${AWF_ARCH_TOKEN:?set AWF_ARCH_TOKEN}"
-: "${AWF_CODER_TOKEN:?set AWF_CODER_TOKEN}"
-AWF_BUS="${AWF_BUS_BIN:-agent-bus}"
 task_id="${BRANCH##*/}"
-payload="$(printf '{"task_id":"%s","branch":"%s","card":"%s","commit":"%s","tool":"%s"}' \
-  "$task_id" "$BRANCH" "$CARD" "$COMMIT" "$TOOL")"
+# report path hint: default to a conventional per-task artifact path if not given.
+[ -n "$REPORT" ] || REPORT=".awf/artifacts/impl-report-$task_id.md"
+payload="$(printf '{"task_id":"%s","branch":"%s","card":"%s","commit":"%s","tool":"%s","model":"%s","report":"%s"}' \
+  "$task_id" "$BRANCH" "$CARD" "$COMMIT" "$TOOL" "$MODEL" "$REPORT")"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "[dispatch] --dry-run: would send event"
+  echo "           type=$EVENT_TYPE  from=architect  to=$TO"
+  echo "           payload=$payload"
+  echo "[dispatch] (dry-run) nothing sent."
+  exit 0
+fi
+
+: "${AGENT_BUS_URL:?set AGENT_BUS_URL (source ~/.config/awf/dispatch.env)}"
+: "${AWF_ARCH_TOKEN:?set AWF_ARCH_TOKEN (source ~/.config/awf/dispatch.env)}"
+AWF_BUS="${AWF_BUS_BIN:-agent-bus}"
 AGENT_BUS_URL="$AGENT_BUS_URL" AGENT_BUS_TOKEN="$AWF_ARCH_TOKEN" AGENT_BUS_AGENT=architect \
-  "$AWF_BUS" send --from architect --to coder --type "$EVENT_TYPE" --payload "$payload" \
+  "$AWF_BUS" send --from architect --to "$TO" --type "$EVENT_TYPE" --payload "$payload" \
   || die "agent-bus send failed"
-echo "[dispatch] event sent (type=$EVENT_TYPE)"
-
-# ---- 3. Start the local coder listener; its handler runs the tool adapter ----
-# The handler exports the adapter interface as env vars and execs the adapter. The card and
-# prompt are passed as file paths (never inlined). Exit 0 from the adapter => listener ACKs.
-DONE_MARKER="$REPO/.awf/artifacts/.awf-done-$task_id"
-REPORT_HINT="$REPO/.awf/artifacts/impl-report-$task_id.md"
-rm -f "$DONE_MARKER"
-
-# The adapter runs OpenCode etc. We wrap it so the executor also writes the done-marker.
-HANDLER="AWF_REPO_DIR='$REPO' AWF_CARD_FILE='$REPO/$CARD' AWF_PROMPT_FILE='$PROMPT_FILE' AWF_MODEL='$MODEL' AWF_REPORT_FILE='$REPORT_HINT' bash '$ADAPTER'; rc=\$?; touch '$DONE_MARKER'; exit \$rc"
-
-echo "[dispatch] starting local listener; executor=$TOOL. Waiting for completion marker:"
-echo "           $DONE_MARKER"
-AGENT_BUS_URL="$AGENT_BUS_URL" AGENT_BUS_TOKEN="$AWF_CODER_TOKEN" AGENT_BUS_AGENT=coder \
-  "$AWF_BUS" listen --agent coder --once --handler-timeout 3600 \
-  --on "$EVENT_TYPE" "$HANDLER"
-
-echo "[dispatch] listener returned. Check $REPORT_HINT and git diff in $REPO."
+echo "[dispatch] event sent (type=$EVENT_TYPE to=$TO). A '$TO' listener will pick it up and execute."

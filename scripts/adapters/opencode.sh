@@ -28,5 +28,5 @@ model_args=()
 exec opencode run \
   --dir "$AWF_REPO_DIR" \
   -f "$AWF_CARD_FILE" \
-  "${model_args[@]}" \
+  ${model_args[@]+"${model_args[@]}"} \
   "$(cat "$AWF_PROMPT_FILE")"
