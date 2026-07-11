@@ -154,3 +154,17 @@ Each stage must produce a structured artifact. Agents hand off via these artifac
 - A tool may be swapped at any stage boundary; the contract does not change.
 - Cross-machine transport and shared long-term memory are **external, optional**
   concerns (see `docs/later/`). The method here runs with only local files.
+
+## 11. Privacy Discipline (Artifacts Are Version-Controlled)
+
+Artifacts (TaskCards, reports, reviews, decisions) are committed to git and may be pushed
+to shared/remote repos. They must therefore contain **no private or secret values**:
+
+- **Never** put in an artifact: auth tokens/secrets, real server IPs/hostnames, SSH aliases,
+  or absolute personal paths (e.g. a home directory or a specific drive path).
+- **Instead** use placeholders and env vars: `$AGENT_BUS_URL`, `<coder-token>`,
+  `<repo>` / repo-relative paths. Verification commands read secrets from the environment.
+- Private concrete values (real IPs, tokens, machine paths, host layout) live **only in
+  private long-term memory** (the operator's AI Memory), never in a committed artifact.
+- The reviewer checks for leaked secrets/PII as part of every review, the same way it checks
+  scope. A leaked secret is a deterministic failure (rework).
