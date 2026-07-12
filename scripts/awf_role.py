@@ -6,7 +6,7 @@ local executor (executors/local.sh). It is invoked by a role listener as the
 Agent Bus `--on` handler when a stage event arrives:
 
     python awf_role.py coder    --branch B --card C --commit H --model M --tool T --report R
-    python awf_role.py reviewer --branch B --card C --commit H --model M --tool T --report R --base BASE
+    python awf_role.py reviewer --branch B --card C ... --report R --base BASE
 
 Why Python instead of bash: on Windows, agent-bus runs handlers through
 `cmd.exe` (subprocess shell=True), where bash scripts collide with cmd quoting,
@@ -39,7 +39,7 @@ def log(msg: str) -> None:
     print(f"[awf_role] {msg}", flush=True)
 
 
-def die(msg: str, code: int = 1) -> "NoReturn":  # type: ignore[name-defined]
+def die(msg: str, code: int = 1):
     print(f"awf_role: {msg}", file=sys.stderr, flush=True)
     raise SystemExit(code)
 
@@ -193,7 +193,8 @@ def role_coder(a: argparse.Namespace) -> int:
     # commit + push the executor's output back to the same branch
     git(repo, "add", "-A")
     if git(repo, "diff", "--cached", "--quiet") != 0:
-        if git(repo, "commit", "-q", "-m", f"feat(awf): executor output for {a.branch} [{tool}]") != 0:
+        msg = f"feat(awf): executor output for {a.branch} [{tool}]"
+        if git(repo, "commit", "-q", "-m", msg) != 0:
             die("git commit failed (is git user.name/user.email configured on this machine?)")
         log(f"committed executor output on {a.branch}")
     else:

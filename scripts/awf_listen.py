@@ -28,7 +28,7 @@ from pathlib import Path
 DEFAULT_ON_TYPE = {"coder": "task:awf-impl", "reviewer": "task:awf-review"}
 
 
-def die(msg: str) -> "NoReturn":  # type: ignore[name-defined]
+def die(msg: str):
     print(f"awf_listen: {msg}", file=sys.stderr)
     raise SystemExit(2)
 
