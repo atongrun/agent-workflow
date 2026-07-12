@@ -193,7 +193,8 @@ def role_coder(a: argparse.Namespace) -> int:
     # commit + push the executor's output back to the same branch
     git(repo, "add", "-A")
     if git(repo, "diff", "--cached", "--quiet") != 0:
-        git(repo, "commit", "-q", "-m", f"feat(awf): executor output for {a.branch} [{tool}]")
+        if git(repo, "commit", "-q", "-m", f"feat(awf): executor output for {a.branch} [{tool}]") != 0:
+            die("git commit failed (is git user.name/user.email configured on this machine?)")
         log(f"committed executor output on {a.branch}")
     else:
         log("no changes produced by the tool")
