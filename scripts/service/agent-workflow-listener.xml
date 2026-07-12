@@ -1,0 +1,39 @@
+<!--
+  WinSW service definition for an Agent Workflow listener (Windows).
+
+  WinSW (https://github.com/winsw/winsw) wraps any process as a Windows service.
+  Setup on the box (documented in README.md, NOT automated):
+    1. Download WinSW.exe (x64), place it next to this file, rename it
+       agent-workflow-listener.exe  (WinSW pairs <exe>.xml with <exe>.exe).
+    2. Fill the __PLACEHOLDERS__ below (or let the justfile do it).
+    3.  agent-workflow-listener.exe install
+        agent-workflow-listener.exe start
+
+  Holds NO secrets — only role/repo/tool. The .cmd shim runs the POSIX wrapper via
+  git-bash, which sources dispatch.env for AGENT_BUS_URL / AWF_<ROLE>_TOKEN / AWF_BUS_BIN.
+
+  onfailure restart => auto-restart on a crash. A clean stop (control:shutdown or
+  `stop`) does not loop.
+-->
+<service>
+  <id>agent-workflow-listener-__ROLE__</id>
+  <name>Agent Workflow Listener (__ROLE__)</name>
+  <description>Agent Workflow role listener: connects to Agent Bus and runs handlers.</description>
+
+  <executable>__CMD_WRAPPER__</executable>
+
+  <workingdirectory>__REPO__</workingdirectory>
+
+  <env name="AWF_ROLE" value="__ROLE__"/>
+  <env name="AWF_REPO" value="__REPO__"/>
+  <env name="AWF_TOOL" value="__TOOL__"/>
+  <env name="AWF_GITBASH" value="__GITBASH__"/>
+
+  <onfailure action="restart" delay="10 sec"/>
+  <resetfailure>1 hour</resetfailure>
+
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+</service>

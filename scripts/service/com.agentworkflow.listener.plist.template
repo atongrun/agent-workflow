@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd service for an Agent Workflow listener (macOS).
+
+  This is a TEMPLATE: the justfile `install-service` recipe fills the __PLACEHOLDERS__
+  and copies the result to ~/Library/LaunchAgents/com.agentworkflow.listener.__ROLE__.plist,
+  then `launchctl bootstrap gui/$UID <file>`.
+
+  It holds NO secrets — only the role/repo/tool. The wrapper (__WRAPPER__) sources
+  ~/.config/awf/dispatch.env for AGENT_BUS_URL / AWF_<ROLE>_TOKEN / AWF_BUS_BIN.
+
+  KeepAlive/SuccessfulExit=false => restart on a crash, but NOT after a clean stop
+  (so `control:shutdown` and `launchctl bootout` really stop it).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agentworkflow.listener.__ROLE__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__WRAPPER__</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AWF_ROLE</key><string>__ROLE__</string>
+        <key>AWF_REPO</key><string>__REPO__</string>
+        <key>AWF_TOOL</key><string>__TOOL__</string>
+        <key>AWF_PYTHON</key><string>__PYTHON__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__LOG__</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG__</string>
+</dict>
+</plist>

@@ -1,0 +1,34 @@
+# systemd service for an Agent Workflow listener (Linux).
+#
+# TEMPLATE: the justfile `install-service` recipe fills __PLACEHOLDERS__ and installs
+# it as /etc/systemd/system/agent-workflow-listener@__ROLE__.service (system-level,
+# matching the existing agent-bus.service), then `systemctl daemon-reload` +
+# `systemctl enable --now`.
+#
+# Holds NO secrets — only role/repo/user. The wrapper (__WRAPPER__) sources the
+# user's ~/.config/awf/dispatch.env for AGENT_BUS_URL / AWF_<ROLE>_TOKEN / AWF_BUS_BIN.
+#
+# --user variant: to run as `systemctl --user` instead of system-level, drop the
+# [Install] WantedBy to default.target, remove User=, install under
+# ~/.config/systemd/user/, and run `loginctl enable-linger <user>` so it survives
+# logout. System-level (below) is simpler on a single-user VPS.
+
+[Unit]
+Description=Agent Workflow listener (__ROLE__)
+After=network-online.target agent-bus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Environment=AWF_ROLE=__ROLE__
+Environment=AWF_REPO=__REPO__
+Environment=AWF_TOOL=__TOOL__
+Environment=AWF_PYTHON=__PYTHON__
+Environment=HOME=__HOME__
+ExecStart=__WRAPPER__
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
