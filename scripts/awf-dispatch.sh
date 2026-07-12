@@ -3,7 +3,7 @@
 #
 # Puts a self-contained TaskCard on a PR branch and announces it on Agent Bus as a
 # POINTER event. It does NOT execute anything: a long-running role listener
-# (scripts/awf-listen.sh) running somewhere — possibly on another machine — picks up
+# (scripts/awf_listen.py) running somewhere — possibly on another machine — picks up
 # the event and runs the executor. This "dispatch = announce, listener = execute"
 # split is what makes execution pluggable across roles and machines.
 #

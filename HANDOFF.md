@@ -36,8 +36,9 @@ agent-bus `shell=True` 跑 handler；改 argv+shell=False + WinSW/launchd/system
 ## 2. Git 状态（未合并的分支，别丢）
 
 - **agent-workflow**：`main` 本地新 commit `c1e5db0`（三端 step1-2：awf_role/awf_listen 硬化 + fetch refspec），
-  **未 push**。旧 bash 版（`awf-listen.sh` 等）暂留待清理；`awf-listen.sh` 有个 `AWF_BASH_BIN` workaround diff
-  **未 commit**（被 argv+shell=False 取代的死胡同）；`awf_bootstrap.py`/`awf_handoff_check.py`（SSH 版）仍未 commit。
+  **未 push**。旧 bash 监听/执行侧（`awf-listen.sh` + `scripts/roles|executors|adapters/*.sh`）**已删**
+  （被 Python `awf_role.py`/`awf_listen.py` 取代；`AWF_BASH_BIN` workaround 死胡同随文件一起丢弃）；
+  `awf_bootstrap.py`/`awf_handoff_check.py`（SSH 版）仍未 commit。
 - **agent-bus**：分支 stack（都已 push origin，**均未合并 master**）：poison-003 → pending-count-004 →
   send-dryrun-005 → **`awf/abus-bootstrap-token-006` @`94e972e`**（本会话从 Windows 取回 push 到 origin，**review 已过**）
   → **`awf/abus-handler-argv-007` @`f5c68f3`**（三端 step3：handler argv+shell=False，**本地未 push**）。
@@ -72,18 +73,20 @@ agent-bus `shell=True` 跑 handler；改 argv+shell=False + WinSW/launchd/system
    **决策：先不合 master，先做了 B。** 之后 bootstrap 脚本 SSH→curl 重写（curl 端点已就绪）。
 2. **push/合并决策（用户）**：agent-workflow `c1e5db0` + agent-bus `awf/abus-handler-argv-007`(`f5c68f3`) +
    其下 `awf/abus-bootstrap-token-006`(`94e972e`) 都本地未 push。要不要 push / 合并 stack，用户定。
-3. **旧 bash 脚本清理**（含 `awf-listen.sh` 那个未 commit 的 `AWF_BASH_BIN` workaround diff）+ agent-bus stack 合并。
+3. **✅ 旧 bash 脚本清理已完成**（`awf-listen.sh` + `scripts/roles|executors|adapters/*.sh` 已 `git rm`，
+   `AWF_BASH_BIN` workaround diff 丢弃）+ 剩 agent-bus stack 合并（另见 A：已收敛 13→1，只剩 master）。
 - 环境/路径/凭证全坑：AI Memory `notes/2026-07-12-cross-machine-windows-python.md` +
   `2026-07-12-curl-bootstrap-and-listener-env-bug.md`。三机拓扑 `topics/tailscale-mesh/CONTEXT.md`
   （Windows=`100.81.0.48`，用前 `tailscale status`）。
 
 ## 4. awf-dispatch 设计（已实现部分）
 
-`scripts/awf-dispatch.sh` + `scripts/adapters/<tool>.sh` + `scripts/executor-prompt.md`。
+派卡侧：`scripts/awf-dispatch.sh`（仍是 bash，暂无 Python 替代）+ `scripts/executor-prompt.md`。
+执行侧：`scripts/awf_role.py`（工具适配器已**内联**进它，旧 `scripts/adapters/*.sh` 已删）。
 - **卡/prompt 走文件，绝不内联进 shell**（一个 em-dash 曾把 SSE 事件编码搞坏、listener crash-loop）。
-- **executor CLI 可插拔**：加新 CLI 只加一个 `adapters/<tool>.sh`（已有 opencode）。dispatcher 不认识具体工具。
+- **executor CLI 可插拔**：加新 CLI 在 `awf_role.py` 里加一个适配器函数（已有 opencode）。dispatcher 不认识具体工具。
 - **卡走 git（PR 分支），事件只带指针**。artifact 现已入库，机制成立。
-- 现状：local executor + PR 传卡 + 工具适配器。Windows/SSH executor 待加。
+- 现状：local executor + PR 传卡 + 内联工具适配。Windows/SSH executor 已跨机跑通（见 AI Memory）。
 
 ## 5. 方法怎么用（constitution 落地）
 
