@@ -81,6 +81,12 @@ def main(argv: list[str] | None = None) -> int:
         die(f"set {token_var} (source your dispatch.env)")
     bus = os.environ.get("AWF_BUS_BIN", "agent-bus")
 
+    # Force UTF-8 for the whole process tree (the agent-bus listener and every handler
+    # it spawns inherit this). No-op on macOS/Linux; on Windows it stops child Python
+    # from defaulting to the gbk locale codec and crashing on non-ASCII output.
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+
     # Config the handler needs is passed via the ENVIRONMENT (inherited by the
     # agent-bus listener and thus by each handler process it spawns).
     os.environ["AWF_SCRIPT_DIR"] = str(script_dir)

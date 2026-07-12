@@ -51,6 +51,20 @@ def env(name: str, default: str | None = None, required: bool = False) -> str:
     return val or ""
 
 
+def child_env() -> dict[str, str]:
+    """Environment for spawned children: inherit-and-augment, never replace.
+
+    A bare ``env={}`` breaks Windows DLL loading, and a service/cmd.exe context can
+    strip variables git needs. So we always start from the full parent environment and
+    only *add* what we require. ``PYTHONUTF8=1`` makes child Python processes decode as
+    UTF-8 (no-op on POSIX; stops gbk crashes on Windows).
+    """
+    e = dict(os.environ)
+    e.setdefault("PYTHONUTF8", "1")
+    e.setdefault("PYTHONIOENCODING", "utf-8")
+    return e
+
+
 def spawn(argv: list[str], *, cwd: str | None = None, stdin: str | None = None) -> int:
     """Run a command as a real argv (no shell). Handles Windows .cmd/.bat shims.
 
@@ -67,6 +81,9 @@ def spawn(argv: list[str], *, cwd: str | None = None, stdin: str | None = None) 
         cwd=cwd,
         input=stdin,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=child_env(),
     )
     return proc.returncode
 
@@ -77,7 +94,12 @@ def git(repo: str, *args: str) -> int:
 
 def git_out(repo: str, *args: str) -> str:
     proc = subprocess.run(
-        ["git", "-C", repo, *args], text=True, capture_output=True
+        ["git", "-C", repo, *args],
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        env=child_env(),
     )
     return proc.stdout.strip()
 
@@ -89,8 +111,15 @@ def git_out(repo: str, *args: str) -> str:
 def fetch_and_checkout(repo: str, branch: str) -> None:
     """Fetch the branch from origin and check it out (creating a tracking branch)."""
     log(f"fetch + checkout {branch} in {repo}")
-    # Best-effort fetch; the branch may be local-only in single-machine tests.
-    subprocess.run(["git", "-C", repo, "fetch", "--quiet", "origin", branch])
+    # Fetch WITH an explicit refspec so the origin/<branch> remote-tracking ref is
+    # created/updated. Plain `fetch origin <branch>` only writes FETCH_HEAD and
+    # leaves origin/<branch> absent, which makes the `-B ... origin/<branch>`
+    # fallback below fail on a machine that has never tracked this branch.
+    subprocess.run(
+        ["git", "-C", repo, "fetch", "--quiet", "origin",
+         f"+{branch}:refs/remotes/origin/{branch}"],
+        env=child_env(),
+    )
     if git(repo, "checkout", "-q", branch) != 0:
         if git(repo, "checkout", "-q", "-B", branch, f"origin/{branch}") != 0:
             die(f"cannot checkout branch {branch}")
@@ -150,16 +179,16 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
     if not (url and token):
         log(f"no AGENT_BUS_URL/AWF_{from_role.upper()}_TOKEN; skipping {etype} announcement")
         return False
-    child_env = dict(os.environ)
-    child_env["AGENT_BUS_URL"] = url
-    child_env["AGENT_BUS_TOKEN"] = token
-    child_env["AGENT_BUS_AGENT"] = from_role
+    cenv = child_env()
+    cenv["AGENT_BUS_URL"] = url
+    cenv["AGENT_BUS_TOKEN"] = token
+    cenv["AGENT_BUS_AGENT"] = from_role
     argv = [bus, "send", "--from", from_role, "--to", to_role,
             "--type", etype, "--payload", json.dumps(payload)]
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
         argv = ["cmd", "/c", *argv]
     log(f"send {etype}: {from_role} -> {to_role}")
-    rc = subprocess.run(argv, env=child_env).returncode
+    rc = subprocess.run(argv, env=cenv).returncode
     if rc != 0:
         log(f"WARN: failed to send {etype} (rc={rc})")
     return rc == 0
@@ -170,7 +199,9 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def role_coder(a: argparse.Namespace) -> int:
-    repo = env("AWF_REPO_DIR", required=True)
+    # Resolve to an absolute path: a relative/unresolved cwd is what makes git behave
+    # differently under a service (cmd.exe) vs. an interactive shell.
+    repo = str(Path(env("AWF_REPO_DIR", required=True)).resolve())
     script_dir = env("AWF_SCRIPT_DIR", required=True)
     prompt_file = os.path.join(script_dir, "executor-prompt.md")
     tool = env("AWF_TOOL", a.tool or "opencode")
@@ -216,7 +247,7 @@ def role_coder(a: argparse.Namespace) -> int:
 
 
 def role_reviewer(a: argparse.Namespace) -> int:
-    repo = env("AWF_REPO_DIR", required=True)
+    repo = str(Path(env("AWF_REPO_DIR", required=True)).resolve())
     script_dir = env("AWF_SCRIPT_DIR", required=True)
     prompt_file = os.path.join(script_dir, "reviewer-prompt.md")
     tool = env("AWF_TOOL", a.tool or "")
