@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -108,21 +109,54 @@ def git_out(repo: str, *args: str) -> str:
 # git helpers shared by all roles
 # ---------------------------------------------------------------------------
 
-def fetch_and_checkout(repo: str, branch: str) -> None:
-    """Fetch the branch from origin and check it out (creating a tracking branch)."""
-    log(f"fetch + checkout {branch} in {repo}")
-    # Fetch WITH an explicit refspec so the origin/<branch> remote-tracking ref is
-    # created/updated. Plain `fetch origin <branch>` only writes FETCH_HEAD and
-    # leaves origin/<branch> absent, which makes the `-B ... origin/<branch>`
-    # fallback below fail on a machine that has never tracked this branch.
-    subprocess.run(
-        ["git", "-C", repo, "fetch", "--quiet", "origin",
-         f"+{branch}:refs/remotes/origin/{branch}"],
-        env=child_env(),
-    )
-    if git(repo, "checkout", "-q", branch) != 0:
-        if git(repo, "checkout", "-q", "-B", branch, f"origin/{branch}") != 0:
-            die(f"cannot checkout branch {branch}")
+
+_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+
+
+def fetch_and_checkout(repo: str, branch: str, expected_commit: str) -> None:
+    """Synchronize a clean checkout to the exact remote task branch."""
+    log(f"preflight + fetch + checkout {branch} in {repo}")
+    if git(repo, "check-ref-format", "--branch", branch) != 0:
+        die(f"invalid task branch {branch!r}")
+    if not _COMMIT_RE.fullmatch(expected_commit):
+        die("event commit must be a 7-64 character hexadecimal Git object ID")
+
+    dirty = git_out(repo, "status", "--porcelain")
+    if dirty:
+        die("working tree is dirty; commit, stash, or clean it before retrying")
+
+    all_heads = "+refs/heads/*:refs/remotes/origin/*"
+    if git(repo, "fetch", "--quiet", "--prune", "origin", all_heads) != 0:
+        die("cannot fetch latest refs from origin")
+
+    remote_ref = f"refs/remotes/origin/{branch}"
+    if git(repo, "show-ref", "--verify", "--quiet", remote_ref) != 0:
+        die(f"remote branch origin/{branch} does not exist")
+
+    resolved_expected = git_out(repo, "rev-parse", "--verify", f"{expected_commit}^{{commit}}")
+    remote_head = git_out(repo, "rev-parse", f"origin/{branch}")
+    if not resolved_expected:
+        die(f"event commit {expected_commit} is not available after fetch")
+    if remote_head != resolved_expected:
+        die(
+            f"origin/{branch} changed after dispatch; expected {resolved_expected}, "
+            f"found {remote_head}"
+        )
+
+    local_ref = f"refs/heads/{branch}"
+    if git(repo, "show-ref", "--verify", "--quiet", local_ref) == 0:
+        ahead = git_out(repo, "rev-list", "--count", f"origin/{branch}..{branch}")
+        if not ahead.isdigit():
+            die(f"cannot compare local branch {branch} with origin/{branch}")
+        if int(ahead) > 0:
+            die(f"local branch {branch} has unpushed commits; refusing to overwrite it")
+
+    if git(repo, "checkout", "-q", "-B", branch, f"origin/{branch}") != 0:
+        die(f"cannot checkout branch {branch} from origin/{branch}")
+
+    head = git_out(repo, "rev-parse", "HEAD")
+    if not head or head != remote_head:
+        die(f"checkout {branch} is not synchronized with origin/{branch}")
 
 
 def read_text(path: str) -> str:
@@ -132,6 +166,7 @@ def read_text(path: str) -> str:
 # ---------------------------------------------------------------------------
 # tool adapters (inlined — no bash adapter files needed)
 # ---------------------------------------------------------------------------
+
 
 def tool_opencode_exec(repo: str, card_file: str, prompt_file: str, model: str) -> int:
     """Run OpenCode as an executor: edit code in `repo` per the card + prompt."""
@@ -172,6 +207,7 @@ def tool_opencode_review(repo: str, base: str, prompt_file: str, card_file: str,
 # Agent Bus event emission (reuse the agent-bus CLI for auth consistency)
 # ---------------------------------------------------------------------------
 
+
 def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
     url = env("AGENT_BUS_URL")
     bus = env("AWF_BUS_BIN", "agent-bus")
@@ -183,8 +219,18 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
     cenv["AGENT_BUS_URL"] = url
     cenv["AGENT_BUS_TOKEN"] = token
     cenv["AGENT_BUS_AGENT"] = from_role
-    argv = [bus, "send", "--from", from_role, "--to", to_role,
-            "--type", etype, "--payload", json.dumps(payload)]
+    argv = [
+        bus,
+        "send",
+        "--from",
+        from_role,
+        "--to",
+        to_role,
+        "--type",
+        etype,
+        "--payload",
+        json.dumps(payload),
+    ]
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
         argv = ["cmd", "/c", *argv]
     log(f"send {etype}: {from_role} -> {to_role}")
@@ -198,6 +244,7 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
 # roles
 # ---------------------------------------------------------------------------
 
+
 def role_coder(a: argparse.Namespace) -> int:
     # Resolve to an absolute path: a relative/unresolved cwd is what makes git behave
     # differently under a service (cmd.exe) vs. an interactive shell.
@@ -208,7 +255,7 @@ def role_coder(a: argparse.Namespace) -> int:
     model = env("AWF_MODEL", a.model or "")
     no_push = env("AWF_NO_PUSH", "0") == "1"
 
-    fetch_and_checkout(repo, a.branch)
+    fetch_and_checkout(repo, a.branch, a.commit)
     card_file = os.path.join(repo, a.card)
     if not Path(card_file).is_file():
         die(f"card not found after checkout: {card_file}")
@@ -238,11 +285,20 @@ def role_coder(a: argparse.Namespace) -> int:
         log(f"pushed {a.branch}")
 
     new_commit = git_out(repo, "rev-parse", "HEAD") or a.commit
-    send_event("coder", "reviewer", "task:awf-review", {
-        "task_id": a.branch.rsplit("/", 1)[-1],
-        "branch": a.branch, "card": a.card, "commit": new_commit,
-        "report": a.report, "tool": tool, "model": model,
-    })
+    send_event(
+        "coder",
+        "reviewer",
+        "task:awf-review",
+        {
+            "task_id": a.branch.rsplit("/", 1)[-1],
+            "branch": a.branch,
+            "card": a.card,
+            "commit": new_commit,
+            "report": a.report,
+            "tool": tool,
+            "model": model,
+        },
+    )
     return 0
 
 
@@ -254,7 +310,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     model = env("AWF_MODEL", a.model or "")
     base = env("AWF_BASE", a.base or "master")
 
-    fetch_and_checkout(repo, a.branch)
+    fetch_and_checkout(repo, a.branch, a.commit)
     card_file = os.path.join(repo, a.card)
 
     log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
@@ -268,11 +324,18 @@ def role_reviewer(a: argparse.Namespace) -> int:
     else:
         log(f"no reviewer tool configured; branch {a.branch} checked out for human review")
 
-    send_event("reviewer", "architect", "decision:awf-ready", {
-        "task_id": a.branch.rsplit("/", 1)[-1],
-        "branch": a.branch, "commit": a.commit,
-        "verdict": verdict, "report": a.report,
-    })
+    send_event(
+        "reviewer",
+        "architect",
+        "decision:awf-ready",
+        {
+            "task_id": a.branch.rsplit("/", 1)[-1],
+            "branch": a.branch,
+            "commit": a.commit,
+            "verdict": verdict,
+            "report": a.report,
+        },
+    )
     return 0
 
 

@@ -9,6 +9,9 @@ Rules:
 - Only rework for deterministic failures. Do not add features or refactor unrelated code.
 - Run the card's SAFE verification commands yourself (unit tests, --help). Do NOT run any
   command that needs a real secret token or hits a remote server; the reviewer verifies those.
+- The runner synchronizes the task branch from origin before invoking you. If it reports a dirty
+  worktree or unpushed local commits, STOP and report the preflight failure; never reset or clean
+  another session's work yourself.
 - When done, write an ImplementationReport (what changed, commands run, results, any
   deviation) to the path the dispatcher tells you, then create the done-marker file the
   dispatcher specifies.

@@ -40,6 +40,10 @@ This is the section that makes cross-machine / fresh-session handoff work.
 -->
 
 - **Repository / path**: [where the code lives]
+- **Base branch**: [branch used to create this task branch, e.g. `main`]
+- **Task branch**: [remote branch the executor must receive, e.g. `feature/task-id`]
+- **Dispatched task commit**: [exact commit expected at `origin/<task-branch>`]
+- **Remote baseline**: [expected `origin/<base>` commit used when the task branch was created]
 - **Entry points & relevant files**: [paths the executor should read/edit first]
 - **Relevant existing behavior**: [what already works and must not regress]
 - **Project rules**: see this project's `AGENTS.md` for stack, conventions, and commands.
@@ -100,4 +104,6 @@ This replaces a separate "analyze" tool — it is a checklist, not code.
 - [ ] Every Acceptance Criterion is verifiable by a command or observable check.
 - [ ] Verification Commands are real commands from the project (checked against its `AGENTS.md`).
 - [ ] Working Context lets a fresh-session executor start without the planner's chat history.
+- [ ] Base branch, task branch, dispatched task commit, and remote baseline are explicit; the
+      task branch was created from the stated `origin/<base>` and pushed before dispatch.
 - [ ] This task advances the current milestone (no unrelated refactors / scope creep).
