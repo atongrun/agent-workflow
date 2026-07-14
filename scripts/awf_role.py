@@ -132,7 +132,9 @@ def git_out(repo: str, *args: str) -> str:
         errors="replace",
         env=child_env(),
     )
-    return proc.stdout.strip()
+    # Use rstrip to preserve leading space in porcelain format
+    # (e.g. " M a.py" — leading space means unmodified in index)
+    return proc.stdout.rstrip("\n\r")
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +153,317 @@ def check_report(report_path: str) -> None:
         die("--report is required; ImplementationReport must exist before commit or review")
     if not Path(report_path).is_file():
         die(f"ImplementationReport not found: {report_path}")
+
+
+# ---------------------------------------------------------------------------
+# Postflight contract
+# ---------------------------------------------------------------------------
+
+
+class PostflightContract:
+    """Frozen postflight contract parsed from a TaskCard awf-postflight block."""
+
+    def __init__(
+        self,
+        allowed_paths: list[str],
+        verification_commands: list[list[str]],
+    ) -> None:
+        self.allowed_paths = list(allowed_paths)
+        self.verification_commands = [list(cmd) for cmd in verification_commands]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, PostflightContract):
+            return NotImplemented
+        return (
+            self.allowed_paths == other.allowed_paths
+            and self.verification_commands == other.verification_commands
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"PostflightContract(allowed_paths={self.allowed_paths!r}, "
+            f"verification_commands={self.verification_commands!r})"
+        )
+
+
+_POSTFLIGHT_RE = re.compile(r"<!--\s*awf-postflight\s*\n(.*?)\n\s*-->", re.DOTALL)
+
+# Artifact denylist — paths that always fail even if in allowed_paths.
+_DENY_PREFIXES: tuple[str, ...] = (
+    ".venv/",
+    "venv/",
+    "env/",
+    "__pycache__/",
+    "node_modules/",
+    "dist/",
+    "build/",
+    "coverage/",
+    "htmlcov/",
+)
+_DENY_EXACT: tuple[str, ...] = (
+    "Thumbs.db",
+    ".DS_Store",
+    ".coverage",
+    "coverage.xml",
+)
+_DENY_SUFFIXES: tuple[str, ...] = (
+    ".swp",
+    ".swo",
+    ".swn",
+    ".bak",
+    ".orig",
+    ".pyc",
+    ".pyo",
+    ".log",
+    ".pid",
+    ".egg-info",
+)
+
+
+def _is_env_denied(path: str) -> bool:
+    """True for .env variants that carry secrets, excluding example templates."""
+    if path == ".env":
+        return True
+    if path.startswith(".env."):
+        # Allow documented examples
+        return path not in (".env.example", ".env.template", ".env.sample")
+    return False
+
+
+def _path_is_denied(path: str) -> bool:
+    """Check a single repository-relative path against the artifact denylist."""
+    if _is_env_denied(path):
+        return True
+    if path.startswith(_DENY_PREFIXES):
+        return True
+    if path in _DENY_EXACT:
+        return True
+    if path.endswith(_DENY_SUFFIXES):
+        return True
+    # Also deny files inside .egg-info directories
+    if ".egg-info/" in path:
+        return True
+    return False
+
+
+def parse_postflight_contract(card_path: str) -> PostflightContract:
+    """Parse, validate, and freeze the awf-postflight contract from a TaskCard.
+
+    Must be called before the model runs so that model edits to the card file
+    (which is deliberately absent from ``allowed_paths``) cannot change the
+    contract.
+    """
+    text = Path(card_path).read_text(encoding="utf-8")
+    m = _POSTFLIGHT_RE.search(text)
+    if not m:
+        die("task card has no awf-postflight contract block")
+
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError as e:
+        die(f"malformed awf-postflight contract: {e}")
+
+    if not isinstance(data, dict):
+        die("awf-postflight contract must be a JSON object")
+
+    # Reject extra keys
+    allowed_keys = {"allowed_paths", "verification_commands"}
+    extra = set(data) - allowed_keys
+    if extra:
+        die(f"unexpected awf-postflight keys: {', '.join(sorted(extra))}")
+
+    # --- allowed_paths ---
+    raw_paths = data.get("allowed_paths", [])
+    if not isinstance(raw_paths, list) or not raw_paths:
+        die("awf-postflight allowed_paths must be a non-empty array")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for p in raw_paths:
+        if not isinstance(p, str) or not p.strip():
+            die(f"invalid allowed_path entry: {p!r}")
+        if "\\" in p:
+            die(f"allowed path must use forward slashes: {p!r}")
+        if p.startswith("/"):
+            die(f"allowed path must be repo-relative (no leading slash): {p!r}")
+        if ":" in p:
+            die(f"allowed path must not be drive-qualified: {p!r}")
+        if ".." in p.split("/"):
+            die(f"allowed path must not contain parent traversal: {p!r}")
+        if p in seen:
+            die(f"duplicate allowed path: {p!r}")
+        seen.add(p)
+        normalized.append(p)
+
+    # --- verification_commands ---
+    raw_cmds = data.get("verification_commands", [])
+    if not isinstance(raw_cmds, list) or not raw_cmds:
+        die("awf-postflight verification_commands must be a non-empty array")
+
+    commands: list[list[str]] = []
+    for i, cmd in enumerate(raw_cmds):
+        if not isinstance(cmd, list) or len(cmd) == 0:
+            die(f"verification_commands[{i}] must be a non-empty array of strings")
+        if not all(isinstance(s, str) for s in cmd):
+            die(f"verification_commands[{i}] must contain only strings")
+        argv = list(cmd)
+        if argv[0] == "{python}":
+            argv[0] = sys.executable
+        commands.append(argv)
+
+    return PostflightContract(allowed_paths=normalized, verification_commands=commands)
+
+
+# ---------------------------------------------------------------------------
+# Postflight gates (run after model succeeds, before git write / send_event)
+# ---------------------------------------------------------------------------
+
+
+def run_verifications(repo: str, contract: PostflightContract) -> None:
+    """Run every verification command in order. Stop at the first failure.
+
+    Verification runs before the final Git delta collection so that files
+    created by verification are subject to path/artifact checks.
+    """
+    for i, argv in enumerate(contract.verification_commands):
+        log(f"postflight verification [{i + 1}/{len(contract.verification_commands)}]")
+        rc = spawn(argv, cwd=repo, env=model_env())
+        if rc != 0:
+            die(f"postflight verification [{i + 1}] failed (rc={rc})")
+
+
+def _collect_delta_paths(repo: str) -> list[str]:
+    """Return all repository-relative paths that differ from HEAD.
+
+    Includes tracked, deleted, renamed, and untracked paths (before staging).
+    Renamed entries return both the old and new path.
+    """
+    status = git_out(repo, "status", "--porcelain")
+    paths: list[str] = []
+    for line in status.splitlines():
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        # Porcelain format: XY PATH or XY ORIG_PATH -> NEW_PATH
+        rest = line[3:]  # skip XY<space>
+        if rest.startswith('"'):
+            # Quoted path — import shlex and unquote
+            import shlex
+
+            rest = shlex.split(rest)[0]
+        if " -> " in rest:
+            # Renamed: split on ' -> '
+            parts = rest.split(" -> ", 1)
+            paths.extend(parts)
+        else:
+            paths.append(rest)
+    return paths
+
+
+def run_postflight_delta_gates(repo: str, contract: PostflightContract) -> None:
+    """Enforce allowed paths, artifact denylist, narrow secret scan, and diff check.
+
+    Must be called after ``run_verifications`` and before ``git add``.
+    """
+    delta_paths = _collect_delta_paths(repo)
+
+    # 1. Empty set check
+    if not delta_paths:
+        die("postflight: no changes detected after model execution")
+
+    # 2. Allowed-path gate
+    allowed_set = set(contract.allowed_paths)
+    offending: list[str] = []
+    for p in delta_paths:
+        if p not in allowed_set:
+            offending.append(p)
+    if offending:
+        die(
+            "postflight: changed path(s) not in allowed_paths:\n  " + "\n  ".join(sorted(offending))
+        )
+
+    # 3. Artifact denylist gate (checked even if path is allowed)
+    denied: list[str] = []
+    for p in delta_paths:
+        if _path_is_denied(p):
+            denied.append(p)
+    if denied:
+        die("postflight: artifact denylist violation:\n  " + "\n  ".join(sorted(denied)))
+
+    # 4. Narrow secret scan — added lines in tracked diffs + untracked file content
+    _narrow_secret_scan(repo)
+
+    # 5. git diff --check
+    rc = git(repo, "diff", "--check")
+    if rc != 0:
+        die("postflight: git diff --check found whitespace errors")
+
+
+# ---------------------------------------------------------------------------
+# Narrow secret scan
+# ---------------------------------------------------------------------------
+
+
+# High-confidence credential detectors: (label, regex)
+_SECRET_DETECTORS: list[tuple[str, re.Pattern[str]]] = [
+    ("private-key", re.compile(r"-----BEGIN\s+(?:\S+\s+)?PRIVATE\s+KEY-----")),
+    ("credential-url", re.compile(r"https?://[^/:@\s]+:[^/@\s]+@")),
+    ("github-token", re.compile(r"gh[puosr]_[A-Za-z0-9_]{36,}")),
+    ("openai-key", re.compile(r"sk-[A-Za-z0-9]{20,}")),
+    ("aws-access-key", re.compile(r"AKIA[0-9A-Z]{16}")),
+]
+
+
+def _scan_text(text: str) -> str | None:
+    """Return the first matching detector label, or None."""
+    for label, pat in _SECRET_DETECTORS:
+        if pat.search(text):
+            return label
+    return None
+
+
+def _narrow_secret_scan(repo: str) -> None:
+    """Scan added content from tracked diffs and untracked files for secrets.
+
+    Reports the first hit per-path with detector label only — never the value.
+    """
+    # Added lines in tracked diffs (HEAD vs working tree)
+    diff_out = git_out(repo, "diff", "--no-color")
+    if diff_out:
+        hits: dict[str, str] = {}
+        current_path: str | None = None
+        for line in diff_out.splitlines():
+            # Track which file we're in via diff headers
+            if line.startswith("--- a/"):
+                # NOP — we track via +++
+                continue
+            if line.startswith("+++ b/"):
+                current_path = line[6:]  # strip "+++ b/"
+                continue
+            # Added lines start with +
+            if line.startswith("+") and current_path:
+                label = _scan_text(line[1:])  # strip leading +
+                if label and current_path not in hits:
+                    hits[current_path] = label
+
+        for path, label in hits.items():
+            die(f"postflight secret scan: {label} in {path}")
+
+    # Untracked regular files
+    status = git_out(repo, "status", "--porcelain")
+    for line in status.splitlines():
+        if not line.startswith("?? "):
+            continue
+        path = line[3:].rstrip("\n")
+        full = os.path.join(repo, path)
+        if os.path.isfile(full):
+            try:
+                content = Path(full).read_text(encoding="utf-8", errors="replace")
+                label = _scan_text(content)
+                if label:
+                    die(f"postflight secret scan: {label} in untracked file {path}")
+            except Exception:
+                pass  # binary file, skip
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +621,9 @@ def role_coder(a: argparse.Namespace) -> int:
     if not Path(card_file).is_file():
         die(f"card not found after checkout: {card_file}")
 
+    # 2. Parse and freeze the TaskCard postflight contract before model starts
+    contract = parse_postflight_contract(card_file)
+
     log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
     if tool == "opencode":
         rc = tool_opencode_exec(repo, card_file, prompt_file, model)
@@ -316,10 +632,16 @@ def role_coder(a: argparse.Namespace) -> int:
     if rc != 0:
         die(f"tool '{tool}' failed (rc={rc}); not announcing review")
 
-    # ImplementationReport gate — fail before any write or downstream event
+    # 4. ImplementationReport gate — fail before any write or downstream event
     check_report(a.report)
 
-    # commit + push the executor's output back to the same branch
+    # 5. Rerun every verification command from the frozen contract
+    run_verifications(repo, contract)
+
+    # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
+    run_postflight_delta_gates(repo, contract)
+
+    # 7. commit + push the executor's output back to the same branch
     git(repo, "add", "-A")
     if git(repo, "diff", "--cached", "--quiet") != 0:
         msg = f"feat(awf): executor output for {a.branch} [{tool}]"
