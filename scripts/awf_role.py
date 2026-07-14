@@ -563,7 +563,7 @@ def tool_opencode_exec(repo: str, card_file: str, prompt_file: str, model: str) 
     argv = [binp, "run", "--dir", repo, "-f", card_file]
     if model:
         argv += ["-m", model]
-    argv += [read_text(prompt_file)]
+    argv += ["--", read_text(prompt_file)]
     return spawn(argv, cwd=repo, env=model_env())
 
 
@@ -588,7 +588,7 @@ def tool_opencode_review(repo: str, base: str, prompt_file: str, card_file: str,
         argv += ["-f", card_file]
     if model:
         argv += ["-m", model]
-    argv += [read_text(prompt_file)]
+    argv += ["--", read_text(prompt_file)]
     return spawn(argv, cwd=repo, env=model_env())
 
 
