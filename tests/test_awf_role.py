@@ -473,6 +473,151 @@ def test_reviewer_missing_report_gate(monkeypatch, tmp_path, tool, review_attr):
 # ---------------------------------------------------------------------------
 
 
+def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    (script_dir / "executor-prompt.md").write_text("prompt")
+    (repo / "task.md").write_text(_VALID_POSTFLIGHT_CARD)
+    report = tmp_path / "report.md"
+    report.write_text("report content")
+
+    monkeypatch.setenv("AWF_REPO_DIR", str(repo))
+    monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
+    if no_push:
+        monkeypatch.setenv("AWF_NO_PUSH", "1")
+    else:
+        monkeypatch.delenv("AWF_NO_PUSH", raising=False)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "tool_opencode_exec", lambda *a, **kw: 0)
+    monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
+
+    send_calls = []
+    monkeypatch.setattr(awf_role, "send_event", lambda *a, **kw: send_calls.append((a, kw)) or True)
+    ns = argparse.Namespace(
+        branch="feature/task",
+        card="task.md",
+        commit="dispatched",
+        model="",
+        tool="opencode",
+        report=str(report),
+        base="",
+    )
+    return ns, send_calls
+
+
+def test_coder_push_failure_blocks_review_event(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+
+    def fake_git(repo, *args):
+        return 1 if args[0] == "push" else 0
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    assert not send_calls
+
+
+def test_coder_missing_ref_after_push_blocks_review_event(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    git_calls = []
+
+    def fake_git(repo, *args):
+        git_calls.append(args)
+        return 0
+
+    def fake_git_out(repo, *args):
+        return "local-sha" if args[-1] == "HEAD^{commit}" else ""
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    assert any(call[0] == "fetch" for call in git_calls)
+    assert not send_calls
+
+
+def test_coder_remote_refresh_failure_blocks_review_event(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+
+    def fake_git(repo, *args):
+        return 1 if args[0] == "fetch" else 0
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    assert not send_calls
+
+
+def test_coder_unreadable_local_head_blocks_review_event(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
+
+    def fake_git_out(repo, *args):
+        return "" if args[-1] == "HEAD^{commit}" else "remote-sha"
+
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    assert not send_calls
+
+
+def test_coder_remote_sha_mismatch_blocks_review_event(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
+
+    def fake_git_out(repo, *args):
+        return "local-sha" if args[-1] == "HEAD^{commit}" else "remote-sha"
+
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    assert not send_calls
+
+
+def test_coder_verified_remote_sha_sends_one_review_event(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    git_calls = []
+    monkeypatch.setattr(awf_role, "git", lambda repo, *args: git_calls.append(args) or 0)
+    monkeypatch.setattr(awf_role, "git_out", lambda *a, **kw: "verified-sha")
+
+    assert awf_role.role_coder(ns) == 0
+
+    assert (
+        "fetch",
+        "--no-tags",
+        "origin",
+        "+refs/heads/feature/task:refs/remotes/origin/feature/task",
+    ) in git_calls
+    assert len(send_calls) == 1
+    assert send_calls[0][0][2] == "task:awf-review"
+    assert send_calls[0][0][3]["commit"] == "verified-sha"
+
+
+def test_coder_no_push_blocks_remote_completion(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path, no_push=True)
+    git_calls = []
+    monkeypatch.setattr(awf_role, "git", lambda *a, **kw: git_calls.append(a[1:]) or 0)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    assert not any(call[0] == "push" for call in git_calls)
+    assert not send_calls
+
+
 def test_coder_fail_closed_send_event(monkeypatch, tmp_path):
     """send_event() == False makes the coder handler fail closed."""
     repo = tmp_path / "repo"
@@ -487,7 +632,7 @@ def test_coder_fail_closed_send_event(monkeypatch, tmp_path):
 
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
     monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
-    monkeypatch.setenv("AWF_NO_PUSH", "1")
+    monkeypatch.delenv("AWF_NO_PUSH", raising=False)
     monkeypatch.setenv("AGENT_BUS_URL", "http://bus")
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
@@ -496,7 +641,7 @@ def test_coder_fail_closed_send_event(monkeypatch, tmp_path):
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
-    monkeypatch.setattr(awf_role, "git_out", lambda *a, **kw: "abc1234")
+    monkeypatch.setattr(awf_role, "push_and_verify_remote_head", lambda *a, **kw: "abc1234")
     monkeypatch.setattr(awf_role, "send_event", lambda *a, **kw: False)
 
     ns = argparse.Namespace(
@@ -527,7 +672,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
 
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
     monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
-    monkeypatch.setenv("AWF_NO_PUSH", "1")
+    monkeypatch.delenv("AWF_NO_PUSH", raising=False)
     monkeypatch.setenv("AGENT_BUS_URL", "http://bus")
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
@@ -536,7 +681,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
-    monkeypatch.setattr(awf_role, "git_out", lambda *a, **kw: "abc1234")
+    monkeypatch.setattr(awf_role, "push_and_verify_remote_head", lambda *a, **kw: "abc1234")
     monkeypatch.setattr(awf_role, "send_event", lambda *a, **kw: True)
 
     ns = argparse.Namespace(

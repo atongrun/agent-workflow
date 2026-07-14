@@ -137,6 +137,28 @@ def git_out(repo: str, *args: str) -> str:
     return proc.stdout.rstrip("\n\r")
 
 
+def push_and_verify_remote_head(repo: str, branch: str) -> str:
+    """Push ``branch`` and return HEAD only after the exact remote ref matches it."""
+    if git(repo, "push", "-u", "origin", branch) != 0:
+        die("push failed (reviewer will not see the changes)")
+
+    remote_ref = f"refs/remotes/origin/{branch}"
+    refspec = f"+refs/heads/{branch}:{remote_ref}"
+    if git(repo, "fetch", "--no-tags", "origin", refspec) != 0:
+        die(f"failed to refresh origin/{branch} after push")
+
+    local_head = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    remote_head = git_out(repo, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
+    if not local_head:
+        die("failed to resolve local HEAD after push")
+    if not remote_head:
+        die(f"failed to resolve refreshed origin/{branch} after push")
+    if remote_head != local_head:
+        die(f"refreshed origin/{branch} does not match local HEAD; reviewer handoff blocked")
+    log(f"pushed and verified origin/{branch} at {local_head}")
+    return local_head
+
+
 # ---------------------------------------------------------------------------
 # ImplementationReport gate
 # ---------------------------------------------------------------------------
@@ -679,13 +701,11 @@ def role_coder(a: argparse.Namespace) -> int:
     else:
         log("no changes produced by the tool")
     if no_push:
-        log("AWF_NO_PUSH=1: skipping push")
-    elif git(repo, "push", "-u", "origin", a.branch) != 0:
-        die("push failed (reviewer will not see the changes)")
-    else:
-        log(f"pushed {a.branch}")
-
-    new_commit = git_out(repo, "rev-parse", "HEAD") or a.commit
+        die(
+            "AWF_NO_PUSH=1 cannot complete the trusted coder handler; "
+            "remote review handoff requires a verified push"
+        )
+    new_commit = push_and_verify_remote_head(repo, a.branch)
     if not send_event(
         "coder",
         "reviewer",
