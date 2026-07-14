@@ -107,3 +107,19 @@ This replaces a separate "analyze" tool — it is a checklist, not code.
 - [ ] Base branch, task branch, dispatched task commit, and remote baseline are explicit; the
       task branch was created from the stated `origin/<base>` and pushed before dispatch.
 - [ ] This task advances the current milestone (no unrelated refactors / scope creep).
+
+---
+
+## Postflight Contract (required for automated dispatch)
+
+<!-- awf-postflight
+{
+  "allowed_paths": [
+    "path/to/file1.py",
+    "path/to/file2.py"
+  ],
+  "verification_commands": [
+    ["{python}", "-m", "pytest", "-q", "tests/test_file.py"]
+  ]
+}
+-->
