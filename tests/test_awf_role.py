@@ -182,22 +182,38 @@ def test_model_env_strips_tokens(monkeypatch):
 
 
 def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
-    """The OpenCode executor adapter passes model_env() to spawn()."""
+    """The executor preserves model_env() and separates file options from its prompt."""
+    card_file = tmp_path / "card.md"
+    card_file.write_text("task")
     prompt_file = tmp_path / "prompt.md"
     prompt_file.write_text("instructions")
 
     captured: dict = {}
 
     def fake_spawn(argv, **kwargs):
+        captured["argv"] = argv
         captured["env"] = kwargs.get("env")
         return 0
 
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
+    monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
 
-    awf_role.tool_opencode_exec(str(tmp_path), "card.md", str(prompt_file), "")
+    awf_role.tool_opencode_exec(str(tmp_path), str(card_file), str(prompt_file), "provider/model")
 
     assert "AGENT_BUS_TOKEN" not in captured["env"]
+    assert captured["argv"] == [
+        "opencode-test",
+        "run",
+        "--dir",
+        str(tmp_path),
+        "-f",
+        str(card_file),
+        "-m",
+        "provider/model",
+        "--",
+        "instructions",
+    ]
 
 
 def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
@@ -222,22 +238,73 @@ def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
 
 
 def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
-    """The OpenCode reviewer adapter passes model_env() to spawn()."""
+    """The reviewer preserves model_env() and separates file options from its prompt."""
+    card_file = tmp_path / "card.md"
+    card_file.write_text("task")
     prompt_file = tmp_path / "prompt.md"
     prompt_file.write_text("instructions")
 
     captured: dict = {}
 
     def fake_spawn(argv, **kwargs):
+        captured["argv"] = argv
         captured["env"] = kwargs.get("env")
         return 0
 
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
+    monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
 
-    awf_role.tool_opencode_review(str(tmp_path), "main", str(prompt_file), "", "")
+    awf_role.tool_opencode_review(
+        str(tmp_path), "main", str(prompt_file), str(card_file), "provider/model"
+    )
 
     assert "AGENT_BUS_TOKEN" not in captured["env"]
+    assert captured["argv"] == [
+        "opencode-test",
+        "run",
+        "--dir",
+        str(tmp_path),
+        "-f",
+        str(card_file),
+        "-m",
+        "provider/model",
+        "--",
+        "instructions",
+    ]
+
+
+@pytest.mark.parametrize("adapter", ["executor", "reviewer"])
+def test_tool_opencode_card_prompt_boundary_without_model(monkeypatch, tmp_path, adapter):
+    """The incident path still terminates the file array when no model is configured."""
+    card_file = tmp_path / "card.md"
+    card_file.write_text("task")
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("instructions")
+    captured: dict = {}
+
+    def fake_spawn(argv, **kwargs):
+        captured["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(awf_role, "spawn", fake_spawn)
+    monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
+
+    if adapter == "executor":
+        awf_role.tool_opencode_exec(str(tmp_path), str(card_file), str(prompt_file), "")
+    else:
+        awf_role.tool_opencode_review(str(tmp_path), "main", str(prompt_file), str(card_file), "")
+
+    assert captured["argv"] == [
+        "opencode-test",
+        "run",
+        "--dir",
+        str(tmp_path),
+        "-f",
+        str(card_file),
+        "--",
+        "instructions",
+    ]
 
 
 # ---------------------------------------------------------------------------
