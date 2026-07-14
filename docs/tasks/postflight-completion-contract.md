@@ -212,3 +212,42 @@ The existing trusted runner verifies this file exists before starting postflight
   engine.
 - Full secret/supply-chain scanning, dependency scanning, history scanning, SBOM, signing, or
   provenance.
+
+## Deterministic Review Rework (single pass)
+
+Strong review rejected the first implementation commit. Apply only the five deterministic fixes
+below; do not redesign the postflight contract or expand the detector set.
+
+1. **Cover the full HEAD delta.** Current `_narrow_secret_scan()` and `git diff --check` inspect
+   only unstaged changes. A model can stage an allowed file containing a token-shaped value and
+   trailing whitespace, after which both gates return success. Make secret scanning and whitespace
+   checking cover staged plus unstaged changes relative to `HEAD`. Add regressions for staged
+   tracked and staged new files.
+2. **Use one NUL-safe path snapshot.** Current text porcelain + `shlex` parsing drops the
+   destination of a quoted rename and leaves Unicode paths as Git escape sequences. The untracked
+   secret scan separately reparses the raw quoted path and can skip a file with spaces. Replace
+   those paths with one NUL-delimited Git snapshot that covers staged/unstaged tracked paths and
+   untracked non-ignored files, returns both sides of a rename (using `--no-renames` is acceptable),
+   and is reused by the allowed-path, artifact, and untracked-content gates. Add spaced rename,
+   spaced untracked-secret, and Unicode path regressions.
+3. **Match artifact categories at any depth.** Reject `.env` variants by basename and local
+   environment/cache/dependency/build directories by path component, while preserving the three
+   documented `.env.example` / `.env.template` / `.env.sample` exceptions. Add nested regressions
+   such as `config/.env.production`, `web/node_modules/pkg/index.js`, and
+   `pkg/build/output.o`.
+4. **Fail closed on unreadable untracked regular files.** Do not silently catch and skip read
+   errors. Report only the repository-relative path plus a safe `unreadable-file` label; never file
+   content or exception text. Add a mocked read-error regression so it behaves consistently on
+   Windows and POSIX.
+5. **Reject an empty executable before OpenCode.** `verification_commands: [[""]]` is malformed
+   and must fail during contract parsing. Do not broaden `{python}` semantics beyond the original
+   card.
+
+Also make the implementation self-hosting: token/key fixtures in `tests/test_awf_role.py` must be
+constructed from fragments so the new postflight secret gate does not reject its own uncommitted
+test diff. After fixing, update the existing ImplementationReport with the rework findings, exact
+final commands/counts, and the new final local commit if available.
+
+The rework is accepted only if the new runner itself parses the frozen contract, reruns the three
+focused commands, scans the final uncommitted delta, passes `git diff HEAD --check` (or equivalent
+complete-delta check), and only then reaches commit/review-event handling.
