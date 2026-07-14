@@ -66,10 +66,38 @@ def child_env() -> dict[str, str]:
     return e
 
 
-def spawn(argv: list[str], *, cwd: str | None = None, stdin: str | None = None) -> int:
+def model_env() -> dict[str, str]:
+    """Environment for model subprocesses: inherit parent, strip Agent Bus tokens.
+
+    Keeps PATH, platform variables, ordinary AWF_* configuration, and UTF-8 settings.
+    Removes AGENT_BUS_TOKEN, AGENT_BUS_AGENT_TOKENS, and any key matching AWF_*_TOKEN
+    so credentials never reach untrusted model processes (OpenCode, Codex).
+    """
+    e = child_env()
+    e.pop("AGENT_BUS_TOKEN", None)
+    e.pop("AGENT_BUS_AGENT_TOKENS", None)
+    for k in list(e):
+        if k.startswith("AWF_") and k.endswith("_TOKEN"):
+            del e[k]
+    return e
+
+
+def spawn(
+    argv: list[str],
+    *,
+    cwd: str | None = None,
+    stdin: str | None = None,
+    env: dict[str, str] | None = None,
+) -> int:
     """Run a command as a real argv (no shell). Handles Windows .cmd/.bat shims.
 
-    Returns the process exit code. stdin, if given, is fed to the process.
+    Returns the process exit code. ``stdin``, if given, is fed to the process via
+    ``input=``. When no explicit input is provided the child receives
+    ``subprocess.DEVNULL`` instead of inheriting the handler's stdin, which is
+    unreliable (especially on Windows).
+
+    ``env`` defaults to ``child_env()`` (full parent environment). Pass
+    ``model_env()`` for model subprocesses to strip credentials.
     """
     # On Windows, .cmd/.bat are not directly executable by CreateProcess; they
     # must go through the command interpreter. Wrap only those.
@@ -81,10 +109,11 @@ def spawn(argv: list[str], *, cwd: str | None = None, stdin: str | None = None) 
         run_argv,
         cwd=cwd,
         input=stdin,
+        stdin=subprocess.DEVNULL if stdin is None else None,
         text=True,
         encoding="utf-8",
         errors="replace",
-        env=child_env(),
+        env=env or child_env(),
     )
     return proc.returncode
 
@@ -98,11 +127,30 @@ def git_out(repo: str, *args: str) -> str:
         ["git", "-C", repo, *args],
         text=True,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
         encoding="utf-8",
         errors="replace",
         env=child_env(),
     )
     return proc.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# ImplementationReport gate
+# ---------------------------------------------------------------------------
+
+
+def check_report(report_path: str) -> None:
+    """Fail if ``--report`` is empty or the path is not a regular file.
+
+    Called by coder after successful model execution but before git writes,
+    and by reviewer after checkout but before model execution.
+    This is an existence gate only — no content or schema validation is performed.
+    """
+    if not report_path:
+        die("--report is required; ImplementationReport must exist before commit or review")
+    if not Path(report_path).is_file():
+        die(f"ImplementationReport not found: {report_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +223,7 @@ def tool_opencode_exec(repo: str, card_file: str, prompt_file: str, model: str) 
     if model:
         argv += ["-m", model]
     argv += [read_text(prompt_file)]
-    return spawn(argv, cwd=repo)
+    return spawn(argv, cwd=repo, env=model_env())
 
 
 def tool_codex_review(repo: str, base: str, prompt_file: str, card_file: str, model: str) -> int:
@@ -188,7 +236,7 @@ def tool_codex_review(repo: str, base: str, prompt_file: str, card_file: str, mo
     stdin = read_text(prompt_file)
     if card_file and Path(card_file).is_file():
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
-    return spawn(argv, cwd=repo, stdin=stdin)
+    return spawn(argv, cwd=repo, stdin=stdin, env=model_env())
 
 
 def tool_opencode_review(repo: str, base: str, prompt_file: str, card_file: str, model: str) -> int:
@@ -200,7 +248,7 @@ def tool_opencode_review(repo: str, base: str, prompt_file: str, card_file: str,
     if model:
         argv += ["-m", model]
     argv += [read_text(prompt_file)]
-    return spawn(argv, cwd=repo)
+    return spawn(argv, cwd=repo, env=model_env())
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +282,7 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
         argv = ["cmd", "/c", *argv]
     log(f"send {etype}: {from_role} -> {to_role}")
-    rc = subprocess.run(argv, env=cenv).returncode
+    rc = subprocess.run(argv, env=cenv, stdin=subprocess.DEVNULL).returncode
     if rc != 0:
         log(f"WARN: failed to send {etype} (rc={rc})")
     return rc == 0
@@ -268,6 +316,9 @@ def role_coder(a: argparse.Namespace) -> int:
     if rc != 0:
         die(f"tool '{tool}' failed (rc={rc}); not announcing review")
 
+    # ImplementationReport gate — fail before any write or downstream event
+    check_report(a.report)
+
     # commit + push the executor's output back to the same branch
     git(repo, "add", "-A")
     if git(repo, "diff", "--cached", "--quiet") != 0:
@@ -285,7 +336,7 @@ def role_coder(a: argparse.Namespace) -> int:
         log(f"pushed {a.branch}")
 
     new_commit = git_out(repo, "rev-parse", "HEAD") or a.commit
-    send_event(
+    if not send_event(
         "coder",
         "reviewer",
         "task:awf-review",
@@ -298,7 +349,8 @@ def role_coder(a: argparse.Namespace) -> int:
             "tool": tool,
             "model": model,
         },
-    )
+    ):
+        die("failed to send reviewer event; implementation will not be ACKed")
     return 0
 
 
@@ -311,6 +363,10 @@ def role_reviewer(a: argparse.Namespace) -> int:
     base = env("AWF_BASE", a.base or "master")
 
     fetch_and_checkout(repo, a.branch, a.commit)
+
+    # ImplementationReport gate — fail before any model invocation
+    check_report(a.report)
+
     card_file = os.path.join(repo, a.card)
 
     log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
