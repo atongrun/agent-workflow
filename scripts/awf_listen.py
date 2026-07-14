@@ -41,12 +41,18 @@ def build_handler(python_exe: str, role_script: str, role: str) -> str:
     The {payload.*} placeholders are substituted + shell-quoted by agent-bus.
     """
     fields = [
-        "--branch", "{payload.branch}",
-        "--card", "{payload.card}",
-        "--commit", "{payload.commit}",
-        "--model", "{payload.model}",
-        "--tool", "{payload.tool}",
-        "--report", "{payload.report}",
+        "--branch",
+        "{payload.branch}",
+        "--card",
+        "{payload.card}",
+        "--commit",
+        "{payload.commit}",
+        "--model",
+        "{payload.model}",
+        "--tool",
+        "{payload.tool}",
+        "--report",
+        "{payload.report}",
     ]
     return f'"{python_exe}" "{role_script}" {role} ' + " ".join(fields)
 
@@ -100,13 +106,20 @@ def main(argv: list[str] | None = None) -> int:
 
     handler = build_handler(sys.executable, role_script, a.role)
 
-    print(f"[listen] role={a.role} repo={a.repo} tool={a.tool} "
-          f"model={a.model or '<default>'}")
+    print(f"[listen] role={a.role} repo={a.repo} tool={a.tool} model={a.model or '<default>'}")
     print(f"[listen] on '{on_type}' -> {role_script}")
     print(f"[listen] stop via: agent-bus send --to {a.role} --type control:shutdown")
 
-    listen_argv = [bus, "listen", "--agent", a.role,
-                   "--workdir", a.repo, "--handler-timeout", "3600"]
+    listen_argv = [
+        bus,
+        "listen",
+        "--agent",
+        a.role,
+        "--workdir",
+        a.repo,
+        "--handler-timeout",
+        "3600",
+    ]
     if a.idle is not None:
         listen_argv += ["--exit-after-idle", str(a.idle)]
     listen_argv += ["--on", on_type, handler]
