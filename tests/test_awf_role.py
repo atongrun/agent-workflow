@@ -1145,6 +1145,8 @@ def test_path_is_denied_nested():
         "config/.env",
         ".env.local",
         "config/.env.staging",
+        "tmp/.DS_Store",
+        "pkg/coverage.xml",
     ]
     for p in nested_denied:
         assert awf_role._path_is_denied(p), f"{p!r} should be denied at any depth"
@@ -1201,7 +1203,7 @@ def test_contract_empty_executable(tmp_path):
 
 
 def test_contract_empty_string_in_command(tmp_path):
-    """An empty string in argv (non-first position) also fails."""
+    """An empty non-executable argv value is preserved."""
     card = tmp_path / "task.md"
     card.write_text(
         "# Card\n"
@@ -1212,8 +1214,44 @@ def test_contract_empty_string_in_command(tmp_path):
         "}\n"
         "-->\n"
     )
+    contract = awf_role.parse_postflight_contract(str(card))
+    assert contract.verification_commands == [["python", "-c", ""]]
+
+
+def test_secret_scan_quoted_tracked_filename(tmp_path):
+    """A quoted Git path cannot detach added content from its known path."""
+    repo = _init_repo(tmp_path)
+    path = repo / 'a"b.py'
+    path.write_text("value = 'safe'\n")
+    run("git", "add", path.name, cwd=repo)
+    run("git", "commit", "-m", "add quoted path", cwd=repo)
+    path.write_text(f"value = '{_GITHUB_TOKEN}'\n")
+    run("git", "add", path.name, cwd=repo)
     with pytest.raises(SystemExit, match="1"):
-        awf_role.parse_postflight_contract(str(card))
+        awf_role._narrow_secret_scan(str(repo))
+
+
+def test_secret_scan_disables_diff_helpers(monkeypatch, tmp_path):
+    """Tracked scanning disables textconv and external diff helpers."""
+    repo = _init_repo(tmp_path)
+    (repo / "a.txt").write_text("safe\n")
+    run("git", "add", "a.txt", cwd=repo)
+    run("git", "commit", "-m", "add text", cwd=repo)
+    (repo / "a.txt").write_text(f"{_GITHUB_TOKEN}\n")
+
+    original = awf_role.git_out
+    calls = []
+
+    def recording_git_out(repo_path, *args):
+        calls.append(args)
+        return original(repo_path, *args)
+
+    monkeypatch.setattr(awf_role, "git_out", recording_git_out)
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+    diff_call = next(args for args in calls if args and args[0] == "diff" and "--" in args)
+    assert "--no-textconv" in diff_call
+    assert "--no-ext-diff" in diff_call
 
 
 # ---------------------------------------------------------------------------

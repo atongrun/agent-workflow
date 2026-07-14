@@ -251,7 +251,7 @@ def _path_is_denied(path: str) -> bool:
         if stripped in path_components:
             return True
 
-    if path in _DENY_EXACT:
+    if os.path.basename(path) in _DENY_EXACT:
         return True
     if path.endswith(_DENY_SUFFIXES):
         return True
@@ -321,8 +321,8 @@ def parse_postflight_contract(card_path: str) -> PostflightContract:
             die(f"verification_commands[{i}] must be a non-empty array of strings")
         if not all(isinstance(s, str) for s in cmd):
             die(f"verification_commands[{i}] must contain only strings")
-        if any(s == "" for s in cmd):
-            die(f"verification_commands[{i}] contains empty string(s)")
+        if cmd[0] == "":
+            die(f"verification_commands[{i}] has an empty executable")
         argv = list(cmd)
         if argv[0] == "{python}":
             argv[0] = sys.executable
@@ -404,7 +404,7 @@ def run_postflight_delta_gates(repo: str, contract: PostflightContract) -> None:
         die("postflight: artifact denylist violation:\n  " + "\n  ".join(sorted(denied)))
 
     # 4. Narrow secret scan — added lines in tracked diffs + untracked file content
-    _narrow_secret_scan(repo)
+    _narrow_secret_scan(repo, delta_paths)
 
     # 5. git diff --check on full HEAD delta (staged + unstaged)
     rc = git(repo, "diff", "HEAD", "--check")
@@ -435,7 +435,7 @@ def _scan_text(text: str) -> str | None:
     return None
 
 
-def _narrow_secret_scan(repo: str) -> None:
+def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> None:
     """Scan added content from tracked diffs and untracked files for secrets.
 
     Uses the full HEAD→working-tree diff (staged + unstaged) for tracked
@@ -443,30 +443,38 @@ def _narrow_secret_scan(repo: str) -> None:
     Reports the first hit per-path with detector label only — never the value.
     Fails closed on unreadable untracked files.
     """
-    # Added lines in tracked diffs (HEAD vs working tree — covers staged + unstaged)
-    diff_out = git_out(repo, "diff", "HEAD", "--no-color")
-    if diff_out:
-        hits: dict[str, str] = {}
-        current_path: str | None = None
-        for line in diff_out.splitlines():
-            # Track which file we're in via diff headers
-            if line.startswith("--- a/"):
-                # NOP — we track via +++
-                continue
-            if line.startswith("+++ b/"):
-                current_path = line[6:]  # strip "+++ b/"
-                continue
-            # Added lines start with +
-            if line.startswith("+") and current_path:
-                label = _scan_text(line[1:])  # strip leading +
-                if label and current_path not in hits:
-                    hits[current_path] = label
+    if delta_paths is None:
+        delta_paths = _collect_delta_paths(repo)
 
-        for path, label in hits.items():
-            die(f"postflight secret scan: {label} in {path}")
-
-    # Untracked regular files — use NUL-delimited output
+    # Identify untracked paths with NUL-delimited output, then scan each tracked
+    # path independently.  This avoids parsing quoted, human-readable patch
+    # headers and prevents configured diff helpers from transforming content or
+    # executing in the credential-bearing runner environment.
     untracked_out = git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    untracked = {path for path in untracked_out.split("\0") if path}
+
+    for path in delta_paths:
+        if path in untracked:
+            continue
+        diff_out = git_out(
+            repo,
+            "diff",
+            "HEAD",
+            "--no-color",
+            "--no-renames",
+            "--no-textconv",
+            "--no-ext-diff",
+            "--unified=0",
+            "--",
+            path,
+        )
+        for line in diff_out.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                label = _scan_text(line[1:])
+                if label:
+                    die(f"postflight secret scan: {label} in {path}")
+
+    # Untracked regular files.
     if untracked_out:
         for path in untracked_out.split("\0"):
             if not path:
