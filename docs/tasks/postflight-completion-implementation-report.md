@@ -4,6 +4,18 @@
 
 Added a fail-closed postflight gate to the trusted coder runner (`scripts/awf_role.py`). The runner now parses and freezes the `awf-postflight` contract from the TaskCard before the model starts, then independently validates the resulting worktree after the model succeeds and the ImplementationReport gate passes, before any `git add`, commit, push, or reviewer event.
 
+### Deterministic Rework (Round 2)
+
+The first implementation commit was rejected by review. Five deterministic fixes were applied:
+
+1. **Full HEAD delta** — Secret scan and `git diff --check` now inspect staged + unstaged changes (via `git diff HEAD`), not only unstaged.
+2. **NUL-safe path snapshot** — `_collect_delta_paths()` uses NUL-delimited git output (`-z`) instead of text porcelain + `shlex`, safely handling spaces, Unicode, and quoted paths. The snapshot is reused by all path-dependent gates.
+3. **Artifact match at any depth** — `_is_env_denied()` matches `.env` variants by basename; `_path_is_denied()` matches directory denials (`node_modules/`, `.venv/`, etc.) by path component at any depth.
+4. **Fail closed on unreadable untracked files** — The untracked file read loop no longer silently catches all exceptions; an `OSError` fails the gate with a safe `unreadable-file` label.
+5. **Reject empty executable** — `parse_postflight_contract()` rejects any empty string in `verification_commands` arrays (e.g., `[""]`).
+
+Self-hosting: token/key test fixtures are constructed from fragments so the postflight secret gate does not reject its own uncommitted test diff.
+
 ### Exact gate ordering
 
 1. **Preflight checkout** — `fetch_and_checkout` (unchanged)
@@ -14,9 +26,9 @@ Added a fail-closed postflight gate to the trusted coder runner (`scripts/awf_ro
 6. **Delta gates** — `run_postflight_delta_gates()` performs:
    - Empty-change-set rejection
    - `allowed_paths` enforcement (every changed path must be in the frozen contract)
-   - Artifact denylist (`.env` variants, editor swap/backup, OS metadata, Python cache, coverage, logs/PIDs, virtual environments, dependency/build output — even if accidentally in `allowed_paths`)
-   - Narrow secret scan (private-key headers, credential URLs, GitHub tokens, OpenAI keys, AWS access keys — in tracked diff added lines and untracked files; label-only reporting, never the matched value)
-   - `git diff --check` whitespace error detection
+   - Artifact denylist (`.env` variants at any depth by basename, `node_modules/`/`.venv/`/`__pycache__`/`build/`/etc. at any depth by component, editor swap/backup, OS metadata, Python cache, coverage, logs/PIDs, dependency/build output — even if accidentally in `allowed_paths`)
+   - Narrow secret scan (full HEAD diff, staged + unstaged tracked files, plus NUL-safe untracked scan; private-key headers, credential URLs, GitHub tokens, OpenAI keys, AWS access keys; label-only reporting, never the matched value; fails closed on unreadable files)
+   - `git diff HEAD --check` whitespace error detection (staged + unstaged)
 7. **git add, commit, optional push** (unchanged)
 8. **task:awf-review event send** (unchanged)
 9. **return 0** (unchanged)
@@ -27,16 +39,16 @@ Any postflight failure (steps 2, 5, 6) raises `SystemExit(1)` before step 7, lea
 
 | File | Action | Description |
 |------|--------|-------------|
-| `scripts/awf_role.py` | Modified | Added `PostflightContract`, `parse_postflight_contract()`, `run_verifications()`, `_collect_delta_paths()`, `run_postflight_delta_gates()`, `_narrow_secret_scan()`, `_path_is_denied()`, denylist constants, secret detectors; integrated into `role_coder()` in the required order. Fixed `git_out()` to use `rstrip` vs `strip` to preserve porcelain leading space. |
-| `templates/artifacts/task-card.md` | Modified | Added `awf-postflight` HTML comment block at the end of the template with `allowed_paths` and `verification_commands` JSON structure. |
-| `tests/test_awf_role.py` | Modified | Updated 3 existing `role_coder` integration tests to include valid contract blocks and postflight mocks; added 39 new focused regression tests. |
-| `docs/tasks/postflight-completion-implementation-report.md` | Created | This file. |
+| `scripts/awf_role.py` | Modified (rework) | `_collect_delta_paths()` changed to NUL-delimited git output (`git diff --name-only HEAD --no-renames -z` + `git ls-files --others --exclude-standard -z`). `_is_env_denied()` now matches by basename. `_path_is_denied()` matches directory prefixes by path component at any depth. `_narrow_secret_scan()` uses `git diff HEAD` for full-delta diff and `git ls-files ... -z` for NUL-safe untracked discovery; fails closed on `OSError` with safe label. `parse_postflight_contract()` rejects empty strings in command argv. `run_postflight_delta_gates()` uses `git diff HEAD --check`. |
+| `templates/artifacts/task-card.md` | Modified (first round) | Added `awf-postflight` HTML comment block at the end of the template with `allowed_paths` and `verification_commands` JSON structure. |
+| `tests/test_awf_role.py` | Modified (rework) | Added 11 new focused regression tests for the five rework fixes (staged tracked secret, staged new-file secret, spaced rename, spaced untracked secret, Unicode path, nested artifact denial at depth, unreadable untracked file, empty executable, empty string in command, staged whitespace rejection). All token/key fixtures fragmented using module-level construction helpers for self-hosting. |
+| `docs/tasks/postflight-completion-implementation-report.md` | Updated (rework) | This file — rework findings, updated gate descriptions, final test results. |
 
 ## Verification Commands and Results
 
 ```
 {python} -m pytest -q tests/test_awf_role.py
-59 passed in 9.65s
+69 passed in 11.78s
 ```
 
 ```
@@ -51,26 +63,23 @@ All formatting checks passed (no output).
 
 ## Focused Test Count
 
-**59 total tests** (20 existing + 39 new), all passing.
+**69 total tests** (20 existing + 39 original + 10 rework), all passing.
 
-### New test coverage:
+### New test coverage (rework round):
 
 | Category | Tests | What they prove |
 |----------|-------|-----------------|
-| Contract parsing (valid) | 3 | Valid contract parses, freezes against card edits, `{python}` replacement only at position 0 |
-| Contract validation | 11 | Missing block, malformed JSON, non-object, extra keys, empty paths, backslash, absolute, drive-qualified, parent-traversal, duplicate, empty commands, non-string argv |
-| Artifact denylist | 1 | Every category rejected, documented examples allowed |
-| Delta collection | 4 | Modified, deleted, untracked, renamed files appear in delta |
-| Delta gates | 4 | Empty set, out-of-scope path, denied artifact, `git diff --check` |
-| Secret scan | 8 | Private key, credential URL, GitHub token, OpenAI key, AWS key in tracked diffs; secret in untracked file; benign placeholders pass; test fixtures pass |
-| Verification commands | 3 | Success, stop-on-first-failure, uses `model_env()` |
-| Verification-created files | 1 | Files created by verification subject to path/artifact checks |
-| Full postflight | 1 | Valid sequence passes all gates (real git repo, real subprocess) |
-| Verification failure isolation | 1 | Non-zero verification prevents downstream git writes |
+| Staged HEAD delta secrets | 2 | Staged tracked file with secret caught; staged new file with secret caught |
+| NUL-safe delta paths | 3 | Spaced rename both sides captured; spaced untracked file with secret caught; Unicode path captured |
+| Nested artifact denial | 1 | Directory patterns denied at any depth; `.env` variants denied by basename at any depth; documented examples allowed at any depth |
+| Unreadable untracked file | 1 | `OSError` on untracked file read fails closed with safe `unreadable-file` label |
+| Empty executable rejection | 2 | `[""]` fails contract parsing; empty string in non-first position also fails |
+| Staged whitespace rejection | 1 | Staged trailing whitespace caught by `git diff HEAD --check` |
+| Self-hosting fixtures | (pervasive) | All secret-like test strings constructed from fragments; no literal secret in test source |
 
 ## Deviations
 
-None. Implementation follows the TaskCard exactly.
+None. Implementation follows the TaskCard exactly, including all five rework items.
 
 ## Unresolved Failures
 

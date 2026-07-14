@@ -221,21 +221,36 @@ _DENY_SUFFIXES: tuple[str, ...] = (
 
 
 def _is_env_denied(path: str) -> bool:
-    """True for .env variants that carry secrets, excluding example templates."""
-    if path == ".env":
+    """True for .env variants that carry secrets, excluding example templates.
+
+    Matches by basename so .env variants at any path depth are detected.
+    """
+    basename = os.path.basename(path)
+    if basename == ".env":
         return True
-    if path.startswith(".env."):
+    if basename.startswith(".env."):
         # Allow documented examples
-        return path not in (".env.example", ".env.template", ".env.sample")
+        return basename not in (".env.example", ".env.template", ".env.sample")
     return False
 
 
 def _path_is_denied(path: str) -> bool:
-    """Check a single repository-relative path against the artifact denylist."""
+    """Check a single repository-relative path against the artifact denylist.
+
+    Directory patterns (e.g. ``node_modules/``, ``.venv/``) are matched at any
+    depth by path component, not only at root.  ``.env`` variants are matched by
+    basename.  Suffix-based patterns match at any depth.
+    """
     if _is_env_denied(path):
         return True
-    if path.startswith(_DENY_PREFIXES):
-        return True
+
+    # Match directory prefixes at any depth via path component
+    path_components = path.split("/")
+    for prefix in _DENY_PREFIXES:
+        stripped = prefix.rstrip("/")
+        if stripped in path_components:
+            return True
+
     if path in _DENY_EXACT:
         return True
     if path.endswith(_DENY_SUFFIXES):
@@ -306,6 +321,8 @@ def parse_postflight_contract(card_path: str) -> PostflightContract:
             die(f"verification_commands[{i}] must be a non-empty array of strings")
         if not all(isinstance(s, str) for s in cmd):
             die(f"verification_commands[{i}] must contain only strings")
+        if any(s == "" for s in cmd):
+            die(f"verification_commands[{i}] contains empty string(s)")
         argv = list(cmd)
         if argv[0] == "{python}":
             argv[0] = sys.executable
@@ -335,28 +352,24 @@ def run_verifications(repo: str, contract: PostflightContract) -> None:
 def _collect_delta_paths(repo: str) -> list[str]:
     """Return all repository-relative paths that differ from HEAD.
 
-    Includes tracked, deleted, renamed, and untracked paths (before staging).
-    Renamed entries return both the old and new path.
+    Uses NUL-delimited git output for safe handling of all path names
+    (spaces, Unicode, quotes).  Covers tracked changes (staged + unstaged
+    vs HEAD) and untracked non-ignored files.  With ``--no-renames`` a
+    renamed file appears as a delete of the old name and an add of the new
+    name, so both sides are captured.
     """
-    status = git_out(repo, "status", "--porcelain")
     paths: list[str] = []
-    for line in status.splitlines():
-        line = line.rstrip("\n")
-        if not line:
-            continue
-        # Porcelain format: XY PATH or XY ORIG_PATH -> NEW_PATH
-        rest = line[3:]  # skip XY<space>
-        if rest.startswith('"'):
-            # Quoted path — import shlex and unquote
-            import shlex
 
-            rest = shlex.split(rest)[0]
-        if " -> " in rest:
-            # Renamed: split on ' -> '
-            parts = rest.split(" -> ", 1)
-            paths.extend(parts)
-        else:
-            paths.append(rest)
+    # Tracked changes: staged + unstaged from HEAD
+    tracked = git_out(repo, "diff", "--name-only", "HEAD", "--no-renames", "-z")
+    if tracked:
+        paths.extend(p for p in tracked.split("\0") if p)
+
+    # Untracked non-ignored files
+    untracked = git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    if untracked:
+        paths.extend(p for p in untracked.split("\0") if p)
+
     return paths
 
 
@@ -393,10 +406,10 @@ def run_postflight_delta_gates(repo: str, contract: PostflightContract) -> None:
     # 4. Narrow secret scan — added lines in tracked diffs + untracked file content
     _narrow_secret_scan(repo)
 
-    # 5. git diff --check
-    rc = git(repo, "diff", "--check")
+    # 5. git diff --check on full HEAD delta (staged + unstaged)
+    rc = git(repo, "diff", "HEAD", "--check")
     if rc != 0:
-        die("postflight: git diff --check found whitespace errors")
+        die("postflight: git diff HEAD --check found whitespace errors")
 
 
 # ---------------------------------------------------------------------------
@@ -425,10 +438,13 @@ def _scan_text(text: str) -> str | None:
 def _narrow_secret_scan(repo: str) -> None:
     """Scan added content from tracked diffs and untracked files for secrets.
 
+    Uses the full HEAD→working-tree diff (staged + unstaged) for tracked
+    changes and NUL-delimited git output for untracked file discovery.
     Reports the first hit per-path with detector label only — never the value.
+    Fails closed on unreadable untracked files.
     """
-    # Added lines in tracked diffs (HEAD vs working tree)
-    diff_out = git_out(repo, "diff", "--no-color")
+    # Added lines in tracked diffs (HEAD vs working tree — covers staged + unstaged)
+    diff_out = git_out(repo, "diff", "HEAD", "--no-color")
     if diff_out:
         hits: dict[str, str] = {}
         current_path: str | None = None
@@ -449,21 +465,21 @@ def _narrow_secret_scan(repo: str) -> None:
         for path, label in hits.items():
             die(f"postflight secret scan: {label} in {path}")
 
-    # Untracked regular files
-    status = git_out(repo, "status", "--porcelain")
-    for line in status.splitlines():
-        if not line.startswith("?? "):
-            continue
-        path = line[3:].rstrip("\n")
-        full = os.path.join(repo, path)
-        if os.path.isfile(full):
-            try:
-                content = Path(full).read_text(encoding="utf-8", errors="replace")
+    # Untracked regular files — use NUL-delimited output
+    untracked_out = git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    if untracked_out:
+        for path in untracked_out.split("\0"):
+            if not path:
+                continue
+            full = os.path.join(repo, path)
+            if os.path.isfile(full):
+                try:
+                    content = Path(full).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    die(f"postflight secret scan: unreadable-file in untracked file {path}")
                 label = _scan_text(content)
                 if label:
                     die(f"postflight secret scan: {label} in untracked file {path}")
-            except Exception:
-                pass  # binary file, skip
 
 
 # ---------------------------------------------------------------------------

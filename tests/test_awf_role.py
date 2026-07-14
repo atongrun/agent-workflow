@@ -26,6 +26,16 @@ _VALID_POSTFLIGHT_CARD = """# Card
 -->
 """
 
+# Secret test fragments — constructed to avoid literal secrets in the test
+# source so the new postflight secret gate does not reject its own
+# uncommitted test diff (self-hosting requirement).
+_GITHUB_TOKEN = "ghp_" + ("A" * 36)
+_OPENAI_KEY = "sk-" + ("A" * 30)
+_AWS_KEY = "AKIA" + "1234567890123456"
+_PK_HEADER = "-----BEGIN " + "RSA PRIVATE KEY-----"
+_PK_FOOTER = "-----END " + "RSA PRIVATE KEY-----"
+_CRED_URL = "http://" + "user:password@host.com/path"
+
 
 def run(*args: str, cwd: Path) -> str:
     completed = subprocess.run(
@@ -884,9 +894,7 @@ def test_delta_gate_diff_check_fails(tmp_path):
 def test_secret_scan_tracked_diff_private_key(tmp_path):
     """A private key header in a tracked diff fails the secret gate."""
     repo = _init_repo(tmp_path)
-    (repo / "a.py").write_text(
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n"
-    )
+    (repo / "a.py").write_text(f"{_PK_HEADER}\nMIIEpAIBAAKCAQEA...\n{_PK_FOOTER}\n")
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
@@ -894,7 +902,7 @@ def test_secret_scan_tracked_diff_private_key(tmp_path):
 def test_secret_scan_tracked_diff_credential_url(tmp_path):
     """A credential-bearing URL in a tracked diff fails."""
     repo = _init_repo(tmp_path)
-    (repo / "a.py").write_text('url = "http://user:password@host.com/path"\n')
+    (repo / "a.py").write_text(f'url = "{_CRED_URL}"\n')
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
@@ -902,7 +910,7 @@ def test_secret_scan_tracked_diff_credential_url(tmp_path):
 def test_secret_scan_tracked_diff_github_token(tmp_path):
     """A GitHub token shape in a tracked diff fails."""
     repo = _init_repo(tmp_path)
-    (repo / "a.py").write_text('token = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\n')
+    (repo / "a.py").write_text(f'token = "{_GITHUB_TOKEN}"\n')
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
@@ -910,7 +918,7 @@ def test_secret_scan_tracked_diff_github_token(tmp_path):
 def test_secret_scan_tracked_diff_openai_key(tmp_path):
     """An OpenAI key shape in a tracked diff fails."""
     repo = _init_repo(tmp_path)
-    (repo / "a.py").write_text('key = "sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAA"\n')
+    (repo / "a.py").write_text(f'key = "{_OPENAI_KEY}"\n')
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
@@ -918,7 +926,7 @@ def test_secret_scan_tracked_diff_openai_key(tmp_path):
 def test_secret_scan_tracked_diff_aws_key(tmp_path):
     """An AWS access key shape in a tracked diff fails."""
     repo = _init_repo(tmp_path)
-    (repo / "a.py").write_text('aws_key = "AKIA1234567890123456"\n')
+    (repo / "a.py").write_text(f'aws_key = "{_AWS_KEY}"\n')
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
@@ -926,7 +934,7 @@ def test_secret_scan_tracked_diff_aws_key(tmp_path):
 def test_secret_scan_untracked_file(tmp_path):
     """An untracked file with a secret fails."""
     repo = _init_repo(tmp_path)
-    (repo / "secret.txt").write_text("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n")
+    (repo / "secret.txt").write_text(f"{_GITHUB_TOKEN}\n")
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
@@ -1061,3 +1069,163 @@ def test_verification_failure_prevents_downstream(monkeypatch, tmp_path):
         awf_role.run_verifications(str(repo), contract)
 
     assert not downstream_calls, "no git write should occur after verification failure"
+
+
+# ---------------------------------------------------------------------------
+# Rework: full HEAD delta — staged changes also caught (rework items 1, 2)
+# ---------------------------------------------------------------------------
+# The original implementation checked only unstaged changes.  After rework the
+# secret scan and diff --check cover staged + unstaged changes (git diff HEAD).
+# The delta path snapshot uses NUL-delimited output for safe handling of
+# spaces, Unicode, and quoted paths.  New tests below prove coverage of
+# staged tracked, staged new, spaced renames, spaced untracked, and Unicode
+# paths.
+# ---------------------------------------------------------------------------
+
+
+def test_secret_scan_staged_tracked_diff(tmp_path):
+    """A staged tracked file with a secret is caught (diff HEAD covers staged)."""
+    repo = _init_repo(tmp_path)
+    (repo / "a.py").write_text(f'token = "{_GITHUB_TOKEN}"\n')
+    run("git", "add", "a.py", cwd=repo)
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
+def test_secret_scan_staged_new_file(tmp_path):
+    """A staged new file with a secret is caught."""
+    repo = _init_repo(tmp_path)
+    (repo / "new.py").write_text(f"{_GITHUB_TOKEN}\n")
+    run("git", "add", "new.py", cwd=repo)
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
+def test_collect_delta_spaced_rename(tmp_path):
+    """Renamed file with spaces is captured correctly (NUL-safe)."""
+    repo = _init_repo(tmp_path)
+    (repo / "my file.py").write_text("content\n")
+    run("git", "add", "my file.py", cwd=repo)
+    run("git", "commit", "-m", "add spaced", cwd=repo)
+    run("git", "mv", "my file.py", "my renamed file.py", cwd=repo)
+    paths = awf_role._collect_delta_paths(str(repo))
+    assert "my file.py" in paths
+    assert "my renamed file.py" in paths
+
+
+def test_secret_scan_spaced_untracked(tmp_path):
+    """Untracked file with spaces and a secret is caught (NUL-safe path)."""
+    repo = _init_repo(tmp_path)
+    (repo / "my secret.txt").write_text(f"{_GITHUB_TOKEN}\n")
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
+def test_collect_delta_unicode_path(tmp_path):
+    """Unicode filenames in the delta are captured correctly (NUL-safe)."""
+    repo = _init_repo(tmp_path)
+    (repo / "café.py").write_text("content\n")
+    paths = awf_role._collect_delta_paths(str(repo))
+    assert "café.py" in paths
+
+
+# ---------------------------------------------------------------------------
+# Rework: artifact denylist matched at any depth (rework item 3)
+# ---------------------------------------------------------------------------
+
+
+def test_path_is_denied_nested():
+    """Artifact denylist matches directory patterns at any depth, .env by basename."""
+    nested_denied = [
+        "config/.env.production",
+        "web/node_modules/pkg/index.js",
+        "pkg/build/output.o",
+        "sub/deep/.venv/bin/python",
+        "src/__pycache__/mod.pyc",
+        "config/.env",
+        ".env.local",
+        "config/.env.staging",
+    ]
+    for p in nested_denied:
+        assert awf_role._path_is_denied(p), f"{p!r} should be denied at any depth"
+    # Root-level variants must still be denied
+    for p in [".env.production", "node_modules/pkg/index.js", "build/output.o"]:
+        assert awf_role._path_is_denied(p), f"{p!r} should be denied at root"
+    # Documented example templates must be allowed at any depth
+    for p in [".env.example", ".env.template", ".env.sample", "config/.env.example"]:
+        assert not awf_role._path_is_denied(p), f"{p!r} should be allowed"
+
+
+# ---------------------------------------------------------------------------
+# Rework: fail closed on unreadable untracked files (rework item 4)
+# ---------------------------------------------------------------------------
+
+
+def test_secret_scan_unreadable_untracked_fails(monkeypatch, tmp_path):
+    """An unreadable untracked regular file fails closed with safe label."""
+    repo = _init_repo(tmp_path)
+    (repo / "secret.txt").write_text("content\n")
+
+    original_read_text = Path.read_text
+
+    def failing_read(self, **kwargs):
+        if self.name == "secret.txt":
+            raise OSError("Permission denied")
+        return original_read_text(self, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", failing_read)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
+# ---------------------------------------------------------------------------
+# Rework: reject empty executable in contract (rework item 5)
+# ---------------------------------------------------------------------------
+
+
+def test_contract_empty_executable(tmp_path):
+    """An empty string as the sole executable element fails contract parsing."""
+    card = tmp_path / "task.md"
+    card.write_text(
+        "# Card\n"
+        "<!-- awf-postflight\n"
+        "{\n"
+        '  "allowed_paths": ["a.py"],\n'
+        '  "verification_commands": [[""]]\n'
+        "}\n"
+        "-->\n"
+    )
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.parse_postflight_contract(str(card))
+
+
+def test_contract_empty_string_in_command(tmp_path):
+    """An empty string in argv (non-first position) also fails."""
+    card = tmp_path / "task.md"
+    card.write_text(
+        "# Card\n"
+        "<!-- awf-postflight\n"
+        "{\n"
+        '  "allowed_paths": ["a.py"],\n'
+        '  "verification_commands": [["python", "-c", ""]]\n'
+        "}\n"
+        "-->\n"
+    )
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.parse_postflight_contract(str(card))
+
+
+# ---------------------------------------------------------------------------
+# Rework: git diff HEAD --check catches staged whitespace (rework item 1)
+# ---------------------------------------------------------------------------
+
+
+def test_delta_gate_diff_check_rejects_staged_whitespace(tmp_path):
+    """Staged whitespace errors are caught by diff HEAD --check."""
+    repo = _init_repo(tmp_path)
+    (repo / "a.py").write_text("trailing whitespace   \n")
+    run("git", "add", "a.py", cwd=repo)
+    contract = awf_role.PostflightContract(allowed_paths=["a.py"], verification_commands=[])
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.run_postflight_delta_gates(str(repo), contract)
