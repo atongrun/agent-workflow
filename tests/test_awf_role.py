@@ -1254,6 +1254,17 @@ def test_secret_scan_disables_diff_helpers(monkeypatch, tmp_path):
     assert "--no-ext-diff" in diff_call
 
 
+def test_secret_scan_added_line_starting_with_plus_plus(tmp_path):
+    """A real added line beginning with ++ is not mistaken for a patch header."""
+    repo = _init_repo(tmp_path)
+    (repo / "a.py").write_text("safe\n")
+    run("git", "add", "a.py", cwd=repo)
+    run("git", "commit", "-m", "add source", cwd=repo)
+    (repo / "a.py").write_text(f"++{_GITHUB_TOKEN}\n")
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
 # ---------------------------------------------------------------------------
 # Rework: git diff HEAD --check catches staged whitespace (rework item 1)
 # ---------------------------------------------------------------------------

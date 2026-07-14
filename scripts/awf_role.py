@@ -468,8 +468,12 @@ def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> None
             "--",
             path,
         )
+        in_hunk = False
         for line in diff_out.splitlines():
-            if line.startswith("+") and not line.startswith("+++"):
+            if line.startswith("@@"):
+                in_hunk = True
+                continue
+            if in_hunk and line.startswith("+"):
                 label = _scan_text(line[1:])
                 if label:
                     die(f"postflight secret scan: {label} in {path}")

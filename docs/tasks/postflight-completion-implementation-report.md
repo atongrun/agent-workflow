@@ -53,7 +53,7 @@ Any postflight failure (steps 2, 5, 6) raises `SystemExit(1)` before step 7, lea
 
 ```
 {python} -m pytest -q tests/test_awf_role.py
-71 passed
+72 passed
 ```
 
 ```
@@ -68,7 +68,7 @@ All formatting checks passed (no output).
 
 ## Focused Test Count
 
-**71 total focused tests**, all passing. Full suite: **105 passed**.
+**72 total focused tests**, all passing. Full suite: **106 passed**.
 
 ### New test coverage (rework round):
 
@@ -80,6 +80,7 @@ All formatting checks passed (no output).
 | Unreadable untracked file | 1 | `OSError` on untracked file read fails closed with safe `unreadable-file` label |
 | Empty executable rejection | 2 | `[""]` fails contract parsing; an empty non-executable argv value remains valid |
 | Quoted paths and diff helpers | 2 | A quoted tracked filename cannot bypass scanning; tracked scans disable textconv and external diff |
+| Patch-header distinction | 1 | An added source line beginning with `++` is scanned after the hunk marker |
 | Staged whitespace rejection | 1 | Staged trailing whitespace caught by `git diff HEAD --check` |
 | Self-hosting fixtures | (pervasive) | All secret-like test strings constructed from fragments; no literal secret in test source |
 
