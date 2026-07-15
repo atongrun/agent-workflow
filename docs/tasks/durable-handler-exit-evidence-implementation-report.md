@@ -50,11 +50,40 @@ The test then reads the OS-state directory outside the temporary checkout and pr
 Separate controlled subprocess cases prove both `rc=0` and `rc=7`, duration persistence, and
 kill+wait+actual-rc evidence when communication is interrupted.
 
+## Live Windows listener return probe
+
+The remaining real-machine gate was completed on 2026-07-15 without changing product code or
+redispatching the UTF-8 task:
+
+- A fresh isolated Windows clone was pinned to merged
+  `main@df6f4947f28596176f107b5a615424bf1db925b2`.
+- A controlled `fake-opencode.cmd` outside the checkout performed only `exit /b 0`.
+- A reviewer listener subscribed to the unique event type
+  `probe:awf-handler-return-20260715-2300`; fresh event `51` was delivered to its real handler.
+- The durable run directory was `%LOCALAPPDATA%\\agent-workflow\\runs\\event-51\\`.
+- `handler.log` contained, in order: `handler_start`, `opencode_start`, `opencode_exit`,
+  `handler_exit`.
+- Atomic `result.json` recorded `handler_pid=30768`, `opencode_pid=32512`, `opencode_rc=0`,
+  `opencode_duration_seconds=0.047`, `postflight_started=false`,
+  `postflight_status=not_started`, `last_phase_before_exit=opencode_exit`, and `handler_rc=0`.
+- The listener reported handler exit zero before ACK. A separate read-only query against the
+  Agent Bus database confirmed event `51` was `acked`, with delivery at `2026-07-15 14:55:20`
+  UTC, ACK at `2026-07-15 14:55:24` UTC, `retry_count=0`, and no `last_error`.
+- The listener then exited normally after its bounded idle window. A new SSH process, independent
+  of the listener stdout stream, re-read both durable files and all final fields. The isolated
+  checkout remained clean at the exact merged SHA.
+
+The reviewer role's current behavior also emitted pending architect event `52`
+(`decision:awf-ready`) with `verdict=tool-review-complete`. In this probe that value means only
+that the controlled fake process returned zero; it is not a semantic review, approval, or valid
+workflow verdict. Event `52` must remain pending and must not be consumed or used to advance a
+task. This is existing behavior, not a verdict-routing implementation or a claim that automatic
+review routing is safe. Reviewer verdict routing remains the next Agent Workflow P0.
+
 ## Verification
 
-The checkout has no local virtual environment, so verification used the existing project
-interpreter at `/Users/torinsun/AI/01_Project/agent-workflow/.venv/bin/python` without installing
-dependencies.
+The checkout has no local virtual environment, so verification used an existing project virtual
+environment outside this worktree without installing dependencies.
 
 ```text
 python -m pytest tests/test_awf_role.py -q
@@ -103,10 +132,11 @@ real-chain cases, and Ruff check/format.
 - The frozen TaskCard listed `python -m awf validate`, but `awf` is a console script rather
   than an importable module and `validate` requires a target. The failed command produced
   `No module named awf`; validation used the repository/CI commands `awf validate roles`,
-  `workflows`, and `examples` instead. The committed TaskCard was not rewritten after
-  implementation began.
-- The controlled subprocess and POSIX state path ran on macOS. Windows
-  `LOCALAPPDATA` selection and `.cmd` wrapping are covered by focused tests, but no new Windows
-  listener or UTF-8 event was started in this task.
-- This change supplies the missing evidence boundary; it does not claim a root cause for event 50
-  and does not authorize another UTF-8 dispatch by itself.
+  `workflows`, and `examples` instead. The original implementation contract, acceptance criteria,
+  and postflight block were not rewritten after implementation began; this closeout adds only the
+  later live-Windows evidence section to the already-merged TaskCard.
+- The original controlled subprocess and POSIX state-path proof ran on macOS. The later live
+  Windows event `51` now proves `LOCALAPPDATA`, `.cmd` wrapping, listener delivery, handler return,
+  durable evidence, and success-gated ACK on the real executor.
+- This proof closes only the no-code handler-return gate. It does not adopt event 50's uncommitted
+  implementation, mark UTF-8 complete, or make the workflow a safe automatic loop.
