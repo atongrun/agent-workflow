@@ -41,6 +41,8 @@ def build_handler(python_exe: str, role_script: str, role: str) -> str:
     The {payload.*} placeholders are substituted + shell-quoted by agent-bus.
     """
     fields = [
+        "--event-id",
+        "{id}",
         "--branch",
         "{payload.branch}",
         "--card",

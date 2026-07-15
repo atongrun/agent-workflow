@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +17,12 @@ SPEC = importlib.util.spec_from_file_location("awf_role", MODULE_PATH)
 assert SPEC and SPEC.loader
 awf_role = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(awf_role)
+
+LISTEN_MODULE_PATH = Path(__file__).parents[1] / "scripts" / "awf_listen.py"
+LISTEN_SPEC = importlib.util.spec_from_file_location("awf_listen", LISTEN_MODULE_PATH)
+assert LISTEN_SPEC and LISTEN_SPEC.loader
+awf_listen = importlib.util.module_from_spec(LISTEN_SPEC)
+LISTEN_SPEC.loader.exec_module(awf_listen)
 
 
 _VALID_POSTFLIGHT_CARD = """# Card
@@ -55,6 +63,174 @@ def commit(repo: Path, message: str, filename: str, content: str) -> str:
     return run("git", "rev-parse", "HEAD", cwd=repo)
 
 
+# ---------------------------------------------------------------------------
+# Durable handler exit evidence
+# ---------------------------------------------------------------------------
+
+
+def test_listener_handler_passes_event_id_once():
+    handler = awf_listen.build_handler("python", "awf_role.py", "coder")
+
+    assert handler.split().count("--event-id") == 1
+    assert "--event-id {id}" in handler
+
+
+@pytest.mark.parametrize(
+    ("os_name", "environ", "home", "expected"),
+    [
+        (
+            "nt",
+            {"LOCALAPPDATA": "C:/Users/test/AppData/Local"},
+            "/unused",
+            Path("C:/Users/test/AppData/Local/agent-workflow/runs/event-50"),
+        ),
+        (
+            "posix",
+            {"XDG_STATE_HOME": "/var/state/test"},
+            "/unused",
+            Path("/var/state/test/agent-workflow/runs/event-50"),
+        ),
+        (
+            "posix",
+            {},
+            "/home/test",
+            Path("/home/test/.local/state/agent-workflow/runs/event-50"),
+        ),
+    ],
+)
+def test_event_run_directory_uses_os_state_location(os_name, environ, home, expected):
+    assert (
+        awf_role.event_run_directory(
+            50,
+            os_name=os_name,
+            environ=environ,
+            home=Path(home),
+        )
+        == expected
+    )
+
+
+def test_run_evidence_appends_log_and_atomically_updates_result(tmp_path):
+    evidence = awf_role.RunEvidence(50, "coder", state_root=tmp_path)
+
+    evidence.record("handler_start", handler_pid=1234, postflight_started=False)
+    first = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    evidence.record("opencode_start", opencode_pid=4321, opencode_cwd="/work")
+    second = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+
+    assert first["last_phase"] == "handler_start"
+    assert second["last_phase"] == "opencode_start"
+    assert second["handler_pid"] == 1234
+    assert second["opencode_pid"] == 4321
+    assert not list(evidence.run_dir.glob("result.json.tmp-*"))
+    phases = [
+        json.loads(line)["phase"]
+        for line in evidence.log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert phases == ["handler_start", "opencode_start"]
+
+
+@pytest.mark.parametrize(("child_rc", "expected_rc"), [(0, 0), (7, 7)])
+def test_controlled_subprocess_persists_real_pid_and_return_code(tmp_path, child_rc, expected_rc):
+    evidence = awf_role.RunEvidence(51 + child_rc, "coder", state_root=tmp_path)
+
+    rc = awf_role.spawn(
+        [sys.executable, "-c", f"raise SystemExit({child_rc})"],
+        cwd=str(tmp_path),
+        env=awf_role.model_env(),
+        evidence=evidence,
+        tracked_phase="opencode",
+    )
+
+    result = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    assert rc == expected_rc
+    assert result["last_phase"] == "opencode_exit"
+    assert result["opencode_pid"] != os.getpid()
+    assert result["opencode_cwd"] == str(tmp_path)
+    assert result["opencode_rc"] == expected_rc
+    assert result["opencode_duration_seconds"] >= 0
+    assert result["postflight_started"] is False
+
+
+def test_controlled_subprocess_interruption_kills_and_reaps_before_exit_evidence(
+    monkeypatch, tmp_path
+):
+    class InterruptedProcess:
+        pid = 4321
+        returncode = None
+        killed = False
+        waited = False
+
+        def communicate(self, _stdin):
+            raise OSError("controlled interruption")
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = InterruptedProcess()
+    monkeypatch.setattr(awf_role.subprocess, "Popen", lambda *args, **kwargs: process)
+    evidence = awf_role.RunEvidence(59, "coder", state_root=tmp_path)
+
+    with pytest.raises(OSError, match="controlled interruption"):
+        awf_role.spawn(
+            ["controlled-opencode"],
+            cwd=str(tmp_path),
+            evidence=evidence,
+            tracked_phase="opencode",
+        )
+
+    result = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    assert process.killed is True
+    assert process.waited is True
+    assert result["last_phase"] == "opencode_exit"
+    assert result["opencode_rc"] == -9
+    assert result["opencode_interrupted"] is True
+
+
+@pytest.mark.parametrize(("role_rc", "expected_rc"), [(0, 0), (9, 9)])
+def test_handler_main_persists_exit_for_success_and_failure(
+    monkeypatch, tmp_path, role_rc, expected_rc
+):
+    monkeypatch.setattr(
+        awf_role,
+        "event_run_directory",
+        lambda event_id, **kwargs: tmp_path / f"event-{event_id}",
+    )
+
+    def fake_role(_args):
+        if role_rc:
+            raise SystemExit(role_rc)
+        return 0
+
+    monkeypatch.setitem(awf_role.ROLES, "coder", fake_role)
+    argv = [
+        "coder",
+        "--event-id",
+        "60",
+        "--branch",
+        "feature/task",
+    ]
+
+    if role_rc:
+        with pytest.raises(SystemExit, match=str(role_rc)):
+            awf_role.main(argv)
+    else:
+        assert awf_role.main(argv) == 0
+
+    result = json.loads((tmp_path / "event-60" / "result.json").read_text(encoding="utf-8"))
+    assert result["last_phase"] == "handler_exit"
+    assert result["last_phase_before_exit"] == "handler_start"
+    assert result["handler_rc"] == expected_rc
+
+
 @pytest.fixture
 def repositories(tmp_path: Path) -> tuple[Path, Path, Path]:
     origin = tmp_path / "origin.git"
@@ -75,6 +251,73 @@ def repositories(tmp_path: Path) -> tuple[Path, Path, Path]:
     run("git", "config", "user.email", "awf-executor@example.invalid", cwd=executor)
     run("git", "switch", "feature/task", cwd=executor)
     return origin, seed, executor
+
+
+def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
+    _, seed, executor = repositories
+    remote_head = commit(seed, "review inputs", "report.md", "controlled report\n")
+    run("git", "push", "origin", "feature/task", cwd=seed)
+
+    if os.name == "nt":
+        fake_tool = tmp_path / "controlled-tool.cmd"
+        fake_tool.write_text("@exit /b 0\r\n", encoding="utf-8")
+    else:
+        fake_tool = tmp_path / "controlled-tool"
+        fake_tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_tool.chmod(0o755)
+
+    state_root = tmp_path / "os-state"
+    child_environment = dict(os.environ)
+    child_environment.update(
+        {
+            "AWF_REPO_DIR": str(executor),
+            "AWF_SCRIPT_DIR": str(MODULE_PATH.parent),
+            "AWF_TOOL": "opencode",
+            "AWF_BASE": "main",
+            "AWF_OPENCODE_BIN": str(fake_tool),
+            "AWF_BUS_BIN": str(fake_tool),
+            "AGENT_BUS_URL": "http://controlled.invalid",
+            "AWF_REVIEWER_TOKEN": "controlled-test-token",
+        }
+    )
+    if os.name == "nt":
+        child_environment["LOCALAPPDATA"] = str(state_root)
+    else:
+        child_environment["XDG_STATE_HOME"] = str(state_root)
+
+    handler = awf_listen.build_handler(sys.executable, str(MODULE_PATH), "reviewer")
+    replacements = {
+        "{id}": "63",
+        "{payload.branch}": "feature/task",
+        "{payload.card}": "task.md",
+        "{payload.commit}": remote_head,
+        "{payload.model}": "controlled/model",
+        "{payload.tool}": "opencode",
+        "{payload.report}": "report.md",
+    }
+    for placeholder, value in replacements.items():
+        handler = handler.replace(placeholder, value)
+
+    completed = subprocess.run(
+        handler,
+        cwd=executor,
+        env=child_environment,
+        shell=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    run_dir = state_root / "agent-workflow" / "runs" / "event-63"
+    result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["last_phase"] == "handler_exit"
+    assert result["last_phase_before_exit"] == "opencode_exit"
+    assert result["handler_rc"] == 0
+    assert result["opencode_pid"] != os.getpid()
+    assert result["opencode_rc"] == 0
+    assert result["postflight_started"] is False
 
 
 def test_fetch_and_checkout_updates_stale_branch_to_remote(repositories):
@@ -401,7 +644,13 @@ def test_coder_missing_report_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
-    monkeypatch.setattr(awf_role, "tool_opencode_exec", lambda *a, **kw: 0)
+    evidence = awf_role.RunEvidence(61, "coder", state_root=tmp_path / "state")
+    tool_evidence = []
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kw: tool_evidence.append(args[-1]) or 0,
+    )
 
     git_calls = []
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: git_calls.append(a) or 0)
@@ -416,6 +665,7 @@ def test_coder_missing_report_gate(monkeypatch, tmp_path):
         tool="opencode",
         report="",
         base="",
+        evidence=evidence,
     )
 
     with pytest.raises(SystemExit, match="1"):
@@ -424,6 +674,11 @@ def test_coder_missing_report_gate(monkeypatch, tmp_path):
     # The gate fires before any git write or event send
     assert not git_calls, "git should not be reached before report gate"
     assert not send_calls, "send_event should not be reached before report gate"
+    assert tool_evidence == [evidence]
+    result = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    assert result["last_phase"] == "postflight_fail"
+    assert result["postflight_started"] is True
+    assert result["postflight_status"] == "fail"
 
 
 @pytest.mark.parametrize(
@@ -677,7 +932,13 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
-    monkeypatch.setattr(awf_role, "tool_opencode_exec", lambda *a, **kw: 0)
+    evidence = awf_role.RunEvidence(62, "coder", state_root=tmp_path / "state")
+    tool_evidence = []
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kw: tool_evidence.append(args[-1]) or 0,
+    )
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
@@ -692,10 +953,25 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
         tool="opencode",
         report=str(report),
         base="",
+        evidence=evidence,
     )
 
     result = awf_role.role_coder(ns)
     assert result == 0
+    assert tool_evidence == [evidence]
+    phases = [
+        json.loads(line)["phase"]
+        for line in evidence.log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert phases == [
+        "postflight_start",
+        "postflight_pass",
+        "commit",
+        "commit",
+        "push",
+        "remote_sha_verified",
+        "review_event_sent",
+    ]
 
 
 # ---------------------------------------------------------------------------
