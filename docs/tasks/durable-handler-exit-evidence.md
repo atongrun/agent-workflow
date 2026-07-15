@@ -54,6 +54,25 @@ payloads, or private-key paths.
 5. Handler success and failure both produce `handler_exit` evidence with an exit code.
 6. Existing process-boundary, postflight, push/remote-SHA, and reviewer tests remain green.
 
+## Live Windows return gate
+
+Completed on 2026-07-15 with a fresh, isolated Windows checkout at merged
+`main@df6f4947f28596176f107b5a615424bf1db925b2` and a controlled `.cmd` fake OpenCode
+subprocess that returned zero without modifying the checkout.
+
+- A reviewer listener subscribed to the unique probe event type
+  `probe:awf-handler-return-20260715-2300` and received fresh event `51`.
+- The listener launched the trusted handler, which launched the fake OpenCode child and wrote
+  `%LOCALAPPDATA%\\agent-workflow\\runs\\event-51\\handler.log` plus atomic `result.json`.
+- Durable evidence recorded a real child PID and cwd, `opencode_rc=0`, a non-negative duration,
+  `postflight_started=false`, `last_phase_before_exit=opencode_exit`, and `handler_rc=0`.
+- The Agent Bus server recorded event `51` as `acked` only after handler success, with
+  `retry_count=0` and no `last_error`.
+- After the listener and its SSH session exited, a separate Windows SSH process read the same
+  durable files successfully. The isolated checkout remained clean at the exact merged SHA.
+- No UTF-8 task was redispatched, and no event 49/50 or historical/proof checkout was modified,
+  reset, cleaned, copied, committed, pushed, or deleted.
+
 ## Verification commands
 
 ```text
