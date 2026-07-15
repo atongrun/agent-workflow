@@ -5,8 +5,8 @@ This replaces the bash role handlers (roles/coder.sh, roles/reviewer.sh) and the
 local executor (executors/local.sh). It is invoked by a role listener as the
 Agent Bus `--on` handler when a stage event arrives:
 
-    python awf_role.py coder    --branch B --card C --commit H --model M --tool T --report R
-    python awf_role.py reviewer --branch B --card C ... --report R --base BASE
+    python awf_role.py coder    --event-id ID --branch B --card C --commit H --tool T --report R
+    python awf_role.py reviewer --event-id ID --branch B --card C ... --report R --base BASE
 
 Why Python instead of bash: on Windows, agent-bus runs handlers through
 `cmd.exe` (subprocess shell=True), where bash scripts collide with cmd quoting,
@@ -33,6 +33,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -66,6 +68,96 @@ def child_env() -> dict[str, str]:
     return e
 
 
+def event_run_directory(
+    event_id: int,
+    *,
+    os_name: str | None = None,
+    environ: dict[str, str] | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Return the event-scoped OS state directory, always outside the checkout."""
+    platform = os_name or os.name
+    values = os.environ if environ is None else environ
+    if platform == "nt":
+        local_app_data = values.get("LOCALAPPDATA")
+        if not local_app_data:
+            die("LOCALAPPDATA is required for durable handler evidence on Windows")
+        root = Path(local_app_data)
+    else:
+        xdg_state_home = values.get("XDG_STATE_HOME")
+        root = Path(xdg_state_home) if xdg_state_home else (home or Path.home()) / ".local/state"
+    return root / "agent-workflow" / "runs" / f"event-{event_id}"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class RunEvidence:
+    """Append durable phase records and atomically publish the latest run result."""
+
+    def __init__(
+        self,
+        event_id: int,
+        role: str,
+        *,
+        state_root: Path | None = None,
+    ) -> None:
+        self.event_id = event_id
+        self.role = role
+        self.run_dir = (
+            Path(state_root) / f"event-{event_id}"
+            if state_root is not None
+            else event_run_directory(event_id)
+        )
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.log_path = self.run_dir / "handler.log"
+        self.result_path = self.run_dir / "result.json"
+        self.state: dict[str, object] = {
+            "event_id": event_id,
+            "role": role,
+            "handler_pid": os.getpid(),
+            "postflight_started": False,
+            "postflight_status": "not_started",
+        }
+
+    def record(self, phase: str, **fields: object) -> None:
+        """Persist one non-sensitive phase record and the latest aggregate state."""
+        timestamp = _utc_now()
+        if phase == "handler_exit":
+            self.state["last_phase_before_exit"] = self.state.get("last_phase")
+        self.state.update(fields)
+        self.state["last_phase"] = phase
+        self.state["updated_at"] = timestamp
+        if "started_at" not in self.state:
+            self.state["started_at"] = timestamp
+
+        entry = {
+            "time": timestamp,
+            "event_id": self.event_id,
+            "role": self.role,
+            "phase": phase,
+            **fields,
+        }
+        with self.log_path.open("a", encoding="utf-8", newline="\n") as log_file:
+            log_file.write(json.dumps(entry, sort_keys=True) + "\n")
+            log_file.flush()
+            os.fsync(log_file.fileno())
+
+        temp_path = self.result_path.with_name(f"result.json.tmp-{os.getpid()}")
+        with temp_path.open("w", encoding="utf-8", newline="\n") as result_file:
+            json.dump(self.state, result_file, indent=2, sort_keys=True)
+            result_file.write("\n")
+            result_file.flush()
+            os.fsync(result_file.fileno())
+        os.replace(temp_path, self.result_path)
+
+
+def record(evidence: RunEvidence | None, phase: str, **fields: object) -> None:
+    if evidence is not None:
+        evidence.record(phase, **fields)
+
+
 def model_env() -> dict[str, str]:
     """Environment for model subprocesses: inherit parent, strip Agent Bus tokens.
 
@@ -88,6 +180,8 @@ def spawn(
     cwd: str | None = None,
     stdin: str | None = None,
     env: dict[str, str] | None = None,
+    evidence: RunEvidence | None = None,
+    tracked_phase: str | None = None,
 ) -> int:
     """Run a command as a real argv (no shell). Handles Windows .cmd/.bat shims.
 
@@ -105,6 +199,62 @@ def spawn(
     if os.name == "nt" and argv and argv[0].lower().endswith((".cmd", ".bat")):
         run_argv = ["cmd", "/c", *argv]
     log("exec: " + " ".join(run_argv))
+    if evidence is not None and tracked_phase is not None:
+        started = time.monotonic()
+        try:
+            proc = subprocess.Popen(
+                run_argv,
+                cwd=cwd,
+                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env or child_env(),
+            )
+        except OSError as exc:
+            record(
+                evidence,
+                f"{tracked_phase}_exit",
+                **{
+                    f"{tracked_phase}_rc": None,
+                    f"{tracked_phase}_duration_seconds": round(time.monotonic() - started, 6),
+                    f"{tracked_phase}_spawn_error": type(exc).__name__,
+                },
+            )
+            raise
+        record(
+            evidence,
+            f"{tracked_phase}_start",
+            **{
+                f"{tracked_phase}_pid": proc.pid,
+                f"{tracked_phase}_cwd": str(Path(cwd).resolve()) if cwd else os.getcwd(),
+            },
+        )
+        try:
+            proc.communicate(stdin)
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            record(
+                evidence,
+                f"{tracked_phase}_exit",
+                **{
+                    f"{tracked_phase}_rc": proc.poll(),
+                    f"{tracked_phase}_duration_seconds": round(time.monotonic() - started, 6),
+                    f"{tracked_phase}_interrupted": True,
+                },
+            )
+            raise
+        record(
+            evidence,
+            f"{tracked_phase}_exit",
+            **{
+                f"{tracked_phase}_rc": proc.returncode,
+                f"{tracked_phase}_duration_seconds": round(time.monotonic() - started, 6),
+            },
+        )
+        return proc.returncode
     proc = subprocess.run(
         run_argv,
         cwd=cwd,
@@ -579,13 +729,27 @@ def read_text(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def tool_opencode_exec(repo: str, card_file: str, prompt_file: str, model: str) -> int:
+def tool_opencode_exec(
+    repo: str,
+    card_file: str,
+    prompt_file: str,
+    model: str,
+    evidence: RunEvidence | None = None,
+) -> int:
     """Run OpenCode as an executor: edit code in `repo` per the card + prompt."""
     binp = env("AWF_OPENCODE_BIN", "opencode")
     argv = [binp, "run", "--dir", repo, "-f", card_file]
     if model:
         argv += ["-m", model]
     argv += ["--", read_text(prompt_file)]
+    if evidence is not None:
+        return spawn(
+            argv,
+            cwd=repo,
+            env=model_env(),
+            evidence=evidence,
+            tracked_phase="opencode",
+        )
     return spawn(argv, cwd=repo, env=model_env())
 
 
@@ -602,7 +766,14 @@ def tool_codex_review(repo: str, base: str, prompt_file: str, card_file: str, mo
     return spawn(argv, cwd=repo, stdin=stdin, env=model_env())
 
 
-def tool_opencode_review(repo: str, base: str, prompt_file: str, card_file: str, model: str) -> int:
+def tool_opencode_review(
+    repo: str,
+    base: str,
+    prompt_file: str,
+    card_file: str,
+    model: str,
+    evidence: RunEvidence | None = None,
+) -> int:
     """Fallback reviewer using OpenCode (when Codex is unavailable)."""
     binp = env("AWF_OPENCODE_BIN", "opencode")
     argv = [binp, "run", "--dir", repo]
@@ -611,6 +782,14 @@ def tool_opencode_review(repo: str, base: str, prompt_file: str, card_file: str,
     if model:
         argv += ["-m", model]
     argv += ["--", read_text(prompt_file)]
+    if evidence is not None:
+        return spawn(
+            argv,
+            cwd=repo,
+            env=model_env(),
+            evidence=evidence,
+            tracked_phase="opencode",
+        )
     return spawn(argv, cwd=repo, env=model_env())
 
 
@@ -665,6 +844,7 @@ def role_coder(a: argparse.Namespace) -> int:
     tool = env("AWF_TOOL", a.tool or "opencode")
     model = env("AWF_MODEL", a.model or "")
     no_push = env("AWF_NO_PUSH", "0") == "1"
+    evidence = getattr(a, "evidence", None)
 
     fetch_and_checkout(repo, a.branch, a.commit)
     card_file = os.path.join(repo, a.card)
@@ -676,22 +856,34 @@ def role_coder(a: argparse.Namespace) -> int:
 
     log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
     if tool == "opencode":
-        rc = tool_opencode_exec(repo, card_file, prompt_file, model)
+        rc = tool_opencode_exec(repo, card_file, prompt_file, model, evidence)
     else:
         die(f"coder: unsupported tool '{tool}'")
     if rc != 0:
         die(f"tool '{tool}' failed (rc={rc}); not announcing review")
 
-    # 4. ImplementationReport gate — fail before any write or downstream event
-    check_report(a.report)
+    record(
+        evidence,
+        "postflight_start",
+        postflight_started=True,
+        postflight_status="running",
+    )
+    try:
+        # 4. ImplementationReport gate — fail before any write or downstream event
+        check_report(a.report)
 
-    # 5. Rerun every verification command from the frozen contract
-    run_verifications(repo, contract)
+        # 5. Rerun every verification command from the frozen contract
+        run_verifications(repo, contract)
 
-    # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
-    run_postflight_delta_gates(repo, contract)
+        # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
+        run_postflight_delta_gates(repo, contract)
+    except BaseException:
+        record(evidence, "postflight_fail", postflight_status="fail")
+        raise
+    record(evidence, "postflight_pass", postflight_status="pass")
 
     # 7. commit + push the executor's output back to the same branch
+    record(evidence, "commit", commit_status="running")
     git(repo, "add", "-A")
     if git(repo, "diff", "--cached", "--quiet") != 0:
         msg = f"feat(awf): executor output for {a.branch} [{tool}]"
@@ -700,12 +892,16 @@ def role_coder(a: argparse.Namespace) -> int:
         log(f"committed executor output on {a.branch}")
     else:
         log("no changes produced by the tool")
+    commit_sha = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    record(evidence, "commit", commit_status="pass", commit_sha=commit_sha)
     if no_push:
         die(
             "AWF_NO_PUSH=1 cannot complete the trusted coder handler; "
             "remote review handoff requires a verified push"
         )
+    record(evidence, "push", push_started=True)
     new_commit = push_and_verify_remote_head(repo, a.branch)
+    record(evidence, "remote_sha_verified", remote_sha=new_commit)
     if not send_event(
         "coder",
         "reviewer",
@@ -721,6 +917,7 @@ def role_coder(a: argparse.Namespace) -> int:
         },
     ):
         die("failed to send reviewer event; implementation will not be ACKed")
+    record(evidence, "review_event_sent", review_event_sent=True)
     return 0
 
 
@@ -731,6 +928,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     tool = env("AWF_TOOL", a.tool or "")
     model = env("AWF_MODEL", a.model or "")
     base = env("AWF_BASE", a.base or "master")
+    evidence = getattr(a, "evidence", None)
 
     fetch_and_checkout(repo, a.branch, a.commit)
 
@@ -745,7 +943,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         rc = tool_codex_review(repo, base, prompt_file, card_file, model)
         verdict = "tool-review-complete" if rc == 0 else "needs-human-review"
     elif tool == "opencode":
-        rc = tool_opencode_review(repo, base, prompt_file, card_file, model)
+        rc = tool_opencode_review(repo, base, prompt_file, card_file, model, evidence)
         verdict = "tool-review-complete" if rc == 0 else "needs-human-review"
     else:
         log(f"no reviewer tool configured; branch {a.branch} checked out for human review")
@@ -771,6 +969,7 @@ ROLES = {"coder": role_coder, "reviewer": role_reviewer}
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="awf_role", description="Agent Workflow role handler")
     p.add_argument("role", choices=sorted(ROLES))
+    p.add_argument("--event-id", required=True, type=int)
     p.add_argument("--branch", required=True)
     p.add_argument("--card", default="")
     p.add_argument("--commit", default="")
@@ -779,7 +978,26 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--report", default="")
     p.add_argument("--base", default="")
     a = p.parse_args(argv)
-    return ROLES[a.role](a)
+    if a.event_id < 1:
+        p.error("--event-id must be a positive integer")
+    a.evidence = RunEvidence(a.event_id, a.role)
+    a.evidence.record(
+        "handler_start",
+        handler_pid=os.getpid(),
+        postflight_started=False,
+        postflight_status="not_started",
+    )
+    try:
+        rc = ROLES[a.role](a)
+    except SystemExit as exc:
+        exit_code = exc.code if isinstance(exc.code, int) else 1
+        a.evidence.record("handler_exit", handler_rc=exit_code)
+        raise
+    except BaseException:
+        a.evidence.record("handler_exit", handler_rc=1)
+        raise
+    a.evidence.record("handler_exit", handler_rc=rc)
+    return rc
 
 
 if __name__ == "__main__":
