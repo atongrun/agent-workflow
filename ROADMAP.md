@@ -42,6 +42,18 @@ Keep `awf` limited to these method-specific, stateless helpers: render the next 
 
 Run the complete [Agent Bus example](examples/agent-bus-dogfood/README.md) before broader hardening.
 
+The repository has already collected substantial **operations dogfood** outside the Phase 0
+validation CLI: exact checkout synchronization, trusted executor boundaries, postflight completion,
+OpenCode argv portability, push plus remote-SHA proof, durable handler evidence, and a real Windows
+handler-return/ACK gate are on `main`. Agent Bus v0.2.0 has also completed a separate real
+three-endpoint transport acceptance. These facts do not complete the artifact-chain checklist below:
+the current reviewer path still treats tool completion as a placeholder verdict and cannot safely
+route a structured ReviewReport.
+
+The next and only P0 is [reviewer verdict routing](docs/tasks/reviewer-verdict-routing.md). Until it
+lands, `tool-review-complete`, process exit zero, and a missing or malformed report must never be
+treated as PASS or used to advance a workflow.
+
 - [ ] Regenerate and verify the existing Agent Bus baseline
 - [ ] Freeze only the architecture needed for the next diagnostic milestone
 - [ ] Produce the current phase plan and `ABUS-DIAG-001` TaskCard
@@ -51,6 +63,11 @@ Run the complete [Agent Bus example](examples/agent-bus-dogfood/README.md) befor
 - [ ] Continue to the next task or next phase from the same run
 
 Success means the artifact chain is complete and Agent Bus made a verified increment—not that Agent Workflow supports every project shape.
+
+Service supervision remains a separate operations candidate. launchd, systemd, WinSW, and `just`
+surfaces exist, but their three-OS install, reboot, crash-recovery, and unattended-listener behavior
+has not been accepted. Whether runner/listener conveniences formally belong to Agent Workflow is an
+open product decision; do not resolve it by silently moving execution or transport into the core.
 
 ## Phase 3: Evidence-Driven Hardening 📋
 
