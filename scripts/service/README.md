@@ -1,8 +1,14 @@
 # Listener services (three-OS)
 
-Run the Agent Workflow listener as a supervised service so it survives reboots and
-crashes — no more hand-starting it over SSH. One wrapper + one native service manager
-per OS, driven by a single `just` menu.
+These are candidate operations templates for running the Agent Workflow listener under a native
+service manager. The wrappers, launchd/systemd templates, WinSW definition, and `just` menu are
+implemented, but their three-OS installation, reboot, crash-recovery, and unattended-listener
+behavior has **not** been accepted end to end. Treat the commands below as an operations surface to
+validate, not as proof that supervision already survives real failures on every OS.
+
+This surface is outside the thin `awf` validation core. It supervises dogfood runner/listener
+scripts that use external Agent Bus transport and model CLIs; it does not make those concerns part
+of the core method contract.
 
 ## What's here
 

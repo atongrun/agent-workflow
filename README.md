@@ -34,6 +34,11 @@ See [Development Workflow MVP](docs/development-workflow-mvp.md) for the usage c
 Agent Workflow ships as a small set of markdown/YAML contracts plus a thin, stateless
 validation CLI. It never executes, schedules, or orchestrates anything.
 
+The repository also contains `scripts/` used to dogfood the method across real agent clients and
+machines. Those trusted runner/listener and service-operation scripts are an **operations surface
+outside the `awf` core**: they exercise Agent Bus and model CLIs, but they do not turn the
+validation CLI into a workflow engine or make transport part of the core contract.
+
 **Boundaries**
 
 1. It **does not** run models, spawn sub-agents, or drive an inner loop — each agent
@@ -198,6 +203,30 @@ Cross-machine transport (Agent Bus) and shared long-term memory (AI Memory) are 
 
 Phase 0 is not yet a usable development workflow: it cannot initialize a run, establish a brownfield baseline, produce architecture/phase/task artifacts, or import execution results.
 
+### Operations dogfood checkpoint
+
+The external operations surface has advanced beyond the Phase 0 CLI and is deliberately tracked
+separately:
+
+- ✅ exact executor checkout and dispatched-commit synchronization;
+- ✅ model subprocess credential/stdin boundaries and required ImplementationReport gating;
+- ✅ trusted postflight verification, allowed-path, artifact, secret, and diff gates;
+- ✅ OpenCode file-array argv termination and repository-wide Ruff format baseline;
+- ✅ mandatory push plus refreshed remote-SHA proof before reviewer handoff;
+- ✅ durable handler-exit evidence and a real Windows no-code handler-return/ACK proof;
+- 🚧 reviewer verdict routing remains unsafe: tool exit zero and `tool-review-complete` are not
+  semantic approval. The next P0 is the
+  [reviewer verdict routing TaskCard](docs/tasks/reviewer-verdict-routing.md).
+
+The launchd, systemd, WinSW, and `just` service surfaces are implemented as operations templates.
+Their three-OS install, reboot, crash-recovery, and unattended-listener behavior has not been
+accepted end to end; see [listener service status](scripts/service/README.md).
+
+An open product question remains: whether any of these dogfood runner/listener conveniences should
+eventually become an official Agent Workflow product surface. Until that decision is made, keep the
+boundaries distinct: core method/validation CLI, operations scripts, Agent Bus transport, listener
+service supervision, and a possible future Agent Host.
+
 ## What Agent Workflow Is Not
 
 Agent Workflow is **not**:
@@ -217,7 +246,7 @@ See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 |-------|-------|--------|
 | 0 | Contract Bootstrap | ✅ Current |
 | 1 | Minimum usable development loop | 📋 Planned |
-| 2 | Agent Bus brownfield dogfood | 📋 Planned |
+| 2 | Agent Bus brownfield dogfood | 🚧 Operations evidence collected; artifact loop incomplete |
 | 3 | Evidence-driven hardening | 📋 Deferred until dogfood |
 | Later | Optional external integrations (Agent Bus, AI Memory) | 📋 Deferred |
 
