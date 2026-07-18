@@ -164,10 +164,10 @@ Local CI-equivalent verification after the contract/schema changes:
 - `python -m compileall -q src scripts tests` — passed;
 - `git diff --check` — passed;
 - repository-local Markdown link scan — passed.
+- GitHub Actions run `29627053345` — passed under Python 3.11 (lint, tests, resource validation).
 
-The tests ran under Python 3.12 because the local venv's removed Python 3.11 interpreter
-made that old environment unusable. The project supports Python 3.11+, and PR CI runs the same suite
-under Python 3.11.
+Local tests ran under Python 3.12 because the local venv's removed Python 3.11 interpreter made that
+old environment unusable. GitHub Actions independently passed the required Python 3.11 suite.
 
 An independent `code-reviewer` reviewed 33 changed/new files against the full request and returned
 `REQUEST CHANGES` with no CRITICAL or HIGH findings and three MEDIUM consistency findings:
