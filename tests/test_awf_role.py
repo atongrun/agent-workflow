@@ -1825,6 +1825,22 @@ def test_run_verifications_uses_verification_env(monkeypatch, tmp_path):
     assert captured_env == expected_env
 
 
+def test_verification_child_runs_without_pythonutf8(monkeypatch, tmp_path):
+    """A real verification child omits forced UTF-8 mode but keeps UTF-8 output."""
+    monkeypatch.setenv("PYTHONUTF8", "1")
+    child_check = (
+        "import os; "
+        "assert 'PYTHONUTF8' not in os.environ; "
+        "assert os.environ.get('PYTHONIOENCODING') == 'utf-8'"
+    )
+    contract = awf_role.PostflightContract(
+        allowed_paths=[],
+        verification_commands=[[sys.executable, "-c", child_check]],
+    )
+
+    awf_role.run_verifications(str(tmp_path), contract)
+
+
 # ---------------------------------------------------------------------------
 # Verification-created files subject to path checks
 # ---------------------------------------------------------------------------
