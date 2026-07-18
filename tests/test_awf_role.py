@@ -2023,6 +2023,8 @@ def test_contract_empty_string_in_command(tmp_path):
 
 def test_secret_scan_quoted_tracked_filename(tmp_path):
     """A quoted Git path cannot detach added content from its known path."""
+    if os.name == "nt":
+        pytest.skip("Windows filesystems forbid the double quote character in filenames")
     repo = _init_repo(tmp_path)
     path = repo / 'a"b.py'
     path.write_text("value = 'safe'\n")
@@ -2030,6 +2032,20 @@ def test_secret_scan_quoted_tracked_filename(tmp_path):
     run("git", "commit", "-m", "add quoted path", cwd=repo)
     path.write_text(f"value = '{_GITHUB_TOKEN}'\n")
     run("git", "add", path.name, cwd=repo)
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
+def test_secret_scan_unicode_spaced_tracked_filename(tmp_path):
+    """A Windows-valid difficult tracked path reaches the known-path diff scan."""
+    repo = _init_repo(tmp_path)
+    path = repo / "café secret.py"
+    path.write_text("value = 'safe'\n", encoding="utf-8")
+    run("git", "add", path.name, cwd=repo)
+    run("git", "commit", "-m", "add Unicode spaced path", cwd=repo)
+    path.write_text(f"value = '{_GITHUB_TOKEN}'\n", encoding="utf-8")
+    run("git", "add", path.name, cwd=repo)
+
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
