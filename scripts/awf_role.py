@@ -174,6 +174,14 @@ def model_env() -> dict[str, str]:
     return e
 
 
+def verification_env() -> dict[str, str]:
+    """Credential-free environment for default-locale verification commands."""
+    e = model_env()
+    e.pop("PYTHONUTF8", None)
+    e["PYTHONIOENCODING"] = "utf-8"
+    return e
+
+
 def spawn(
     argv: list[str],
     *,
@@ -667,7 +675,7 @@ def run_verifications(repo: str, contract: PostflightContract) -> None:
     """
     for i, argv in enumerate(contract.verification_commands):
         log(f"postflight verification [{i + 1}/{len(contract.verification_commands)}]")
-        rc = spawn(argv, cwd=repo, env=model_env())
+        rc = spawn(argv, cwd=repo, env=verification_env())
         if rc != 0:
             die(f"postflight verification [{i + 1}] failed (rc={rc})")
 
