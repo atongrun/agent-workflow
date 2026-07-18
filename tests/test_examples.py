@@ -20,7 +20,7 @@ WORKFLOWS_DIR = PROJECT_ROOT / "workflows"
 def _load_yaml_file(path: Path) -> dict:
     import yaml
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

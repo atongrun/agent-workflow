@@ -6,6 +6,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -285,6 +286,16 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
         )
         fake_tool.chmod(0o755)
 
+    send_bin = executor / "send"
+    send_bin.write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "args = ' '.join(sys.argv[1:])\n"
+        "Path('send-called.txt').write_text(args, encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (executor / ".git" / "info" / "exclude").write_text("send\n", encoding="utf-8")
+
     state_root = tmp_path / "os-state"
     child_environment = dict(os.environ)
     child_environment.update(
@@ -294,7 +305,7 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
             "AWF_TOOL": "opencode",
             "AWF_BASE": "main",
             "AWF_OPENCODE_BIN": str(fake_tool),
-            "AWF_BUS_BIN": str(fake_tool),
+            "AWF_BUS_BIN": sys.executable,
             "AGENT_BUS_URL": "http://controlled.invalid",
             "AWF_REVIEWER_TOKEN": "controlled-test-token",
         }
@@ -1010,12 +1021,37 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
     (repo / "task.md").write_text("task\n", encoding="utf-8")
 
+    def _find_git_bash():
+        if os.name != "nt":
+            return "bash"
+        git_exe = shutil.which("git")
+        if git_exe:
+            candidate = Path(git_exe).resolve().parent.parent / "usr" / "bin" / "bash.exe"
+            if candidate.is_file():
+                return str(candidate)
+        for prog_files in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+            if prog_files:
+                candidate = Path(prog_files) / "Git" / "usr" / "bin" / "bash.exe"
+                if candidate.is_file():
+                    return str(candidate)
+        return "bash"
+
+    def _win_path_to_msys(path: str) -> str:
+        p = Path(path).resolve()
+        drive = p.drive.lower().rstrip(":")
+        rest = str(p).replace("\\", "/").split(":", 1)[1]
+        return f"/{drive}{rest}"
+
+    bash = _find_git_bash()
+    script_path = str(DISPATCH_PATH) if os.name != "nt" else _win_path_to_msys(str(DISPATCH_PATH))
+    repo_path = str(repo) if os.name != "nt" else _win_path_to_msys(str(repo))
+
     completed = subprocess.run(
         [
-            "bash",
-            str(DISPATCH_PATH),
+            bash,
+            script_path,
             "--repo",
-            str(repo),
+            repo_path,
             "--card",
             "task.md",
             "--branch",
@@ -1025,10 +1061,11 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
-    payload_line = next(line for line in completed.stdout.splitlines() if "payload=" in line)
+    stdout = completed.stdout.decode("utf-8", errors="replace")
+    _ = completed.stderr.decode("utf-8", errors="replace")
+    payload_line = next(line for line in stdout.splitlines() if "payload=" in line)
     payload = json.loads(payload_line.split("payload=", 1)[1])
     assert payload["report"] == ".awf/artifacts/impl-report-task.md"
     assert payload["review_report"] == ".awf/artifacts/review-report-task.md"
@@ -2051,6 +2088,8 @@ def test_contract_empty_string_in_command(tmp_path):
 
 def test_secret_scan_quoted_tracked_filename(tmp_path):
     """A quoted Git path cannot detach added content from its known path."""
+    if os.name == "nt":
+        pytest.skip('quoted filename a"b.py is invalid on Windows')
     repo = _init_repo(tmp_path)
     path = repo / 'a"b.py'
     path.write_text("value = 'safe'\n")
@@ -2058,6 +2097,20 @@ def test_secret_scan_quoted_tracked_filename(tmp_path):
     run("git", "commit", "-m", "add quoted path", cwd=repo)
     path.write_text(f"value = '{_GITHUB_TOKEN}'\n")
     run("git", "add", path.name, cwd=repo)
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
+def test_secret_scan_windows_valid_unicode_and_space_tracked_filename(tmp_path):
+    """A tracked Unicode-and-space filename on Windows contains a real secret after commit."""
+    repo = _init_repo(tmp_path)
+    filename = "café token.py"
+    path = repo / filename
+    path.write_text("value = 'safe'\n", encoding="utf-8")
+    run("git", "add", filename, cwd=repo)
+    run("git", "commit", "-m", "add unicode space file", cwd=repo)
+    path.write_text(f"value = '{_GITHUB_TOKEN}'\n", encoding="utf-8")
+    run("git", "add", filename, cwd=repo)
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 
