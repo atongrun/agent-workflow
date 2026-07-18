@@ -1,7 +1,8 @@
 # Repository Handoff
 
-> Current as of 2026-07-18, `main` at `db5a45c`. Repository files and Git refs are authoritative;
-> this document contains no private endpoint, credential, host, or personal-path data.
+> Current through the 2026-07-18 documentation truth refresh. The audited implementation baseline
+> is `db5a45c`; repository files and live Git refs are authoritative. This document contains no
+> private endpoint, credential, host, or personal-path data.
 
 ## Product Position
 
@@ -26,10 +27,9 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- `main` / `origin/main` at `db5a45c`; PR #1 through PR #14 are merged. The documentation-only
-  `codex/docs-truth-refresh` branch starts from that exact base.
-- Apart from the active truth-refresh branch, there are no remaining product or evidence branches.
-  All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
+- The authoritative product branch is `main`. Commit `db5a45c` is the audited implementation
+  baseline before this documentation refresh and contains merged PR #1 through PR #14.
+- All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
   prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
   evidence, not product direction.
 - A detached dirty postflight self-test worktree (`/private/tmp/agent-workflow-postflight-selftest`)
