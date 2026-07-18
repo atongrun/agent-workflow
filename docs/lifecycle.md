@@ -8,11 +8,13 @@ When a stage fails, the workflow can route back to an earlier stage:
 
 ```
 test (failed) ──→ implement (rework)
-review (request_changes) ──→ implement (rework)
+review (REQUEST_CHANGES) ──→ implement (deterministic rework)
 decide (request_changes) ──→ implement (rework)
 ```
 
-Rework loops are declared in `onFailure` transitions. The contract only records where a failed stage hands back to; it does not perform automatic retry.
+Reviewer `REQUEST_CHANGES` is valid only for deterministic failure evidence. Reviewer `BLOCKED`
+routes to Architect/Decider escalation, not automatic rework. Rework loops are bounded by the
+TaskCard or PhasePlan. The contract records the handoff; it does not perform automatic retry.
 
 ---
 

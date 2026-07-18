@@ -25,6 +25,16 @@
 
 - [Item]
 
+## Model Capacity Record
+<!-- Observable counts only. Do not invent unavailable token, price, or quota data. -->
+
+- **High-value model invocations:** [count]
+- **Lower-cost model invocations:** [count]
+- **Normal-path or escalation:** [classification]
+- **Roles and reason codes:** [TaskCard-linked entries]
+- **Deterministic rework count:** [count]
+- **Human interventions:** [count]
+
 ## Requested Decision
 <!-- What decision is needed from the Arbiter -->
 

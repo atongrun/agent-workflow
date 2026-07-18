@@ -15,6 +15,7 @@ spec:
     - Decompose work into structured, implementable tasks
     - Identify risks, dependencies, and unknowns
     - Define acceptance criteria and scope boundaries
+    - Compress current-task facts from approved sources into a self-contained TaskCard
     - Produce a TaskCard artifact for downstream stages
   capabilities:
     - Read task descriptions and requirements
@@ -22,6 +23,7 @@ spec:
     - Reason about task decomposition
     - Write TaskCard artifacts
     - Define scope and out-of-scope boundaries
+    - Consult optional long-term context without making it an executor dependency
   forbiddenActions:
     - Modify code or configuration files
     - Approve own plan as final
@@ -34,6 +36,7 @@ spec:
     - TaskCard
   completionCriteria:
     - TaskCard produced with background, goal, scope, outOfScope, acceptanceCriteria, risks
+    - TaskCard lets a fresh-session executor start without planner chat or AI Memory lookup
     - Scope boundaries are explicit and unambiguous
     - Risks are identified with severity
   escalationConditions:

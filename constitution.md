@@ -1,170 +1,201 @@
 # Development Constitution
 
-This file is the single source of truth for **how** a project is developed under
-Agent Workflow. It is a portable set of rules — a development method and handoff
-protocol — that any AI coding agent (Claude Code, Codex, OpenCode, Hermes, …) can
-follow. It does **not** describe how any agent plans, calls sub-agents, executes,
-or reviews internally; that is each runner's own concern.
+This file is the normative development method and handoff protocol for Agent Workflow. It defines
+what happens, who is responsible, which Artifact proves a transition, and when work must converge,
+rework, escalate, or stop. It does not run models, schedule agents, transport events, or manage an
+agent client's internal reasoning loop.
 
-Agent Workflow only defines: **what to do, who is responsible, what the inputs and
-outputs are, and when to stop.** It never executes, schedules, or orchestrates.
+## 1. Product Objective and Operating Modes
 
----
+Agent Workflow optimizes a **downstream project's continuing dependence on high-value-model
+capacity**, not total model calls or total tokens.
 
-## 1. Project Mode
+- A **high-value model** has stronger capability for the decision at hand but is expensive or
+  capacity-limited.
+- A **lower-cost model** is suitable for frequent, bounded work. An **execution model** is the model
+  currently assigned to Executor, Tester, or first-line Reviewer duties.
 
-Every project declares one mode before work begins:
+These are vendor-neutral roles, not permanent labels. Projects record the actual model/runtime used
+as run evidence without putting a vendor in the method contract.
 
-- **Greenfield** — a new project. Start from goal → architecture → phase plan → tasks.
-- **Brownfield** — an existing project. Start from a verified baseline (see §3). This
-  is the default and the primary target.
+Two modes must not be confused:
 
-## 2. Starting a New Project (Greenfield)
+1. **Infrastructure development.** Critical infrastructure may use high-value models freely for
+   architecture, implementation, safety, failure diagnosis, strong review, and real-environment
+   validation. Reliability and evidence quality take precedence over reducing such use.
+2. **Downstream operation.** High-value models concentrate on architecture, exceptional judgment,
+   explicit escalation, and Phase/Milestone acceptance. Lower-cost models handle bounded planning,
+   execution, testing, first-line review, deterministic rework, and Artifact preparation.
 
-1. Capture the goal and hard constraints.
-2. Run architecture convergence (§4) to freeze only what the first milestone needs.
-3. Produce a coarse phase plan; detail only the current phase (§5).
-4. Emit the first `TaskCard` and enter the execution loop (§6).
+## 2. Project Mode
 
-## 3. Starting from an Existing Project (Brownfield)
+Every project declares one starting mode:
 
-Before any architecture work, record a short baseline:
+- **Greenfield** — capture goal and hard constraints, converge the architecture needed for the
+  first milestone, create a coarse PhasePlan, detail the current phase, then issue a TaskCard.
+- **Brownfield** — begin from a verified baseline. This is the default and primary target.
 
-- capabilities already implemented **and actually verified**;
-- current constraints and accepted boundaries;
-- unfinished work and the next explicit milestone;
-- current blockers and available test evidence.
+For brownfield work, record verified capabilities, accepted constraints, unfinished work, the next
+milestone, blockers, and available test evidence. The default path is:
 
-Default path:
+```text
+Current Baseline → Next Milestone → Incremental Plan → Current TaskCard → Execute and Verify
+```
 
-`Current Baseline → Next Milestone → Incremental Plan → Current TaskCard → Execute and Verify`
+Existing verified behavior is the baseline. Debt, optional optimization, and future extensions are
+`Later`; they do not block the current milestone.
 
-Existing working behavior **is** the baseline. Do not restart from whole-system
-architecture or propose broad refactors just because a cleaner design exists.
-Historical debt, general optimization, and future extensions go to `Later` and
-cannot block the current task.
+## 3. Architecture Convergence
 
-## 4. Architecture Convergence
+- Single-architect mode uses one Architect plus a separate, limited self-challenge invocation.
+- Dual-architect mode uses one primary Architect and one goal-bounded challenger; the primary owns
+  convergence.
+- By round three, the outcome must be `frozen`, `frozen_with_known_risk`, or `waiting_human`.
+- Reopen a frozen decision only when it blocks the milestone, the core path cannot run, a
+  predefined high-risk change requires it, or the project goal changed.
 
-- **Single-architect mode**: one architect plus a separate, limited self-challenge pass.
-- **Dual-architect mode**: one primary architect and one goal-bounded challenger. The
-  primary owns convergence.
-- **Round limit**: by round **three**, architecture must be one of `frozen`,
-  `frozen_with_known_risk`, or `waiting_human`. No unbounded architecture debate.
-- Reopen a frozen decision only when: the current architecture blocks the milestone,
-  the core path cannot run, or the project goal changed.
+No Stage or Reviewer may reopen architecture merely for preference or optimization.
 
-## 5. Progressive Planning
+## 4. Progressive Planning
 
-- Keep future phases **coarse**. Detail only the current phase.
-- When all current-phase exit criteria have evidence, emit a phase-advance packet and
-  only then detail the next phase.
-- A `TaskCard` is the smallest executable unit: background, goal, scope, out-of-scope,
-  acceptance criteria, risks.
+- Keep future phases coarse; detail only the current phase.
+- A Phase advances only when every current-phase exit criterion has auditable evidence.
+- A `TaskCard` is the smallest executable unit: background, one goal, scope, explicit exclusions,
+  inputs, acceptance criteria, verification, risks, and required outputs.
+- Planner/Architect decisions that affect execution must be compressed into versioned Artifacts.
 
-## 6. What May Be Delegated to an Executor
+## 5. TaskCard and Knowledge Boundary
 
-A task may be handed to an execution model when it has:
+A TaskCard is the self-contained execution context for one current task. A fresh-session Executor
+must be able to start from:
 
-- an unambiguous, bounded scope (explicit out-of-scope);
-- concrete acceptance criteria;
-- the inputs it needs already available.
+- the TaskCard;
+- the repository content and project `AGENTS.md`;
+- explicitly listed inputs.
 
-Ambiguous goals, unresolved architecture, or missing required context must **not** be
-delegated — they escalate (§7).
+The Executor must not need the Planner's chat history or be forced to search AI Memory for required
+facts. A Planner or Architect may read AI Memory and copy only the current, non-private facts needed
+for success into the TaskCard. Do not copy the entire memory corpus.
 
-### 6a. Self-contained handoff
+Information belongs in one of three places:
 
-A `TaskCard` is the **complete** handoff package. An executor — a coding agent such as
-OpenCode, possibly on another machine, in a fresh session with no chat history — must be
-able to complete the task **from the card alone**. If the executor would need something
-that lives only in the planner's conversation, that thing belongs in the card.
+| Layer | Required content |
+|---|---|
+| Repository Truth | Versioned code, project rules, ArchitectureRecord, PhasePlan, TaskCard, reports, decisions, tests, and PR evidence |
+| Run Context | Current Stage, Artifact, role, branch/commit/PR, retry, failure, and escalation status |
+| AI Memory | Long-term background, historical explanation, private environment facts, preferences, and cross-project knowledge |
 
-The card carries the task's own working context (repository path, entry points, relevant
-files, what must not regress) and points to the **project's own `AGENTS.md`** for stack,
-conventions, and real commands. Keep the two separate: this method (roles, workflow,
-handoff rules) is portable across projects; a project's `AGENTS.md` holds that project's
-facts. The card is where they meet — its acceptance and verification commands are the
-project's real commands.
+Task success requirements belong in auditable Artifacts. AI Memory is a potential upstream source,
+not an Executor runtime dependency and not the authority for the next Workflow transition.
 
-### 6b. Consistency gate before delegation
+Before delegation, the Planner verifies that the goal is singular, scope is explicit, acceptance
+criteria are observable, commands are real, the context is sufficient for a fresh session, and the
+task advances the current milestone. See [`templates/artifacts/task-card.md`](templates/artifacts/task-card.md).
 
-A card is not ready to delegate until it passes a self-check (the planner runs it; it is a
-checklist, not a tool). At minimum:
+## 6. Normal Path
 
-- the goal is a single concrete deliverable;
-- scope and out-of-scope are explicit and non-overlapping;
-- every acceptance criterion is verifiable by a command or observable check;
-- verification commands are the project's real commands;
-- the card lets a fresh-session executor start without the planner's chat history;
-- the task advances the current milestone — no unrelated refactors.
+The preferred downstream path is:
 
-See `templates/artifacts/task-card.md` for the structure and the embedded self-check.
+```text
+Planner / task generator
+→ Executor
+→ deterministic verification
+→ first-line Reviewer
+→ PASS or deterministic rework
+→ next TaskCard
+```
 
-## 7. Rework vs. Escalation
+An optional Tester may provide separate evidence. A Decider may initially be the Architect. Lower-
+cost models should complete this normal path where task boundaries and evidence permit.
 
-**Rework at the execution end** is allowed only for **deterministic failures**:
+The longer project loop is:
+
+```text
+User goal → Architecture / Planning → PhasePlan → TaskCard → Dispatch → Execute → Test
+→ Review → Decision → Merge or deterministic rework → Next TaskCard
+→ continue until Phase or Milestone completion
+```
+
+## 7. Deterministic Rework
+
+`REQUEST_CHANGES` returns to the lower-cost execution chain only for deterministic failures:
 
 - compile or test failure;
-- a failed acceptance criterion;
-- missing required evidence;
-- a clear TaskCard violation.
+- an unmet acceptance criterion;
+- an allowed-path or explicit TaskCard violation;
+- a missing required ImplementationReport, TestReport, ReviewReport, or other evidence;
+- a secret/privacy violation in a versioned Artifact or change.
 
-**Escalate (do not silently rework)** when:
+Deterministic rework is bounded by the current PhasePlan or TaskCard. Exceeding that bound escalates;
+it does not create an infinite loop. Style preferences, optional improvements, and a Reviewer's
+personal architecture preference are advisory and never consume rework or block completion.
 
-- the goal is fundamentally ambiguous after reasonable clarification;
-- required context is unavailable and blocks progress;
-- there is an architecture tradeoff or scope dispute;
-- a decision conflicts with a frozen architecture record.
+## 8. Escalation
 
-Architecture tradeoffs, scope disputes, and non-blocking improvements go into the
-`DecisionPacket`. **Optional improvements never block task or phase completion.**
+A high-value model may be invoked when—and only when—the run records a role and reason code for one
+of these conditions:
 
-## 8. Reviewer Authority (Boundary)
+- fundamental goal or requirement ambiguity;
+- a TaskCard cannot be produced within frozen architecture;
+- frozen architecture must be reopened;
+- the Reviewer returns genuine `BLOCKED` with evidence;
+- bounded deterministic rework is exhausted;
+- a predefined high-risk scope is entered;
+- a Phase or Milestone acceptance point is reached;
+- the project goal changed;
+- available evidence cannot support a reliable decision.
 
-First-line review may **only** return deterministic failures (the §7 list). It may
-**not**:
+Ordinary test failure, missing evidence, allowed-path violation, normal `REQUEST_CHANGES`, style,
+and non-blocking optimization do not escalate by default.
 
-- rewrite or merge code;
-- approve its own implementation;
-- block on style preferences, scope opinions, or non-blocking improvements.
+## 9. Reviewer and Decider Authority
 
-Non-deterministic concerns are recorded as findings in the `ReviewReport` and carried
-into the `DecisionPacket` for the decider — they are advisory, not blocking.
+The first-line Reviewer uses exactly these semantic verdicts:
 
-## 9. Required Artifacts per Stage
+- `PASS` — acceptance and evidence are sufficient for the next decision/merge gate.
+- `REQUEST_CHANGES` — one or more deterministic failures must return to the Executor.
+- `BLOCKED` — evidence shows the task cannot safely progress inside the current TaskCard and frozen
+  architecture.
 
-Each stage must produce a structured artifact. Agents hand off via these artifacts,
-**not** free-form chat. Templates live in `templates/artifacts/`.
+The Reviewer does not edit or merge code, approve its own work, reopen architecture, or block on
+advisory findings. A final Decider uses `approve`, `request_changes`, `reject`, or `escalate` and owns
+the project-level decision. Reviewer verdicts and Decider decisions are distinct contracts.
 
-| Stage | Role | Required Artifact |
-|-------|------|-------------------|
-| plan | planner | `TaskCard` |
-| implement | implementer | `ImplementationReport` |
-| test | tester | `TestReport` |
-| review | reviewer | `ReviewReport` |
-| summarize | summarizer | `DecisionPacket` (compressed; excludes full diffs by default) |
-| decide | arbiter | `Decision` (`approve` / `request_changes` / `reject` / `escalate`) |
+## 10. Required Artifacts
 
-## 10. Handoff Across Clients, Models, and Machines
+| Stage | Product role | Current schema role | Required Artifact |
+|---|---|---|---|
+| architecture / plan | Architect / Planner | `planner` | `ArchitectureRecord`, `PhasePlan`, then `TaskCard` |
+| execute | Executor | `implementer` | `ImplementationReport` |
+| test (optional) | Tester | `tester` | `TestReport` |
+| first-line review | Reviewer | `reviewer` | `ReviewReport` |
+| compress | Summarizer | `summarizer` | `DecisionPacket` |
+| decide | Decider | `arbiter` | `Decision` |
 
-- The artifact chain — not chat history — is the portable state. Any client can read
-  the last artifact and produce the next.
-- Roles bind to **no** model or runner. The same workflow runs under any tool.
-- A tool may be swapped at any stage boundary; the contract does not change.
-- Cross-machine transport and shared long-term memory are **external, optional**
-  concerns (see `docs/later/`). The method here runs with only local files.
+The v1alpha1 Artifact schema recognizes `ArchitectureRecord` and `PhasePlan` while keeping their
+content open during initial dogfood; their templates define the current minimum handoff shape. Each
+formal handoff uses an Artifact, not a chat transcript.
 
-## 11. Privacy Discipline (Artifacts Are Version-Controlled)
+## 11. External Boundaries
 
-Artifacts (TaskCards, reports, reviews, decisions) are committed to git and may be pushed
-to shared/remote repos. They must therefore contain **no private or secret values**:
+- Agent Workflow owns method semantics and Artifact contracts; it does not execute or transport.
+- Agent Bus owns endpoint/agent identity, delivery, ACK, retry, and failure propagation. It does
+  not interpret Workflow Stage, Review verdict, or completion semantics.
+- AI Memory owns long-term and private context. It does not replace versioned Artifacts or select
+  the next Stage.
+- A future external runtime may compose these projects. Agent Workflow currently specifies no
+  Agent Host integration, Plugin SDK, provider adapter, or generic runtime.
 
-- **Never** put in an artifact: auth tokens/secrets, real server IPs/hostnames, SSH aliases,
-  or absolute personal paths (e.g. a home directory or a specific drive path).
-- **Instead** use placeholders and env vars: `$AGENT_BUS_URL`, `<coder-token>`,
-  `<repo>` / repo-relative paths. Verification commands read secrets from the environment.
-- Private concrete values (real IPs, tokens, machine paths, host layout) live **only in
-  private long-term memory** (the operator's AI Memory), never in a committed artifact.
-- The reviewer checks for leaked secrets/PII as part of every review, the same way it checks
-  scope. A leaked secret is a deterministic failure (rework).
+## 12. Privacy Discipline
+
+Versioned Artifacts must contain no credentials, real private endpoints, SSH aliases, or absolute
+personal paths. Use placeholders, repository-relative paths, and environment-variable names.
+Private concrete values remain in the operator's private memory/environment. A leak is a
+deterministic failure.
+
+## 13. Completion
+
+A Task completes only when required Artifacts and verification evidence exist, deterministic
+failures are closed, and the authorized decision is recorded. A Phase/Milestone completes only when
+its exit criteria have evidence and any required high-value acceptance is recorded. Technical event
+delivery alone is never proof of Workflow completion or downstream product value.

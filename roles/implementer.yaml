@@ -27,7 +27,8 @@ spec:
     - Merge code without review
   requiredInputs:
     - TaskCard
-    - Binding profile (runner configuration)
+    - Repository content and project AGENTS.md
+    - Explicit inputs listed by the TaskCard
   producedArtifacts:
     - ImplementationReport
   completionCriteria:

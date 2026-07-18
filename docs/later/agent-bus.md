@@ -1,119 +1,53 @@
-# Agent Bus Integration (Later — Not in Core)
+# Agent Bus Boundary (Later External Composition)
 
-> **Status: deferred.** This is a future, optional external integration. The Agent
-> Workflow core does **not** reserve interfaces for it and ships no adapter or event
-> port. The method runs with only local files. This document is retained as a
-> boundary record: when a real project needs cross-machine transport, a fresh adapter
-> is written against Agent Bus's actual API — not a pre-built stub.
+> **Status: external and deferred.** Agent Workflow ships no Agent Bus adapter, event port, or
+> Workflow Engine. The current `scripts/` integration is an operations dogfood surface, not core.
 
-This document describes how Agent Workflow *would* integrate with [Agent Bus](https://github.com/atongrun/agent-bus) — the cross-machine durable event relay.
+## Ownership
 
-## Integration Model
+Agent Bus owns:
 
-```
-Agent Workflow                    Agent Bus
-┌──────────────┐                ┌──────────────┐
-│ Workflow     │── publish ────►│ POST /events │
-│ Engine       │                │              │
-│              │◄── subscribe ──│ SSE stream   │
-└──────────────┘                └──────────────┘
-```
+- endpoint and agent identity;
+- event delivery and replay;
+- ACK, retry, and failure propagation;
+- durable transport evidence.
 
-- Agent Workflow **produces** workflow events.
-- Agent Bus **transports** them to remote agents.
-- Agent Workflow **owns** workflow state.
-- Agent Bus **does not** interpret business events or decide next stages.
+Agent Bus does not understand or decide:
 
-## Agent Workflow Events
+- Workflow Stage or allowed transition;
+- ReviewReport semantics;
+- deterministic rework versus escalation;
+- TaskCard, Phase, Milestone, merge, or project completion.
 
-Agent Workflow publishes these event types:
+Agent Workflow owns those method semantics as Artifact contracts. An external runner interprets the
+current Artifact/Run Context and chooses which Agent Bus event to send. The transport treats that
+domain payload as opaque.
 
-| Event Type | When |
-|------------|------|
-| `workflow.run.created` | Workflow run initialized |
-| `workflow.run.started` | First stage begins |
-| `workflow.run.completed` | Terminal state reached |
-| `workflow.run.failed` | Unrecoverable error |
-| `workflow.stage.ready` | Stage inputs available |
-| `workflow.stage.started` | Stage execution begins |
-| `workflow.stage.waiting` | Stage waiting for external input |
-| `workflow.stage.completed` | Stage finished successfully |
-| `workflow.stage.failed` | Stage failed |
-| `workflow.artifact.published` | Artifact stored and available |
-| `workflow.decision.required` | Arbiter decision needed |
-| `workflow.decision.recorded` | Decision recorded |
-| `workflow.memory.context.requested` | Context query sent to AI Memory |
-| `workflow.memory.context.available` | Context returned from AI Memory |
-| `workflow.memory.write-candidates.published` | Memory candidates submitted |
+## Current Dogfood Evidence
 
-## Event Structure
+Repository operations scripts have used the real Agent Bus CLI to demonstrate:
 
-Every event carries:
+- pointer dispatch to a versioned TaskCard;
+- role listener → trusted handler → model child process boundaries;
+- handler success as an ACK gate;
+- coder postflight, commit/push, refreshed remote-SHA proof, and reviewer handoff;
+- durable handler lifecycle records outside the checkout;
+- a real Windows no-code handler-return followed by success-gated ACK.
 
-```json
-{
-  "eventId": "uuid",
-  "eventType": "workflow.stage.completed",
-  "schemaVersion": "1.0",
-  "occurredAt": "2026-07-07T12:00:00Z",
-  "workflowRunId": "run-123",
-  "stageRunId": "stage-456",
-  "taskId": "task-789",
-  "correlationId": "run-123",
-  "causationId": "stage-start-event-id",
-  "producer": {
-    "project": "agent-workflow",
-    "component": "workflow-engine"
-  },
-  "payload": {}
-}
-```
+This is engineering evidence, not a stable integration protocol. The current Reviewer still maps
+tool completion to a placeholder and cannot route a validated semantic `PASS`, deterministic
+`REQUEST_CHANGES`, or `BLOCKED`. Merge and next-TaskCard continuation have not been proven in one
+uninterrupted cross-machine chain.
 
-## Design Rules
+## Future Composition Rule
 
-1. **Agent Workflow owns workflow state.** Agent Bus transports events; it does not interpret them.
-2. **Agent Bus does not decide next stages.** That is the workflow engine's responsibility.
-3. **All events support idempotent processing.** Consumers use `eventId` for deduplication.
-4. **`correlationId` chains a workflow run.** All events for the same run share the same `correlationId`.
-5. **`causationId` links cause and effect.** The event that triggered the current event.
-6. **Agent Bus does not store full artifact bodies.** It passes artifact references or small event payloads. Large artifacts live in the Artifact Store.
-7. **Event types are namespaced under `workflow.*`** to avoid collisions with other Agent Bus producers.
+A future external runtime may combine Agent Workflow Artifacts with Agent Bus transport only after
+real dogfood demonstrates a repeated need. It should:
 
-## Current Agent Bus Compatibility
+1. carry a bounded Artifact or immutable reference plus branch/commit provenance;
+2. fail closed when required content cannot reach the next role;
+3. keep delivery/ACK status separate from semantic completion;
+4. avoid teaching Agent Bus Workflow-specific verdicts or transitions.
 
-*Based on inspection of `agent-bus` v0.1 at `github.com/atongrun/agent-bus`.*
-
-### Confirmed Interfaces
-
-| Agent Bus Feature | Status | Notes |
-|------------------|--------|-------|
-| `POST /events` | ✅ Available | Accepts `from_agent`, `to_agent`, `type`, `payload` |
-| `GET /events/stream?agent=` | ✅ Available | SSE stream with replay for un-ACKed events |
-| `POST /events/{id}/ack` | ✅ Available | Acknowledges event processing |
-| `GET /health` | ✅ Available | Health check (no auth) |
-| Bearer token auth | ✅ Available | Single shared token |
-| Event persistence (SQLite) | ✅ Available | Events stored before delivery |
-| At-least-once delivery | ✅ Available | Events remain pending until ACKed |
-
-### Known Gaps
-
-| Gap | Impact | Resolution |
-|-----|--------|------------|
-| Agent Bus event schema uses `from_agent`/`to_agent`, not producer/consumer model | Agent Workflow events need adaptation | Phase 2 adapter will map workflow events to agent-bus wire format |
-| Agent Bus event types are ad-hoc (`task:new`, `pr:ready`, etc.) | No standard event taxonomy | Agent Workflow namespace (`workflow.*`) avoids collisions |
-| No event filtering by type in SSE stream | Consumers receive all events for their agent | Acceptable for Phase 2 — filter client-side |
-| Single shared token | No per-agent access control | Acceptable for Phase 2 single-user setup |
-| No dead-letter queue | Failed events not retried automatically | Phase 4 consideration |
-
-### Deferred to Phase 2
-
-- Production `AgentBusAdapter` implementation
-- Event type mapping layer
-- Client-side event filtering
-- Retry with backoff for publish failures
-
-### TODO
-
-- [ ] Define stable Agent Bus event wire format alignment (Phase 2)
-- [ ] Implement `AgentBusAdapter` that maps workflow events to agent-bus `POST /events` format (Phase 2)
-- [ ] Test cross-machine workflow stage dispatch via Agent Bus (Phase 2)
+No Agent Bus protocol redesign, generic adapter, event taxonomy, or retry policy is authorized by
+this boundary note.

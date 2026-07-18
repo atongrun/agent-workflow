@@ -93,3 +93,58 @@ spec: {}
         errors = validate_file(file_path)
         assert errors
         assert any("unknown kind" in e.lower() for e in errors)
+
+
+class TestPlanningArtifactTypes:
+    """Method-level planning artifacts are recognized without opening their content schema."""
+
+    @pytest.mark.parametrize("artifact_type", ["ArchitectureRecord", "PhasePlan"])
+    def test_planning_artifact_type_passes(self, tmp_path: Path, artifact_type: str):
+        file_path = tmp_path / f"{artifact_type}.yaml"
+        file_path.write_text(
+            f"""
+apiVersion: agent-workflow/v1alpha1
+kind: Artifact
+metadata:
+  name: planning-artifact
+  version: "0.1.0"
+spec:
+  artifactId: artifact-1
+  artifactType: {artifact_type}
+  schemaVersion: "0.1.0"
+  workflowRunId: run-1
+  createdAt: "2026-07-18T00:00:00Z"
+  createdBy:
+    role: planner
+    runner: manual
+  content: {{}}
+"""
+        )
+
+        assert not validate_file(file_path)
+
+    def test_unknown_artifact_type_fails(self, tmp_path: Path):
+        file_path = tmp_path / "unknown-artifact.yaml"
+        file_path.write_text(
+            """
+apiVersion: agent-workflow/v1alpha1
+kind: Artifact
+metadata:
+  name: unknown-artifact
+  version: "0.1.0"
+spec:
+  artifactId: artifact-1
+  artifactType: ArbitraryGraphState
+  schemaVersion: "0.1.0"
+  workflowRunId: run-1
+  createdAt: "2026-07-18T00:00:00Z"
+  createdBy:
+    role: planner
+    runner: manual
+  content: {}
+"""
+        )
+
+        errors = validate_file(file_path)
+        assert errors
+        assert any("artifactType" in error or "enum" in error for error in errors)

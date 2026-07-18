@@ -7,7 +7,8 @@ metadata:
 spec:
   description: >
     Fixes a reported bug through triage → plan → implement → test → review → decide.
-    Includes a triage stage for root cause analysis before planning.
+    Includes a triage stage for root cause analysis before planning. Reviewer onFailure means
+    deterministic REQUEST_CHANGES only; BLOCKED escalates to Architect/Decider.
   inputs:
     - name: bug-report
       required: true
@@ -54,6 +55,7 @@ spec:
       outputs:
         - ReviewReport
       onSuccess: decide
+      # Deterministic REQUEST_CHANGES only; BLOCKED escalates outside the normal rework path.
       onFailure: implement
     - id: decide
       role: arbiter

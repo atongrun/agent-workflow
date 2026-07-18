@@ -1,98 +1,105 @@
 # Roadmap
 
-## Product Gate
+## Product Gates
 
-**Use first, abstract second.** Agent Workflow must complete one real brownfield development loop before expanding generic infrastructure. Requirements that have not appeared in real use do not enter the core architecture.
+1. **Use first, abstract second.** A requirement enters the stable core only after real use proves
+   it belongs there.
+2. **Engineering feasibility is not product value.** Cross-machine dispatch and ACK prove transport
+   boundaries. Downstream value requires evidence that frequent high-value-model participation was
+   replaced by a lower-cost execution/review chain without losing completion quality.
 
-The first proof project is Agent Bus. Until its baseline-to-decision run completes, do not expand UI, cross-machine automation, a generic plugin system, complex runtime machinery, arbitrary DAGs, or generalized retry/retrieval protocols.
+Before UI, a generic engine, arbitrary DAGs, Plugin SDK, Agent Host integration, or broad runtime
+automation, complete one downstream Phase that records model role, invocation class, escalation
+reason, deterministic rework, human intervention, and TaskCard completion.
 
-## Phase 0: Contract Bootstrap ✅ Current
+## Phase 0: Method Contract and Validation CLI ✅
 
-- [x] Repository and project structure
-- [x] The development method in one file (`constitution.md`)
-- [x] JSON Schema and semantic validation (Role, Workflow, Artifact)
-- [x] Initial roles, workflows, and artifact templates
-- [x] Validation/inspection CLI
-- [x] Concepts, handoff-semantics, and ADR documentation
+- [x] Normative development constitution
+- [x] Role, Workflow, and Artifact schemas plus semantic validation
+- [x] Default roles, staged workflow examples, and handoff templates
+- [x] Stateless `validate` and `inspect` CLI
 - [x] Tests and CI
 
-Phase 0 is validation-only. It is not a usable development workflow because a user cannot initialize a run, establish a brownfield baseline, obtain architecture/phase/task artifacts, or submit execution results.
+The CLI validates contracts only. Earlier ports, adapters, Policy/Event/BindingProfile schemas, and
+control-plane runtime concepts were removed. The core is not a Workflow Engine.
 
-> The earlier Phase 0 shipped Runner/EventBus/Memory ports, local adapter stubs, and BindingProfile/Policy/Event schemas. These were removed when the project was refocused as a portable method + handoff protocol; execution, transport, and memory belong to each agent client or to deferred external projects (`docs/later/`), not the core.
+## Phase 1: Product Positioning and Repository Truth 🚧
 
-## Phase 1: Minimum Usable Development Loop 📋
+- [x] Define high-value-model capacity isolation as the downstream objective
+- [x] Separate infrastructure-development and downstream-operation modes
+- [x] Define normal-path, escalation, deterministic-rework, and Reviewer authority semantics
+- [x] Define Repository Truth, Run Context, TaskCard, and AI Memory boundaries
+- [x] Classify current branches, PRs, operations evidence, and incomplete links
+- [x] Add product-positioning ADR and measurable product metrics
+- [ ] Merge the positioning PR and refresh the next implementation TaskCard from the resulting main
 
-The acceptance path is documented in [Development Workflow MVP](docs/development-workflow-mvp.md).
+## Phase 2: Close the Proven Operations Gap 📋
 
-- [ ] `awf init` accepts a project, goal, architecture mode, executor, reviewer, and decider
-- [ ] Brownfield initialization records verified capabilities, constraints, unfinished work, next milestone, blockers, and test evidence
-- [ ] Any generated Workflow YAML remains internal output rather than required user input
-- [ ] `awf status`, `awf next`, and `awf submit` support resumable manual handoff **statelessly** — progression is a function of which artifacts exist on disk, not a private state machine
-- [ ] Single-architect self-challenge and dual-architect one-primary/one-challenger modes
-- [ ] Three-round hard stop: freeze, freeze with known risk, or wait for user
-- [ ] Separate project `ArchitectureRecord`, current `PhasePlan`, and executable `TaskCard`
-- [ ] Only deterministic failures may return to execution; optional improvements cannot block
-- [ ] Compressed DecisionPacket excludes full diffs by default
-- [ ] Next TaskCard or next-phase refinement follows a completed decision
-- [ ] Quick Start runs end to end in a temporary fixture
+The non-core operations surface has already demonstrated:
 
-Keep `awf` limited to these method-specific, stateless helpers: render the next packet, validate submitted artifacts. It must not execute models, hold run state, or decide transitions — the human plus the chosen agent client drive progression.
+- exact dispatched-commit checkout;
+- model credential/stdin isolation;
+- required ImplementationReport and trusted postflight gates;
+- allowed-path, secret, and diff checks;
+- commit/push plus refreshed remote-SHA proof;
+- durable handler lifecycle evidence;
+- a real Windows no-code handler-return followed by success-gated Agent Bus ACK.
 
-## Phase 2: Agent Bus Brownfield Dogfood 📋
+It has **not** demonstrated a complete semantic review loop. Tool exit zero and
+`tool-review-complete` are not `PASS`; `REQUEST_CHANGES` and `BLOCKED` are not yet safely routed as
+structured ReviewReports. Consequently the uninterrupted sequence from review verdict through
+merge and next TaskCard is incomplete.
 
-Run the complete [Agent Bus example](examples/agent-bus-dogfood/README.md) before broader hardening.
+After this positioning branch merges:
 
-The repository has already collected substantial **operations dogfood** outside the Phase 0
-validation CLI: exact checkout synchronization, trusted executor boundaries, postflight completion,
-OpenCode argv portability, push plus remote-SHA proof, durable handler evidence, and a real Windows
-handler-return/ACK gate are on `main`. Agent Bus v0.2.0 has also completed a separate real
-three-endpoint transport acceptance. These facts do not complete the artifact-chain checklist below:
-the current reviewer path still treats tool completion as a placeholder verdict and cannot safely
-route a structured ReviewReport.
+- [ ] Regenerate [`docs/tasks/reviewer-verdict-routing.md`](docs/tasks/reviewer-verdict-routing.md)
+  against the new `origin/main`; never dispatch its pre-merge SHA.
+- [ ] Implement and deterministically test `PASS`, `REQUEST_CHANGES`, and `BLOCKED` routing.
+- [ ] Verify send failure keeps the current review event unacknowledged.
+- [ ] Run a fresh isolated cross-machine acceptance without consuming preserved failure events or
+  checkouts.
+- [ ] Record semantic verdict → decision/merge → next-TaskCard evidence.
 
-The next and only P0 is [reviewer verdict routing](docs/tasks/reviewer-verdict-routing.md). Until it
-lands, `tool-review-complete`, process exit zero, and a missing or malformed report must never be
-treated as PASS or used to advance a workflow.
+This Phase changes the operations surface only. It does not promote runner/listener behavior into
+the stable core or modify Agent Bus protocol.
 
-- [ ] Regenerate and verify the existing Agent Bus baseline
-- [ ] Freeze only the architecture needed for the next diagnostic milestone
-- [ ] Produce the current phase plan and `ABUS-DIAG-001` TaskCard
-- [ ] Implement and test the non-mutating `agent-bus doctor --json` slice
-- [ ] Complete first-line review and compressed final decision
-- [ ] Record architecture rounds, manual handoffs, deterministic rework, optional suggestions, packet size, and targeted context requests
-- [ ] Continue to the next task or next phase from the same run
+## Phase 3: First Downstream Capacity-Isolation Dogfood 📋 Product Gate
 
-Success means the artifact chain is complete and Agent Bus made a verified increment—not that Agent Workflow supports every project shape.
+Select a real downstream software project, not Agent Workflow or its supporting infrastructure.
+Create one PhasePlan that can drive multiple bounded TaskCards and compare it with the project's
+previous high-value-model-led baseline.
 
-Service supervision remains a separate operations candidate. launchd, systemd, WinSW, and `just`
-surfaces exist, but their three-OS install, reboot, crash-recovery, and unattended-listener behavior
-has not been accepted. Whether runner/listener conveniences formally belong to Agent Workflow is an
-open product decision; do not resolve it by silently moving execution or transport into the core.
+First-run suggestions (adjustable evidence targets, not permanent product contracts):
 
-## Phase 3: Evidence-Driven Hardening 📋
+- [ ] Complete at least three real TaskCards.
+- [ ] Complete at least two without a high-value-model invocation.
+- [ ] Keep normal `PASS` and deterministic `REQUEST_CHANGES` chains high-value-model-free.
+- [ ] Record every high-value-model invocation with project, TaskCard, role, path class, and reason
+  code.
+- [ ] Allow high-value escalation for genuine `BLOCKED`, architecture reopen, predefined high risk,
+  insufficient evidence, or Milestone acceptance.
+- [ ] Compare high-value invocations per completed TaskCard and human intervention with the prior
+  baseline.
 
-- [ ] Fix only failures or repeated manual burden observed in dogfood
-- [ ] Run a second bounded Agent Bus task
-- [ ] Promote behavior into a reusable core capability only after repeated evidence
-- [ ] Package schemas and add install smoke tests when needed by real use
-- [ ] Improve recovery or automation only where the run proves value
+Do not claim success from total-token reduction alone, and do not require precise provider token,
+price, or quota APIs. See [`docs/product-metrics.md`](docs/product-metrics.md).
 
-## Later: Optional Integrations
+## Phase 4: Evidence-Driven Helpers 📋
 
-Consider these only after the real-project gate:
+- [ ] Fix only failures or repeated manual burden observed in the downstream run.
+- [ ] Repeat a second bounded downstream Phase before generalizing behavior.
+- [ ] Add only method-specific, inspectable helpers proven necessary by the runs.
+- [ ] Re-evaluate whether any operations convenience belongs in this repository.
 
-- Agent Bus transport adapter and cross-machine dispatch
-- Agent Host `workflow.engine` integration
-- AI Memory adapter
-- Codex, Claude Code, Hermes, and OpenCode runner conveniences
-- UI or tray experience
-- Generic plugin/runtime integration using a mature implementation where practical
+## Later: External Runtime Composition
 
-## Explicit Non-Roadmap
+An external runtime may eventually compose Agent Workflow, Agent Bus, and AI Memory. Until the
+preceding gates pass:
 
-- Hosted multi-tenant SaaS
-- Visual drag-and-drop workflow builder
-- Database migration without demonstrated need
-- Kubernetes operator
-- Cloud-provider SDKs
-- Reimplementing a general-purpose multi-agent framework for completeness
+- no Agent Host architecture or integration;
+- no formal Plugin SDK;
+- no provider-specific model runner in the core;
+- no generic scheduling, arbitrary DAG, database, dashboard, or SaaS surface;
+- no Agent Bus or AI Memory protocol redesign for Workflow convenience.
+
+Boundary notes live in [`docs/later/`](docs/later/).

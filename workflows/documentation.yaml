@@ -7,7 +7,8 @@ metadata:
 spec:
   description: >
     Creates or updates documentation through plan → implement → review → decide.
-    No dedicated test stage; review covers correctness and clarity.
+    No dedicated test stage; review covers correctness and clarity. Reviewer onFailure means
+    deterministic REQUEST_CHANGES only; BLOCKED escalates to Architect/Decider.
   inputs:
     - name: doc-request
       required: true
@@ -36,6 +37,7 @@ spec:
       outputs:
         - ReviewReport
       onSuccess: decide
+      # Deterministic REQUEST_CHANGES only; BLOCKED escalates outside the normal rework path.
       onFailure: implement
     - id: decide
       role: arbiter

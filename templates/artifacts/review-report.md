@@ -1,39 +1,41 @@
 # Review Report
 
 ## Verdict
-<!-- approve | request_changes | reject | escalate -->
+<!-- Exactly one: PASS | REQUEST_CHANGES | BLOCKED -->
 
-**Verdict:** [verdict]
+**Verdict:** [PASS | REQUEST_CHANGES | BLOCKED]
 
-## Findings
+## Deterministic Failures
+<!-- Required for REQUEST_CHANGES. Use exact criterion, command/result, or file/line evidence. -->
 
-| # | Severity | Description | Recommendation |
-|---|----------|-------------|----------------|
-| 1 |          |             |                |
+| # | Failed criterion or rule | Exact evidence | Required correction |
+|---|---|---|---|
+| | | | |
+
+## Advisory Findings
+<!-- Style, architecture preferences, and optional improvements. These never block completion. -->
+
+| # | Severity | Finding | Suggestion |
+|---|---|---|---|
+| | | | |
 
 ## Acceptance Criteria Result
 
-| Criteria | Met? | Notes |
-|----------|------|-------|
-|          |      |       |
+| Criterion | Met? | Evidence |
+|---|---|---|
+| | | |
 
-## Scope Deviation
-<!-- Any scope deviations from the TaskCard -->
+## Scope and Regression Risk
 
-[None or describe deviations]
+- **Scope deviation:** [none or exact deterministic violation]
+- **Regression risk:** [low | medium | high]
+- **Rationale:** [evidence-based explanation]
 
-## Regression Risk
-<!-- Assessment of regression risk -->
+## Blocked Evidence
+<!-- Required for BLOCKED: why current TaskCard/frozen architecture cannot safely progress. -->
 
-- **Level:** [low / medium / high]
-- **Rationale:** [explanation]
+[N/A or evidence, escalation reason code, and decision needed]
 
 ## Confidence
-<!-- Reviewer confidence in the verdict -->
 
-- **Level:** [low / medium / high]
-
-## Escalation Required
-<!-- Whether Arbiter escalation is needed -->
-
-[Yes / No] — [reason if yes]
+[low | medium | high] — [why]
