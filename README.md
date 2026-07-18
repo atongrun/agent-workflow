@@ -90,14 +90,18 @@ model or advances a Workflow Run.
 `scripts/` is a separate **operations surface** produced by real dogfood. It has demonstrated exact
 checkout synchronization, trusted model-process boundaries, postflight verification, allowed-path
 and secret gates, commit/push plus remote-SHA proof, durable handler evidence, and a real Windows
-handler-return/ACK gate over Agent Bus. This proves important cross-machine engineering boundaries;
-it does not make the scripts part of the stable core.
+handler-return/ACK gate over Agent Bus. The trusted reviewer now validates structured `PASS`,
+deterministic `REQUEST_CHANGES`, and `BLOCKED` reports, embeds the normalized report in its verdict
+event, selects exactly one route, and fails closed before ACK when report validation or delivery
+fails. These semantics are proven at the deterministic-test level, not yet by a fresh live
+cross-machine run. Windows Python 3.12 default-locale portability is also closed with a trusted full
+suite. These capabilities remain outside the stable core.
 
-The cross-machine loop is not complete. Reviewer tool success is still a placeholder rather than a
-validated semantic verdict, so safe `PASS` / deterministic `REQUEST_CHANGES` / `BLOCKED` routing,
-merge, and automatic continuation to the next TaskCard have not been proven as one uninterrupted
-chain. See the [repository audit](docs/reviews/2026-07-18-product-positioning-audit.md) and the
-[reviewer routing TaskCard](docs/tasks/reviewer-verdict-routing.md).
+The remaining gaps are a fresh real-machine acceptance of the complete semantic loop, recorded
+capacity-isolation metrics from that run, and the first non-infrastructure downstream dogfood. See
+the [reviewer-routing implementation report](docs/tasks/reviewer-verdict-routing-implementation-report.md),
+the [Windows portability report](docs/tasks/windows-python312-utf8-closeout-v7-implementation-report.md),
+and the current [repository handoff](HANDOFF.md).
 
 ## Product Gate
 
@@ -143,8 +147,8 @@ tests/                validation and operations regression tests
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Method contract and validation CLI | Complete |
-| 1 | Product-positioning and repository-truth convergence | Complete on this branch |
-| 2 | Safe reviewer verdict routing in the operations surface | Next engineering gate |
+| 1 | Product-positioning and repository-truth convergence | Complete on `main` |
+| 2 | Semantic reviewer routing and live operations proof | Deterministic routing complete; live acceptance and metrics pending |
 | 3 | First downstream capacity-isolation dogfood | Next product gate |
 | Later | Evidence-driven helpers and possible external runtime integration | Deferred |
 
