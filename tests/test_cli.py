@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,11 +11,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run_awf(*args: str) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env.pop("PYTHONUTF8", None)
+    env["PYTHONIOENCODING"] = "utf-8"
     return subprocess.run(
         [sys.executable, "-m", "agent_workflow.cli", *args],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=env,
     )
 
 

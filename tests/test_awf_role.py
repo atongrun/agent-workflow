@@ -6,6 +6,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -285,6 +286,16 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
         )
         fake_tool.chmod(0o755)
 
+    # Agent Bus send shim: a plain Python script named "send" in the handler cwd.
+    # Production runs `python.exe send ...` since AWF_BUS_BIN=sys.executable.
+    # Exclude it via .git/info/exclude so the worktree stays clean.
+    (executor / ".git" / "info" / "exclude").write_text("send\n", encoding="utf-8")
+    bus_script = executor / "send"
+    bus_script.write_text(
+        '"""Agent Bus send shim for controlled test."""\nimport sys\nsys.exit(0)\n',
+        encoding="utf-8",
+    )
+
     state_root = tmp_path / "os-state"
     child_environment = dict(os.environ)
     child_environment.update(
@@ -294,7 +305,7 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
             "AWF_TOOL": "opencode",
             "AWF_BASE": "main",
             "AWF_OPENCODE_BIN": str(fake_tool),
-            "AWF_BUS_BIN": str(fake_tool),
+            "AWF_BUS_BIN": sys.executable,
             "AGENT_BUS_URL": "http://controlled.invalid",
             "AWF_REVIEWER_TOKEN": "controlled-test-token",
         }
@@ -1003,6 +1014,40 @@ def test_reviewer_report_path_must_not_replace_tracked_file(monkeypatch, tmp_pat
     assert not send_calls
 
 
+def _msys_path(path: str) -> str:
+    """Convert a Windows drive path to MSYS form (/d/path) for Git Bash."""
+    if os.name == "nt" and len(path) > 2 and path[1] == ":":
+        return f"/{path[0].lower()}{path[2:].replace(chr(92), '/')}"
+    return path
+
+
+def _git_bash() -> str:
+    """Find Git Bash executable, falling back to common locations."""
+    candidates = []
+    # Derive from git location in PATH
+    git = shutil.which("git")
+    if git:
+        git_dir = Path(git).resolve().parent  # mingw64/bin
+        # Git Bash is at <install>/usr/bin/bash.exe
+        bash_candidate = str(git_dir.parent.parent / "usr" / "bin" / "bash.exe")
+        candidates.append(bash_candidate)
+    # Common install paths
+    candidates.extend(
+        [
+            "C:/Program Files/Git/usr/bin/bash.exe",
+            "C:/Program Files (x86)/Git/usr/bin/bash.exe",
+        ]
+    )
+    # shutil.which fallback
+    which_bash = shutil.which("bash")
+    if which_bash:
+        candidates.append(which_bash)
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    raise RuntimeError("Git Bash not found. Install Git for Windows.")
+
+
 def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     repo = tmp_path / "repo"
     run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
@@ -1010,12 +1055,13 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
     (repo / "task.md").write_text("task\n", encoding="utf-8")
 
+    bash_path = _git_bash()
     completed = subprocess.run(
         [
-            "bash",
-            str(DISPATCH_PATH),
+            bash_path,
+            _msys_path(str(DISPATCH_PATH)),
             "--repo",
-            str(repo),
+            _msys_path(str(repo)),
             "--card",
             "task.md",
             "--branch",
@@ -1025,8 +1071,9 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
+    completed.stdout = completed.stdout.decode("utf-8", errors="replace")
+    completed.stderr = completed.stderr.decode("utf-8", errors="replace")
 
     payload_line = next(line for line in completed.stdout.splitlines() if "payload=" in line)
     payload = json.loads(payload_line.split("payload=", 1)[1])
@@ -2051,6 +2098,8 @@ def test_contract_empty_string_in_command(tmp_path):
 
 def test_secret_scan_quoted_tracked_filename(tmp_path):
     """A quoted Git path cannot detach added content from its known path."""
+    if os.name == "nt":
+        pytest.skip('a"b.py is illegal on Windows')
     repo = _init_repo(tmp_path)
     path = repo / 'a"b.py'
     path.write_text("value = 'safe'\n")
@@ -2092,6 +2141,19 @@ def test_secret_scan_added_line_starting_with_plus_plus(tmp_path):
     run("git", "add", "a.py", cwd=repo)
     run("git", "commit", "-m", "add source", cwd=repo)
     (repo / "a.py").write_text(f"++{_GITHUB_TOKEN}\n")
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._narrow_secret_scan(str(repo))
+
+
+def test_secret_scan_windows_valid_unicode_space_path(tmp_path):
+    """A Windows-valid path with Unicode and space reaches the real secret scan."""
+    repo = _init_repo(tmp_path)
+    name = "my secret café.txt"
+    tracked = repo / name
+    tracked.write_text("safe\n", encoding="utf-8")
+    run("git", "add", name, cwd=repo)
+    run("git", "commit", "-m", "add unicode spaced file", cwd=repo)
+    tracked.write_text(f"token = '{_GITHUB_TOKEN}'\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
 

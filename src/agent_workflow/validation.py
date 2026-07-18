@@ -33,7 +33,7 @@ def _load_schema(kind: str) -> dict[str, Any]:
     path = SCHEMA_DIR / filename
     if not path.exists():
         raise FileNotFoundError(f"Schema not found: {path}")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         schema = json.load(f)
     _schema_cache[kind] = schema
     return schema
@@ -41,7 +41,7 @@ def _load_schema(kind: str) -> dict[str, Any]:
 
 def _parse_yaml_or_json(path: Path) -> list[dict[str, Any]]:
     """Parse a YAML or JSON file, supporting multi-document YAML."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         content = f.read()
 
     if path.suffix in (".yaml", ".yml"):
