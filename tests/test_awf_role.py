@@ -1789,15 +1789,28 @@ def test_verification_stops_on_first_failure(tmp_path):
         awf_role.run_verifications(str(tmp_path), contract)
 
 
-def test_verification_uses_model_env(monkeypatch, tmp_path):
-    """Verification commands receive the credential-stripped model environment."""
+def test_verification_env_strips_credentials_and_pythonutf8(monkeypatch):
+    """Verification keeps UTF-8 output but removes credentials and forced UTF-8 mode."""
     monkeypatch.setenv("AWF_CODER_TOKEN", "should-not-leak")
     monkeypatch.setenv("AGENT_BUS_TOKEN", "should-not-leak")
+    monkeypatch.setenv("PYTHONUTF8", "1")
 
-    captured_env: dict = {}
+    result = awf_role.verification_env()
+
+    assert "AWF_CODER_TOKEN" not in result
+    assert "AGENT_BUS_TOKEN" not in result
+    assert "PYTHONUTF8" not in result
+    assert result["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_run_verifications_uses_verification_env(monkeypatch, tmp_path):
+    """Frozen verification commands use the dedicated default-locale environment."""
+    expected_env = {"AWF_TEST_VERIFICATION_ENV": "1"}
+    captured_env: dict[str, str] = {}
+
+    monkeypatch.setattr(awf_role, "verification_env", lambda: expected_env)
 
     def capturing_spawn(argv, *, cwd=None, stdin=None, env=None):
-        captured_env.clear()
         captured_env.update(env or {})
         return 0
 
@@ -1809,8 +1822,23 @@ def test_verification_uses_model_env(monkeypatch, tmp_path):
     )
     awf_role.run_verifications(str(tmp_path), contract)
 
-    assert "AWF_CODER_TOKEN" not in captured_env
-    assert "AGENT_BUS_TOKEN" not in captured_env
+    assert captured_env == expected_env
+
+
+def test_verification_child_runs_without_pythonutf8(monkeypatch, tmp_path):
+    """A real verification child omits forced UTF-8 mode but keeps UTF-8 output."""
+    monkeypatch.setenv("PYTHONUTF8", "1")
+    child_check = (
+        "import os; "
+        "assert 'PYTHONUTF8' not in os.environ; "
+        "assert os.environ.get('PYTHONIOENCODING') == 'utf-8'"
+    )
+    contract = awf_role.PostflightContract(
+        allowed_paths=[],
+        verification_commands=[[sys.executable, "-c", child_check]],
+    )
+
+    awf_role.run_verifications(str(tmp_path), contract)
 
 
 # ---------------------------------------------------------------------------
