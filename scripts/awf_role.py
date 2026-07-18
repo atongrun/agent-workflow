@@ -327,6 +327,157 @@ def check_report(report_path: str) -> None:
         die(f"ImplementationReport not found: {report_path}")
 
 
+_REVIEW_REPORT_RE = re.compile(r"<!--\s*awf-review-report\s*\n(.*?)\n\s*-->", re.DOTALL)
+_REVIEW_VERDICTS = {"PASS", "REQUEST_CHANGES", "BLOCKED"}
+_REVIEW_REPORT_MAX_BYTES = 16 * 1024
+_REVIEW_REPORT_KEYS = {"verdict", "deterministic_failures", "blocked_reason"}
+_DIFF_BODY_RE = re.compile(
+    r"(?m)^(?:diff --git |@@ -|--- a/|\+\+\+ b/)|```(?:diff|patch)\s*$",
+    re.IGNORECASE,
+)
+
+
+class DuplicateReviewReportKey(ValueError):
+    """Raised when JSON object pairs contain a duplicate key."""
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateReviewReportKey(key)
+        result[key] = value
+    return result
+
+
+def resolve_review_report_path(repo: str, report_path: str, implementation_report: str) -> Path:
+    """Resolve one explicit repo-relative ReviewReport path without traversal."""
+    if not report_path:
+        die("--review-report is required")
+    if "\\" in report_path or report_path.startswith("/") or ":" in report_path:
+        die("ReviewReport path must be repository-relative and use forward slashes")
+    if ".." in report_path.split("/"):
+        die("ReviewReport path must not contain parent traversal")
+
+    repo_root = Path(repo).resolve()
+    resolved = (repo_root / report_path).resolve()
+    if resolved == repo_root or repo_root not in resolved.parents:
+        die("ReviewReport path escapes the repository")
+
+    implementation_path = Path(implementation_report)
+    if not implementation_path.is_absolute():
+        implementation_path = repo_root / implementation_path
+    if resolved == implementation_path.resolve():
+        die("ReviewReport path must be distinct from ImplementationReport path")
+    return resolved
+
+
+def _validate_deterministic_failure(item: object, index: int) -> dict[str, object]:
+    if not isinstance(item, dict):
+        die(f"deterministic_failures[{index}] must be an object")
+    expected = {"evidence", "required_correction"}
+    if set(item) != expected:
+        die(f"deterministic_failures[{index}] has invalid fields")
+    correction = item["required_correction"]
+    evidence = item["evidence"]
+    if not isinstance(correction, str) or not correction.strip():
+        die(f"deterministic_failures[{index}] requires a correction")
+    if not isinstance(evidence, dict) or not isinstance(evidence.get("kind"), str):
+        die(f"deterministic_failures[{index}] requires structured evidence")
+
+    kind = evidence["kind"]
+    if kind == "criterion":
+        expected_evidence = {"kind", "criterion"}
+        valid = isinstance(evidence.get("criterion"), str) and bool(evidence["criterion"].strip())
+    elif kind == "command":
+        expected_evidence = {"kind", "command", "result"}
+        valid = all(
+            isinstance(evidence.get(key), str) and bool(evidence[key].strip())
+            for key in ("command", "result")
+        )
+    elif kind == "file_line":
+        expected_evidence = {"kind", "file", "line"}
+        file_name = evidence.get("file")
+        line = evidence.get("line")
+        valid = (
+            isinstance(file_name, str)
+            and bool(file_name.strip())
+            and not file_name.startswith("/")
+            and "\\" not in file_name
+            and ".." not in file_name.split("/")
+            and isinstance(line, int)
+            and not isinstance(line, bool)
+            and line > 0
+        )
+    else:
+        die(f"deterministic_failures[{index}] has unknown evidence kind")
+    if set(evidence) != expected_evidence or not valid:
+        die(f"deterministic_failures[{index}] lacks precise evidence")
+    return {"evidence": dict(evidence), "required_correction": correction.strip()}
+
+
+def parse_review_report(report_path: Path) -> dict[str, object]:
+    """Validate and normalize a bounded ReviewReport for downstream payloads."""
+    try:
+        markdown = report_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        die(f"ReviewReport is missing or unreadable: {report_path}")
+    if not markdown.strip():
+        die("ReviewReport is empty")
+    if _DIFF_BODY_RE.search(markdown):
+        die("ReviewReport must not contain full diff or patch bodies")
+    secret_label = _scan_text(markdown)
+    if secret_label:
+        die(f"ReviewReport contains prohibited {secret_label} material")
+
+    blocks = _REVIEW_REPORT_RE.findall(markdown)
+    if len(blocks) != 1:
+        die("ReviewReport must contain exactly one awf-review-report object")
+    try:
+        data = json.loads(blocks[0], object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, DuplicateReviewReportKey):
+        die("ReviewReport machine object is malformed or contains duplicate fields")
+    if not isinstance(data, dict) or set(data) != _REVIEW_REPORT_KEYS:
+        die("ReviewReport machine object has missing or unknown fields")
+
+    verdict = data["verdict"]
+    if not isinstance(verdict, str) or verdict not in _REVIEW_VERDICTS:
+        die("ReviewReport verdict must be exactly PASS, REQUEST_CHANGES, or BLOCKED")
+    failures = data["deterministic_failures"]
+    if not isinstance(failures, list):
+        die("ReviewReport deterministic_failures must be an array")
+    normalized_failures = [
+        _validate_deterministic_failure(item, index) for index, item in enumerate(failures)
+    ]
+    blocked_reason = data["blocked_reason"]
+    if not isinstance(blocked_reason, str):
+        die("ReviewReport blocked_reason must be a string")
+    blocked_reason = blocked_reason.strip()
+
+    if verdict == "PASS" and normalized_failures:
+        die("PASS ReviewReport cannot contain deterministic failures")
+    if verdict == "REQUEST_CHANGES" and not normalized_failures:
+        die("REQUEST_CHANGES requires deterministic failure evidence")
+    if verdict == "BLOCKED" and not blocked_reason:
+        die("BLOCKED requires an escalation reason")
+    if verdict != "BLOCKED" and blocked_reason:
+        die("blocked_reason is only valid for BLOCKED")
+
+    normalized: dict[str, object] = {
+        "format": "awf.review-report.v1",
+        "verdict": verdict,
+        "deterministic_failures": normalized_failures,
+        "blocked_reason": blocked_reason,
+        "markdown": markdown,
+    }
+    # Match send_event()'s JSON representation so the bound applies to the bytes that
+    # are actually embedded in the downstream payload, including escaped Unicode.
+    encoded = json.dumps(normalized).encode("utf-8")
+    if len(encoded) > _REVIEW_REPORT_MAX_BYTES:
+        die("normalized ReviewReport exceeds 16 KiB")
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Postflight contract
 # ---------------------------------------------------------------------------
@@ -753,14 +904,31 @@ def tool_opencode_exec(
     return spawn(argv, cwd=repo, env=model_env())
 
 
-def tool_codex_review(repo: str, base: str, prompt_file: str, card_file: str, model: str) -> int:
-    """Run Codex as a reviewer: review the branch vs base. Read-only; instructions via stdin."""
+def tool_codex_review(
+    repo: str,
+    base: str,
+    prompt_file: str,
+    card_file: str,
+    model: str,
+    review_report_path: str,
+) -> int:
+    """Run Codex review and persist its final response at the exact report path."""
     binp = env("AWF_CODEX_BIN", "codex")
-    argv = [binp, "review", "-C", repo, "--base", base]
+    argv = [
+        binp,
+        "exec",
+        "-C",
+        repo,
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+        review_report_path,
+    ]
     if model:
-        argv += ["-c", f"model={model}"]
-    argv += ["-"]  # read review instructions from stdin
+        argv += ["--model", model]
+    argv += ["review", "--base", base, "-"]
     stdin = read_text(prompt_file)
+    stdin += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
     if card_file and Path(card_file).is_file():
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
     return spawn(argv, cwd=repo, stdin=stdin, env=model_env())
@@ -772,6 +940,7 @@ def tool_opencode_review(
     prompt_file: str,
     card_file: str,
     model: str,
+    review_report_path: str,
     evidence: RunEvidence | None = None,
 ) -> int:
     """Fallback reviewer using OpenCode (when Codex is unavailable)."""
@@ -781,7 +950,9 @@ def tool_opencode_review(
         argv += ["-f", card_file]
     if model:
         argv += ["-m", model]
-    argv += ["--", read_text(prompt_file)]
+    instructions = read_text(prompt_file)
+    instructions += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
+    argv += ["--", instructions]
     if evidence is not None:
         return spawn(
             argv,
@@ -912,6 +1083,7 @@ def role_coder(a: argparse.Namespace) -> int:
             "card": a.card,
             "commit": new_commit,
             "report": a.report,
+            "review_report": a.review_report,
             "tool": tool,
             "model": model,
         },
@@ -934,32 +1106,53 @@ def role_reviewer(a: argparse.Namespace) -> int:
 
     # ImplementationReport gate — fail before any model invocation
     check_report(a.report)
+    review_report_path = resolve_review_report_path(repo, a.review_report, a.report)
+    if git_out(repo, "ls-files", "--", a.review_report):
+        die("ReviewReport path must not replace a tracked repository file")
+    review_report_path.parent.mkdir(parents=True, exist_ok=True)
+    if review_report_path.exists():
+        review_report_path.unlink()
 
     card_file = os.path.join(repo, a.card)
 
     log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
-    verdict = "needs-human-review"
     if tool == "codex":
-        rc = tool_codex_review(repo, base, prompt_file, card_file, model)
-        verdict = "tool-review-complete" if rc == 0 else "needs-human-review"
+        rc = tool_codex_review(repo, base, prompt_file, card_file, model, a.review_report)
     elif tool == "opencode":
-        rc = tool_opencode_review(repo, base, prompt_file, card_file, model, evidence)
-        verdict = "tool-review-complete" if rc == 0 else "needs-human-review"
+        rc = tool_opencode_review(
+            repo,
+            base,
+            prompt_file,
+            card_file,
+            model,
+            a.review_report,
+            evidence,
+        )
     else:
-        log(f"no reviewer tool configured; branch {a.branch} checked out for human review")
+        die("reviewer tool must be codex or opencode")
+    if rc != 0:
+        die(f"reviewer tool '{tool}' failed (rc={rc}); no verdict routed")
 
-    send_event(
-        "reviewer",
-        "architect",
-        "decision:awf-ready",
-        {
-            "task_id": a.branch.rsplit("/", 1)[-1],
-            "branch": a.branch,
-            "commit": a.commit,
-            "verdict": verdict,
-            "report": a.report,
-        },
-    )
+    review_report = parse_review_report(review_report_path)
+    verdict = review_report["verdict"]
+    route = {
+        "PASS": ("architect", "decision:awf-ready"),
+        "REQUEST_CHANGES": ("coder", "task:awf-rework"),
+        "BLOCKED": ("architect", "decision:awf-blocked"),
+    }[verdict]
+    payload = {
+        "task_id": a.branch.rsplit("/", 1)[-1],
+        "branch": a.branch,
+        "card": a.card,
+        "commit": a.commit,
+        "report": a.report,
+        "review_report_path": a.review_report,
+        "review_report": review_report,
+        "tool": a.tool,
+        "model": a.model,
+    }
+    if not send_event("reviewer", route[0], route[1], payload):
+        die(f"failed to send {route[1]}; review event will not be ACKed")
     return 0
 
 
@@ -976,6 +1169,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="")
     p.add_argument("--tool", default="")
     p.add_argument("--report", default="")
+    p.add_argument("--review-report", dest="review_report", default="")
     p.add_argument("--base", default="")
     a = p.parse_args(argv)
     if a.event_id < 1:

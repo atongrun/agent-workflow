@@ -7,26 +7,26 @@ structured, fail-closed ReviewReport contract and route its semantic verdict saf
 the next P0 in the existing dogfood operations runner; it does not change Agent Workflow core
 architecture or Agent Bus protocol.
 
-## Baseline gate (refresh before dispatch)
+## Fixed baseline
 
 - Repository: `atongrun/agent-workflow`.
-- Last audited base before the product-positioning branch: `origin/main` at
-  `19d8c4470f19786170f631cbc2c1f55b1b731174`.
+- Base: `origin/main` at `f759e34fa89aed5ded0ea870e261f3db30ac51c6`.
 - Task branch: `codex/reviewer-verdict-routing`.
-- PR #1 through PR #10 are merged at the last audit. The baseline already includes exact checkout synchronization,
-  model process boundaries, ImplementationReport and postflight gates, OpenCode argv termination,
-  the Ruff baseline, mandatory push plus refreshed remote-SHA proof, durable handler evidence, and
-  the Windows no-code handler-return gate.
+- PR #1 through PR #11 are merged. PR #11 merged the product-positioning and capacity-isolation
+  contract, including the refreshed ReviewReport vocabulary and this task's dispatch gate. The
+  baseline already includes exact checkout synchronization, model process boundaries,
+  ImplementationReport and postflight gates, OpenCode argv termination, the Ruff baseline,
+  mandatory push plus refreshed remote-SHA proof, durable handler evidence, and the Windows no-code
+  handler-return gate.
 - Current unsafe behavior: `role_reviewer()` maps model process `rc == 0` to
   `tool-review-complete`, sends `decision:awf-ready` unconditionally, ignores send failure, and
   returns zero even though no semantic ReviewReport has been validated.
 - Historical Agent Bus events `49`, `50`, `51`, and `52` are evidence only. Do not read their
   payloads, consume them, ACK them, requeue them, or use them for this task.
 
-This TaskCard is **not dispatch-ready while the product-positioning branch is unmerged**. Immediately
-before creating the task branch, replace the audited SHA above with the then-current `origin/main`,
-revalidate the Allowed paths/postflight contract, and record all merged PRs. Product-positioning
-documentation changes are not part of the Executor's allowed paths.
+The Allowed paths and `awf-postflight` contract below were revalidated against this merged baseline
+before the task branch was created. Product-positioning documentation changes are already in the
+baseline and are not part of the Executor's allowed paths.
 
 ## Allowed paths
 

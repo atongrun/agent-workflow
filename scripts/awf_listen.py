@@ -55,6 +55,8 @@ def build_handler(python_exe: str, role_script: str, role: str) -> str:
         "{payload.tool}",
         "--report",
         "{payload.report}",
+        "--review-report",
+        "{payload.review_report}",
     ]
     return f'"{python_exe}" "{role_script}" {role} ' + " ".join(fields)
 
