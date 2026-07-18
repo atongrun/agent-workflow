@@ -24,8 +24,9 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- Audited base before this positioning work: `main` / `origin/main` at `19d8c44` (PR #10 merge).
-- PR #1 through PR #10 were merged; no open or closed-unmerged PR existed at audit time.
+- Current verified base: `main` / `origin/main` at `7b1bb29` (PR #12 merge).
+- PR #1 through PR #12 are merged. The product-positioning branch was deleted after its merge;
+  the reviewer-routing branch remains until its separate cleanup gate.
 - `codex/windows-python312-utf8` and `codex/windows-python312-utf8-rerun` are preserved failure-
   evidence branches. Do not delete, reset, reuse, or treat them as current product direction.
 - A detached dirty postflight self-test worktree is preserved for separate audit; do not clean it as
@@ -44,14 +45,17 @@ Refresh refs before relying on this snapshot.
 ## Proven and Missing
 
 Proven operations boundaries include exact checkout, trusted model-process and postflight gates,
-commit/push plus remote-SHA proof, durable handler evidence, and Windows handler-return/ACK.
+commit/push plus remote-SHA proof, durable handler evidence, Windows handler-return/ACK, and
+fail-closed semantic `PASS` / deterministic `REQUEST_CHANGES` / `BLOCKED` routing.
 
-Missing from the complete chain: semantic ReviewReport routing, verdict-dependent fail-closed send,
-review-to-merge decision, and automatic next TaskCard. The reviewer-routing TaskCard must be
-regenerated from the post-positioning `main` before dispatch.
+The remaining preserved portability branches contain failed TaskCards, not merge-ready
+implementations. The next priority is a fresh Windows Python 3.12 UTF-8 closeout from current main;
+review-to-merge-to-next-TaskCard live acceptance remains later work.
 
 ## Next Gates
 
-1. Merge the product-positioning branch and refresh the reviewer-routing TaskCard baseline.
-2. Close and verify semantic `PASS` / deterministic `REQUEST_CHANGES` / `BLOCKED` operations routing.
-3. Run the first downstream multi-TaskCard dogfood and measure high-value-model capacity isolation.
+1. Execute [`docs/tasks/windows-python312-utf8-closeout.md`](docs/tasks/windows-python312-utf8-closeout.md)
+   from its frozen current-main baseline in a fresh Windows checkout.
+2. After successful acceptance and merge, separately authorize deletion of the two superseded
+   UTF-8 failure-evidence branches.
+3. Run fresh semantic review-loop acceptance, then the first downstream multi-TaskCard dogfood.

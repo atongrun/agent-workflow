@@ -31,7 +31,7 @@ control-plane runtime concepts were removed. The core is not a Workflow Engine.
 - [x] Define Repository Truth, Run Context, TaskCard, and AI Memory boundaries
 - [x] Classify current branches, PRs, operations evidence, and incomplete links
 - [x] Add product-positioning ADR and measurable product metrics
-- [ ] Merge the positioning PR and refresh the next implementation TaskCard from the resulting main
+- [x] Merge the positioning PR and refresh reviewer routing from the resulting main
 
 ## Phase 2: Close the Proven Operations Gap 📋
 
@@ -45,17 +45,19 @@ The non-core operations surface has already demonstrated:
 - durable handler lifecycle evidence;
 - a real Windows no-code handler-return followed by success-gated Agent Bus ACK.
 
-It has **not** demonstrated a complete semantic review loop. Tool exit zero and
-`tool-review-complete` are not `PASS`; `REQUEST_CHANGES` and `BLOCKED` are not yet safely routed as
-structured ReviewReports. Consequently the uninterrupted sequence from review verdict through
-merge and next TaskCard is incomplete.
+It now deterministically validates and routes structured semantic ReviewReports. The remaining live
+gap is an uninterrupted cross-machine sequence from review verdict through merge and next TaskCard.
+Before that acceptance, close the preserved Windows Python 3.12 portability failure with a fresh
+implementation from current main.
 
-After this positioning branch merges:
+Current gates:
 
-- [ ] Regenerate [`docs/tasks/reviewer-verdict-routing.md`](docs/tasks/reviewer-verdict-routing.md)
-  against the new `origin/main`; never dispatch its pre-merge SHA.
-- [ ] Implement and deterministically test `PASS`, `REQUEST_CHANGES`, and `BLOCKED` routing.
-- [ ] Verify send failure keeps the current review event unacknowledged.
+- [x] Regenerate and merge [`docs/tasks/reviewer-verdict-routing.md`](docs/tasks/reviewer-verdict-routing.md)
+  against the post-positioning baseline.
+- [x] Implement and deterministically test `PASS`, `REQUEST_CHANGES`, and `BLOCKED` routing.
+- [x] Verify send failure keeps the current review event unacknowledged.
+- [ ] Execute [`docs/tasks/windows-python312-utf8-closeout.md`](docs/tasks/windows-python312-utf8-closeout.md)
+  in a fresh Windows checkout without reusing preserved events or failed implementation state.
 - [ ] Run a fresh isolated cross-machine acceptance without consuming preserved failure events or
   checkouts.
 - [ ] Record semantic verdict → decision/merge → next-TaskCard evidence.
