@@ -2,103 +2,121 @@
 
 ## Product Rule
 
-Agent Workflow codifies one practical development method: establish the current truth, plan progressively, challenge architecture only when necessary, close deterministic failures locally, compress decisions, and force convergence.
+The MVP is a usable, model-agnostic development method that makes high-value-model participation
+explicit and exceptional in downstream operation. It does not minimize all model tokens, and it
+does not constrain high-value-model use while critical infrastructure is being built.
 
-**Use first, abstract second.** A requirement does not enter the core architecture until a real project demonstrates it. Generic runtimes, remote scheduling, UI, and plugin systems may reuse mature projects later.
+The stable contract is:
 
-**Stateless by design.** `awf` renders the next packet and validates submitted artifacts — it does **not** hold run state, execute models, or decide transitions. The human plus the chosen agent client drive progression. Any run scaffolding on disk (see below) is inspectable output the user owns, not a controller's private state machine. See the root [`constitution.md`](../constitution.md) for the full method rules.
+- progressive planning and bounded architecture convergence;
+- self-contained TaskCards and auditable handoffs;
+- lower-cost execution, verification, first-line review, and deterministic rework by default;
+- named escalation to a high-value model for difficult decisions and milestone acceptance;
+- forced convergence and explicit completion evidence.
+
+`awf` remains stateless and provider-neutral. It may validate or render inspectable Artifacts, but it
+must not become a model runner, scheduler, private state machine, arbitrary DAG engine, transport,
+or memory service.
 
 ## What “Usable” Means
 
-The MVP is not usable until a user can start from a goal, receive the next actionable packet, submit an artifact, and continue through architecture, phase planning, TaskCard execution, review, and decision. `awf validate` and `awf inspect` alone do not satisfy this bar.
-
-The commands below are the MVP usage contract. They are not implemented in the current Phase 0 CLI.
-
-## Quick Start: Continue Agent Bus
-
-Install Agent Workflow, then start a brownfield run:
-
-```bash
-pip install -e ".[dev]"
-
-awf init \
-  --project ../agent-bus \
-  --goal examples/agent-bus-dogfood/goal.md \
-  --mode dual \
-  --executor manual \
-  --reviewer manual \
-  --decider manual
-```
-
-The user supplies only the goal and a few choices. Agent Workflow inspects the repository and generates its internal Workflow/Profile configuration under the run directory. YAML is inspectable output, not the primary interface.
-
-`awf init` must create:
+A usable run can progress through:
 
 ```text
-../agent-bus/.awf/runs/<run-id>/
-├── run.json
-├── baseline.md
-├── generated/workflow.yaml
-├── generated/profile.yaml
-├── inbox/next-stage.md
-└── artifacts/
+User goal → Architecture / Planning → PhasePlan → TaskCard → Dispatch → Execute → Test
+→ Review → Decision → Merge or deterministic rework → Next TaskCard
+→ Phase or Milestone completion
 ```
 
-The shortest user path is:
+The current CLI only provides `validate`, `inspect`, and `version`; the run commands shown in older
+examples are target ideas, not implemented behavior. MVP usability may first be proven through
+manual, file-based handoff. A generic controller is not a prerequisite.
 
-| Step | System does automatically | Manual handoff allowed | Durable output |
-|---|---|---|---|
-| Initialize | Inspect the checkout, generate internal configuration, open the run | Confirm the goal and role choices | Baseline and run manifest |
-| Architecture | Build role packets, enforce challenge scope and three-round convergence | Invoke architect(s) and submit responses | Frozen ArchitectureRecord or user decision request |
-| Plan | Keep future phases coarse and detail only the current phase | Submit the planner response | PhasePlan and current TaskCard |
-| Execute and review | Route packets, validate artifacts, allow only deterministic rework | Run the executor/tests/reviewer and import reports | Implementation, test, and review reports |
-| Decide | Compress evidence and exclude full diffs by default | Final decider approves, rejects, or requests one bounded rework | DecisionPacket and Decision |
-| Continue | Select the next task or phase-advance packet | Confirm phase evidence when requested | Next TaskCard or next PhasePlan |
+## Roles and Model Assignment
 
-Ask what happens next:
+Initial product roles are Architect/Planner, Executor, Reviewer, optional Tester, and Decider. The
+current resource names `implementer` and `arbiter` map to product-facing Executor and Decider.
 
-```bash
-awf status --project ../agent-bus
-awf next --project ../agent-bus
+- Infrastructure development may assign high-value models to any role when quality or safety
+  warrants it.
+- Downstream operation assigns lower-cost models to frequent bounded roles by default.
+- A model assignment is run evidence, not part of Role or Workflow schema.
+
+## Normal and Escalation Paths
+
+Normal path:
+
+```text
+Planner / task generator → Executor → deterministic verification → first-line Reviewer
+→ PASS or deterministic REQUEST_CHANGES → next TaskCard
 ```
 
-`awf next` prints the active role, required input, expected artifact, and packet path. In the MVP, model invocation may remain manual: give `next-stage.md` to the named architect, executor, reviewer, or decider; save the response as an artifact; then import it:
+The first-line Reviewer has no architecture veto. `REQUEST_CHANGES` requires deterministic evidence
+such as a failing command, unmet acceptance criterion, missing Artifact, or exact TaskCard
+violation. Optional advice remains non-blocking.
 
-```bash
-awf submit --project ../agent-bus --artifact /path/to/result.md
+Escalation to a high-value model requires a recorded role and reason code. Allowed categories are
+fundamental ambiguity, architecture reopen, genuine `BLOCKED`, exhausted bounded rework,
+predefined high risk, changed project goal, insufficient evidence, or Phase/Milestone acceptance.
+
+## Artifact and Context Contract
+
+The minimum auditable chain is:
+
+```text
+ArchitectureRecord → PhasePlan → TaskCard → ImplementationReport → TestReport
+→ ReviewReport → DecisionPacket → Decision
 ```
 
-Repeat `awf next` and `awf submit`. `awf submit` validates the artifact's structure against its schema and writes the next packet based on the workflow definition. It does not run models or maintain a private state machine — progression is a function of which artifacts exist on disk, which the user can inspect and edit directly.
+The TaskCard must let a fresh-session Executor start from the repository, project `AGENTS.md`, and
+listed inputs. Planner/Architect may consult AI Memory, but required task facts must be compressed
+into the TaskCard. Run Context records the current Stage, Artifact, branch/commit/PR, retries, and
+escalation; it must remain inspectable and recoverable.
 
-After architecture convergence, `awf status` must expose the frozen `ArchitectureRecord`, detailed current `PhasePlan`, and current `TaskCard`. After execution, local verification, and first-line review, it must expose the `ImplementationReport`, `TestReport`, `ReviewReport`, compressed `DecisionPacket`, and final `Decision`.
+## First Formal Downstream Dogfood
 
-When a task completes, `awf next` selects the next TaskCard. When all current-phase exit criteria have evidence, it emits a phase-advance packet and then details only the next phase.
+The first product proof must use a real downstream software project rather than Agent Workflow,
+Agent Bus, AI Memory, or another supporting infrastructure project. One architecture/phase plan
+should drive multiple bounded TaskCards.
 
-## Brownfield Default
+Suggested first-run evidence targets (adjustable, not permanent contracts):
 
-For an existing project, initialization produces a short baseline before any architecture work:
+- at least three completed real TaskCards;
+- at least two completed without a high-value-model invocation;
+- normal `PASS` and deterministic `REQUEST_CHANGES` chains remain high-value-model-free;
+- each high-value invocation records project, TaskCard, role, reason code, and normal/escalation
+  path;
+- `BLOCKED`, architecture reopen, predefined high risk, insufficient evidence, and Milestone
+  acceptance may invoke a high-value model;
+- the result is compared with the project's earlier high-value-model-led baseline.
 
-- capabilities already implemented and actually verified;
-- current constraints and accepted boundaries;
-- unfinished work and the next explicit milestone;
-- current blockers and available test evidence.
+Record counts and roles first. Do not invent exact token, price, or quota data when providers do not
+expose it. Full metric definitions are in [`product-metrics.md`](product-metrics.md).
 
-The default path is:
+## Agent Bus Operations Evidence
 
-`Current Baseline → Next Milestone → Incremental Plan → Current TaskCard → Execute and Verify`
+The repository's `scripts/` surface has already proven important engineering boundaries through
+real Agent Bus dogfood: exact checkout, trusted process/postflight gates, commit/push and remote-SHA
+proof, durable handler evidence, and a Windows handler-return/ACK gate. It remains outside the core.
 
-Existing working behavior is the baseline. Do not restart from whole-system architecture or propose broad refactors because a cleaner design exists. Reopen a local architecture decision only when the current architecture blocks the milestone, the core path cannot run, or the project goal changed. Historical debt, general optimization, and future extensions go to `Later` and cannot block the current task.
+The loop is still incomplete because the Reviewer does not yet emit and route a validated semantic
+ReviewReport. Safe verdict routing, merge, and next-TaskCard continuation must be proven before the
+operations surface can claim a complete cross-machine chain. See
+[`tasks/reviewer-verdict-routing.md`](tasks/reviewer-verdict-routing.md).
 
-## Architecture and Review Limits
+## Acceptance Criteria
 
-- Single mode uses a separate, limited self-challenge invocation.
-- Dual mode uses one primary architect and one goal-bounded challenger. The primary owns convergence.
-- By round three, architecture must be `frozen`, `frozen_with_known_risk`, or `waiting_human`.
-- First-line review can return only deterministic failures: compile/test failure, failed acceptance criterion, missing required evidence, or clear TaskCard violation.
-- Architecture tradeoffs, scope disputes, and non-blocking improvements go into the DecisionPacket. Optional improvements never block task or phase completion.
+- Product docs consistently distinguish infrastructure development from downstream operation.
+- Role and Artifact contracts are vendor-neutral.
+- A fresh-session Executor does not require AI Memory or planner chat history.
+- Ordinary deterministic failures close inside the lower-cost chain.
+- Every high-value invocation has an auditable role and reason code.
+- One plan drives multiple TaskCards and the suggested first-run capacity-isolation targets are
+  measured against a baseline.
+- No generic runtime, Agent Host integration, Plugin SDK, arbitrary DAG, provider billing adapter,
+  or transport/memory protocol change is required.
 
-## First Real Proof
+## Later
 
-The first dogfood target is the bounded Agent Bus diagnostic slice in [the complete example](../examples/agent-bus-dogfood/README.md). The run must record manual handoffs, architecture rounds, deterministic rework, DecisionPacket size, and whether targeted context was requested.
-
-Until that run completes, do not extend the UI, cross-machine automation, generic plugin system, complex runtime, or generalized orchestration contracts.
+Only evidence from repeated downstream runs may justify additional render/validation helpers,
+operations productization, or external runtime composition. Agent Host remains deferred.

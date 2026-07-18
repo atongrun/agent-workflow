@@ -1,49 +1,42 @@
 # ADR-0003: Artifact-Based Handoff
 
-**Status:** Accepted  
+**Status:** Accepted; amended 2026-07-18
 **Date:** 2026-07-07
 
 ## Context
 
-Agent-to-agent communication today typically uses free-form chat messages. This is problematic:
-- No structured state that can be validated.
-- No audit trail linking decisions to evidence.
-- No machine-readable format for downstream tooling.
-- Ambiguous authority — who decided what?
+Free-form chat does not provide a durable, auditable link between task scope, implementation,
+verification, Review verdict, and final decision. A fresh client or machine must be able to resume
+without hidden conversation history.
 
 ## Decision
 
-**Formal handoffs between stages use structured Artifacts, not chat logs.**
+Formal Stage handoffs use structured, versioned Artifacts. The Artifact chain in Repository Truth,
+together with explicit Run Context, is the recoverable source of Workflow evidence.
 
-### Artifact Requirements
+Every published Artifact identifies its type, creator role, upstream references, and structured
+content. A TaskCard must be self-contained for execution. ReviewReport and Decision remain distinct:
+the first-line Reviewer returns `PASS`, `REQUEST_CHANGES`, or `BLOCKED`; the Decider records
+`approve`, `request_changes`, `reject`, or `escalate`.
 
-Every artifact must carry:
-- `artifactId` — unique identifier
-- `artifactType` — one of the defined types (TaskCard, ImplementationReport, etc.)
-- `workflowRunId` and `stageRunId` — traceability
-- `createdBy` — role and runner attribution
-- `sourceRefs` — links to upstream artifacts
-- `content` — structured payload
+## Chat, Memory, and Artifacts
 
-### Chat vs. Artifacts
+| Need | Source |
+|---|---|
+| Formal task/Stage handoff | Versioned Artifact |
+| Current Stage/branch/retry/escalation | Run Context |
+| Real-time debugging | Transient chat/logs |
+| Long-term/private background | AI Memory |
+| Final task/Phase decision | Decision Artifact |
 
-| Use Case | Mechanism |
-|----------|-----------|
-| Formal stage handoff | Artifact |
-| Real-time debugging | Chat (transient) |
-| Final decisions | Artifact (Decision) |
-| Workflow state | Artifact store |
-| Human-readable summary | Artifact content is both machine and human readable |
-
-### What Artifacts Are Not
-
-- Chat logs are not the authoritative state of a workflow run.
-- Artifacts do not replace real-time communication — they augment it with structure.
-- Artifacts are not immutable (within a stage run) — but once published to downstream stages, they should be treated as stable.
+AI Memory may help a Planner create a TaskCard, but it does not replace the Artifact or act as a
+mandatory Executor dependency. There is no core-owned Artifact Store service or port.
 
 ## Consequences
 
-- Every stage produces at least one artifact.
-- Downstream stages read artifacts, not chat history.
-- The Artifact Store is the source of truth for workflow state.
-- Human-readable summaries live alongside machine-readable data in the same artifact.
+- Every formal Stage produces the required Artifact.
+- Downstream roles read the Artifact, not upstream chat history.
+- Published Artifacts are treated as stable evidence; corrections create an explicit revision or
+  successor rather than silently rewriting history.
+- Transport may carry Artifact references or bounded content, but transport success alone does not
+  mean the Workflow transition is valid.

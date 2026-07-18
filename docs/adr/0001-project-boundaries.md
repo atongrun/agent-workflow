@@ -1,43 +1,41 @@
 # ADR-0001: Project Boundaries
 
-**Status:** Amended (2026-07-11) — see note below  
+**Status:** Amended by [ADR-0005](0005-high-value-model-capacity-isolation.md)
 **Date:** 2026-07-07
-
-> **Amended.** The core boundaries still hold: Agent Workflow does not implement transport
-> (Agent Bus) or long-term memory (AI Memory), and there are no circular dependencies. What
-> changed: Agent Workflow is now a **method + handoff-protocol** layer, not a control-plane
-> runtime. It does **not** own run state as a live state machine, define an event protocol,
-> or expose a Runner/Execution plane — execution lives entirely inside each agent client.
-> The "three-plane" framing and the Runner Adapters row below are historical; transport and
-> memory are deferred external integrations under `docs/later/`, with no interfaces reserved
-> in the core.
+**Last amended:** 2026-07-18
 
 ## Context
 
-The agent infrastructure consists of three projects: Agent Workflow, Agent Bus, and AI Memory. Without clear boundaries, concerns will leak across projects, creating coupling and fragility.
+Agent Workflow, Agent Bus, and AI Memory must cooperate without sharing ownership of execution,
+transport, long-term knowledge, or Workflow decisions. The original “three-plane control runtime”
+framing was removed on 2026-07-11 after the product contracted to a method and handoff protocol.
 
-## Decision
+## Current Decision
 
-Each project owns exactly one plane:
+| Project/layer | Owns | Explicitly does not own |
+|---|---|---|
+| Agent Workflow | Development method, Role/Stage authority, Artifact contracts, transition and convergence semantics | Model execution, scheduling, transport, long-term memory, hosted runtime |
+| Agent Bus | Endpoint and agent identity, event delivery, ACK, retry, failure propagation | Workflow Stage, Review verdict, task completion, model selection |
+| AI Memory | Long-term background, historical decisions, private environment facts, preferences, cross-project knowledge | Versioned task evidence, TaskCard completeness, next-Stage decisions |
+| External agent runtime | Model invocation, process lifecycle, sub-agents, and inner loops | Rewriting the versioned method contract implicitly |
 
-| Project | Plane | Owns |
-|---------|-------|------|
-| Agent Workflow | Control | Roles, stages, state, policy, handoff artifacts |
-| Agent Bus | Transport | Event delivery, durability, remote notification |
-| AI Memory | Memory | Context retrieval, memory lifecycle, knowledge storage |
-| Runner Adapters | Execution | Stage execution via local/remote agents |
+Repository Truth stores the auditable Artifact chain. Run Context identifies which Artifact and
+Stage are current. AI Memory may inform planning but never replaces either.
 
-### Rules
+## Rules
 
-1. Agent Workflow **owns** workflow state. Agent Bus transports it; does not interpret it.
-2. Agent Workflow **defines** event types. Agent Bus routes them; does not decide next stages.
-3. Agent Workflow **produces** memory write candidates. AI Memory decides what to persist.
-4. Runner adapters are swappable — no runner-specific logic in the workflow core.
-5. No circular imports or runtime dependencies between the three projects.
+1. No project imports another as a mandatory runtime dependency of the Agent Workflow core.
+2. Agent Bus transports opaque domain payloads and never infers Workflow meaning.
+3. An Executor can begin from TaskCard, repository, project `AGENTS.md`, and listed inputs without
+   querying AI Memory.
+4. A future external runtime may compose the projects, but no Agent Host or Plugin SDK is defined
+   by this ADR.
+5. Operations scripts in this repository are dogfood surfaces, not implicit core expansion.
 
 ## Consequences
 
-- Each project can evolve independently.
-- Agent Workflow core must work with only local adapters.
-- Integration adapters are optional upgrades.
-- Cross-project integration is documented via contracts, not implementation details.
+- Projects can evolve independently.
+- Required task facts remain auditable and recoverable.
+- Private/long-term knowledge does not leak into every TaskCard.
+- Future runtime integration must respect these boundaries rather than revive the removed control
+  plane, ports, or adapters.

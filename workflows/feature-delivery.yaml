@@ -7,7 +7,8 @@ metadata:
 spec:
   description: >
     Delivers a feature or change through plan → implement → test → review → summarize → decide.
-    Supports rework loops: test failures and review change requests flow back to implement.
+    Supports deterministic rework: test failures and reviewer REQUEST_CHANGES flow back to
+    implement. Reviewer BLOCKED leaves this normal transition and escalates to Architect/Decider.
   inputs:
     - name: task
       required: true
@@ -46,6 +47,7 @@ spec:
       outputs:
         - ReviewReport
       onSuccess: summarize
+      # Deterministic REQUEST_CHANGES only; BLOCKED escalates outside the normal rework path.
       onFailure: implement
     - id: summarize
       role: summarizer

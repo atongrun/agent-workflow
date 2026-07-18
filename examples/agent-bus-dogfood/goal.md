@@ -1,5 +1,8 @@
 # Goal: Agent Bus Diagnostic Command
 
+> Infrastructure-development dogfood: reliability and evidence quality take precedence over
+> reducing high-value-model use. This example is not the downstream product-value benchmark.
+
 Add the first non-mutating `agent-bus doctor --json` slice for the existing Agent Bus CLI.
 
 ## Outcome

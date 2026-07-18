@@ -7,12 +7,13 @@ structured, fail-closed ReviewReport contract and route its semantic verdict saf
 the next P0 in the existing dogfood operations runner; it does not change Agent Workflow core
 architecture or Agent Bus protocol.
 
-## Fixed baseline
+## Baseline gate (refresh before dispatch)
 
 - Repository: `atongrun/agent-workflow`.
-- Base: `origin/main` at `a32310db9dd24593cf424352a979ddddbc443211`.
+- Last audited base before the product-positioning branch: `origin/main` at
+  `19d8c4470f19786170f631cbc2c1f55b1b731174`.
 - Task branch: `codex/reviewer-verdict-routing`.
-- PR #1 through PR #9 are merged. The baseline already includes exact checkout synchronization,
+- PR #1 through PR #10 are merged at the last audit. The baseline already includes exact checkout synchronization,
   model process boundaries, ImplementationReport and postflight gates, OpenCode argv termination,
   the Ruff baseline, mandatory push plus refreshed remote-SHA proof, durable handler evidence, and
   the Windows no-code handler-return gate.
@@ -21,6 +22,11 @@ architecture or Agent Bus protocol.
   returns zero even though no semantic ReviewReport has been validated.
 - Historical Agent Bus events `49`, `50`, `51`, and `52` are evidence only. Do not read their
   payloads, consume them, ACK them, requeue them, or use them for this task.
+
+This TaskCard is **not dispatch-ready while the product-positioning branch is unmerged**. Immediately
+before creating the task branch, replace the audited SHA above with the then-current `origin/main`,
+revalidate the Allowed paths/postflight contract, and record all merged PRs. Product-positioning
+documentation changes are not part of the Executor's allowed paths.
 
 ## Allowed paths
 
@@ -34,7 +40,8 @@ Only these files may change after this TaskCard commit:
 6. `tests/test_awf_role.py`
 7. `docs/tasks/reviewer-verdict-routing-implementation-report.md` (create)
 
-This TaskCard is already committed and must not be edited by the executor.
+After the baseline is refreshed and the TaskCard is committed on its task branch, the Executor must
+not edit it.
 
 ## Required contract
 

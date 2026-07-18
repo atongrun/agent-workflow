@@ -1,12 +1,12 @@
 # Contributing
 
-Agent Workflow is in early development (Phase 0). Contributions are welcome in these areas:
+Agent Workflow is in early development. Contributions are welcome in these areas:
 
 ## What to Contribute
 
 - **Bug fixes**: Validation logic, schema errors, CLI behavior.
 - **Documentation**: Typos, unclear explanations, missing examples.
-- **New schemas**: Additional artifact types, policy rule patterns.
+- **Contract refinements**: Transition-critical Artifact fields proven by real use.
 - **Role definitions**: Refined responsibilities and constraints.
 - **Workflow definitions**: Additional workflow patterns.
 
@@ -14,11 +14,11 @@ Agent Workflow is in early development (Phase 0). Contributions are welcome in t
 
 These are deferred to later phases. Please hold off until the relevant phase begins:
 
-- Workflow runtime engine (Phase 1)
-- Agent Bus adapter (Phase 2)
-- AI Memory adapter (Phase 3)
-- Runner adapters for specific agents (Phase 4)
-- Web UI, databases, Docker, Kubernetes
+- Generic Workflow Engine or arbitrary DAG runtime
+- Agent Bus or AI Memory adapters/protocol redesign
+- Agent Host integration or Plugin SDK
+- Provider-specific model runners in the core
+- Web UI, dashboards, SaaS, or new databases
 
 ## Development Setup
 
@@ -35,7 +35,6 @@ python -m pytest
 ruff check .
 awf validate roles
 awf validate workflows
-awf validate profiles
 awf validate examples
 ```
 
@@ -43,13 +42,13 @@ awf validate examples
 
 - Python 3.11+
 - Ruff for linting and formatting
-- Type hints preferred but not mandated for Phase 0
+- Type hints preferred for new and changed public code
 - Docstrings for public APIs
 
 ## Pull Request Process
 
 1. Ensure tests pass locally.
-2. Run the four directory-specific `awf validate` commands from project root.
+2. Run the three directory-specific `awf validate` commands from project root.
 3. Keep PRs focused — one concern per PR.
 4. Update CHANGELOG.md if the change is user-facing.
 

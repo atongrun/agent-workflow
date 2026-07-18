@@ -31,6 +31,8 @@
         "artifactType": {
           "type": "string",
           "enum": [
+            "ArchitectureRecord",
+            "PhasePlan",
             "TaskCard",
             "ImplementationReport",
             "TestReport",

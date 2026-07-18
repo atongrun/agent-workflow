@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Product positioning
+
+- Defined Agent Workflow as a model-agnostic development method, structured handoff protocol, and
+  verifiable process contract that isolates high-value-model capacity in downstream projects.
+- Separated infrastructure-development reliability metrics from downstream capacity-isolation
+  metrics; infrastructure work is not required to minimize high-value-model use.
+- Defined Repository Truth, Run Context, TaskCard, AI Memory, Agent Bus, and future-runtime
+  boundaries without adding a runtime or adapter.
+- Added `ArchitectureRecord` and `PhasePlan` as recognized Artifact types and aligned first-line
+  ReviewReport verdicts to `PASS`, `REQUEST_CHANGES`, and `BLOCKED`.
+- Reconciled repository/branch truth, operations dogfood evidence, and the stale reviewer-routing
+  baseline before the next implementation task.
+
 ## [0.2.0] — 2026-07-11
 
 ### Changed

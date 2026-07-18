@@ -1,255 +1,155 @@
 # Agent Workflow
 
-**An opinionated, model-agnostic development method for AI-assisted projects.**
+**A model-agnostic development method, structured handoff protocol, and verifiable process contract for AI-assisted software projects.**
 
-Agent Workflow codifies progressive planning, limited architecture challenge, task closure, layered review, information compression, and forced convergence. Contracts are its internal representation, not the product's primary user interface.
+Agent Workflow concentrates architecture, difficult judgment, explicit escalation, and milestone
+acceptance in **high-value models** while **lower-cost models** handle frequent, bounded execution,
+testing, first-line review, and deterministic rework. The product optimizes a downstream project's
+continuing dependence on scarce high-value-model capacity—not total model calls or total tokens.
 
-## Why This Exists
+The normative method lives in [`constitution.md`](constitution.md). The current implementation is a
+thin, stateless `awf` CLI that validates Role, Workflow, and Artifact contracts.
 
-Every AI coding agent — Claude Code, Codex, OpenCode, Hermes — has its own planner,
-architect, reviewer, sub-agents, and inner loop. What they lack is a **shared, portable
-rule for how a project is developed**: when to freeze architecture, what may be delegated,
-what must escalate, and what each stage must hand off.
+## Two Operating Modes
 
-Agent Workflow is that rule layer. It defines **what to do, who is responsible, what the
-inputs and outputs are, and when to stop** — as plain contracts any tool can follow. It
-does **not** re-implement planning, execution, review, or orchestration; those stay inside
-each agent's own runner. The point is to put every tool under the same development method
-and let you swap tools freely — not to compete with them.
+### Infrastructure development
 
-The whole method lives in one file: [`constitution.md`](constitution.md).
+Agent Workflow, Agent Bus, AI Memory, and future critical infrastructure may use high-value models
+freely for architecture, implementation, safety review, failure analysis, and real-environment
+validation. Reducing high-value-model use while building this infrastructure is not a product goal;
+reliability, recoverability, and evidence quality are.
 
-## Product Direction
+### Downstream operation
 
-**Use first, abstract second.** Requirements that have not been validated in a real project do not enter the core architecture. The first target is a local or semi-automatic loop that can continue an existing project from its verified baseline; generic engines, remote scheduling, UI, and plugin systems are deferred.
+For projects developed under the method, the normal path keeps frequent work in the lower-cost
+execution chain:
 
-For brownfield projects, the default path is:
+```text
+Planner / task generator
+→ Executor
+→ deterministic verification
+→ first-line Reviewer
+→ PASS or deterministic rework
+→ next TaskCard
+```
 
-`Current Baseline → Next Milestone → Incremental Plan → Current TaskCard → Execute and Verify`
+A high-value model enters at named escalation points: fundamental ambiguity, frozen-architecture
+reopen, genuine `BLOCKED`, exhausted bounded rework, predefined high-risk change, insufficient
+evidence, changed project goal, or Phase/Milestone acceptance. Ordinary test failures, missing
+reports, allowed-path violations, `REQUEST_CHANGES`, style preferences, and optional improvements
+stay in the lower-cost chain.
 
-See [Development Workflow MVP](docs/development-workflow-mvp.md) for the usage contract and [Agent Bus Brownfield Dogfood](examples/agent-bus-dogfood/README.md) for the complete real example.
+The generic terms **high-value model** and **lower-cost model** describe the capacity and role, not a
+vendor. A high-value model has stronger relevant capability but is expensive or capacity-limited; a
+lower-cost model is suitable for frequent, bounded work. The same model may occupy different roles
+as capabilities and constraints change.
 
-## What It Is (and Isn't)
+## Stable Core
 
-Agent Workflow ships as a small set of markdown/YAML contracts plus a thin, stateless
-validation CLI. It never executes, schedules, or orchestrates anything.
+Agent Workflow defines:
 
-The repository also contains `scripts/` used to dogfood the method across real agent clients and
-machines. Those trusted runner/listener and service-operation scripts are an **operations surface
-outside the `awf` core**: they exercise Agent Bus and model CLIs, but they do not turn the
-validation CLI into a workflow engine or make transport part of the core contract.
+- the development method and forced-convergence rules;
+- Role responsibilities and authority boundaries;
+- Stage and transition semantics;
+- versioned Artifact contracts;
+- `rework`, `blocked`, `escalation`, and `completion` rules.
 
-**Boundaries**
+It is not an LLM, coding agent, general multi-agent framework, arbitrary DAG engine, cross-machine
+transport, long-term memory system, hosted SaaS, or model runner. Model invocation, process
+supervision, scheduling, and inner agent loops belong to external runtimes.
 
-1. It **does not** run models, spawn sub-agents, or drive an inner loop — each agent
-   client does that internally.
-2. It **does not** implement cross-machine transport or long-term memory. Those are
-   external, optional concerns recorded under [`docs/later/`](docs/later/) — the core
-   reserves no interfaces for them and runs with only local files.
-3. It **does not** bind to any single model or tool. A tool may be swapped at any stage
-   boundary without changing the contract.
-4. Agents hand off via **structured Artifacts**, not free-form chat logs.
+## Information Boundaries
 
-## Core Concepts
+| Layer | Owns | Does not own |
+|---|---|---|
+| Repository Truth | Versioned code, project rules, plans, TaskCards, reports, decisions, tests, and PR evidence | Private machine facts or transient run status |
+| Run Context | Current Stage, Artifact, branch/commit/PR, role, retry, failure, and escalation state | Long-term knowledge or hidden transition rules |
+| TaskCard | Self-contained execution context for one current task | A copy of all long-term memory |
+| AI Memory | Long-term background, decision history, private environment facts, preferences, and cross-project knowledge | Versioned task evidence or the authority to choose the next Stage |
 
-### Role
-A role defines *responsibilities*, *capabilities*, and *constraints* — and, crucially,
-authority boundaries (e.g. a reviewer may only flag deterministic failures). It binds to
-no model, tool, or runner. Default roles: `planner`, `implementer`, `tester`, `reviewer`,
-`summarizer`, `arbiter`.
+A fresh-session Executor must be able to start from the TaskCard, repository, project `AGENTS.md`,
+and explicitly listed inputs. A Planner or Architect may read AI Memory and compress only the facts
+required for this task into the TaskCard. Required execution facts belong in auditable Artifacts;
+long-lived explanation and private context stay in AI Memory.
 
-### Workflow
-A workflow declares *stages* and their *transitions*. Each stage is assigned a role and
-declares its inputs, outputs, and `onSuccess`/`onFailure` targets. Example:
-`plan → implement → test → review → summarize → decide`. It is a description of *what
-happens and when to stop* — not an execution engine.
+## Related Infrastructure
 
-### Artifact
-Structured handoff documents between stages: `TaskCard`, `ImplementationReport`,
-`TestReport`, `ReviewReport`, `DecisionPacket`, `Decision`. Each carries machine-readable
-data and a human-readable summary. The artifact chain — not chat history — is the portable
-state any client reads to produce the next step.
+- **Agent Bus** transports cross-machine events and owns endpoint/agent identity, delivery, ACK,
+  retry, and failure propagation. It does not interpret Workflow Stages, Review verdicts, or task
+  completion.
+- **AI Memory** preserves long-term and private context. It is a potential upstream knowledge
+  source for planning, not a mandatory dependency of every Executor.
+- A future external runtime may combine Agent Workflow, Agent Bus, and AI Memory. Agent Workflow
+  currently defines no Agent Host integration or Plugin SDK.
 
-## Phase 0 Validation Quick Start
+## Current Implementation and Dogfood Surface
+
+The repository ships markdown/YAML contracts plus the validation-only `awf` CLI. It never runs a
+model or advances a Workflow Run.
+
+`scripts/` is a separate **operations surface** produced by real dogfood. It has demonstrated exact
+checkout synchronization, trusted model-process boundaries, postflight verification, allowed-path
+and secret gates, commit/push plus remote-SHA proof, durable handler evidence, and a real Windows
+handler-return/ACK gate over Agent Bus. This proves important cross-machine engineering boundaries;
+it does not make the scripts part of the stable core.
+
+The cross-machine loop is not complete. Reviewer tool success is still a placeholder rather than a
+validated semantic verdict, so safe `PASS` / deterministic `REQUEST_CHANGES` / `BLOCKED` routing,
+merge, and automatic continuation to the next TaskCard have not been proven as one uninterrupted
+chain. See the [repository audit](docs/reviews/2026-07-18-product-positioning-audit.md) and the
+[reviewer routing TaskCard](docs/tasks/reviewer-verdict-routing.md).
+
+## Product Gate
+
+**Use first, abstract second.** Technical transport success proves feasibility, not downstream
+product value. Before expanding the core or building Agent Host integration, a real downstream
+project must show that multiple bounded TaskCards can close with less frequent high-value-model
+participation than the previous high-value-model-led baseline. See
+[`docs/product-metrics.md`](docs/product-metrics.md) and
+[`docs/development-workflow-mvp.md`](docs/development-workflow-mvp.md).
+
+## Validation Quick Start
 
 ```bash
-# Install
-pip install -e .
-
-# Validate all resources
+pip install -e ".[dev]"
+ruff check .
+ruff format --check .
+python -m pytest -v
 awf validate roles
 awf validate workflows
 awf validate examples
-
-# Inspect a resource
 awf inspect workflows/feature-delivery.yaml
-
-# Check version
-awf version
 ```
 
-These commands validate and inspect contracts; they do not start a development Workflow Run.
-
-## MVP Run Quick Start
-
-The usable MVP must support this path:
-
-```bash
-awf init \
-  --project ../agent-bus \
-  --goal examples/agent-bus-dogfood/goal.md \
-  --mode dual \
-  --executor manual \
-  --reviewer manual \
-  --decider manual
-
-awf status --project ../agent-bus
-awf next --project ../agent-bus
-awf submit --project ../agent-bus --artifact /path/to/result.md
-```
-
-The current Phase 0 CLI does not implement these run commands yet. They are the acceptance contract for Phase 1; the project is not considered usable for development work until this Quick Start completes end to end.
-
-## CLI Examples
-
-```bash
-# Validate a single file
-awf validate roles/planner.yaml
-# PASS roles/planner.yaml
-
-# Validate a directory
-awf validate roles
-# PASS roles/planner.yaml
-# PASS roles/implementer.yaml
-# ...
-
-# Validate each resource directory
-awf validate roles
-awf validate workflows
-awf validate examples
-
-# Inspect a workflow
-awf inspect workflows/feature-delivery.yaml
-# apiVersion: agent-workflow/v1alpha1
-# kind: Workflow
-# name: feature-delivery
-# version: 0.1.0
-# stages: 6
-#   - plan [planner] (onSuccess: implement, onFailure: failed)
-#   - implement [implementer] (onSuccess: test, onFailure: failed)
-#   ...
-
-# Inspect a role
-awf inspect roles/planner.yaml
-# capabilities (4):
-#   - Read task descriptions and requirements
-#   - Read project structure and documentation
-#   ...
-# forbiddenActions (4):
-#   - Modify code or configuration files
-#   ...
-```
-
-## Example Workflow: Feature Delivery
-
-```yaml
-apiVersion: agent-workflow/v1alpha1
-kind: Workflow
-metadata:
-  name: feature-delivery
-spec:
-  stages:
-    - id: plan          # planner → TaskCard
-    - id: implement     # implementer → ImplementationReport
-    - id: test          # tester → TestReport, onFailure → implement
-    - id: review        # reviewer → ReviewReport, onFailure → implement
-    - id: summarize     # summarizer → DecisionPacket
-    - id: decide        # arbiter → Decision (approve | request_changes | reject | escalate)
-```
+These commands validate and inspect contracts; they do not start or orchestrate a Workflow Run.
 
 ## Repository Structure
 
+```text
+constitution.md       normative development method
+docs/                 product, architecture, ADR, lifecycle, and deferred-boundary docs
+schemas/              Role, Workflow, and Artifact schemas
+roles/                default role contracts
+workflows/            example transition contracts
+templates/artifacts/  handoff templates
+examples/             bounded examples and dogfood inputs
+src/agent_workflow/   stateless validation/inspection CLI
+scripts/              non-core operations dogfood surface
+tests/                validation and operations regression tests
 ```
-agent-workflow/
-├── constitution.md    # The development method — the single source of truth
-├── docs/              # Concepts, ADRs; docs/later/ holds deferred integrations
-├── schemas/           # JSON Schema for Role, Workflow, Artifact
-├── roles/             # Default role definitions
-├── workflows/         # Default workflow definitions
-├── templates/         # Artifact templates
-├── examples/          # Complete example configurations
-├── src/agent_workflow/ # Thin validation CLI (awf)
-│   ├── cli.py          # CLI entry point (validate, inspect)
-│   ├── validation.py   # Schema + semantic validation
-│   ├── models.py       # Data models
-│   └── errors.py       # Error types
-└── tests/              # Test suite
-```
-
-## Current Status
-
-**Phase 0 — Contract Bootstrap** (current; validation-only)
-
-- ✅ The development method in one file (`constitution.md`)
-- ✅ JSON Schema for Role, Workflow, Artifact
-- ✅ Default roles (planner, implementer, tester, reviewer, summarizer, arbiter)
-- ✅ Default workflows (feature-delivery, bugfix, documentation, research)
-- ✅ Artifact templates for all handoff types
-- ✅ Validation CLI (`awf validate`, `awf inspect`)
-- ✅ Schema and semantic validation tests
-- ✅ CI pipeline (GitHub Actions)
-
-Cross-machine transport (Agent Bus) and shared long-term memory (AI Memory) are deferred, external, and optional — recorded under [`docs/later/`](docs/later/). The core reserves no interfaces for them.
-
-Phase 0 is not yet a usable development workflow: it cannot initialize a run, establish a brownfield baseline, produce architecture/phase/task artifacts, or import execution results.
-
-### Operations dogfood checkpoint
-
-The external operations surface has advanced beyond the Phase 0 CLI and is deliberately tracked
-separately:
-
-- ✅ exact executor checkout and dispatched-commit synchronization;
-- ✅ model subprocess credential/stdin boundaries and required ImplementationReport gating;
-- ✅ trusted postflight verification, allowed-path, artifact, secret, and diff gates;
-- ✅ OpenCode file-array argv termination and repository-wide Ruff format baseline;
-- ✅ mandatory push plus refreshed remote-SHA proof before reviewer handoff;
-- ✅ durable handler-exit evidence and a real Windows no-code handler-return/ACK proof;
-- 🚧 reviewer verdict routing remains unsafe: tool exit zero and `tool-review-complete` are not
-  semantic approval. The next P0 is the
-  [reviewer verdict routing TaskCard](docs/tasks/reviewer-verdict-routing.md).
-
-The launchd, systemd, WinSW, and `just` service surfaces are implemented as operations templates.
-Their three-OS install, reboot, crash-recovery, and unattended-listener behavior has not been
-accepted end to end; see [listener service status](scripts/service/README.md).
-
-An open product question remains: whether any of these dogfood runner/listener conveniences should
-eventually become an official Agent Workflow product surface. Until that decision is made, keep the
-boundaries distinct: core method/validation CLI, operations scripts, Agent Bus transport, listener
-service supervision, and a possible future Agent Host.
-
-## What Agent Workflow Is Not
-
-Agent Workflow is **not**:
-
-- an LLM
-- a coding agent
-- a replacement for Agent Bus
-- a replacement for AI Memory
-- a hosted multi-agent platform
-- a visual workflow builder
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for the full roadmap.
-
 | Phase | Scope | Status |
-|-------|-------|--------|
-| 0 | Contract Bootstrap | ✅ Current |
-| 1 | Minimum usable development loop | 📋 Planned |
-| 2 | Agent Bus brownfield dogfood | 🚧 Operations evidence collected; artifact loop incomplete |
-| 3 | Evidence-driven hardening | 📋 Deferred until dogfood |
-| Later | Optional external integrations (Agent Bus, AI Memory) | 📋 Deferred |
+|---|---|---|
+| 0 | Method contract and validation CLI | Complete |
+| 1 | Product-positioning and repository-truth convergence | Complete on this branch |
+| 2 | Safe reviewer verdict routing in the operations surface | Next engineering gate |
+| 3 | First downstream capacity-isolation dogfood | Next product gate |
+| Later | Evidence-driven helpers and possible external runtime integration | Deferred |
+
+See [`ROADMAP.md`](ROADMAP.md) for acceptance details.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

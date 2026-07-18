@@ -51,7 +51,9 @@ Roles enforce:
 
 ## Workflow
 
-A Workflow is a directed graph of stages. Each stage is assigned a role.
+A Workflow is a declared staged handoff process. Each stage is assigned a role and bounded
+transitions. The schema representation may form a graph, but Agent Workflow is not an arbitrary DAG
+engine and does not execute the transitions.
 
 ```yaml
 spec:
@@ -90,9 +92,15 @@ Artifacts are the formal handoff mechanism between stages. Every artifact carrie
 
 | Type | Produced By | Purpose |
 |------|-------------|---------|
+| `ArchitectureRecord` | Architect / planner | Frozen milestone architecture and reopen conditions |
+| `PhasePlan` | planner | Coarse roadmap plus one detailed current phase and exit evidence |
 | `TaskCard` | planner | Task definition: scope, acceptance criteria, risks |
 | `ImplementationReport` | implementer | What was changed, commands run, deviations |
 | `TestReport` | tester | Test results and acceptance criteria status |
 | `ReviewReport` | reviewer | Findings, verdict, regression risk |
 | `DecisionPacket` | summarizer | Compressed multi-stage summary for arbiter |
 | `Decision` | arbiter | Final verdict and mandatory actions |
+
+Product-facing role names map `implementer` to **Executor** and `arbiter` to **Decider**. The
+first-line ReviewReport uses `PASS`, `REQUEST_CHANGES`, or `BLOCKED`; the final Decision uses
+`approve`, `request_changes`, `reject`, or `escalate`.

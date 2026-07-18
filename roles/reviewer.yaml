@@ -34,11 +34,11 @@ spec:
   producedArtifacts:
     - ReviewReport
   completionCriteria:
-    - ReviewReport produced with verdict, findings, acceptanceCriteriaResult
+    - ReviewReport produced with PASS, REQUEST_CHANGES, or BLOCKED verdict
     - Scope deviations identified
     - Regression risk assessed
     - Escalation recommendation if needed
   escalationConditions:
-    - Critical finding that blocks approval
-    - Suspected scope violation
-    - Unresolved regression risk
+    - Evidence is insufficient for a reliable verdict
+    - Task cannot progress without reopening frozen architecture
+    - Predefined high-risk scope requires Architect or Decider review

@@ -26,6 +26,10 @@ This is the expected brownfield baseline for the first dogfood run. `awf init` m
 
 Implement the non-mutating `agent-bus doctor --json` slice from [goal.md](goal.md), with deterministic tests and no unrelated refactor.
 
-## Current Blocker
+## Current Blockers
 
-The Agent Workflow run commands required by this example do not exist in Phase 0. Implementing the minimum `init/status/next/submit` path is the immediate prerequisite; broader runtime work is not.
+- The proposed Agent Workflow run commands do not exist; manual Artifact handoff is acceptable and
+  a generic controller is not a prerequisite.
+- The operations Reviewer path does not yet validate and route semantic ReviewReports. This blocks
+  a claim that the cross-machine chain is complete, but it does not invalidate earlier transport
+  and handler evidence.
