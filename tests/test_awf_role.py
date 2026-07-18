@@ -23,6 +23,7 @@ LISTEN_SPEC = importlib.util.spec_from_file_location("awf_listen", LISTEN_MODULE
 assert LISTEN_SPEC and LISTEN_SPEC.loader
 awf_listen = importlib.util.module_from_spec(LISTEN_SPEC)
 LISTEN_SPEC.loader.exec_module(awf_listen)
+DISPATCH_PATH = Path(__file__).parents[1] / "scripts" / "awf-dispatch.sh"
 
 
 _VALID_POSTFLIGHT_CARD = """# Card
@@ -73,6 +74,13 @@ def test_listener_handler_passes_event_id_once():
 
     assert handler.split().count("--event-id") == 1
     assert "--event-id {id}" in handler
+
+
+def test_listener_handler_passes_distinct_report_paths():
+    handler = awf_listen.build_handler("python", "awf_role.py", "reviewer")
+
+    assert "--report {payload.report}" in handler
+    assert "--review-report {payload.review_report}" in handler
 
 
 @pytest.mark.parametrize(
@@ -258,12 +266,23 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
     remote_head = commit(seed, "review inputs", "report.md", "controlled report\n")
     run("git", "push", "origin", "feature/task", cwd=seed)
 
+    review_report = executor / ".awf" / "artifacts" / "review-report-task.md"
+    fake_script = tmp_path / "controlled-reviewer.py"
+    fake_script.write_text(
+        "from pathlib import Path\n"
+        f"path = Path({str(review_report)!r})\n"
+        "path.parent.mkdir(parents=True, exist_ok=True)\n"
+        f"path.write_text({_review_markdown('PASS')!r}, encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     if os.name == "nt":
         fake_tool = tmp_path / "controlled-tool.cmd"
-        fake_tool.write_text("@exit /b 0\r\n", encoding="utf-8")
+        fake_tool.write_text(f'@"{sys.executable}" "{fake_script}" %*\r\n', encoding="utf-8")
     else:
         fake_tool = tmp_path / "controlled-tool"
-        fake_tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_tool.write_text(
+            f"#!{sys.executable}\nexec(open({str(fake_script)!r}).read())\n", encoding="utf-8"
+        )
         fake_tool.chmod(0o755)
 
     state_root = tmp_path / "os-state"
@@ -294,6 +313,7 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
         "{payload.model}": "controlled/model",
         "{payload.tool}": "opencode",
         "{payload.report}": "report.md",
+        "{payload.review_report}": ".awf/artifacts/review-report-task.md",
     }
     for placeholder, value in replacements.items():
         handler = handler.replace(placeholder, value)
@@ -467,6 +487,7 @@ def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
     captured: dict = {}
 
     def fake_spawn(argv, **kwargs):
+        captured["argv"] = argv
         captured["env"] = kwargs.get("env")
         captured["stdin"] = kwargs.get("stdin")
         return 0
@@ -474,10 +495,25 @@ def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
 
-    awf_role.tool_codex_review(str(tmp_path), "main", str(prompt_file), "", "")
+    report_path = str(tmp_path / "review.md")
+    awf_role.tool_codex_review(str(tmp_path), "main", str(prompt_file), "", "", report_path)
 
     assert "AGENT_BUS_TOKEN" not in captured["env"]
-    assert captured["stdin"] == "review instructions"
+    assert report_path in captured["stdin"]
+    assert captured["argv"] == [
+        "codex",
+        "exec",
+        "-C",
+        str(tmp_path),
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+        report_path,
+        "review",
+        "--base",
+        "main",
+        "-",
+    ]
 
 
 def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
@@ -499,7 +535,12 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
     monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
 
     awf_role.tool_opencode_review(
-        str(tmp_path), "main", str(prompt_file), str(card_file), "provider/model"
+        str(tmp_path),
+        "main",
+        str(prompt_file),
+        str(card_file),
+        "provider/model",
+        ".awf/review.md",
     )
 
     assert "AGENT_BUS_TOKEN" not in captured["env"]
@@ -513,7 +554,7 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
         "-m",
         "provider/model",
         "--",
-        "instructions",
+        "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n",
     ]
 
 
@@ -536,8 +577,15 @@ def test_tool_opencode_card_prompt_boundary_without_model(monkeypatch, tmp_path,
     if adapter == "executor":
         awf_role.tool_opencode_exec(str(tmp_path), str(card_file), str(prompt_file), "")
     else:
-        awf_role.tool_opencode_review(str(tmp_path), "main", str(prompt_file), str(card_file), "")
+        awf_role.tool_opencode_review(
+            str(tmp_path), "main", str(prompt_file), str(card_file), "", ".awf/review.md"
+        )
 
+    expected_instructions = (
+        "instructions"
+        if adapter == "executor"
+        else "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n"
+    )
     assert captured["argv"] == [
         "opencode-test",
         "run",
@@ -546,7 +594,7 @@ def test_tool_opencode_card_prompt_boundary_without_model(monkeypatch, tmp_path,
         "-f",
         str(card_file),
         "--",
-        "instructions",
+        expected_instructions,
     ]
 
 
@@ -664,6 +712,7 @@ def test_coder_missing_report_gate(monkeypatch, tmp_path):
         model="",
         tool="opencode",
         report="",
+        review_report=".awf/review.md",
         base="",
         evidence=evidence,
     )
@@ -714,6 +763,7 @@ def test_reviewer_missing_report_gate(monkeypatch, tmp_path, tool, review_attr):
         model="",
         tool=tool,
         report="",
+        review_report=".awf/review.md",
         base="main",
     )
 
@@ -724,7 +774,268 @@ def test_reviewer_missing_report_gate(monkeypatch, tmp_path, tool, review_attr):
 
 
 # ---------------------------------------------------------------------------
-# Fail-closed reviewer handoff
+# Structured ReviewReport and fail-closed reviewer routing
+# ---------------------------------------------------------------------------
+
+
+def _review_markdown(verdict, *, failures=None, blocked_reason="", extra=""):
+    machine = {
+        "verdict": verdict,
+        "deterministic_failures": failures or [],
+        "blocked_reason": blocked_reason,
+    }
+    return "# Review Report\n\n<!-- awf-review-report\n" + json.dumps(machine) + "\n-->\n\n" + extra
+
+
+_COMMAND_FAILURE = {
+    "evidence": {
+        "kind": "command",
+        "command": "python -m pytest -q tests/test_feature.py",
+        "result": "FAILED test_expected_contract",
+    },
+    "required_correction": "Make the failed acceptance test pass without widening scope.",
+}
+
+
+def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=True, tool_rc=0):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    (script_dir / "reviewer-prompt.md").write_text("prompt", encoding="utf-8")
+    (repo / "task.md").write_text("card", encoding="utf-8")
+    implementation_report = repo / "implementation.md"
+    implementation_report.write_text("implementation", encoding="utf-8")
+
+    monkeypatch.setenv("AWF_REPO_DIR", str(repo))
+    monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
+    monkeypatch.setenv("AWF_TOOL", "opencode")
+    monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+
+    tool_calls = []
+
+    def fake_review(*args, **kwargs):
+        tool_calls.append((args, kwargs))
+        if content is not None:
+            (Path(args[0]) / args[5]).write_text(content, encoding="utf-8")
+        return tool_rc
+
+    monkeypatch.setattr(awf_role, "tool_opencode_review", fake_review)
+    send_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: send_calls.append((args, kwargs)) or send_result,
+    )
+    ns = argparse.Namespace(
+        branch="feature/task",
+        card="task.md",
+        commit="abc1234",
+        model="",
+        tool="opencode",
+        report=str(implementation_report),
+        review_report=".awf/artifacts/review-report-task.md",
+        base="main",
+    )
+    return ns, send_calls, tool_calls
+
+
+@pytest.mark.parametrize(
+    ("content", "recipient", "event_type"),
+    [
+        (_review_markdown("PASS"), "architect", "decision:awf-ready"),
+        (
+            _review_markdown("REQUEST_CHANGES", failures=[_COMMAND_FAILURE]),
+            "coder",
+            "task:awf-rework",
+        ),
+        (
+            _review_markdown("BLOCKED", blocked_reason="TaskCard has conflicting requirements"),
+            "architect",
+            "decision:awf-blocked",
+        ),
+    ],
+)
+def test_reviewer_routes_exactly_one_valid_verdict(
+    monkeypatch, tmp_path, content, recipient, event_type
+):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(monkeypatch, tmp_path, content)
+
+    assert awf_role.role_reviewer(ns) == 0
+
+    assert len(tool_calls) == 1
+    assert tool_calls[0][0][5] == ns.review_report
+    assert len(send_calls) == 1
+    args = send_calls[0][0]
+    assert args[:3] == ("reviewer", recipient, event_type)
+    payload = args[3]
+    assert payload["branch"] == "feature/task"
+    assert payload["card"] == "task.md"
+    assert payload["commit"] == "abc1234"
+    assert payload["report"] == ns.report
+    assert payload["review_report_path"] == ns.review_report
+    assert payload["tool"] == "opencode"
+    assert payload["model"] == ""
+    assert payload["review_report"]["format"] == "awf.review-report.v1"
+    assert payload["review_report"]["verdict"] in content
+    assert payload["review_report"]["markdown"] == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "",
+        "# no machine verdict\n",
+        "<!-- awf-review-report\n{bad json\n-->\n",
+        _review_markdown("pass"),
+        _review_markdown("UNKNOWN"),
+        (
+            "<!-- awf-review-report\n"
+            '{"verdict":"PASS","verdict":"BLOCKED",'
+            '"deterministic_failures":[],"blocked_reason":""}\n-->\n'
+        ),
+        _review_markdown("REQUEST_CHANGES"),
+        _review_markdown("BLOCKED"),
+        _review_markdown("PASS") + _review_markdown("PASS"),
+    ],
+)
+def test_invalid_review_report_fails_before_send(monkeypatch, tmp_path, content):
+    ns, send_calls, _ = _prepare_reviewer_routing(monkeypatch, tmp_path, content)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not send_calls
+
+
+def test_reviewer_rc_zero_without_report_cannot_route_pass(monkeypatch, tmp_path):
+    ns, send_calls, _ = _prepare_reviewer_routing(monkeypatch, tmp_path, None, tool_rc=0)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not send_calls
+
+
+def test_reviewer_tool_failure_prevents_report_routing(monkeypatch, tmp_path):
+    ns, send_calls, _ = _prepare_reviewer_routing(
+        monkeypatch, tmp_path, _review_markdown("PASS"), tool_rc=7
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not send_calls
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        _review_markdown("PASS", extra="x" * (17 * 1024)),
+        _review_markdown("PASS", extra="审" * 3000),
+        _review_markdown("PASS", extra="```diff\n-old\n+new\n```\n"),
+        _review_markdown("PASS", extra="diff --git a/a.py b/a.py\n"),
+        _review_markdown("PASS", extra=_GITHUB_TOKEN),
+    ],
+)
+def test_unsafe_or_oversized_review_report_fails_before_send(monkeypatch, tmp_path, content):
+    ns, send_calls, _ = _prepare_reviewer_routing(monkeypatch, tmp_path, content)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not send_calls
+
+
+@pytest.mark.parametrize("verdict", ["PASS", "REQUEST_CHANGES", "BLOCKED"])
+def test_each_reviewer_route_send_failure_is_nonzero(monkeypatch, tmp_path, verdict):
+    failures = [_COMMAND_FAILURE] if verdict == "REQUEST_CHANGES" else []
+    blocked_reason = "needs architect decision" if verdict == "BLOCKED" else ""
+    content = _review_markdown(verdict, failures=failures, blocked_reason=blocked_reason)
+    ns, send_calls, _ = _prepare_reviewer_routing(monkeypatch, tmp_path, content, send_result=False)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert len(send_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["", "/tmp/review.md", "../review.md", "C:/review.md", ".awf\\review.md"],
+)
+def test_reviewer_requires_safe_repo_relative_path(monkeypatch, tmp_path, path):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch, tmp_path, _review_markdown("PASS")
+    )
+    ns.review_report = path
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not tool_calls
+    assert not send_calls
+
+
+def test_reviewer_report_path_must_differ_from_implementation_report(monkeypatch, tmp_path):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch, tmp_path, _review_markdown("PASS")
+    )
+    ns.review_report = "implementation.md"
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not tool_calls
+    assert not send_calls
+
+
+def test_reviewer_report_path_must_not_replace_tracked_file(monkeypatch, tmp_path):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch, tmp_path, _review_markdown("PASS")
+    )
+    monkeypatch.setattr(awf_role, "git_out", lambda *args: "tracked.md")
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not tool_calls
+    assert not send_calls
+
+
+def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
+    repo = tmp_path / "repo"
+    run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    (repo / "task.md").write_text("task\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(DISPATCH_PATH),
+            "--repo",
+            str(repo),
+            "--card",
+            "task.md",
+            "--branch",
+            "feature/task",
+            "--no-push",
+            "--dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload_line = next(line for line in completed.stdout.splitlines() if "payload=" in line)
+    payload = json.loads(payload_line.split("payload=", 1)[1])
+    assert payload["report"] == ".awf/artifacts/impl-report-task.md"
+    assert payload["review_report"] == ".awf/artifacts/review-report-task.md"
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed coder handoff
 # ---------------------------------------------------------------------------
 
 
@@ -758,6 +1069,7 @@ def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
         model="",
         tool="opencode",
         report=str(report),
+        review_report=".awf/review.md",
         base="",
     )
     return ns, send_calls
@@ -859,6 +1171,7 @@ def test_coder_verified_remote_sha_sends_one_review_event(monkeypatch, tmp_path)
     assert len(send_calls) == 1
     assert send_calls[0][0][2] == "task:awf-review"
     assert send_calls[0][0][3]["commit"] == "verified-sha"
+    assert send_calls[0][0][3]["review_report"] == ".awf/review.md"
 
 
 def test_coder_no_push_blocks_remote_completion(monkeypatch, tmp_path):
@@ -906,6 +1219,7 @@ def test_coder_fail_closed_send_event(monkeypatch, tmp_path):
         model="",
         tool="opencode",
         report=str(report),
+        review_report=".awf/review.md",
         base="",
     )
 
@@ -952,6 +1266,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
         model="",
         tool="opencode",
         report=str(report),
+        review_report=".awf/review.md",
         base="",
         evidence=evidence,
     )

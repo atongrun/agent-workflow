@@ -24,6 +24,7 @@
 #     [--tool  opencode]           (executor CLI hint for the listener; default: opencode) \
 #     [--model opencode-go/deepseek-v4-flash] \
 #     [--report .awf/artifacts/NN-implementation-report.md]  (impl-report path hint) \
+#     [--review-report .awf/artifacts/review-report-<task-id>.md] \
 #     [--type  task:awf-impl]      (event type; default: task:awf-impl) \
 #     [--no-push]                  (skip git push — LOCAL-ONLY; cross-machine needs push) \
 #     [--dry-run]                  (print the event that WOULD be sent, send nothing)
@@ -34,7 +35,8 @@
 set -uo pipefail
 
 # ---- defaults ----
-REPO="" CARD="" BRANCH="" TO="coder" TOOL="opencode" MODEL="" REPORT="" DO_PUSH=1 DRY_RUN=0
+REPO="" CARD="" BRANCH="" TO="coder" TOOL="opencode" MODEL="" REPORT="" REVIEW_REPORT=""
+DO_PUSH=1 DRY_RUN=0
 EVENT_TYPE="task:awf-impl"
 
 die() { echo "awf-dispatch: $*" >&2; exit 2; }
@@ -48,6 +50,7 @@ while [ $# -gt 0 ]; do
     --tool) TOOL="$2"; shift 2;;
     --model) MODEL="$2"; shift 2;;
     --report) REPORT="$2"; shift 2;;
+    --review-report) REVIEW_REPORT="$2"; shift 2;;
     --type) EVENT_TYPE="$2"; shift 2;;
     --no-push) DO_PUSH=0; shift;;
     --dry-run) DRY_RUN=1; shift;;
@@ -87,8 +90,9 @@ echo "[dispatch] card committed at $COMMIT on $BRANCH"
 task_id="${BRANCH##*/}"
 # report path hint: default to a conventional per-task artifact path if not given.
 [ -n "$REPORT" ] || REPORT=".awf/artifacts/impl-report-$task_id.md"
-payload="$(printf '{"task_id":"%s","branch":"%s","card":"%s","commit":"%s","tool":"%s","model":"%s","report":"%s"}' \
-  "$task_id" "$BRANCH" "$CARD" "$COMMIT" "$TOOL" "$MODEL" "$REPORT")"
+[ -n "$REVIEW_REPORT" ] || REVIEW_REPORT=".awf/artifacts/review-report-$task_id.md"
+payload="$(printf '{"task_id":"%s","branch":"%s","card":"%s","commit":"%s","tool":"%s","model":"%s","report":"%s","review_report":"%s"}' \
+  "$task_id" "$BRANCH" "$CARD" "$COMMIT" "$TOOL" "$MODEL" "$REPORT" "$REVIEW_REPORT")"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "[dispatch] --dry-run: would send event"
