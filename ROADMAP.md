@@ -23,7 +23,7 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 The CLI validates contracts only. Earlier ports, adapters, Policy/Event/BindingProfile schemas, and
 control-plane runtime concepts were removed. The core is not a Workflow Engine.
 
-## Phase 1: Product Positioning and Repository Truth 🚧
+## Phase 1: Product Positioning and Repository Truth ✅
 
 - [x] Define high-value-model capacity isolation as the downstream objective
 - [x] Separate infrastructure-development and downstream-operation modes
@@ -31,7 +31,7 @@ control-plane runtime concepts were removed. The core is not a Workflow Engine.
 - [x] Define Repository Truth, Run Context, TaskCard, and AI Memory boundaries
 - [x] Classify current branches, PRs, operations evidence, and incomplete links
 - [x] Add product-positioning ADR and measurable product metrics
-- [ ] Merge the positioning PR and refresh the next implementation TaskCard from the resulting main
+- [x] Merge the positioning PR and freeze reviewer routing from the resulting `main`
 
 ## Phase 2: Close the Proven Operations Gap 📋
 
@@ -43,22 +43,32 @@ The non-core operations surface has already demonstrated:
 - allowed-path, secret, and diff checks;
 - commit/push plus refreshed remote-SHA proof;
 - durable handler lifecycle evidence;
-- a real Windows no-code handler-return followed by success-gated Agent Bus ACK.
+- a real Windows no-code handler-return followed by success-gated Agent Bus ACK;
+- structured `PASS`, deterministic `REQUEST_CHANGES`, and `BLOCKED` ReviewReport validation and
+  fail-closed verdict routing at the deterministic-test level;
+- a dedicated default-locale postflight environment boundary plus a trusted Windows Python 3.12
+  portability closeout.
 
-It has **not** demonstrated a complete semantic review loop. Tool exit zero and
-`tool-review-complete` are not `PASS`; `REQUEST_CHANGES` and `BLOCKED` are not yet safely routed as
-structured ReviewReports. Consequently the uninterrupted sequence from review verdict through
-merge and next TaskCard is incomplete.
+PR #12 closed the placeholder-reviewer gap: tool exit zero is no longer treated as a verdict, and
+exactly one validated semantic route is selected before the review event can be acknowledged. PR
+#13 and PR #14 then closed the default-locale verification prerequisite and full Windows Python
+3.12 portability gate. Those claims are backed by deterministic tests and preserved implementation
+reports; the semantic route has not yet been accepted as one fresh uninterrupted cross-machine run.
 
-After this positioning branch merges:
+Completed engineering gates:
 
-- [ ] Regenerate [`docs/tasks/reviewer-verdict-routing.md`](docs/tasks/reviewer-verdict-routing.md)
-  against the new `origin/main`; never dispatch its pre-merge SHA.
-- [ ] Implement and deterministically test `PASS`, `REQUEST_CHANGES`, and `BLOCKED` routing.
-- [ ] Verify send failure keeps the current review event unacknowledged.
-- [ ] Run a fresh isolated cross-machine acceptance without consuming preserved failure events or
-  checkouts.
-- [ ] Record semantic verdict → decision/merge → next-TaskCard evidence.
+- [x] Freeze [`docs/tasks/reviewer-verdict-routing.md`](docs/tasks/reviewer-verdict-routing.md)
+  against the merged positioning baseline.
+- [x] Implement and deterministically test `PASS`, `REQUEST_CHANGES`, and `BLOCKED` routing.
+- [x] Verify invalid reports and send failures keep the current review event unacknowledged.
+- [x] Prove the verification child boundary with `PYTHONUTF8` absent on Windows Python 3.12.
+- [x] Close the full Windows Python 3.12 portability suite and trusted postflight gate.
+
+Remaining Phase 2 work:
+
+- [ ] Run a fresh isolated cross-machine semantic-loop acceptance, using new events and checkouts,
+  and record the capacity-isolation metrics defined in [`docs/product-metrics.md`](docs/product-metrics.md).
+- [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
 the stable core or modify Agent Bus protocol.

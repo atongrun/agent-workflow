@@ -14,6 +14,9 @@
   ReviewReport verdicts to `PASS`, `REQUEST_CHANGES`, and `BLOCKED`.
 - Reconciled repository/branch truth, operations dogfood evidence, and the stale reviewer-routing
   baseline before the next implementation task.
+- Refreshed current-state documentation after reviewer verdict routing, the default-locale
+  verification boundary, and the Windows Python 3.12 portability closeout landed, leaving live
+  cross-machine acceptance, metric capture, and downstream dogfood as the explicit open gates.
 
 ## [0.2.0] — 2026-07-11
 
