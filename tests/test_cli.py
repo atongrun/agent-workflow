@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,12 +11,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run_awf(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    env = dict(os.environ)
+    env.pop("PYTHONUTF8", None)
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
         [sys.executable, "-m", "agent_workflow.cli", *args],
         cwd=PROJECT_ROOT,
         capture_output=True,
-        text=True,
+        env=env,
     )
+    completed.stdout = completed.stdout.decode("utf-8")
+    completed.stderr = completed.stderr.decode("utf-8")
+    return completed
 
 
 class TestCLIVersion:
