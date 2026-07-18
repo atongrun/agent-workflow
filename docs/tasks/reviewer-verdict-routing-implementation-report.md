@@ -112,4 +112,3 @@ critical, high, medium, or low findings.
 - `task:awf-rework` routing is deterministic and complete but deliberately has no automatic listener
   transition in this task.
 - Agent Bus protocol, persistence, ACK/failure semantics, and authentication were unchanged.
-
