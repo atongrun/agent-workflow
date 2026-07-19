@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import tomllib
 from pathlib import Path
 
 import pytest
 
+from agent_workflow import validation
 from agent_workflow.validation import validate_directory, validate_file
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -59,6 +62,32 @@ class TestSchemaFilesExist:
     def test_schema_exists(self, schema_file: str):
         path = SCHEMAS_DIR / schema_file
         assert path.exists(), f"Schema missing: {schema_file}"
+
+    def test_wheel_maps_canonical_schemas_into_package_resources(self):
+        project_metadata = tomllib.loads(
+            (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        force_include = project_metadata["tool"]["hatch"]["build"]["targets"]["wheel"][
+            "force-include"
+        ]
+        assert force_include == {"schemas": "agent_workflow/schemas"}
+
+    def test_packaged_schema_resource_is_preferred(self, tmp_path: Path, monkeypatch):
+        package_dir = tmp_path / "agent_workflow"
+        package_schema_dir = package_dir / "schemas"
+        package_schema_dir.mkdir(parents=True)
+        packaged_schema = {"title": "packaged role schema"}
+        (package_schema_dir / "role.schema.json").write_text(
+            json.dumps(packaged_schema), encoding="utf-8"
+        )
+
+        monkeypatch.setattr(validation.resources, "files", lambda package: package_dir)
+        monkeypatch.setattr(validation, "SOURCE_SCHEMA_DIR", tmp_path / "missing-source-schemas")
+        validation._schema_cache.clear()
+
+        assert validation._load_schema("Role") == packaged_schema
+
+        validation._schema_cache.clear()
 
 
 class TestMissingNameValidation:
