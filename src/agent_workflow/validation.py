@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,8 @@ import yaml
 from agent_workflow.errors import ParseError
 from agent_workflow.models import VALID_KINDS, Resource
 
-SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
+SOURCE_SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
+PACKAGE_SCHEMA_DIR = "schemas"
 
 KIND_TO_SCHEMA: dict[str, str] = {
     "Role": "role.schema.json",
@@ -24,17 +26,25 @@ KIND_TO_SCHEMA: dict[str, str] = {
 _schema_cache: dict[str, dict[str, Any]] = {}
 
 
+def _read_schema(filename: str) -> str:
+    package_resource = resources.files("agent_workflow").joinpath(PACKAGE_SCHEMA_DIR, filename)
+    if package_resource.is_file():
+        return package_resource.read_text(encoding="utf-8")
+
+    source_path = SOURCE_SCHEMA_DIR / filename
+    if source_path.is_file():
+        return source_path.read_text(encoding="utf-8")
+
+    raise FileNotFoundError(f"Schema not found in package resources or source checkout: {filename}")
+
+
 def _load_schema(kind: str) -> dict[str, Any]:
     if kind in _schema_cache:
         return _schema_cache[kind]
     filename = KIND_TO_SCHEMA.get(kind)
     if not filename:
         raise ValueError(f"Unknown kind: {kind}")
-    path = SCHEMA_DIR / filename
-    if not path.exists():
-        raise FileNotFoundError(f"Schema not found: {path}")
-    with open(path, encoding="utf-8") as f:
-        schema = json.load(f)
+    schema = json.loads(_read_schema(filename))
     _schema_cache[kind] = schema
     return schema
 

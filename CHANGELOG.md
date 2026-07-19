@@ -34,6 +34,8 @@
   truth after the reviewer-routing and Windows portability work landed.
 - Set the PEP 440 package candidate version to `0.3.0rc1` (future Git tag
   `v0.3.0-rc.1`) and added a regression test that keeps project, runtime, and CLI versions aligned.
+- Packaged the canonical root `schemas/` files as runtime package resources and added a clean-wheel
+  installation gate so `awf validate` no longer depends on a source checkout.
 
 ### Not yet complete
 

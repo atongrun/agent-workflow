@@ -21,9 +21,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+          python -m pip install build
 
       - name: Lint with ruff
-        run: ruff check .
+        run: |
+          ruff check .
+          ruff format --check .
 
       - name: Run tests
         run: python -m pytest -v
@@ -33,3 +36,26 @@ jobs:
           awf validate roles
           awf validate workflows
           awf validate examples
+
+      - name: Build wheel and source distribution
+        run: python -m build
+
+      - name: Verify distribution schema contents
+        shell: bash
+        run: |
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          sdist="$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          for schema in role.schema.json workflow.schema.json artifact.schema.json; do
+            python -m zipfile -l "$wheel" | grep -F "agent_workflow/schemas/$schema"
+            tar -tzf "$sdist" | grep -E "/schemas/$schema$"
+          done
+
+      - name: Validate from an installed wheel
+        shell: bash
+        run: |
+          python -m venv "${RUNNER_TEMP}/awf-wheel-venv"
+          "${RUNNER_TEMP}/awf-wheel-venv/bin/python" -m pip install dist/*.whl
+          "${RUNNER_TEMP}/awf-wheel-venv/bin/awf" version
+          "${RUNNER_TEMP}/awf-wheel-venv/bin/awf" validate roles
+          "${RUNNER_TEMP}/awf-wheel-venv/bin/awf" validate workflows
+          "${RUNNER_TEMP}/awf-wheel-venv/bin/awf" validate examples

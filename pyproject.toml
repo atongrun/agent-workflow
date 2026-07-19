@@ -26,6 +26,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_workflow"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "agent_workflow/schemas"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
