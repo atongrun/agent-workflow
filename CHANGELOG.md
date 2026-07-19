@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
 
-### Product positioning
+## [0.3.0-rc.1] — 2026-07-19
+
+### Core method and contracts
 
 - Defined Agent Workflow as a model-agnostic development method, structured handoff protocol, and
   verifiable process contract that isolates high-value-model capacity in downstream projects.
@@ -12,11 +14,35 @@
   boundaries without adding a runtime or adapter.
 - Added `ArchitectureRecord` and `PhasePlan` as recognized Artifact types and aligned first-line
   ReviewReport verdicts to `PASS`, `REQUEST_CHANGES`, and `BLOCKED`.
-- Reconciled repository/branch truth, operations dogfood evidence, and the stale reviewer-routing
-  baseline before the next implementation task.
-- Refreshed current-state documentation after reviewer verdict routing, the default-locale
-  verification boundary, and the Windows Python 3.12 portability closeout landed, leaving live
-  cross-machine acceptance, metric capture, and downstream dogfood as the explicit open gates.
+
+### Operations surface
+
+- Added role-based dispatch/listener scripts, cross-platform bootstrap and handoff checks, and
+  launchd, systemd, and WinSW service templates without promoting them into the stateless core.
+- Added exact dispatched-commit checkout, isolated model-process execution, trusted postflight,
+  allowed-path, secret, diff, commit/push, and refreshed remote-SHA completion gates.
+- Added durable handler logs and atomic result evidence so model completion, postflight entry, and
+  handler exit remain independently auditable after the listener process ends.
+- Replaced tool-exit-based review completion with structured semantic ReviewReport validation and
+  fail-closed `PASS`, `REQUEST_CHANGES`, and `BLOCKED` event routing.
+
+### Verification and release metadata
+
+- Closed the Windows Python 3.12 default-locale boundary with explicit UTF-8 resource handling,
+  trusted verification-environment isolation, and a fresh Windows postflight acceptance.
+- Reconciled repository, branch, TaskCard, implementation-report, and archived failure-evidence
+  truth after the reviewer-routing and Windows portability work landed.
+- Set the PEP 440 package candidate version to `0.3.0rc1` (future Git tag
+  `v0.3.0-rc.1`) and added a regression test that keeps project, runtime, and CLI versions aligned.
+
+### Not yet complete
+
+- No fresh uninterrupted cross-machine semantic loop has accepted dispatch through implementation,
+  review, verdict routing, merge or deterministic rework, and next-TaskCard continuation.
+- Capacity-isolation metrics have not yet been captured from that live loop.
+- The first non-infrastructure downstream multi-TaskCard dogfood remains a product gate.
+- Listener supervision and operations helpers remain a non-core surface; this candidate does not
+  claim a generic runtime, scheduler, Agent Host, or plugin system.
 
 ## [0.2.0] — 2026-07-11
 
@@ -60,4 +86,7 @@
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[0.1.0]: https://github.com/atongrun/agent-workflow/releases/tag/v0.1.0
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.1...HEAD
+[0.3.0-rc.1]: https://github.com/atongrun/agent-workflow/compare/v0.2.0...v0.3.0-rc.1
+[0.2.0]: https://github.com/atongrun/agent-workflow/compare/a08664da1640207bd8757609cbf83348249df709...v0.2.0
+[0.1.0]: https://github.com/atongrun/agent-workflow/commit/a08664da1640207bd8757609cbf83348249df709

@@ -1,6 +1,6 @@
 [project]
 name = "agent_workflow"
-version = "0.2.0"
+version = "0.3.0rc1"
 description = "A portable personal development method and handoff protocol for AI coding agents."
 readme = "README.md"
 license = { text = "MIT" }
