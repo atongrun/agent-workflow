@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+from agent_workflow import __version__
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -29,11 +32,17 @@ class TestCLIVersion:
     def test_version_prints_version(self):
         result = run_awf("version")
         assert result.returncode == 0
-        assert "0.1.0" in result.stdout
+        assert result.stdout == f"awf {__version__}\n"
 
     def test_version_exit_code_zero(self):
         result = run_awf("version")
         assert result.returncode == 0
+
+    def test_runtime_version_matches_project_metadata(self):
+        project_metadata = tomllib.loads(
+            (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        assert __version__ == project_metadata["project"]["version"]
 
 
 class TestCLIValidate:

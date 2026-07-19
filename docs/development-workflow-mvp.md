@@ -99,10 +99,13 @@ The repository's `scripts/` surface has already proven important engineering bou
 real Agent Bus dogfood: exact checkout, trusted process/postflight gates, commit/push and remote-SHA
 proof, durable handler evidence, and a Windows handler-return/ACK gate. It remains outside the core.
 
-The loop is still incomplete because the Reviewer does not yet emit and route a validated semantic
-ReviewReport. Safe verdict routing, merge, and next-TaskCard continuation must be proven before the
-operations surface can claim a complete cross-machine chain. See
-[`tasks/reviewer-verdict-routing.md`](tasks/reviewer-verdict-routing.md).
+The Reviewer now validates a structured ReviewReport and routes `PASS`, `REQUEST_CHANGES`, and
+`BLOCKED` through fail-closed deterministic logic. That boundary is covered by tests, but it has
+not yet been accepted as one fresh, uninterrupted cross-machine semantic loop. A live run must
+still prove dispatch through verdict routing and record the merge or deterministic-rework and
+next-TaskCard continuation evidence before the operations surface can claim a complete
+cross-machine chain. See
+[`tasks/reviewer-verdict-routing-implementation-report.md`](tasks/reviewer-verdict-routing-implementation-report.md).
 
 ## Acceptance Criteria
 
