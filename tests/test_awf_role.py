@@ -490,6 +490,13 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
     ]
 
 
+def test_executor_prompt_reserves_git_writes_for_trusted_runner():
+    prompt = (Path(awf_role.__file__).parent / "executor-prompt.md").read_text(encoding="utf-8")
+
+    assert "Do not run `git add`, `git commit`" in prompt
+    assert "The trusted runner alone verifies" in prompt
+
+
 def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
     """The Codex reviewer adapter passes model_env() and stdin to spawn()."""
     prompt_file = tmp_path / "prompt.md"
