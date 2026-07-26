@@ -1,8 +1,8 @@
 # Repository Handoff
 
-> Current through the 2026-07-18 documentation truth refresh. The audited implementation baseline
-> is `db5a45c`; repository files and live Git refs are authoritative. This document contains no
-> private endpoint, credential, host, or personal-path data.
+> Current through the 2026-07-26 live semantic-loop acceptance closeout. The `main` baseline before
+> this closeout is `3612ab5`; repository files and live Git refs are authoritative. This document
+> contains no private endpoint, credential, host, or personal-path data.
 
 ## Product Position
 
@@ -21,6 +21,7 @@ Read in this order:
 5. [`docs/tasks/reviewer-verdict-routing-implementation-report.md`](docs/tasks/reviewer-verdict-routing-implementation-report.md)
 6. [`docs/tasks/windows-verification-env-gate-v2-implementation-report.md`](docs/tasks/windows-verification-env-gate-v2-implementation-report.md)
 7. [`docs/tasks/windows-python312-utf8-closeout-v7-implementation-report.md`](docs/tasks/windows-python312-utf8-closeout-v7-implementation-report.md)
+8. [`docs/tasks/live-semantic-loop-acceptance-2026-07-26-v5-implementation-report.md`](docs/tasks/live-semantic-loop-acceptance-2026-07-26-v5-implementation-report.md)
 
 AI Memory can provide long-term/private background to an Architect or Planner. It does not override
 these versioned files, and a fresh Executor must not need it when a TaskCard is complete.
@@ -36,6 +37,9 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
   is preserved for separate audit; do not clean it as part of unrelated work.
 - Historical Agent Bus events 49–52 and 73–80 are evidence only: never read payloads, consume, ACK,
   or requeue them.
+- The 2026-07-26 v1–v4 semantic-loop branches are failed or intermediate evidence. The v5 branch is
+  the successful evidence branch at executor commit `451cc60`; preserve all five refs and their
+  event-scoped evidence without reset, re-pointing, or redispatch.
 
 Refresh refs before relying on this snapshot.
 
@@ -58,6 +62,13 @@ Refresh refs before relying on this snapshot.
    162 passed, 1 expected platform skip, Ruff/format/resource validation clean, trusted postflight
    passed, and push plus remote SHA verified. The accepted executor commit remains preserved at
    `archive/event-80-windows-python312-utf8-closeout-v7-success`.
+4. **Reviewer compatibility and live semantic-loop closeout.** The operations runner now keeps
+   model-side Git writes disabled, drives Codex review through a read-only prompt with the canonical
+   ReviewReport contract, and passes only validated deterministic failures into rework. A fresh
+   isolated Mac architect → Windows coder → Mac reviewer → architect run completed on events
+   94–96: coder postflight, commit/push, and remote SHA `451cc60` matched; reviewer emitted a
+   structured `PASS`; architect consumed the verdict; every event was ACKed with retry count zero
+   and no last error. Agent Bus remained an unchanged opaque transport.
 
 ## Repository Truth Consistency
 
@@ -68,24 +79,21 @@ evidence and are not rewritten when current status advances.
 
 ## Proven and Missing
 
-Proven at deterministic-test level: exact checkout, trusted model-process and postflight gates,
-allowed-path/secret/diff checks, commit/push plus remote-SHA proof, durable handler evidence,
-Windows handler-return/ACK, semantic verdict validation and fail-closed routing, and Windows
-Python 3.12 default-locale portability.
+Proven with deterministic tests and live operations evidence: exact checkout, trusted
+model-process and postflight gates, allowed-path/secret/diff checks, commit/push plus remote-SHA
+proof, durable handler evidence, Windows handler-return/ACK, semantic verdict validation and
+fail-closed routing, Windows Python 3.12 default-locale portability, and one fresh uninterrupted
+cross-machine `PASS` route through architect consumption and ACK.
 
-Missing from the complete chain: a **live cross-machine acceptance** of the semantic review loop
-(fresh events, real machines, one uninterrupted dispatch → implement → review → verdict route),
-recorded capacity-isolation metrics from that live run (`docs/product-metrics.md` counters have not
-yet been filled), and the first non-infrastructure downstream dogfood.
+Still missing: recorded capacity-isolation metrics for the live run
+(`docs/product-metrics.md` counters have not yet been filled), automatic continuation into a next
+TaskCard, and the first non-infrastructure downstream dogfood.
 
 ## Next Gates (in order)
 
-1. **Live cross-machine semantic-loop acceptance** — author a frozen TaskCard for a fresh, isolated
-   run proving at least the `PASS` route and one failure route (`REQUEST_CHANGES` or invalid-report
-   fail-closed) end to end over real Agent Bus and machines. New events and checkouts only; archive
-   tags and the preserved worktree stay untouched. Record the metrics defined in
-   `docs/product-metrics.md` for this run.
-2. **First downstream multi-TaskCard dogfood** — a real non-infrastructure project, measuring
+1. **Close the live-run measurement record** — record the capacity-isolation counters defined in
+   `docs/product-metrics.md` without rewriting preserved event evidence.
+2. **First downstream multi-TaskCard dogfood** — run a real non-infrastructure project, measuring
    high-value-model invocations per completed TaskCard against the metrics doc.
 
 ## Standing Rules

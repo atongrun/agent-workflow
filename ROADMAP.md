@@ -53,7 +53,9 @@ PR #12 closed the placeholder-reviewer gap: tool exit zero is no longer treated 
 exactly one validated semantic route is selected before the review event can be acknowledged. PR
 #13 and PR #14 then closed the default-locale verification prerequisite and full Windows Python
 3.12 portability gate. Those claims are backed by deterministic tests and preserved implementation
-reports; the semantic route has not yet been accepted as one fresh uninterrupted cross-machine run.
+reports. The 2026-07-26 v5 acceptance then completed one fresh uninterrupted Mac architect →
+Windows coder → Mac reviewer → architect `PASS` route with exact remote-SHA proof, durable handler
+evidence, ACKed events 94–96, retry count zero, and no last error.
 
 Completed engineering gates:
 
@@ -63,11 +65,12 @@ Completed engineering gates:
 - [x] Verify invalid reports and send failures keep the current review event unacknowledged.
 - [x] Prove the verification child boundary with `PYTHONUTF8` absent on Windows Python 3.12.
 - [x] Close the full Windows Python 3.12 portability suite and trusted postflight gate.
+- [x] Complete one fresh isolated cross-machine semantic `PASS` route through architect ACK.
 
 Remaining Phase 2 work:
 
-- [ ] Run a fresh isolated cross-machine semantic-loop acceptance, using new events and checkouts,
-  and record the capacity-isolation metrics defined in [`docs/product-metrics.md`](docs/product-metrics.md).
+- [ ] Record the capacity-isolation metrics defined in
+  [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
