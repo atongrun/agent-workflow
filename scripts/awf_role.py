@@ -936,7 +936,14 @@ def tool_codex_review(
         argv += ["--model", model]
     argv += ["review", "--base", base]
     stdin = read_text(prompt_file)
-    stdin += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
+    template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
+    stdin += (
+        "\n\nYour final response is persisted verbatim as the ReviewReport. "
+        "Return the complete filled-in Markdown report itself; do not merely summarize "
+        "the verdict or say that you wrote a file."
+        f"\n\nReviewReport output path: {review_report_path}\n"
+        "\n--- Required ReviewReport template ---\n\n" + read_text(str(template_path))
+    )
     if card_file and Path(card_file).is_file():
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
     return spawn(argv, cwd=repo, stdin=stdin, env=model_env())
