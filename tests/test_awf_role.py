@@ -84,6 +84,18 @@ def test_listener_handler_passes_distinct_report_paths():
     assert "--review-report {payload.review_report}" in handler
 
 
+def test_rework_handler_maps_report_path_and_structured_feedback():
+    handler = awf_listen.build_handler(
+        "python",
+        "awf_role.py",
+        "coder",
+        on_type="task:awf-rework",
+    )
+
+    assert "--review-report {payload.review_report_path}" in handler
+    assert "--review-feedback {payload.review_report}" in handler
+
+
 @pytest.mark.parametrize(
     ("os_name", "environ", "home", "expected"),
     [
@@ -488,6 +500,42 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
         "--",
         "instructions",
     ]
+
+
+def test_tool_opencode_exec_injects_bounded_rework_feedback(monkeypatch, tmp_path):
+    card_file = tmp_path / "card.md"
+    card_file.write_text("task")
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("instructions")
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        awf_role,
+        "spawn",
+        lambda argv, **kwargs: captured.update(argv=argv, kwargs=kwargs) or 0,
+    )
+    feedback = json.dumps(
+        {
+            "format": "awf.review-report.v1",
+            "verdict": "REQUEST_CHANGES",
+            "deterministic_failures": [_COMMAND_FAILURE],
+            "blocked_reason": "",
+            "markdown": "must not reach the executor",
+        }
+    )
+
+    awf_role.tool_opencode_exec(
+        str(tmp_path),
+        str(card_file),
+        str(prompt_file),
+        "",
+        review_feedback=feedback,
+    )
+
+    instructions = captured["argv"][-1]
+    assert "Structured reviewer feedback to correct" in instructions
+    assert "Make the failed acceptance test pass" in instructions
+    assert "must not reach the executor" not in instructions
 
 
 def test_executor_prompt_reserves_git_writes_for_trusted_runner():
