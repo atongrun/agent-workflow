@@ -934,7 +934,7 @@ def tool_codex_review(
     ]
     if model:
         argv += ["--model", model]
-    argv += ["review", "--base", base, "-"]
+    argv += ["review", "--base", base]
     stdin = read_text(prompt_file)
     stdin += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
     if card_file and Path(card_file).is_file():

@@ -523,7 +523,6 @@ def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
         "review",
         "--base",
         "main",
-        "-",
     ]
 
 
