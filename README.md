@@ -93,13 +93,15 @@ and secret gates, commit/push plus remote-SHA proof, durable handler evidence, a
 handler-return/ACK gate over Agent Bus. The trusted reviewer now validates structured `PASS`,
 deterministic `REQUEST_CHANGES`, and `BLOCKED` reports, embeds the normalized report in its verdict
 event, selects exactly one route, and fails closed before ACK when report validation or delivery
-fails. These semantics are proven at the deterministic-test level, not yet by a fresh live
-cross-machine run. Windows Python 3.12 default-locale portability is also closed with a trusted full
+fails. A fresh 2026-07-26 run completed one uninterrupted Mac architect → Windows coder → Mac
+reviewer → architect `PASS` route with trusted postflight, commit/push, remote-SHA, durable handler,
+and ACK evidence. Windows Python 3.12 default-locale portability is also closed with a trusted full
 suite. These capabilities remain outside the stable core.
 
-The remaining gaps are a fresh real-machine acceptance of the complete semantic loop, recorded
-capacity-isolation metrics from that run, and the first non-infrastructure downstream dogfood. See
+The remaining gaps are recorded capacity-isolation metrics from that run, automatic continuation
+into a next TaskCard, and the first non-infrastructure downstream dogfood. See
 the [reviewer-routing implementation report](docs/tasks/reviewer-verdict-routing-implementation-report.md),
+the [live semantic-loop report](docs/tasks/live-semantic-loop-acceptance-2026-07-26-v5-implementation-report.md),
 the [Windows portability report](docs/tasks/windows-python312-utf8-closeout-v7-implementation-report.md),
 and the current [repository handoff](HANDOFF.md).
 
@@ -148,7 +150,7 @@ tests/                validation and operations regression tests
 |---|---|---|
 | 0 | Method contract and validation CLI | Complete |
 | 1 | Product-positioning and repository-truth convergence | Complete on `main` |
-| 2 | Semantic reviewer routing and live operations proof | Deterministic routing complete; live acceptance and metrics pending |
+| 2 | Semantic reviewer routing and live operations proof | Live `PASS` route complete; metrics pending |
 | 3 | First downstream capacity-isolation dogfood | Next product gate |
 | Later | Evidence-driven helpers and possible external runtime integration | Deferred |
 

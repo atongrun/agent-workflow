@@ -33,7 +33,13 @@ def die(msg: str):
     raise SystemExit(2)
 
 
-def build_handler(python_exe: str, role_script: str, role: str) -> str:
+def build_handler(
+    python_exe: str,
+    role_script: str,
+    role: str,
+    *,
+    on_type: str = "",
+) -> str:
     """Build the agent-bus --on handler command.
 
     Path parts are wrapped in DOUBLE quotes: cmd.exe (Windows) and sh (POSIX)
@@ -55,9 +61,16 @@ def build_handler(python_exe: str, role_script: str, role: str) -> str:
         "{payload.tool}",
         "--report",
         "{payload.report}",
-        "--review-report",
-        "{payload.review_report}",
     ]
+    if role == "coder" and on_type == "task:awf-rework":
+        fields += [
+            "--review-report",
+            "{payload.review_report_path}",
+            "--review-feedback",
+            "{payload.review_report}",
+        ]
+    else:
+        fields += ["--review-report", "{payload.review_report}"]
     return f'"{python_exe}" "{role_script}" {role} ' + " ".join(fields)
 
 
@@ -108,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
 
-    handler = build_handler(sys.executable, role_script, a.role)
+    handler = build_handler(sys.executable, role_script, a.role, on_type=on_type)
 
     print(f"[listen] role={a.role} repo={a.repo} tool={a.tool} model={a.model or '<default>'}")
     print(f"[listen] on '{on_type}' -> {role_script}")

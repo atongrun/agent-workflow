@@ -33,11 +33,14 @@ Repository operations scripts have used the real Agent Bus CLI to demonstrate:
 - coder postflight, commit/push, refreshed remote-SHA proof, and reviewer handoff;
 - durable handler lifecycle records outside the checkout;
 - a real Windows no-code handler-return followed by success-gated ACK.
+- a fresh isolated semantic `PASS` route from Mac architect through Windows coder and Mac reviewer
+  back to architect consumption and ACK.
 
-This is engineering evidence, not a stable integration protocol. The current Reviewer still maps
-tool completion to a placeholder and cannot route a validated semantic `PASS`, deterministic
-`REQUEST_CHANGES`, or `BLOCKED`. Merge and next-TaskCard continuation have not been proven in one
-uninterrupted cross-machine chain.
+This is engineering evidence, not a stable integration protocol. The current Reviewer validates a
+bounded structured report and routes semantic `PASS`, deterministic `REQUEST_CHANGES`, or
+`BLOCKED` while failing closed on invalid output or failed delivery. Events 94–96 proved one clean
+uninterrupted `PASS` route with retry count zero and no last error. Merge and automatic
+next-TaskCard continuation were outside that run.
 
 ## Future Composition Rule
 
@@ -48,6 +51,7 @@ real dogfood demonstrates a repeated need. It should:
 2. fail closed when required content cannot reach the next role;
 3. keep delivery/ACK status separate from semantic completion;
 4. avoid teaching Agent Bus Workflow-specific verdicts or transitions.
+5. retain event ID, retry count, last error, and ACK state as transport evidence.
 
 No Agent Bus protocol redesign, generic adapter, event taxonomy, or retry policy is authorized by
 this boundary note.

@@ -12,8 +12,11 @@ Rules:
 - The runner synchronizes the task branch from origin before invoking you. If it reports a dirty
   worktree or unpushed local commits, STOP and report the preflight failure; never reset or clean
   another session's work yourself.
+- Do not run `git add`, `git commit`, `git amend`, `git reset`, `git push`, or change Git refs.
+  Leave the completed implementation as working-tree changes. The trusted runner alone verifies,
+  stages, commits, pushes, and records the final revision after your process exits successfully.
 - When done, write an ImplementationReport (what changed, commands run, results, any
-  deviation) to the path the dispatcher tells you, then create the done-marker file the
-  dispatcher specifies.
+  deviation) to the path the dispatcher tells you. If the final revision is not yet available,
+  state that the trusted runner will record it; do not try to create a commit to discover it.
 
 Your working directory is already set to the repository. The attached file is the TaskCard.

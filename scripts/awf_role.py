@@ -893,6 +893,7 @@ def tool_opencode_exec(
     card_file: str,
     prompt_file: str,
     model: str,
+    review_feedback: str = "",
     evidence: RunEvidence | None = None,
 ) -> int:
     """Run OpenCode as an executor: edit code in `repo` per the card + prompt."""
@@ -900,7 +901,11 @@ def tool_opencode_exec(
     argv = [binp, "run", "--dir", repo, "-f", card_file]
     if model:
         argv += ["-m", model]
-    argv += ["--", read_text(prompt_file)]
+    instructions = read_text(prompt_file)
+    if review_feedback:
+        instructions += "\n\n--- Structured reviewer feedback to correct ---\n\n"
+        instructions += normalize_rework_feedback(review_feedback)
+    argv += ["--", instructions]
     if evidence is not None:
         return spawn(
             argv,
@@ -910,6 +915,38 @@ def tool_opencode_exec(
             tracked_phase="opencode",
         )
     return spawn(argv, cwd=repo, env=model_env())
+
+
+def normalize_rework_feedback(raw: str) -> str:
+    """Return bounded reviewer feedback without forwarding report prose or patches."""
+    if len(raw.encode("utf-8")) > _REVIEW_REPORT_MAX_BYTES:
+        die("review feedback exceeds 16 KiB")
+    try:
+        data = json.loads(raw, object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, DuplicateReviewReportKey):
+        die("review feedback is malformed or contains duplicate fields")
+    if not isinstance(data, dict) or data.get("format") != "awf.review-report.v1":
+        die("review feedback has an invalid format")
+    verdict = data.get("verdict")
+    failures = data.get("deterministic_failures")
+    blocked_reason = data.get("blocked_reason")
+    if verdict != "REQUEST_CHANGES" or not isinstance(failures, list) or not failures:
+        die("rework requires REQUEST_CHANGES with deterministic failures")
+    if not isinstance(blocked_reason, str) or blocked_reason:
+        die("REQUEST_CHANGES feedback cannot contain a blocked reason")
+    normalized_failures = [
+        _validate_deterministic_failure(item, index) for index, item in enumerate(failures)
+    ]
+    bounded = {
+        "verdict": verdict,
+        "deterministic_failures": normalized_failures,
+        "blocked_reason": "",
+    }
+    text = json.dumps(bounded, indent=2, sort_keys=True)
+    secret_label = _scan_text(text)
+    if secret_label:
+        die(f"review feedback contains prohibited {secret_label} material")
+    return text
 
 
 def tool_codex_review(
@@ -934,9 +971,20 @@ def tool_codex_review(
     ]
     if model:
         argv += ["--model", model]
-    argv += ["review", "--base", base, "-"]
+    argv += ["-"]
     stdin = read_text(prompt_file)
-    stdin += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
+    stdin += (
+        f"\n\nReview the committed branch diff against the base ref `{base}`. "
+        "Use Git read-only commands to inspect that exact comparison."
+    )
+    template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
+    stdin += (
+        "\n\nYour final response is persisted verbatim as the ReviewReport. "
+        "Return the complete filled-in Markdown report itself; do not merely summarize "
+        "the verdict or say that you wrote a file."
+        f"\n\nReviewReport output path: {review_report_path}\n"
+        "\n--- Required ReviewReport template ---\n\n" + read_text(str(template_path))
+    )
     if card_file and Path(card_file).is_file():
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
     return spawn(argv, cwd=repo, stdin=stdin, env=model_env())
@@ -1035,7 +1083,14 @@ def role_coder(a: argparse.Namespace) -> int:
 
     log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
     if tool == "opencode":
-        rc = tool_opencode_exec(repo, card_file, prompt_file, model, evidence)
+        rc = tool_opencode_exec(
+            repo,
+            card_file,
+            prompt_file,
+            model,
+            getattr(a, "review_feedback", ""),
+            evidence,
+        )
     else:
         die(f"coder: unsupported tool '{tool}'")
     if rc != 0:
@@ -1178,6 +1233,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tool", default="")
     p.add_argument("--report", default="")
     p.add_argument("--review-report", dest="review_report", default="")
+    p.add_argument("--review-feedback", dest="review_feedback", default="")
     p.add_argument("--base", default="")
     a = p.parse_args(argv)
     if a.event_id < 1:
