@@ -934,8 +934,12 @@ def tool_codex_review(
     ]
     if model:
         argv += ["--model", model]
-    argv += ["review", "--base", base]
+    argv += ["-"]
     stdin = read_text(prompt_file)
+    stdin += (
+        f"\n\nReview the committed branch diff against the base ref `{base}`. "
+        "Use Git read-only commands to inspect that exact comparison."
+    )
     template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
     stdin += (
         "\n\nYour final response is persisted verbatim as the ReviewReport. "

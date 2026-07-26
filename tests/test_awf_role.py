@@ -518,6 +518,7 @@ def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
 
     assert "AGENT_BUS_TOKEN" not in captured["env"]
     assert report_path in captured["stdin"]
+    assert "against the base ref `main`" in captured["stdin"]
     assert "<!-- awf-review-report" in captured["stdin"]
     assert "Return the complete filled-in Markdown report itself" in captured["stdin"]
     assert captured["argv"] == [
@@ -529,9 +530,7 @@ def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
         "read-only",
         "--output-last-message",
         report_path,
-        "review",
-        "--base",
-        "main",
+        "-",
     ]
 
 
