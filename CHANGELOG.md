@@ -6,6 +6,9 @@
 
 - Stop dispatch before Agent Bus delivery when the TaskCard branch push fails, preventing remote
   executors from receiving a pointer to an unavailable commit.
+- Parse Windows credential ACL principals separately from the echoed target path so a secure file
+  under `C:\Users\...` does not fail readiness, while unreadable ACLs, inherited ACEs, and grants
+  to any principal other than the current user fail closed.
 
 ## [0.3.0-rc.1] — 2026-07-19
 

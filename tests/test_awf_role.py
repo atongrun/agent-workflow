@@ -26,6 +26,12 @@ awf_listen = importlib.util.module_from_spec(LISTEN_SPEC)
 LISTEN_SPEC.loader.exec_module(awf_listen)
 DISPATCH_PATH = Path(__file__).parents[1] / "scripts" / "awf-dispatch.sh"
 
+HANDOFF_MODULE_PATH = Path(__file__).parents[1] / "scripts" / "awf_handoff_check.py"
+HANDOFF_SPEC = importlib.util.spec_from_file_location("awf_handoff_check", HANDOFF_MODULE_PATH)
+assert HANDOFF_SPEC and HANDOFF_SPEC.loader
+awf_handoff_check = importlib.util.module_from_spec(HANDOFF_SPEC)
+HANDOFF_SPEC.loader.exec_module(awf_handoff_check)
+
 
 _VALID_POSTFLIGHT_CARD = """# Card
 <!-- awf-postflight
@@ -1173,6 +1179,150 @@ def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
     assert completed.returncode == 2
     assert "push failed; refusing to send an event" in stderr
     assert not marker.exists()
+
+
+def test_windows_acl_check_does_not_treat_users_in_target_path_as_a_principal(monkeypatch):
+    dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
+    stdout = f"{dest} ATONG-COMPUTER\\atong:(F)\n\nSuccessfully processed 1 files\n"
+
+    def fake_run(args, **kwargs):
+        if args[0] == "whoami":
+            return subprocess.CompletedProcess(args, 0, "atong-computer\\atong\n", "")
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(
+        awf_handoff_check.subprocess,
+        "run",
+        fake_run,
+    )
+    records = []
+    monkeypatch.setattr(
+        awf_handoff_check,
+        "record",
+        lambda status, label, detail: records.append((status, label, detail)),
+    )
+
+    awf_handoff_check.check_windows_acl(dest)
+
+    assert records == [
+        (
+            awf_handoff_check.PASS,
+            "dispatch.env is owner-only",
+            "icacls: current principal only",
+        )
+    ]
+
+
+def test_windows_acl_check_rejects_another_principal(monkeypatch):
+    dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
+    stdout = (
+        f"{dest} ATONG-COMPUTER\\atong:(F)\nBUILTIN\\Users:(RX)\n\nSuccessfully processed 1 files\n"
+    )
+
+    def fake_run(args, **kwargs):
+        if args[0] == "whoami":
+            return subprocess.CompletedProcess(args, 0, "ATONG-COMPUTER\\atong\n", "")
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(
+        awf_handoff_check.subprocess,
+        "run",
+        fake_run,
+    )
+    records = []
+    monkeypatch.setattr(
+        awf_handoff_check,
+        "record",
+        lambda status, label, detail: records.append((status, label, detail)),
+    )
+
+    awf_handoff_check.check_windows_acl(dest)
+
+    assert records[0][0] == awf_handoff_check.FAIL
+
+
+def test_windows_acl_check_rejects_unverifiable_acl(monkeypatch):
+    dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
+    monkeypatch.setattr(
+        awf_handoff_check.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 5, "", "access denied"),
+    )
+    records = []
+    monkeypatch.setattr(
+        awf_handoff_check,
+        "record",
+        lambda status, label, detail: records.append((status, label, detail)),
+    )
+
+    awf_handoff_check.check_windows_acl(dest)
+
+    assert records[0][0] == awf_handoff_check.FAIL
+
+
+def test_windows_acl_check_rejects_unparseable_acl(monkeypatch):
+    dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
+    monkeypatch.setattr(
+        awf_handoff_check.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, "Successfully processed 1 files\n", ""
+        ),
+    )
+    records = []
+    monkeypatch.setattr(
+        awf_handoff_check,
+        "record",
+        lambda status, label, detail: records.append((status, label, detail)),
+    )
+
+    awf_handoff_check.check_windows_acl(dest)
+
+    assert records[0][0] == awf_handoff_check.FAIL
+
+
+def test_windows_acl_check_rejects_unknown_current_principal(monkeypatch):
+    dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
+    stdout = f"{dest} ATONG-COMPUTER\\atong:(F)\n"
+
+    def fake_run(args, **kwargs):
+        if args[0] == "whoami":
+            return subprocess.CompletedProcess(args, 1, "", "unable to resolve principal")
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(awf_handoff_check.subprocess, "run", fake_run)
+    records = []
+    monkeypatch.setattr(
+        awf_handoff_check,
+        "record",
+        lambda status, label, detail: records.append((status, label, detail)),
+    )
+
+    awf_handoff_check.check_windows_acl(dest)
+
+    assert records[0][0] == awf_handoff_check.FAIL
+
+
+def test_windows_acl_check_rejects_inherited_owner_ace(monkeypatch):
+    dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
+    stdout = f"{dest} ATONG-COMPUTER\\atong:(I)(F)\n"
+
+    def fake_run(args, **kwargs):
+        if args[0] == "whoami":
+            return subprocess.CompletedProcess(args, 0, "ATONG-COMPUTER\\atong\n", "")
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(awf_handoff_check.subprocess, "run", fake_run)
+    records = []
+    monkeypatch.setattr(
+        awf_handoff_check,
+        "record",
+        lambda status, label, detail: records.append((status, label, detail)),
+    )
+
+    awf_handoff_check.check_windows_acl(dest)
+
+    assert records[0][0] == awf_handoff_check.FAIL
 
 
 # ---------------------------------------------------------------------------
