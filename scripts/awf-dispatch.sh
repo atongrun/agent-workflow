@@ -105,7 +105,19 @@ fi
 : "${AGENT_BUS_URL:?set AGENT_BUS_URL (source ~/.config/awf/dispatch.env)}"
 : "${AWF_ARCH_TOKEN:?set AWF_ARCH_TOKEN (source ~/.config/awf/dispatch.env)}"
 AWF_BUS="${AWF_BUS_BIN:-agent-bus}"
+bus_host="${AGENT_BUS_URL#*://}"
+bus_host="${bus_host%%/*}"
+bus_host="${bus_host%%:*}"
+bus_no_proxy="${NO_PROXY:-${no_proxy:-}}"
+if [ -n "${NO_PROXY:-}" ] && [ -n "${no_proxy:-}" ] && [ "$NO_PROXY" != "$no_proxy" ]; then
+  bus_no_proxy="$NO_PROXY,$no_proxy"
+fi
+case ",$bus_no_proxy," in
+  *",$bus_host,"*) ;;
+  *) bus_no_proxy="${bus_no_proxy:+$bus_no_proxy,}$bus_host";;
+esac
 AGENT_BUS_URL="$AGENT_BUS_URL" AGENT_BUS_TOKEN="$AWF_ARCH_TOKEN" AGENT_BUS_AGENT=architect \
+  NO_PROXY="$bus_no_proxy" no_proxy="$bus_no_proxy" \
   "$AWF_BUS" send --from architect --to "$TO" --type "$EVENT_TYPE" --payload "$payload" \
   || die "agent-bus send failed"
 echo "[dispatch] event sent (type=$EVENT_TYPE to=$TO). A '$TO' listener will pick it up and execute."

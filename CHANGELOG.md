@@ -9,6 +9,9 @@
 - Parse Windows credential ACL principals separately from the echoed target path so a secure file
   under `C:\Users\...` does not fail readiness, while unreadable ACLs, inherited ACEs, and grants
   to any principal other than the current user fail closed.
+- Bypass environment HTTP proxies for the configured Agent Bus host at handoff, listener, and
+  dispatch boundaries, preserving existing `NO_PROXY` entries while keeping private mesh traffic
+  off localhost or corporate proxies.
 
 ## [0.3.0-rc.1] — 2026-07-19
 

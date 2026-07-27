@@ -76,6 +76,9 @@ Refresh refs before relying on this snapshot.
    path before parsing ACE principals, so `C:\Users\...` does not masquerade as a broad `Users`
    grant. ACL read/parse uncertainty, inherited ACEs, and any principal other than the current user
    remain blocking failures.
+7. **Private Bus proxy bypass.** Handoff, listener, and dispatch subprocesses add the configured
+   Agent Bus host to both `NO_PROXY` variants without discarding existing exclusions. This prevents
+   Windows proxy settings from turning a healthy Tailscale Bus route into HTTP 502/SSE retries.
 
 ## Repository Truth Consistency
 
@@ -90,8 +93,8 @@ Proven with deterministic tests and live operations evidence: exact checkout, tr
 model-process and postflight gates, allowed-path/secret/diff checks, commit/push plus remote-SHA
 proof, durable handler evidence, Windows handler-return/ACK, semantic verdict validation and
 fail-closed routing, fail-closed dispatch when a TaskCard branch cannot be pushed, Windows Python
-3.12 default-locale portability, path-safe Windows ACL validation, and one fresh uninterrupted
-cross-machine `PASS` route through architect consumption and ACK.
+3.12 default-locale portability, path-safe Windows ACL validation, private-Bus proxy bypass, and
+one fresh uninterrupted cross-machine `PASS` route through architect consumption and ACK.
 
 Still missing: recorded capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), automatic continuation into a next

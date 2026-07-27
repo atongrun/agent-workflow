@@ -27,6 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from awf_network import add_url_host_to_no_proxy
+
 ROLE_TO_TOKEN_VAR = {
     "architect": "AWF_ARCH_TOKEN",
     "coder": "AWF_CODER_TOKEN",
@@ -202,6 +204,7 @@ def check_bus_reachable(env: dict, role: str) -> None:
     child["AGENT_BUS_URL"] = url
     child["AGENT_BUS_TOKEN"] = token
     child["AGENT_BUS_AGENT"] = role
+    add_url_host_to_no_proxy(child, url)
     # dispatch.env stores the git-bash POSIX path; native Windows Python's
     # CreateProcess needs D:\... form to actually launch the binary.
     argv = [posix_to_native(bus), "pending", "--count"]
