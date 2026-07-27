@@ -35,6 +35,9 @@ preserved as evidence; it was not reset, acknowledged, or requeued.
   metadata manifest immediately after verification and again after delta gates. Delta discovery,
   secret scanning, and whitespace checks always use the credential-free Git plumbing, so a
   verification-time helper injection cannot regain the runner environment.
+- Credential-free Git pins `core.autocrlf=true` on Windows and `false` on POSIX after disabling
+  global/system config. This preserves deterministic worktree normalization without trusting any
+  user-controlled executable configuration.
 - Frozen verification, allowed-path, artifact, secret, and diff gates run inside the isolated coder
   workspace. The runner serializes its full binary Git delta, applies it to the trusted checkout,
   and requires both Git tree hashes to match before commit/push.

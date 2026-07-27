@@ -631,6 +631,7 @@ def test_postflight_git_env_is_credential_free(monkeypatch):
         assert key not in environment
     assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
     assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert "core.autocrlf" in environment.values()
 
 
 def test_model_env_blocks_git_commit(tmp_path):

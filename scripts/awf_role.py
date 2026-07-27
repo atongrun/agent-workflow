@@ -506,6 +506,7 @@ def postflight_git_env() -> dict[str, str]:
     _append_process_git_config(e, "core.fsmonitor", "false")
     _append_process_git_config(e, "core.hooksPath", os.devnull)
     _append_process_git_config(e, "credential.helper", "")
+    _append_process_git_config(e, "core.autocrlf", "true" if os.name == "nt" else "false")
     return e
 
 
