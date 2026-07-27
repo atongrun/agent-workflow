@@ -31,6 +31,10 @@ preserved as evidence; it was not reset, acknowledged, or requeued.
   `.git` control metadata. Changes to config, refs, index, hooks, or info files fail before Git can
   execute a model-planted helper. Import Git plumbing also runs in a credential-free environment
   with global/system config, fsmonitor, hooks, external diff, and textconv disabled.
+- TaskCard verification commands are treated as model-controlled code: the runner rechecks the Git
+  metadata manifest immediately after verification and again after delta gates. Delta discovery,
+  secret scanning, and whitespace checks always use the credential-free Git plumbing, so a
+  verification-time helper injection cannot regain the runner environment.
 - Frozen verification, allowed-path, artifact, secret, and diff gates run inside the isolated coder
   workspace. The runner serializes its full binary Git delta, applies it to the trusted checkout,
   and requires both Git tree hashes to match before commit/push.
@@ -70,6 +74,8 @@ principal/container and network policy, which is outside this recovery patch.
   credentials, arbitrary secrets, and injection variables do not reach the model process.
 - A malicious repository-local `diff.external` configuration is rejected by the raw metadata gate
   before any Git command runs with trusted state.
+- A verification command that mutates `.git/config` is rejected before delta discovery performs
+  any Git read.
 - Delta tests cover tracked modification, deletion, untracked binary import, exact tree equality,
   `.git` metadata exclusion, and a late trusted-checkout file that remains untracked and absent from
   the pushed commit.
@@ -82,7 +88,7 @@ principal/container and network policy, which is outside this recovery patch.
 - Ref-integrity tests reject local `HEAD`, remote task-branch, model remote, and reviewer-base
   mutation.
 - `git interpret-trailers --parse` recognizes the generated executor commit trailers.
-- Full Mac suite after the final security rework: 199 passed, 1 Windows-only skip.
+- Full Mac suite after the final security rework: 200 passed, 1 Windows-only skip.
 - Exact-head Windows Python 3.12 role module: 155 passed, 1 expected platform skip; the focused
   `git -c ... push --no-verify` bypass regression passed through the Windows `cmd` resolution path.
 - A diagnostic full-repository Windows run had 190 passes, the same expected skip, and one unrelated

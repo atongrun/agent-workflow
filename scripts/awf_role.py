@@ -522,6 +522,14 @@ def postflight_git(
     )
 
 
+def postflight_git_out(workspace: str, *args: str) -> str:
+    """Return credential-free Git output from a model-controlled worktree."""
+    proc = postflight_git(workspace, *args, capture=True)
+    if proc.returncode != 0:
+        die("credential-free model workspace Git read failed")
+    return proc.stdout.decode("utf-8", errors="replace").rstrip("\n\r")
+
+
 def prepare_model_workspace(
     source_repo: str,
     expected_commit: str,
@@ -1090,12 +1098,21 @@ def _collect_delta_paths(repo: str) -> list[str]:
     paths: list[str] = []
 
     # Tracked changes: staged + unstaged from HEAD
-    tracked = git_out(repo, "diff", "--name-only", "HEAD", "--no-renames", "-z")
+    tracked = postflight_git_out(
+        repo,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        "HEAD",
+        "--no-renames",
+        "-z",
+    )
     if tracked:
         paths.extend(p for p in tracked.split("\0") if p)
 
     # Untracked non-ignored files
-    untracked = git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    untracked = postflight_git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
     if untracked:
         paths.extend(p for p in untracked.split("\0") if p)
 
@@ -1136,8 +1153,15 @@ def run_postflight_delta_gates(repo: str, contract: PostflightContract) -> None:
     _narrow_secret_scan(repo, delta_paths)
 
     # 5. git diff --check on full HEAD delta (staged + unstaged)
-    rc = git(repo, "diff", "HEAD", "--check")
-    if rc != 0:
+    checked = postflight_git(
+        repo,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "HEAD",
+        "--check",
+    )
+    if checked.returncode != 0:
         die("postflight: git diff HEAD --check found whitespace errors")
 
 
@@ -1179,13 +1203,13 @@ def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> None
     # path independently.  This avoids parsing quoted, human-readable patch
     # headers and prevents configured diff helpers from transforming content or
     # executing in the credential-bearing runner environment.
-    untracked_out = git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    untracked_out = postflight_git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
     untracked = {path for path in untracked_out.split("\0") if path}
 
     for path in delta_paths:
         if path in untracked:
             continue
-        diff_out = git_out(
+        diff_out = postflight_git_out(
             repo,
             "diff",
             "HEAD",
@@ -1513,9 +1537,11 @@ def role_coder(a: argparse.Namespace) -> int:
 
         # 5. Rerun every verification command from the frozen contract
         run_verifications(model_repo, contract)
+        assert_model_git_metadata(model_repo)
 
         # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
         run_postflight_delta_gates(model_repo, contract)
+        assert_model_git_metadata(model_repo)
         imported_tree = import_model_delta(model_repo, repo)
         check_report(str(resolve_repo_file(repo, a.report, "ImplementationReport")))
     except BaseException:

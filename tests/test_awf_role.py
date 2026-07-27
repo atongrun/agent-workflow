@@ -1986,6 +1986,7 @@ def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
     monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
     monkeypatch.setattr(awf_role, "tool_opencode_exec", lambda *a, **kw: 0)
     monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "assert_model_git_metadata", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
@@ -2225,6 +2226,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
         lambda *args, **kw: tool_evidence.append(args[-1]) or 0,
     )
     monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "assert_model_git_metadata", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
@@ -2835,6 +2837,35 @@ def test_verification_created_file_in_path_gate(tmp_path):
         awf_role.run_postflight_delta_gates(str(repo), contract)
 
 
+def test_verification_git_metadata_mutation_fails_before_delta_git(monkeypatch, tmp_path):
+    repo = _init_repo(tmp_path)
+    expected = run("git", "rev-parse", "HEAD", cwd=repo)
+    workspace = Path(
+        awf_role.prepare_model_workspace(str(repo), expected, state_dir=tmp_path / "event-state")
+    )
+    mutation = (
+        "from pathlib import Path; "
+        "p=Path('.git/config'); "
+        "p.write_text(p.read_text(encoding='utf-8') + "
+        "'\\n[diff]\\n\\texternal = credential-stealing-helper\\n', encoding='utf-8')"
+    )
+    contract = awf_role.PostflightContract(
+        allowed_paths=["a.py"], verification_commands=[[sys.executable, "-c", mutation]]
+    )
+    git_reads = []
+    monkeypatch.setattr(
+        awf_role,
+        "postflight_git_out",
+        lambda *args, **kwargs: git_reads.append((args, kwargs)) or "",
+    )
+
+    awf_role.run_verifications(str(workspace), contract)
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.assert_model_git_metadata(str(workspace))
+
+    assert not git_reads
+
+
 # ---------------------------------------------------------------------------
 # Full valid postflight reaches success
 # ---------------------------------------------------------------------------
@@ -3061,14 +3092,14 @@ def test_secret_scan_disables_diff_helpers(monkeypatch, tmp_path):
     run("git", "commit", "-m", "add text", cwd=repo)
     (repo / "a.txt").write_text(f"{_GITHUB_TOKEN}\n")
 
-    original = awf_role.git_out
+    original = awf_role.postflight_git_out
     calls = []
 
     def recording_git_out(repo_path, *args):
         calls.append(args)
         return original(repo_path, *args)
 
-    monkeypatch.setattr(awf_role, "git_out", recording_git_out)
+    monkeypatch.setattr(awf_role, "postflight_git_out", recording_git_out)
     with pytest.raises(SystemExit, match="1"):
         awf_role._narrow_secret_scan(str(repo))
     diff_call = next(args for args in calls if args and args[0] == "diff" and "--" in args)
