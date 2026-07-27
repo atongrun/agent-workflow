@@ -66,6 +66,7 @@ Completed engineering gates:
 - [x] Prove the verification child boundary with `PYTHONUTF8` absent on Windows Python 3.12.
 - [x] Close the full Windows Python 3.12 portability suite and trusted postflight gate.
 - [x] Complete one fresh isolated cross-machine semantic `PASS` route through architect ACK.
+- [x] Fail closed before dispatch when the TaskCard branch cannot be pushed for remote checkout.
 
 Remaining Phase 2 work:
 

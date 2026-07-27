@@ -69,6 +69,9 @@ Refresh refs before relying on this snapshot.
    94–96: coder postflight, commit/push, and remote SHA `451cc60` matched; reviewer emitted a
    structured `PASS`; architect consumed the verdict; every event was ACKed with retry count zero
    and no last error. Agent Bus remained an unchanged opaque transport.
+5. **Dispatch push fail-closed gate.** `awf-dispatch.sh` now exits before Agent Bus delivery when
+   its TaskCard branch push fails. A regression test proves the bus command is not invoked on that
+   path; explicit `--no-push` remains a local-only mode.
 
 ## Repository Truth Consistency
 
@@ -82,8 +85,9 @@ evidence and are not rewritten when current status advances.
 Proven with deterministic tests and live operations evidence: exact checkout, trusted
 model-process and postflight gates, allowed-path/secret/diff checks, commit/push plus remote-SHA
 proof, durable handler evidence, Windows handler-return/ACK, semantic verdict validation and
-fail-closed routing, Windows Python 3.12 default-locale portability, and one fresh uninterrupted
-cross-machine `PASS` route through architect consumption and ACK.
+fail-closed routing, fail-closed dispatch when a TaskCard branch cannot be pushed, Windows Python
+3.12 default-locale portability, and one fresh uninterrupted cross-machine `PASS` route through
+architect consumption and ACK.
 
 Still missing: recorded capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), automatic continuation into a next

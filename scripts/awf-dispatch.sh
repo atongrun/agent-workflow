@@ -80,7 +80,7 @@ COMMIT="$(git -C "$REPO" rev-parse HEAD)"
 if [ "$DO_PUSH" -eq 1 ]; then
   # Cross-machine executors can ONLY get the card by pulling this branch from origin.
   git -C "$REPO" push -u origin "$BRANCH" >/dev/null 2>&1 \
-    || echo "[dispatch] WARN: push failed. A remote executor will not see the card until this branch is pushed."
+    || die "push failed; refusing to send an event for a TaskCard the remote executor cannot fetch"
 else
   echo "[dispatch] --no-push: LOCAL-ONLY. A remote (e.g. Windows) executor cannot pull this card."
 fi
