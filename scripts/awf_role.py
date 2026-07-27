@@ -28,6 +28,7 @@ Design:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -172,52 +173,121 @@ def _append_process_git_config(environment: dict[str, str], key: str, value: str
     environment["GIT_CONFIG_COUNT"] = str(count + 1)
 
 
-_MODEL_GIT_CREDENTIAL_ENV = {
-    "CI_JOB_TOKEN",
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "GITLAB_TOKEN",
-    "GIT_ALLOW_PROTOCOL",
-    "GIT_ASKPASS",
-    "GIT_CONFIG_GLOBAL",
-    "GIT_CONFIG_NOSYSTEM",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_CONFIG_SYSTEM",
-    "GIT_SSH",
-    "GIT_SSH_COMMAND",
-    "SSH_AGENT_PID",
-    "SSH_ASKPASS",
-    "SSH_ASKPASS_REQUIRE",
-    "SSH_AUTH_SOCK",
+_MODEL_ENV_ALLOWLIST = {
+    "ALL_PROXY",
+    "APPDATA",
+    "COLORTERM",
+    "COMSPEC",
+    "CURL_CA_BUNDLE",
+    "FORCE_COLOR",
+    "HOMEDRIVE",
+    "HOME",
+    "HOMEPATH",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOCALAPPDATA",
+    "LOGNAME",
+    "NO_COLOR",
+    "NO_PROXY",
+    "NUMBER_OF_PROCESSORS",
+    "OPENCODE_CONFIG",
+    "OPENCODE_CONFIG_DIR",
+    "OS",
+    "PATH",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_IDENTIFIER",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PYTHONIOENCODING",
+    "PYTHONUTF8",
+    "REQUESTS_CA_BUNDLE",
+    "SHELL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "USER",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
 }
 
 
-def model_env(repo: str | None = None) -> dict[str, str]:
-    """Environment for model subprocesses: inherit runtime state, strip credentials.
+def _model_base_env() -> dict[str, str]:
+    """Build a minimal cross-platform environment for untrusted processes."""
+    inherited = child_env()
+    e = {
+        key: value
+        for key, value in inherited.items()
+        if key.upper() in _MODEL_ENV_ALLOWLIST or key.upper().startswith("LC_")
+    }
+    trusted_root = Path(__file__).resolve().parent.parent
+    trusted_text = str(trusted_root)
+    path_entries = []
+    for entry in e.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        try:
+            if Path(entry).resolve().is_relative_to(trusted_root):
+                continue
+        except (OSError, RuntimeError):
+            pass
+        path_entries.append(entry)
+    e["PATH"] = os.pathsep.join(path_entries)
+    for key, value in list(e.items()):
+        if key != "PATH" and trusted_text in value:
+            del e[key]
+    e.setdefault("PYTHONUTF8", "1")
+    e.setdefault("PYTHONIOENCODING", "utf-8")
+    return e
 
-    Keeps PATH, platform variables, HOME, and UTF-8 settings. Removes runner/Bus
-    metadata, inherited process Git config, Git-host tokens, askpass, and SSH-agent
-    credential channels so they never reach untrusted model processes (OpenCode,
-    Codex).
+
+def _prepare_model_git_guard(repo: str) -> tuple[Path, Path]:
+    """Copy model-only Git guards outside both trusted and model checkouts."""
+    repository = Path(repo).resolve()
+    source = Path(__file__).resolve().parent
+    guard_root = Path(
+        tempfile.mkdtemp(prefix="model-git-guard-", dir=str(repository.parent))
+    ).resolve()
+    model_bin = guard_root / "model-bin"
+    hooks = guard_root / "model-git-hooks"
+    model_bin.mkdir()
+    hooks.mkdir()
+    for relative in ("git", "git.cmd", "model_git_guard.py"):
+        shutil.copy2(source / "model-bin" / relative, model_bin / relative)
+    for relative in ("pre-commit", "pre-push"):
+        shutil.copy2(source / "model-git-hooks" / relative, hooks / relative)
+    return model_bin, hooks
+
+
+def model_env(repo: str | None = None) -> dict[str, str]:
+    """Environment for model subprocesses: allowlisted runtime state only.
+
+    Keeps only required platform, path, proxy, locale, certificate, and UTF-8
+    settings. Runner/Bus metadata, inherited Git config, cloud credentials, model
+    provider keys, arbitrary secret variables, and executable injection variables
+    never reach untrusted model processes (OpenCode, Codex).
 
     When a repository is supplied, process-scoped Git config denies every transport
     protocol in addition to ordinary commit/push hooks. Trusted postflight commands
     and runner-owned Git writes use separate environments and remain unaffected.
     """
-    e = child_env()
-    for k in list(e):
-        if (
-            k in _MODEL_GIT_CREDENTIAL_ENV
-            or k == "GIT_CONFIG_COUNT"
-            or k.startswith("GIT_CONFIG_KEY_")
-            or k.startswith("GIT_CONFIG_VALUE_")
-            or k.startswith("AGENT_BUS_")
-            or k.startswith("AWF_")
-        ):
-            del e[k]
+    e = _model_base_env()
     if repo is not None:
-        hooks = Path(__file__).resolve().parent / "model-git-hooks"
-        model_bin = Path(__file__).resolve().parent / "model-bin"
+        model_bin, hooks = _prepare_model_git_guard(repo)
         if (
             not Path(repo).is_dir()
             or not (hooks / "pre-commit").is_file()
@@ -258,6 +328,8 @@ def model_env(repo: str | None = None) -> dict[str, str]:
             e.pop(key, None)
         e["GIT_TERMINAL_PROMPT"] = "0"
         e["GCM_INTERACTIVE"] = "Never"
+        e["GIT_OPTIONAL_LOCKS"] = "0"
+        e["NoDefaultCurrentDirectoryInExePath"] = "1"
     return e
 
 
@@ -292,7 +364,7 @@ def spawn(
     # must go through the command interpreter. Wrap only those.
     run_argv = argv
     if os.name == "nt" and argv and argv[0].lower().endswith((".cmd", ".bat")):
-        run_argv = ["cmd", "/c", *argv]
+        run_argv = ["cmd.exe", "/d", "/s", "/c", *argv]
     log("exec: " + " ".join(run_argv))
     if evidence is not None and tracked_phase is not None:
         started = time.monotonic()
@@ -382,6 +454,74 @@ def git_out(repo: str, *args: str) -> str:
     return proc.stdout.rstrip("\n\r")
 
 
+_MODEL_GIT_MANIFESTS: dict[str, dict[str, tuple[str, str]]] = {}
+
+
+def _model_git_manifest(workspace: str) -> dict[str, tuple[str, str]]:
+    """Hash mutable Git control metadata without invoking model-controlled Git."""
+    git_dir = Path(workspace).resolve() / ".git"
+    if not git_dir.is_dir():
+        die("isolated model workspace Git directory is unavailable")
+    manifest: dict[str, tuple[str, str]] = {}
+    for path in sorted(git_dir.rglob("*")):
+        relative = path.relative_to(git_dir)
+        parts = relative.parts
+        if parts and parts[0] == "objects" and parts[:2] != ("objects", "info"):
+            continue
+        name = relative.as_posix()
+        if path.is_symlink():
+            manifest[name] = ("symlink", os.readlink(path))
+        elif path.is_file():
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            manifest[name] = ("file", digest)
+        elif path.is_dir():
+            manifest[name] = ("dir", "")
+        else:
+            manifest[name] = ("other", "")
+    return manifest
+
+
+def freeze_model_git_metadata(workspace: str) -> None:
+    """Record the trusted pre-model Git control state in runner memory."""
+    resolved = str(Path(workspace).resolve())
+    _MODEL_GIT_MANIFESTS[resolved] = _model_git_manifest(resolved)
+
+
+def assert_model_git_metadata(workspace: str) -> None:
+    """Reject any model mutation to Git config, refs, index, hooks, or info files."""
+    resolved = str(Path(workspace).resolve())
+    expected = _MODEL_GIT_MANIFESTS.get(resolved)
+    if expected is None or _model_git_manifest(resolved) != expected:
+        die("model process changed isolated workspace Git control metadata")
+
+
+def postflight_git_env() -> dict[str, str]:
+    """Credential-free environment for Git reads of model-controlled worktrees."""
+    e = _model_base_env()
+    e["GIT_CONFIG_NOSYSTEM"] = "1"
+    e["GIT_CONFIG_GLOBAL"] = os.devnull
+    e["GIT_TERMINAL_PROMPT"] = "0"
+    e["GCM_INTERACTIVE"] = "Never"
+    e["GIT_OPTIONAL_LOCKS"] = "0"
+    _append_process_git_config(e, "core.fsmonitor", "false")
+    _append_process_git_config(e, "core.hooksPath", os.devnull)
+    _append_process_git_config(e, "credential.helper", "")
+    return e
+
+
+def postflight_git(
+    workspace: str, *args: str, capture: bool = False
+) -> subprocess.CompletedProcess:
+    """Run trusted Git plumbing on a frozen model workspace without credentials."""
+    return subprocess.run(
+        ["git", "-C", workspace, *args],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stderr=subprocess.PIPE if capture else subprocess.DEVNULL,
+        env=postflight_git_env(),
+    )
+
+
 def prepare_model_workspace(
     source_repo: str,
     expected_commit: str,
@@ -421,11 +561,13 @@ def prepare_model_workspace(
         die("model workspace does not match the dispatched commit")
     if git_out(str(workspace), "remote"):
         die("model workspace must not have a Git remote")
+    freeze_model_git_metadata(str(workspace))
     return str(workspace)
 
 
 def assert_model_workspace_state(workspace: str, expected_commit: str) -> None:
     """Reject model-created refs or remotes before importing any file delta."""
+    assert_model_git_metadata(workspace)
     head = git_out(workspace, "rev-parse", "--verify", "HEAD^{commit}")
     if head != expected_commit:
         die("model process changed isolated workspace HEAD")
@@ -435,18 +577,29 @@ def assert_model_workspace_state(workspace: str, expected_commit: str) -> None:
 
 def import_model_delta(workspace: str, trusted_repo: str) -> str:
     """Apply the verified workspace tree delta to the trusted checkout."""
-    if git(workspace, "add", "-A") != 0:
+    assert_model_git_metadata(workspace)
+    staged = postflight_git(workspace, "add", "-A")
+    if staged.returncode != 0:
         die("failed to stage the isolated model delta")
-    model_tree = git_out(workspace, "write-tree")
-    base_tree = git_out(workspace, "rev-parse", "HEAD^{tree}")
+    model_tree_proc = postflight_git(workspace, "write-tree", capture=True)
+    base_tree_proc = postflight_git(workspace, "rev-parse", "HEAD^{tree}", capture=True)
+    if model_tree_proc.returncode != 0 or base_tree_proc.returncode != 0:
+        die("failed to resolve isolated model trees")
+    model_tree = model_tree_proc.stdout.decode("utf-8", errors="replace").strip()
+    base_tree = base_tree_proc.stdout.decode("utf-8", errors="replace").strip()
     if not model_tree or model_tree == base_tree:
         die("isolated model workspace has no importable changes")
 
-    diff = subprocess.run(
-        ["git", "-C", workspace, "diff", "--cached", "--binary", "--full-index", "HEAD"],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        env=child_env(),
+    diff = postflight_git(
+        workspace,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--cached",
+        "--binary",
+        "--full-index",
+        "HEAD",
+        capture=True,
     )
     if diff.returncode != 0 or not diff.stdout:
         die("failed to serialize the isolated model delta")
@@ -1294,7 +1447,7 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
         json.dumps(payload),
     ]
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
-        argv = ["cmd", "/c", *argv]
+        argv = ["cmd.exe", "/d", "/s", "/c", *argv]
     log(f"send {etype}: {from_role} -> {to_role}")
     rc = subprocess.run(argv, env=cenv, stdin=subprocess.DEVNULL).returncode
     if rc != 0:
@@ -1377,8 +1530,9 @@ def role_coder(a: argparse.Namespace) -> int:
 
     # 7. commit + push the executor's output back to the same branch
     record(evidence, "commit", commit_status="running")
-    git(repo, "add", "-A")
     if git(repo, "diff", "--cached", "--quiet") != 0:
+        if git_out(repo, "write-tree") != imported_tree:
+            die("trusted index changed after verified model import")
         msg = executor_commit_message(a.branch, tool)
         if git(repo, "commit", "-q", "-m", msg) != 0:
             die("git commit failed (is git user.name/user.email configured on this machine?)")
@@ -1453,6 +1607,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         model_base = "awf-review-base"
         if git(model_repo, "branch", "--force", model_base, base_commit) != 0:
             die("failed to create isolated reviewer base ref")
+        freeze_model_git_metadata(model_repo)
         model_card_file = str(resolve_repo_file(model_repo, a.card, "TaskCard"))
         model_review_report_path = resolve_review_report_path(
             model_repo,

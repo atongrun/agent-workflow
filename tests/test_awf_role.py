@@ -500,7 +500,7 @@ def test_fetch_and_checkout_finds_task_branch_from_single_branch_clone(
 
 
 def test_model_env_strips_credentials_and_runner_metadata(monkeypatch):
-    """Model children receive no Agent Bus or trusted-runner metadata."""
+    """Model children receive only allowlisted runtime state."""
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
     monkeypatch.setenv("AGENT_BUS_AGENT_TOKENS", "secrets")
     monkeypatch.setenv("AGENT_BUS_AGENT", "coder")
@@ -517,6 +517,15 @@ def test_model_env_strips_credentials_and_runner_metadata(monkeypatch):
     monkeypatch.setenv("SSH_ASKPASS", "/tmp/ssh-askpass")
     monkeypatch.setenv("GIT_SSH", "/tmp/git-ssh")
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /tmp/key")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "cloud-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "cloud-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "model-provider-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "model-provider-secret")
+    monkeypatch.setenv("DOCKER_CONFIG", "/tmp/docker-secret")
+    monkeypatch.setenv("KUBECONFIG", "/tmp/kube-secret")
+    monkeypatch.setenv("NPM_CONFIG_USERCONFIG", "/tmp/npm-secret")
+    monkeypatch.setenv("PYTHONPATH", "/tmp/python-injection")
+    monkeypatch.setenv("ARBITRARY_PRIVATE_SECRET", "private")
 
     env = awf_role.model_env()
 
@@ -536,6 +545,15 @@ def test_model_env_strips_credentials_and_runner_metadata(monkeypatch):
         "SSH_ASKPASS",
         "GIT_SSH",
         "GIT_SSH_COMMAND",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DOCKER_CONFIG",
+        "KUBECONFIG",
+        "NPM_CONFIG_USERCONFIG",
+        "PYTHONPATH",
+        "ARBITRARY_PRIVATE_SECRET",
     ):
         assert key not in env
     assert "AWF_SCRIPT_DIR" not in env
@@ -583,7 +601,36 @@ def test_model_env_points_runtime_paths_at_isolated_repo(monkeypatch, tmp_path):
     assert "OLDPWD" not in environment
     assert "GIT_DIR" not in environment
     assert all("/trusted" not in value for value in environment.values())
-    assert Path(environment["PATH"].split(os.pathsep)[0]).name == "model-bin"
+    model_bin = Path(environment["PATH"].split(os.pathsep)[0]).resolve()
+    hooks_path = Path(environment["GIT_CONFIG_VALUE_0"]).resolve()
+    trusted_root = Path(awf_role.__file__).resolve().parent.parent
+    assert model_bin.name == "model-bin"
+    assert hooks_path.name == "model-git-hooks"
+    assert not model_bin.is_relative_to(trusted_root)
+    assert not hooks_path.is_relative_to(trusted_root)
+    assert all(str(trusted_root) not in value for value in environment.values())
+    assert environment["NoDefaultCurrentDirectoryInExePath"] == "1"
+
+
+def test_postflight_git_env_is_credential_free(monkeypatch):
+    monkeypatch.setenv("AWF_CODER_TOKEN", "bus-secret")
+    monkeypatch.setenv("GH_TOKEN", "git-secret")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "cloud-secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "provider-secret")
+    monkeypatch.setenv("PYTHONPATH", "/tmp/injection")
+
+    environment = awf_role.postflight_git_env()
+
+    for key in (
+        "AWF_CODER_TOKEN",
+        "GH_TOKEN",
+        "AWS_SECRET_ACCESS_KEY",
+        "OPENROUTER_API_KEY",
+        "PYTHONPATH",
+    ):
+        assert key not in environment
+    assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
 
 
 def test_model_env_blocks_git_commit(tmp_path):
@@ -662,6 +709,54 @@ def test_model_env_blocks_no_verify_push_to_direct_remote(repositories):
     assert run("git", "rev-parse", "refs/heads/feature/task", cwd=origin) == remote_head
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows command lookup semantics")
+def test_model_env_blocks_workspace_git_cmd_shadow(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    marker = tmp_path / "shadow-ran.txt"
+    (repo / "git.cmd").write_text(f"@echo shadow>{marker}\r\n@exit /b 0\r\n", encoding="utf-8")
+    environment = awf_role.model_env(str(repo))
+
+    completed = subprocess.run(
+        model_git_argv("commit", "-m", "must use isolated guard"),
+        cwd=repo,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "trusted runner owns Git writes" in completed.stderr
+    assert not marker.exists()
+
+
+def test_windows_cmd_wrappers_disable_autorun(monkeypatch):
+    calls = []
+    wrapper_sources = [
+        Path(script).read_text(encoding="utf-8")
+        for script in (awf_listen.__file__, awf_handoff_check.__file__)
+    ]
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(awf_role.os, "name", "nt")
+    monkeypatch.setattr(awf_role.subprocess, "run", fake_run)
+
+    assert awf_role.spawn(["tool.cmd", "argument"], env={"PATH": "ignored"}) == 0
+    assert calls[0][0] == ["cmd.exe", "/d", "/s", "/c", "tool.cmd", "argument"]
+
+    monkeypatch.setenv("AGENT_BUS_URL", "http://bus.invalid")
+    monkeypatch.setenv("AWF_CODER_TOKEN", "token")
+    monkeypatch.setenv("AWF_BUS_BIN", "agent-bus.cmd")
+    assert awf_role.send_event("coder", "reviewer", "task:test", {})
+    assert calls[1][0][:5] == ["cmd.exe", "/d", "/s", "/c", "agent-bus.cmd"]
+
+    for source in wrapper_sources:
+        assert '["cmd.exe", "/d", "/s", "/c", *' in source
+
+
 def test_prepare_model_workspace_has_exact_head_and_no_remote(repositories, tmp_path):
     _, _, executor = repositories
     expected = run("git", "rev-parse", "HEAD", cwd=executor)
@@ -712,6 +807,30 @@ def test_assert_model_workspace_state_rejects_head_or_remote_change(repositories
 
     with pytest.raises(SystemExit, match="1"):
         awf_role.assert_model_workspace_state(str(workspace), expected)
+
+
+def test_assert_model_workspace_state_rejects_git_helper_injection_before_git_runs(
+    repositories, monkeypatch, tmp_path
+):
+    _, _, executor = repositories
+    expected = run("git", "rev-parse", "HEAD", cwd=executor)
+    workspace = Path(awf_role.prepare_model_workspace(str(executor), expected, state_dir=tmp_path))
+    config = workspace / ".git" / "config"
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n[diff]\n\texternal = credential-stealing-helper\n",
+        encoding="utf-8",
+    )
+    git_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "git_out",
+        lambda *args, **kwargs: git_calls.append((args, kwargs)) or expected,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.assert_model_workspace_state(str(workspace), expected)
+
+    assert not git_calls
 
 
 def test_import_model_delta_reproduces_verified_tree_without_git_metadata(repositories, tmp_path):
@@ -771,6 +890,14 @@ def test_coder_runs_model_in_no_remote_workspace_then_trusted_runner_pushes(
 
     events = []
     monkeypatch.setattr(awf_role, "tool_opencode_exec", fake_tool)
+    real_import_model_delta = awf_role.import_model_delta
+
+    def import_then_add_late_rogue_file(model_repo, trusted_repo):
+        tree = real_import_model_delta(model_repo, trusted_repo)
+        (Path(trusted_repo) / "late-rogue.txt").write_text("must not be staged\n", encoding="utf-8")
+        return tree
+
+    monkeypatch.setattr(awf_role, "import_model_delta", import_then_add_late_rogue_file)
     monkeypatch.setattr(
         awf_role,
         "send_event",
@@ -795,6 +922,13 @@ def test_coder_runs_model_in_no_remote_workspace_then_trusted_runner_pushes(
     assert pushed != dispatched
     assert run("git", "rev-parse", "HEAD", cwd=executor) == pushed
     assert (executor / "result.txt").read_text(encoding="utf-8") == "done\n"
+    assert (executor / "late-rogue.txt").is_file()
+    assert (
+        run("git", "ls-tree", "-r", "--name-only", pushed, cwd=executor)
+        .splitlines()
+        .count("late-rogue.txt")
+        == 0
+    )
     model_config = Path(seen["repo"]).joinpath(".git", "config").read_text(encoding="utf-8")
     assert str(executor.resolve()) not in model_config
     assert len(events) == 1
@@ -1308,6 +1442,7 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
     monkeypatch.setenv("AWF_TOOL", "opencode")
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
+    monkeypatch.setattr(awf_role, "freeze_model_git_metadata", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "resolve_review_base", lambda *a, **kw: "base-sha")
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
     monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *a, **kw: None)
