@@ -15,6 +15,8 @@ Rules:
 - Do not run `git add`, `git commit`, `git amend`, `git reset`, `git push`, or change Git refs.
   Leave the completed implementation as working-tree changes. The trusted runner alone verifies,
   stages, commits, pushes, and records the final revision after your process exits successfully.
+  You run in an isolated no-remote workspace whose normal Git command path is read-only; do not put
+  Git writes in your task list or attempt to work around a rejected commit or push.
 - When done, write an ImplementationReport (what changed, commands run, results, any
   deviation) to the path the dispatcher tells you. If the final revision is not yet available,
   state that the trusted runner will record it; do not try to create a commit to discover it.

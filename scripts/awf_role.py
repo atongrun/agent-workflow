@@ -31,8 +31,10 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,19 +160,104 @@ def record(evidence: RunEvidence | None, phase: str, **fields: object) -> None:
         evidence.record(phase, **fields)
 
 
-def model_env() -> dict[str, str]:
-    """Environment for model subprocesses: inherit parent, strip Agent Bus tokens.
+def _append_process_git_config(environment: dict[str, str], key: str, value: str) -> None:
+    """Append one Git config entry to the child-only environment."""
+    raw_count = environment.get("GIT_CONFIG_COUNT", "0")
+    try:
+        count = int(raw_count)
+    except ValueError:
+        die("inherited GIT_CONFIG_COUNT must be an integer")
+    environment[f"GIT_CONFIG_KEY_{count}"] = key
+    environment[f"GIT_CONFIG_VALUE_{count}"] = value
+    environment["GIT_CONFIG_COUNT"] = str(count + 1)
 
-    Keeps PATH, platform variables, ordinary AWF_* configuration, and UTF-8 settings.
-    Removes AGENT_BUS_TOKEN, AGENT_BUS_AGENT_TOKENS, and any key matching AWF_*_TOKEN
-    so credentials never reach untrusted model processes (OpenCode, Codex).
+
+_MODEL_GIT_CREDENTIAL_ENV = {
+    "CI_JOB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GITLAB_TOKEN",
+    "GIT_ALLOW_PROTOCOL",
+    "GIT_ASKPASS",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "SSH_AGENT_PID",
+    "SSH_ASKPASS",
+    "SSH_ASKPASS_REQUIRE",
+    "SSH_AUTH_SOCK",
+}
+
+
+def model_env(repo: str | None = None) -> dict[str, str]:
+    """Environment for model subprocesses: inherit runtime state, strip credentials.
+
+    Keeps PATH, platform variables, HOME, and UTF-8 settings. Removes runner/Bus
+    metadata, inherited process Git config, Git-host tokens, askpass, and SSH-agent
+    credential channels so they never reach untrusted model processes (OpenCode,
+    Codex).
+
+    When a repository is supplied, process-scoped Git config denies every transport
+    protocol in addition to ordinary commit/push hooks. Trusted postflight commands
+    and runner-owned Git writes use separate environments and remain unaffected.
     """
     e = child_env()
-    e.pop("AGENT_BUS_TOKEN", None)
-    e.pop("AGENT_BUS_AGENT_TOKENS", None)
     for k in list(e):
-        if k.startswith("AWF_") and k.endswith("_TOKEN"):
+        if (
+            k in _MODEL_GIT_CREDENTIAL_ENV
+            or k == "GIT_CONFIG_COUNT"
+            or k.startswith("GIT_CONFIG_KEY_")
+            or k.startswith("GIT_CONFIG_VALUE_")
+            or k.startswith("AGENT_BUS_")
+            or k.startswith("AWF_")
+        ):
             del e[k]
+    if repo is not None:
+        hooks = Path(__file__).resolve().parent / "model-git-hooks"
+        model_bin = Path(__file__).resolve().parent / "model-bin"
+        if (
+            not Path(repo).is_dir()
+            or not (hooks / "pre-commit").is_file()
+            or not (hooks / "pre-push").is_file()
+            or not (model_bin / "git").is_file()
+            or not (model_bin / "git.cmd").is_file()
+            or not (model_bin / "model_git_guard.py").is_file()
+        ):
+            die("model Git write guard is unavailable")
+        _append_process_git_config(e, "core.hooksPath", str(hooks))
+        _append_process_git_config(e, "protocol.allow", "never")
+        for protocol in ("ext", "file", "git", "http", "https", "ssh"):
+            _append_process_git_config(e, f"protocol.{protocol}.allow", "never")
+        _append_process_git_config(
+            e,
+            "remote.origin.pushurl",
+            "awf-model-write-denied://origin",
+        )
+        _append_process_git_config(e, "credential.helper", "")
+        e["PATH"] = str(model_bin) + os.pathsep + e.get("PATH", "")
+        e["AWF_PYTHON"] = sys.executable
+        if os.name == "nt":
+            extensions = [part for part in e.get("PATHEXT", "").split(";") if part]
+            extensions = [part for part in extensions if part.upper() != ".CMD"]
+            e["PATHEXT"] = ";".join([".CMD", *extensions])
+        e["AWF_REPO_DIR"] = str(Path(repo).resolve())
+        e["PWD"] = str(Path(repo).resolve())
+        e["INIT_CWD"] = str(Path(repo).resolve())
+        e.pop("OLDPWD", None)
+        for key in (
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_WORK_TREE",
+        ):
+            e.pop(key, None)
+        e["GIT_TERMINAL_PROMPT"] = "0"
+        e["GCM_INTERACTIVE"] = "Never"
     return e
 
 
@@ -295,6 +382,116 @@ def git_out(repo: str, *args: str) -> str:
     return proc.stdout.rstrip("\n\r")
 
 
+def prepare_model_workspace(
+    source_repo: str,
+    expected_commit: str,
+    *,
+    state_dir: Path | None = None,
+) -> str:
+    """Create a fresh no-remote clone for one untrusted model invocation."""
+    parent = str(state_dir) if state_dir is not None else None
+    if state_dir is not None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+    workspace = Path(tempfile.mkdtemp(prefix="model-workspace-", dir=parent)).resolve()
+    clone = subprocess.run(
+        ["git", "clone", "--no-hardlinks", "--no-checkout", source_repo, str(workspace)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        env=child_env(),
+    )
+    if clone.returncode != 0:
+        die("failed to create isolated model workspace")
+    if git(str(workspace), "remote", "remove", "origin") != 0:
+        die("failed to remove model workspace remote")
+    if git(str(workspace), "config", "core.logAllRefUpdates", "false") != 0:
+        die("failed to disable model workspace reflogs")
+    if git(str(workspace), "checkout", "--detach", expected_commit) != 0:
+        die("failed to checkout dispatched commit in model workspace")
+    git_dir = workspace / ".git"
+    logs = git_dir / "logs"
+    if logs.exists():
+        shutil.rmtree(logs)
+    fetch_head = git_dir / "FETCH_HEAD"
+    if fetch_head.exists():
+        fetch_head.unlink()
+    if logs.exists() or fetch_head.exists():
+        die("failed to remove model workspace source metadata")
+    head = git_out(str(workspace), "rev-parse", "--verify", "HEAD^{commit}")
+    if head != expected_commit:
+        die("model workspace does not match the dispatched commit")
+    if git_out(str(workspace), "remote"):
+        die("model workspace must not have a Git remote")
+    return str(workspace)
+
+
+def assert_model_workspace_state(workspace: str, expected_commit: str) -> None:
+    """Reject model-created refs or remotes before importing any file delta."""
+    head = git_out(workspace, "rev-parse", "--verify", "HEAD^{commit}")
+    if head != expected_commit:
+        die("model process changed isolated workspace HEAD")
+    if git_out(workspace, "remote"):
+        die("model process added a Git remote to the isolated workspace")
+
+
+def import_model_delta(workspace: str, trusted_repo: str) -> str:
+    """Apply the verified workspace tree delta to the trusted checkout."""
+    if git(workspace, "add", "-A") != 0:
+        die("failed to stage the isolated model delta")
+    model_tree = git_out(workspace, "write-tree")
+    base_tree = git_out(workspace, "rev-parse", "HEAD^{tree}")
+    if not model_tree or model_tree == base_tree:
+        die("isolated model workspace has no importable changes")
+
+    diff = subprocess.run(
+        ["git", "-C", workspace, "diff", "--cached", "--binary", "--full-index", "HEAD"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        env=child_env(),
+    )
+    if diff.returncode != 0 or not diff.stdout:
+        die("failed to serialize the isolated model delta")
+    applied = subprocess.run(
+        ["git", "-C", trusted_repo, "apply", "--index", "--binary", "-"],
+        input=diff.stdout,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=child_env(),
+    )
+    if applied.returncode != 0:
+        die("failed to import the isolated model delta")
+    trusted_tree = git_out(trusted_repo, "write-tree")
+    if trusted_tree != model_tree:
+        die("imported trusted tree does not match the verified model tree")
+    return model_tree
+
+
+def import_model_report(workspace: str, trusted_repo: str, report_path: str) -> Path:
+    """Copy the sole reviewer output from an isolated workspace."""
+    source = resolve_repo_file(workspace, report_path, "ReviewReport")
+    delta_paths = _collect_delta_paths(workspace)
+    if delta_paths != [report_path]:
+        die("isolated reviewer may only create the requested ReviewReport")
+    if not source.is_file():
+        die("isolated reviewer did not create the requested ReviewReport")
+    destination = resolve_repo_file(trusted_repo, report_path, "ReviewReport")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    return destination
+
+
+def resolve_review_base(repo: str, base: str) -> str:
+    """Resolve a local or origin-qualified reviewer base to one commit."""
+    candidates = []
+    if "/" not in base:
+        candidates.append(f"origin/{base}")
+    candidates.append(base)
+    for candidate in candidates:
+        commit = git_out(repo, "rev-parse", "--verify", f"{candidate}^{{commit}}")
+        if commit:
+            return commit
+    die(f"review base ref does not resolve: {base}")
+
+
 def push_and_verify_remote_head(repo: str, branch: str) -> str:
     """Push ``branch`` and return HEAD only after the exact remote ref matches it."""
     if git(repo, "push", "-u", "origin", branch) != 0:
@@ -315,6 +512,39 @@ def push_and_verify_remote_head(repo: str, branch: str) -> str:
         die(f"refreshed origin/{branch} does not match local HEAD; reviewer handoff blocked")
     log(f"pushed and verified origin/{branch} at {local_head}")
     return local_head
+
+
+def assert_model_git_state(repo: str, branch: str, expected_commit: str) -> None:
+    """Fail if an untrusted model changed local HEAD or the dispatched remote ref."""
+    expected = git_out(repo, "rev-parse", "--verify", f"{expected_commit}^{{commit}}")
+    local_head = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    if not expected or local_head != expected:
+        die("model process changed local HEAD; trusted runner owns commits")
+
+    remote_ref = f"refs/remotes/origin/{branch}"
+    refspec = f"+refs/heads/{branch}:{remote_ref}"
+    if git(repo, "fetch", "--no-tags", "origin", refspec) != 0:
+        die("cannot verify the remote task ref after model execution")
+    remote_head = git_out(repo, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
+    if remote_head != expected:
+        die("model process changed the remote task ref; trusted runner owns pushes")
+
+
+def executor_commit_message(branch: str, tool: str) -> str:
+    """Return a git-native Lore message for trusted executor output."""
+    return (
+        "Deliver the frozen TaskCard through the trusted executor\n\n"
+        f"The {tool} model produced the bounded working-tree delta for {branch}. "
+        "The trusted runner independently enforced the frozen postflight contract "
+        "before recording and publishing this revision.\n\n"
+        "Constraint: Scope and verification commands are frozen in the dispatched TaskCard\n"
+        "Confidence: high\n"
+        "Scope-risk: narrow\n"
+        "Reversibility: clean\n"
+        "Directive: Review and merge only the exact remote SHA verified by Agent Workflow\n"
+        "Tested: All TaskCard postflight commands and delta gates passed in the trusted runner\n"
+        "Not-tested: Independent reviewer verdict and repository CI are pending\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +607,21 @@ def resolve_review_report_path(repo: str, report_path: str, implementation_repor
         implementation_path = repo_root / implementation_path
     if resolved == implementation_path.resolve():
         die("ReviewReport path must be distinct from ImplementationReport path")
+    return resolved
+
+
+def resolve_repo_file(repo: str, relative_path: str, label: str) -> Path:
+    """Resolve one required repository-relative file path without traversal."""
+    if not relative_path:
+        die(f"--{label.lower().replace(' ', '-')} is required")
+    if "\\" in relative_path or relative_path.startswith("/") or ":" in relative_path:
+        die(f"{label} path must be repository-relative and use forward slashes")
+    if ".." in relative_path.split("/"):
+        die(f"{label} path must not contain parent traversal")
+    repo_root = Path(repo).resolve()
+    resolved = (repo_root / relative_path).resolve()
+    if resolved == repo_root or repo_root not in resolved.parents:
+        die(f"{label} path escapes the repository")
     return resolved
 
 
@@ -910,11 +1155,11 @@ def tool_opencode_exec(
         return spawn(
             argv,
             cwd=repo,
-            env=model_env(),
+            env=model_env(repo),
             evidence=evidence,
             tracked_phase="opencode",
         )
-    return spawn(argv, cwd=repo, env=model_env())
+    return spawn(argv, cwd=repo, env=model_env(repo))
 
 
 def normalize_rework_feedback(raw: str) -> str:
@@ -987,7 +1232,7 @@ def tool_codex_review(
     )
     if card_file and Path(card_file).is_file():
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
-    return spawn(argv, cwd=repo, stdin=stdin, env=model_env())
+    return spawn(argv, cwd=repo, stdin=stdin, env=model_env(repo))
 
 
 def tool_opencode_review(
@@ -1013,11 +1258,11 @@ def tool_opencode_review(
         return spawn(
             argv,
             cwd=repo,
-            env=model_env(),
+            env=model_env(repo),
             evidence=evidence,
             tracked_phase="opencode",
         )
-    return spawn(argv, cwd=repo, env=model_env())
+    return spawn(argv, cwd=repo, env=model_env(repo))
 
 
 # ---------------------------------------------------------------------------
@@ -1074,18 +1319,21 @@ def role_coder(a: argparse.Namespace) -> int:
     evidence = getattr(a, "evidence", None)
 
     fetch_and_checkout(repo, a.branch, a.commit)
-    card_file = os.path.join(repo, a.card)
+    card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
     if not Path(card_file).is_file():
         die(f"card not found after checkout: {card_file}")
 
     # 2. Parse and freeze the TaskCard postflight contract before model starts
     contract = parse_postflight_contract(card_file)
 
+    model_state_dir = evidence.run_dir if evidence is not None else None
+    model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
+    model_card_file = str(resolve_repo_file(model_repo, a.card, "TaskCard"))
     log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
     if tool == "opencode":
         rc = tool_opencode_exec(
-            repo,
-            card_file,
+            model_repo,
+            model_card_file,
             prompt_file,
             model,
             getattr(a, "review_feedback", ""),
@@ -1093,6 +1341,9 @@ def role_coder(a: argparse.Namespace) -> int:
         )
     else:
         die(f"coder: unsupported tool '{tool}'")
+    assert_model_workspace_state(model_repo, a.commit)
+    assert_model_git_state(repo, a.branch, a.commit)
+    record(evidence, "model_git_state_verified", model_git_state="pass")
     if rc != 0:
         die(f"tool '{tool}' failed (rc={rc}); not announcing review")
 
@@ -1104,23 +1355,31 @@ def role_coder(a: argparse.Namespace) -> int:
     )
     try:
         # 4. ImplementationReport gate — fail before any write or downstream event
-        check_report(a.report)
+        model_report = resolve_repo_file(model_repo, a.report, "ImplementationReport")
+        check_report(str(model_report))
 
         # 5. Rerun every verification command from the frozen contract
-        run_verifications(repo, contract)
+        run_verifications(model_repo, contract)
 
         # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
-        run_postflight_delta_gates(repo, contract)
+        run_postflight_delta_gates(model_repo, contract)
+        imported_tree = import_model_delta(model_repo, repo)
+        check_report(str(resolve_repo_file(repo, a.report, "ImplementationReport")))
     except BaseException:
         record(evidence, "postflight_fail", postflight_status="fail")
         raise
-    record(evidence, "postflight_pass", postflight_status="pass")
+    record(
+        evidence,
+        "postflight_pass",
+        postflight_status="pass",
+        imported_tree=imported_tree,
+    )
 
     # 7. commit + push the executor's output back to the same branch
     record(evidence, "commit", commit_status="running")
     git(repo, "add", "-A")
     if git(repo, "diff", "--cached", "--quiet") != 0:
-        msg = f"feat(awf): executor output for {a.branch} [{tool}]"
+        msg = executor_commit_message(a.branch, tool)
         if git(repo, "commit", "-q", "-m", msg) != 0:
             die("git commit failed (is git user.name/user.email configured on this machine?)")
         log(f"committed executor output on {a.branch}")
@@ -1166,35 +1425,60 @@ def role_reviewer(a: argparse.Namespace) -> int:
     evidence = getattr(a, "evidence", None)
 
     fetch_and_checkout(repo, a.branch, a.commit)
+    card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
+    if not Path(card_file).is_file():
+        die(f"card not found after checkout: {card_file}")
 
     # ImplementationReport gate — fail before any model invocation
-    check_report(a.report)
-    review_report_path = resolve_review_report_path(repo, a.review_report, a.report)
+    implementation_report = resolve_repo_file(repo, a.report, "ImplementationReport")
+    check_report(str(implementation_report))
+    review_report_path = resolve_review_report_path(
+        repo,
+        a.review_report,
+        str(implementation_report),
+    )
     if git_out(repo, "ls-files", "--", a.review_report):
         die("ReviewReport path must not replace a tracked repository file")
     review_report_path.parent.mkdir(parents=True, exist_ok=True)
     if review_report_path.exists():
         review_report_path.unlink()
 
-    card_file = os.path.join(repo, a.card)
-
     log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
+    base_commit = resolve_review_base(repo, base)
     if tool == "codex":
-        rc = tool_codex_review(repo, base, prompt_file, card_file, model, a.review_report)
+        rc = tool_codex_review(repo, base_commit, prompt_file, card_file, model, a.review_report)
     elif tool == "opencode":
-        rc = tool_opencode_review(
-            repo,
-            base,
-            prompt_file,
-            card_file,
-            model,
+        model_state_dir = evidence.run_dir if evidence is not None else None
+        model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
+        model_base = "awf-review-base"
+        if git(model_repo, "branch", "--force", model_base, base_commit) != 0:
+            die("failed to create isolated reviewer base ref")
+        model_card_file = str(resolve_repo_file(model_repo, a.card, "TaskCard"))
+        model_review_report_path = resolve_review_report_path(
+            model_repo,
             a.review_report,
+            a.report,
+        )
+        rc = tool_opencode_review(
+            model_repo,
+            model_base,
+            prompt_file,
+            model_card_file,
+            model,
+            str(model_review_report_path),
             evidence,
         )
     else:
         die("reviewer tool must be codex or opencode")
     if rc != 0:
         die(f"reviewer tool '{tool}' failed (rc={rc}); no verdict routed")
+
+    if tool == "opencode":
+        assert_model_workspace_state(model_repo, a.commit)
+        if git_out(model_repo, "rev-parse", "--verify", f"{model_base}^{{commit}}") != base_commit:
+            die("model process changed the isolated reviewer base ref")
+        assert_model_git_state(repo, a.branch, a.commit)
+        review_report_path = import_model_report(model_repo, repo, a.review_report)
 
     review_report = parse_review_report(review_report_path)
     verdict = review_report["verdict"]

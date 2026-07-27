@@ -68,6 +68,13 @@ def run(*args: str, cwd: Path) -> str:
     return completed.stdout.strip()
 
 
+def model_git_argv(*args: str) -> list[str]:
+    """Use the shell resolution path that OpenCode uses for model Git commands."""
+    if os.name == "nt":
+        return ["cmd", "/d", "/s", "/c", "git", *args]
+    return ["git", *args]
+
+
 def commit(repo: Path, message: str, filename: str, content: str) -> str:
     (repo / filename).write_text(content, encoding="utf-8")
     run("git", "add", filename, cwd=repo)
@@ -327,11 +334,13 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
     remote_head = commit(seed, "review inputs", "report.md", "controlled report\n")
     run("git", "push", "origin", "feature/task", cwd=seed)
 
-    review_report = executor / ".awf" / "artifacts" / "review-report-task.md"
     fake_script = tmp_path / "controlled-reviewer.py"
     fake_script.write_text(
+        "import sys\n"
         "from pathlib import Path\n"
-        f"path = Path({str(review_report)!r})\n"
+        "args = sys.argv[1:]\n"
+        "repo = Path(args[args.index('--dir') + 1])\n"
+        "path = repo / '.awf' / 'artifacts' / 'review-report-task.md'\n"
         "path.parent.mkdir(parents=True, exist_ok=True)\n"
         f"path.write_text({_review_markdown('PASS')!r}, encoding='utf-8')\n",
         encoding="utf-8",
@@ -490,29 +499,356 @@ def test_fetch_and_checkout_finds_task_branch_from_single_branch_clone(
 # ---------------------------------------------------------------------------
 
 
-def test_model_env_strips_tokens(monkeypatch):
-    """AGENT_BUS_TOKEN, AGENT_BUS_AGENT_TOKENS, and AWF_*_TOKEN are removed."""
+def test_model_env_strips_credentials_and_runner_metadata(monkeypatch):
+    """Model children receive no Agent Bus or trusted-runner metadata."""
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
     monkeypatch.setenv("AGENT_BUS_AGENT_TOKENS", "secrets")
     monkeypatch.setenv("AGENT_BUS_AGENT", "coder")
     monkeypatch.setenv("AWF_CODER_TOKEN", "coder-tok")
     monkeypatch.setenv("AWF_REVIEWER_TOKEN", "reviewer-tok")
     monkeypatch.setenv("AWF_SCRIPT_DIR", "/safe")
+    monkeypatch.setenv("GH_TOKEN", "github-cli-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-actions-token")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+    monkeypatch.setenv("SSH_AGENT_PID", "123")
+    monkeypatch.setenv("GIT_ASKPASS", "/tmp/git-askpass")
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file:https:ssh")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'protocol.file.allow=always'")
+    monkeypatch.setenv("SSH_ASKPASS", "/tmp/ssh-askpass")
+    monkeypatch.setenv("GIT_SSH", "/tmp/git-ssh")
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /tmp/key")
 
     env = awf_role.model_env()
 
     assert "AGENT_BUS_TOKEN" not in env
     assert "AGENT_BUS_AGENT_TOKENS" not in env
-    # Non-token AGENT_BUS_ keys are preserved
-    assert "AGENT_BUS_AGENT" in env
-    # AWF_*_TOKEN keys removed
+    assert "AGENT_BUS_AGENT" not in env
     assert "AWF_CODER_TOKEN" not in env
     assert "AWF_REVIEWER_TOKEN" not in env
-    # Non-token AWF_ keys preserved
-    assert "AWF_SCRIPT_DIR" in env
+    for key in (
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "SSH_AUTH_SOCK",
+        "SSH_AGENT_PID",
+        "GIT_ASKPASS",
+        "GIT_ALLOW_PROTOCOL",
+        "GIT_CONFIG_PARAMETERS",
+        "SSH_ASKPASS",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+    ):
+        assert key not in env
+    assert "AWF_SCRIPT_DIR" not in env
     # UTF-8 settings present (from child_env)
     assert "PYTHONUTF8" in env
     assert "PYTHONIOENCODING" in env
+
+
+def test_model_env_replaces_existing_process_git_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "credential.helper")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/trusted/credential-helper")
+
+    environment = awf_role.model_env(str(tmp_path))
+
+    assert environment["GIT_CONFIG_COUNT"] == "10"
+    assert environment["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert environment["GIT_CONFIG_KEY_1"] == "protocol.allow"
+    assert environment["GIT_CONFIG_VALUE_1"] == "never"
+    assert environment["GIT_CONFIG_KEY_2"] == "protocol.ext.allow"
+    assert environment["GIT_CONFIG_KEY_7"] == "protocol.ssh.allow"
+    assert environment["GIT_CONFIG_KEY_8"] == "remote.origin.pushurl"
+    assert environment["GIT_CONFIG_KEY_9"] == "credential.helper"
+    assert "/trusted/credential-helper" not in environment.values()
+
+
+def test_model_env_points_runtime_paths_at_isolated_repo(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWF_REPO_DIR", "/trusted/repo")
+    monkeypatch.setenv("AWF_SCRIPT_DIR", "/trusted/agent-workflow/scripts")
+    monkeypatch.setenv("AWF_BUS_BIN", "/trusted/agent-bus")
+    monkeypatch.setenv("AGENT_BUS_URL", "http://private-bus.invalid")
+    monkeypatch.setenv("PWD", "/trusted/repo")
+    monkeypatch.setenv("OLDPWD", "/trusted")
+    monkeypatch.setenv("INIT_CWD", "/trusted/repo")
+    monkeypatch.setenv("GIT_DIR", "/trusted/repo/.git")
+
+    environment = awf_role.model_env(str(tmp_path))
+
+    assert environment["AWF_REPO_DIR"] == str(tmp_path.resolve())
+    assert environment["PWD"] == str(tmp_path.resolve())
+    assert environment["INIT_CWD"] == str(tmp_path.resolve())
+    assert "AWF_SCRIPT_DIR" not in environment
+    assert "AWF_BUS_BIN" not in environment
+    assert "AGENT_BUS_URL" not in environment
+    assert "OLDPWD" not in environment
+    assert "GIT_DIR" not in environment
+    assert all("/trusted" not in value for value in environment.values())
+    assert Path(environment["PATH"].split(os.pathsep)[0]).name == "model-bin"
+
+
+def test_model_env_blocks_git_commit(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run("git", "init", "-b", "main", cwd=repo)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    original_head = commit(repo, "base", "task.md", "base\n")
+    (repo / "task.md").write_text("model output\n", encoding="utf-8")
+    run("git", "add", "task.md", cwd=repo)
+
+    completed = subprocess.run(
+        model_git_argv("commit", "-m", "model must not commit"),
+        cwd=repo,
+        env=awf_role.model_env(str(repo)),
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "trusted runner owns Git writes" in completed.stderr
+    assert run("git", "rev-parse", "HEAD", cwd=repo) == original_head
+
+
+def test_model_env_blocks_git_push(repositories):
+    origin, _, executor = repositories
+    commit(executor, "model commit", "model.txt", "must not reach origin\n")
+    remote_head = run("git", "rev-parse", "refs/heads/feature/task", cwd=origin)
+
+    completed = subprocess.run(
+        model_git_argv("push", "origin", "feature/task"),
+        cwd=executor,
+        env=awf_role.model_env(str(executor)),
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert run("git", "rev-parse", "refs/heads/feature/task", cwd=origin) == remote_head
+
+
+def test_model_env_blocks_no_verify_push_to_direct_remote(repositories):
+    origin, _, executor = repositories
+    remote_head = run("git", "rev-parse", "refs/heads/feature/task", cwd=origin)
+    environment = awf_role.model_env(str(executor))
+    (executor / "bypass.txt").write_text("must stay local\n", encoding="utf-8")
+    run("git", "add", "bypass.txt", cwd=executor)
+
+    committed = subprocess.run(
+        model_git_argv("commit", "--no-verify", "-m", "bypass local hook"),
+        cwd=executor,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    pushed = subprocess.run(
+        model_git_argv(
+            "-c",
+            "protocol.file.allow=always",
+            "push",
+            "--no-verify",
+            str(origin),
+            "HEAD:refs/heads/feature/task",
+        ),
+        cwd=executor,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert committed.returncode != 0
+    assert "trusted runner owns Git writes" in committed.stderr
+    assert pushed.returncode != 0
+    assert "trusted runner owns Git writes" in pushed.stderr
+    assert run("git", "rev-parse", "refs/heads/feature/task", cwd=origin) == remote_head
+
+
+def test_prepare_model_workspace_has_exact_head_and_no_remote(repositories, tmp_path):
+    _, _, executor = repositories
+    expected = run("git", "rev-parse", "HEAD", cwd=executor)
+
+    workspace = Path(
+        awf_role.prepare_model_workspace(
+            str(executor),
+            expected,
+            state_dir=tmp_path / "event-state",
+        )
+    )
+
+    assert workspace.parent == (tmp_path / "event-state").resolve()
+    assert run("git", "rev-parse", "HEAD", cwd=workspace) == expected
+    assert run("git", "remote", cwd=workspace) == ""
+    assert str(executor.resolve()) not in (workspace / ".git" / "config").read_text(
+        encoding="utf-8"
+    )
+    assert not (workspace / ".git" / "objects" / "info" / "alternates").exists()
+    source_paths = {
+        str(executor.resolve()).encode(),
+        executor.resolve().as_posix().encode(),
+    }
+    for metadata_path in (workspace / ".git").rglob("*"):
+        if metadata_path.is_file():
+            metadata = metadata_path.read_bytes()
+            assert all(source_path not in metadata for source_path in source_paths), metadata_path
+    assert run("git", "config", "--bool", "core.logAllRefUpdates", cwd=workspace) == "false"
+    assert not (workspace / ".git" / "logs").exists()
+    assert not (workspace / ".git" / "FETCH_HEAD").exists()
+    assert run("git", "status", "--short", cwd=workspace) == ""
+    assert run("git", "log", "-1", "--format=%H", cwd=workspace) == expected
+
+
+def test_assert_model_workspace_state_rejects_head_or_remote_change(repositories, tmp_path):
+    _, _, executor = repositories
+    expected = run("git", "rev-parse", "HEAD", cwd=executor)
+    workspace = Path(awf_role.prepare_model_workspace(str(executor), expected, state_dir=tmp_path))
+    run("git", "remote", "add", "escaped", str(executor), cwd=workspace)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.assert_model_workspace_state(str(workspace), expected)
+
+    run("git", "remote", "remove", "escaped", cwd=workspace)
+    run("git", "config", "user.name", "Model", cwd=workspace)
+    run("git", "config", "user.email", "model@example.invalid", cwd=workspace)
+    commit(workspace, "model commit", "model.txt", "unexpected\n")
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.assert_model_workspace_state(str(workspace), expected)
+
+
+def test_import_model_delta_reproduces_verified_tree_without_git_metadata(repositories, tmp_path):
+    _, _, executor = repositories
+    expected = run("git", "rev-parse", "HEAD", cwd=executor)
+    workspace = Path(awf_role.prepare_model_workspace(str(executor), expected, state_dir=tmp_path))
+    original_config = (executor / ".git" / "config").read_text(encoding="utf-8")
+    (workspace / "README.md").write_text("changed\n", encoding="utf-8")
+    (workspace / "task.md").unlink()
+    (workspace / "nested").mkdir()
+    (workspace / "nested" / "new.bin").write_bytes(b"\x00\x01model\xff")
+
+    model_tree = awf_role.import_model_delta(str(workspace), str(executor))
+
+    assert run("git", "write-tree", cwd=executor) == model_tree
+    assert (executor / "README.md").read_text(encoding="utf-8") == "changed\n"
+    assert not (executor / "task.md").exists()
+    assert (executor / "nested" / "new.bin").read_bytes() == b"\x00\x01model\xff"
+    assert (executor / ".git" / "config").read_text(encoding="utf-8") == original_config
+
+
+def _isolated_coder_card() -> str:
+    return """# Isolated coder card
+<!-- awf-postflight
+{
+  "allowed_paths": ["result.txt", ".awf/artifacts/impl.md"],
+  "verification_commands": [["{python}", "-c", "exit(0)"]]
+}
+-->
+"""
+
+
+def test_coder_runs_model_in_no_remote_workspace_then_trusted_runner_pushes(
+    repositories, monkeypatch, tmp_path
+):
+    origin, seed, executor = repositories
+    dispatched = commit(seed, "frozen card", "task.md", _isolated_coder_card())
+    run("git", "push", "origin", "feature/task", cwd=seed)
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    (script_dir / "executor-prompt.md").write_text("prompt", encoding="utf-8")
+    monkeypatch.setenv("AWF_REPO_DIR", str(executor))
+    monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
+    monkeypatch.delenv("AWF_NO_PUSH", raising=False)
+    seen: dict[str, str] = {}
+
+    def fake_tool(model_repo, card_file, *_args):
+        seen["repo"] = model_repo
+        seen["card"] = card_file
+        assert Path(model_repo).resolve() != executor.resolve()
+        assert run("git", "remote", cwd=Path(model_repo)) == ""
+        (Path(model_repo) / "result.txt").write_text("done\n", encoding="utf-8")
+        report = Path(model_repo) / ".awf" / "artifacts" / "impl.md"
+        report.parent.mkdir(parents=True)
+        report.write_text("implemented in isolation\n", encoding="utf-8")
+        return 0
+
+    events = []
+    monkeypatch.setattr(awf_role, "tool_opencode_exec", fake_tool)
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: events.append((args, kwargs)) or True,
+    )
+    evidence = awf_role.RunEvidence(80, "coder", state_root=tmp_path / "state")
+    args = argparse.Namespace(
+        branch="feature/task",
+        card="task.md",
+        commit=dispatched,
+        model="",
+        tool="opencode",
+        report=".awf/artifacts/impl.md",
+        review_report=".awf/artifacts/review.md",
+        base="",
+        evidence=evidence,
+    )
+
+    assert awf_role.role_coder(args) == 0
+
+    pushed = run("git", "rev-parse", "refs/heads/feature/task", cwd=origin)
+    assert pushed != dispatched
+    assert run("git", "rev-parse", "HEAD", cwd=executor) == pushed
+    assert (executor / "result.txt").read_text(encoding="utf-8") == "done\n"
+    model_config = Path(seen["repo"]).joinpath(".git", "config").read_text(encoding="utf-8")
+    assert str(executor.resolve()) not in model_config
+    assert len(events) == 1
+    assert events[0][0][3]["commit"] == pushed
+    message = run("git", "show", "-s", "--format=%B", pushed, cwd=executor)
+    assert "Directive:" in message
+    assert "Tested:" in message
+
+
+def test_isolated_model_commit_fails_before_trusted_checkout_or_remote_changes(
+    repositories, monkeypatch, tmp_path
+):
+    origin, seed, executor = repositories
+    dispatched = commit(seed, "frozen card", "task.md", _isolated_coder_card())
+    run("git", "push", "origin", "feature/task", cwd=seed)
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    (script_dir / "executor-prompt.md").write_text("prompt", encoding="utf-8")
+    monkeypatch.setenv("AWF_REPO_DIR", str(executor))
+    monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
+
+    def fake_tool(model_repo, _card_file, *_args):
+        model_path = Path(model_repo)
+        run("git", "config", "user.name", "Model", cwd=model_path)
+        run("git", "config", "user.email", "model@example.invalid", cwd=model_path)
+        commit(model_path, "model bypass", "result.txt", "must not import\n")
+        return 0
+
+    monkeypatch.setattr(awf_role, "tool_opencode_exec", fake_tool)
+    events = []
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: events.append((args, kwargs)) or True,
+    )
+    args = argparse.Namespace(
+        branch="feature/task",
+        card="task.md",
+        commit=dispatched,
+        model="",
+        tool="opencode",
+        report=".awf/artifacts/impl.md",
+        review_report=".awf/artifacts/review.md",
+        base="",
+        evidence=None,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(args)
+
+    assert run("git", "rev-parse", "HEAD", cwd=executor) == dispatched
+    assert run("git", "rev-parse", "refs/heads/feature/task", cwd=origin) == dispatched
+    assert not (executor / "result.txt").exists()
+    assert not events
 
 
 def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
@@ -532,10 +868,12 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
     monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
 
     awf_role.tool_opencode_exec(str(tmp_path), str(card_file), str(prompt_file), "provider/model")
 
     assert "AGENT_BUS_TOKEN" not in captured["env"]
+    assert captured["env"]["GIT_CONFIG_COUNT"] == "10"
     assert captured["argv"] == [
         "opencode-test",
         "run",
@@ -806,6 +1144,7 @@ def test_coder_missing_report_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
     evidence = awf_role.RunEvidence(61, "coder", state_root=tmp_path / "state")
     tool_evidence = []
     monkeypatch.setattr(
@@ -813,6 +1152,8 @@ def test_coder_missing_report_gate(monkeypatch, tmp_path):
         "tool_opencode_exec",
         lambda *args, **kw: tool_evidence.append(args[-1]) or 0,
     )
+    monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
 
     git_calls = []
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: git_calls.append(a) or 0)
@@ -887,6 +1228,47 @@ def test_reviewer_missing_report_gate(monkeypatch, tmp_path, tool, review_attr):
     assert not tool_calls, f"{tool} review tool should not be invoked before report gate"
 
 
+@pytest.mark.parametrize("field", ["card", "report"])
+@pytest.mark.parametrize("escaped_path", ["absolute", "../outside.md"])
+def test_reviewer_rejects_repo_path_escape_before_model(monkeypatch, tmp_path, field, escaped_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    (script_dir / "reviewer-prompt.md").write_text("prompt", encoding="utf-8")
+    (repo / "task.md").write_text("card", encoding="utf-8")
+    (repo / "implementation.md").write_text("implementation", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("must not satisfy a repository artifact gate", encoding="utf-8")
+
+    monkeypatch.setenv("AWF_REPO_DIR", str(repo))
+    monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
+    monkeypatch.setenv("AWF_TOOL", "codex")
+    monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+    tool_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "tool_codex_review",
+        lambda *a, **kw: tool_calls.append(a) or 0,
+    )
+    args = argparse.Namespace(
+        branch="feature/task",
+        card="task.md",
+        commit="abc1234",
+        model="",
+        tool="codex",
+        report="implementation.md",
+        review_report=".awf/review.md",
+        base="main",
+    )
+    setattr(args, field, str(outside) if escaped_path == "absolute" else escaped_path)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(args)
+
+    assert not tool_calls
+
+
 # ---------------------------------------------------------------------------
 # Structured ReviewReport and fail-closed reviewer routing
 # ---------------------------------------------------------------------------
@@ -925,6 +1307,21 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
     monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
     monkeypatch.setenv("AWF_TOOL", "opencode")
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
+    monkeypatch.setattr(awf_role, "resolve_review_base", lambda *a, **kw: "base-sha")
+    monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
+    monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        awf_role,
+        "git_out",
+        lambda _repo, *args: "" if args and args[0] == "ls-files" else "base-sha",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "import_model_report",
+        lambda _workspace, trusted, path: Path(trusted) / path,
+    )
 
     tool_calls = []
 
@@ -947,7 +1344,7 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
         commit="abc1234",
         model="",
         tool="opencode",
-        report=str(implementation_report),
+        report="implementation.md",
         review_report=".awf/artifacts/review-report-task.md",
         base="main",
     )
@@ -978,7 +1375,9 @@ def test_reviewer_routes_exactly_one_valid_verdict(
     assert awf_role.role_reviewer(ns) == 0
 
     assert len(tool_calls) == 1
-    assert tool_calls[0][0][5] == ns.review_report
+    isolated_report = Path(tool_calls[0][0][5])
+    assert isolated_report.is_absolute()
+    assert isolated_report.as_posix().endswith(ns.review_report)
     assert len(send_calls) == 1
     args = send_calls[0][0]
     assert args[:3] == ("reviewer", recipient, event_type)
@@ -1439,7 +1838,7 @@ def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
     script_dir.mkdir()
     (script_dir / "executor-prompt.md").write_text("prompt")
     (repo / "task.md").write_text(_VALID_POSTFLIGHT_CARD)
-    report = tmp_path / "report.md"
+    report = repo / "report.md"
     report.write_text("report content")
 
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
@@ -1449,9 +1848,13 @@ def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
     else:
         monkeypatch.delenv("AWF_NO_PUSH", raising=False)
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
     monkeypatch.setattr(awf_role, "tool_opencode_exec", lambda *a, **kw: 0)
+    monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "import_model_delta", lambda *a, **kw: "verified-tree")
 
     send_calls = []
     monkeypatch.setattr(awf_role, "send_event", lambda *a, **kw: send_calls.append((a, kw)) or True)
@@ -1461,7 +1864,7 @@ def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
         commit="dispatched",
         model="",
         tool="opencode",
-        report=str(report),
+        report="report.md",
         review_report=".awf/review.md",
         base="",
     )
@@ -1567,6 +1970,44 @@ def test_coder_verified_remote_sha_sends_one_review_event(monkeypatch, tmp_path)
     assert send_calls[0][0][3]["review_report"] == ".awf/review.md"
 
 
+def test_assert_model_git_state_rejects_local_head_change(repositories):
+    _, _, executor = repositories
+    expected = run("git", "rev-parse", "HEAD", cwd=executor)
+    commit(executor, "model commit", "model.txt", "unexpected\n")
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.assert_model_git_state(str(executor), "feature/task", expected)
+
+
+def test_assert_model_git_state_rejects_remote_branch_change(repositories):
+    _, seed, executor = repositories
+    expected = run("git", "rev-parse", "HEAD", cwd=executor)
+    commit(seed, "model push", "remote-model.txt", "unexpected\n")
+    run("git", "push", "origin", "feature/task", cwd=seed)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.assert_model_git_state(str(executor), "feature/task", expected)
+
+
+def test_executor_commit_message_has_git_native_lore_trailers():
+    message = awf_role.executor_commit_message("feature/task", "opencode")
+
+    parsed = subprocess.run(
+        ["git", "interpret-trailers", "--parse"],
+        input=message,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    assert message.startswith("Deliver the frozen TaskCard through the trusted executor\n")
+    assert "Constraint:" in parsed
+    assert "Confidence: high" in parsed
+    assert "Scope-risk: narrow" in parsed
+    assert "Tested:" in parsed
+    assert "Not-tested:" in parsed
+
+
 def test_coder_no_push_blocks_remote_completion(monkeypatch, tmp_path):
     ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path, no_push=True)
     git_calls = []
@@ -1588,7 +2029,7 @@ def test_coder_fail_closed_send_event(monkeypatch, tmp_path):
     (script_dir / "executor-prompt.md").write_text("prompt")
     card = repo / "task.md"
     card.write_text(_VALID_POSTFLIGHT_CARD)
-    report = tmp_path / "report.md"
+    report = repo / "report.md"
     report.write_text("report content")
 
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
@@ -1598,6 +2039,7 @@ def test_coder_fail_closed_send_event(monkeypatch, tmp_path):
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
     monkeypatch.setattr(awf_role, "tool_opencode_exec", lambda *a, **kw: 0)
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
@@ -1629,7 +2071,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
     (script_dir / "executor-prompt.md").write_text("prompt")
     card = repo / "task.md"
     card.write_text(_VALID_POSTFLIGHT_CARD)
-    report = tmp_path / "report.md"
+    report = repo / "report.md"
     report.write_text("report content")
 
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
@@ -1639,6 +2081,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
     evidence = awf_role.RunEvidence(62, "coder", state_root=tmp_path / "state")
     tool_evidence = []
     monkeypatch.setattr(
@@ -1646,8 +2089,11 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
         "tool_opencode_exec",
         lambda *args, **kw: tool_evidence.append(args[-1]) or 0,
     )
+    monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "import_model_delta", lambda *a, **kw: "verified-tree")
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
     monkeypatch.setattr(awf_role, "push_and_verify_remote_head", lambda *a, **kw: "abc1234")
     monkeypatch.setattr(awf_role, "send_event", lambda *a, **kw: True)
@@ -1658,7 +2104,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
         commit="abc1234",
         model="",
         tool="opencode",
-        report=str(report),
+        report="report.md",
         review_report=".awf/review.md",
         base="",
         evidence=evidence,
@@ -1672,6 +2118,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
         for line in evidence.log_path.read_text(encoding="utf-8").splitlines()
     ]
     assert phases == [
+        "model_git_state_verified",
         "postflight_start",
         "postflight_pass",
         "commit",

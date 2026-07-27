@@ -95,7 +95,15 @@ branch cannot be pushed, so a remote executor is never pointed at an unavailable
 Windows handoff check parses ACL principals independently from the echoed `C:\Users\...` target
 path, preserving fail-closed owner-only enforcement without path-based false failures. The trusted
 operations entry points also add the configured Bus host to `NO_PROXY`, so private Tailscale
-traffic cannot be diverted through a desktop HTTP proxy. The trusted reviewer now validates structured `PASS`,
+traffic cannot be diverted through a desktop HTTP proxy. OpenCode coder and fallback reviewer
+subprocesses run in fresh event-scoped clones with no remotes or source-checkout path in their
+ordinary runtime context. A read-only Git command shim, stripped credential channels, denied Git
+protocols, and hooks block the observed prompt-violating commit/push class in depth. After the
+model returns, the trusted runner verifies both workspaces and the real remote ref, runs postflight
+in the isolated clone, imports the exact tree delta, and retains the only normal credentialed
+commit/push path. This is not an adversarial same-user OS sandbox; hostile arbitrary code still
+requires a separate uncredentialed principal or network isolation. The trusted reviewer
+now validates structured `PASS`,
 deterministic `REQUEST_CHANGES`, and `BLOCKED` reports, embeds the normalized report in its verdict
 event, selects exactly one route, and fails closed before ACK when report validation or delivery
 fails. A fresh 2026-07-26 run completed one uninterrupted Mac architect → Windows coder → Mac
@@ -108,6 +116,7 @@ into a next TaskCard, and the first non-infrastructure downstream dogfood. See
 the [reviewer-routing implementation report](docs/tasks/reviewer-verdict-routing-implementation-report.md),
 the [live semantic-loop report](docs/tasks/live-semantic-loop-acceptance-2026-07-26-v5-implementation-report.md),
 the [Windows portability report](docs/tasks/windows-python312-utf8-closeout-v7-implementation-report.md),
+the [executor Git-boundary report](docs/tasks/executor-git-write-guard-implementation-report.md),
 and the current [repository handoff](HANDOFF.md).
 
 ## Product Gate

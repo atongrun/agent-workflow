@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$AWF_PYTHON" "$(dirname "$0")/model_git_guard.py" "$@"

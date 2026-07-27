@@ -69,6 +69,8 @@ Completed engineering gates:
 - [x] Fail closed before dispatch when the TaskCard branch cannot be pushed for remote checkout.
 - [x] Verify Windows credential ACLs without treating the target path as a broad `Users` grant.
 - [x] Keep configured private Agent Bus traffic out of inherited HTTP proxy routes.
+- [x] Isolate ordinary OpenCode Git writes in no-remote event workspaces and keep trusted-runner
+  ownership of imported commits and pushes.
 
 Remaining Phase 2 work:
 
