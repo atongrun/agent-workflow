@@ -43,6 +43,10 @@ preserved as evidence; it was not reset, acknowledged, or requeued.
 - Frozen verification, allowed-path, artifact, secret, and diff gates run inside the isolated coder
   workspace. The runner serializes its full binary Git delta, applies it to the trusted checkout,
   and requires both Git tree hashes to match before commit/push.
+- The configured ImplementationReport and fallback ReviewReport are force-staged in the isolated
+  workspace even when the target repository ignores their artifact directory. The runner refreezes
+  its metadata manifest after this trusted index write, and reviewer input must be tracked by the
+  dispatched commit so an ignored stale local report cannot satisfy the evidence gate.
 - OpenCode reviewer fallback may create only its requested ReviewReport; the runner validates and
   copies that report back. Codex review remains in its existing read-only sandbox.
 - Reviewer TaskCard and ImplementationReport inputs must resolve to repository-relative files;
@@ -88,13 +92,15 @@ principal/container and network policy, which is outside this recovery patch.
 - End-to-end coder tests prove only the trusted runner creates the Lore commit/push; a model-created
   local commit fails before either the trusted checkout or external ref changes.
 - The OpenCode reviewer return-chain test runs in the isolated clone and imports only the validated
-  report.
+  report, including when the configured artifact directory is ignored.
 - Reviewer boundary tests reject absolute and parent-traversing TaskCard or ImplementationReport
-  paths before model invocation.
+  paths before model invocation and reject ignored local ImplementationReports absent from the
+  dispatched commit.
 - Ref-integrity tests reject local `HEAD`, remote task-branch, model remote, and reviewer-base
   mutation.
 - `git interpret-trailers --parse` recognizes the generated executor commit trailers.
-- Full Mac suite after the authenticated-proxy security rework: 203 passed, 1 Windows-only skip.
+- Full Mac suite after the authenticated-proxy and ignored-artifact security rework: 205 passed, 1
+  Windows-only skip.
 - Previous-candidate Windows Python 3.12 role module: 160 passed, 1 expected platform skip. This includes
   the real current-directory `git.cmd` shadow regression, verification-time Git metadata mutation,
   and trusted `core.autocrlf` normalization paths.

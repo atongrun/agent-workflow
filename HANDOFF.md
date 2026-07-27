@@ -88,8 +88,9 @@ Refresh refs before relying on this snapshot.
    refreshed remote task ref, runs frozen postflight in the isolated clone, imports an exact tree
    delta, and alone commits/pushes with git-native Lore trailers. This closes the observed ordinary
    Git-write class. Model inference keeps credential-free proxy settings, but embedded proxy
-   username/password values fail before model launch. Hostile same-user arbitrary code still
-   requires OS/network isolation.
+   username/password values fail before model launch. Configured report artifacts are imported even
+   from ignored directories, while reviewer evidence must be tracked by the dispatched commit.
+   Hostile same-user arbitrary code still requires OS/network isolation.
 
 ## Repository Truth Consistency
 

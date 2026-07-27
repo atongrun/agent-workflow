@@ -100,10 +100,11 @@ subprocesses run in fresh event-scoped clones with no remotes or source-checkout
 ordinary runtime context. A read-only Git command shim, stripped credential channels, denied Git
 protocols, and hooks block the observed prompt-violating commit/push class in depth. Credential-free
 proxy settings remain available for inference, while authenticated proxy URLs fail before model
-launch instead of exposing their userinfo. After the
-model returns, the trusted runner verifies both workspaces and the real remote ref, runs postflight
-in the isolated clone, imports the exact tree delta, and retains the only normal credentialed
-commit/push path. This is not an adversarial same-user OS sandbox; hostile arbitrary code still
+launch instead of exposing their userinfo. After the model returns, the trusted runner verifies
+both workspaces and the real remote ref, runs postflight in the isolated clone, force-includes the
+configured report even when its directory is ignored, imports the exact tree delta, and retains the
+only normal credentialed commit/push path. Reviewers accept only ImplementationReports tracked by
+the dispatched commit. This is not an adversarial same-user OS sandbox; hostile arbitrary code still
 requires a separate uncredentialed principal or network isolation. The trusted reviewer
 now validates structured `PASS`,
 deterministic `REQUEST_CHANGES`, and `BLOCKED` reports, embeds the normalized report in its verdict

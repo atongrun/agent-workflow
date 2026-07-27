@@ -883,6 +883,8 @@ def test_coder_runs_model_in_no_remote_workspace_then_trusted_runner_pushes(
     repositories, monkeypatch, tmp_path
 ):
     origin, seed, executor = repositories
+    (seed / ".gitignore").write_text(".awf/\n", encoding="utf-8")
+    run("git", "add", ".gitignore", cwd=seed)
     dispatched = commit(seed, "frozen card", "task.md", _isolated_coder_card())
     run("git", "push", "origin", "feature/task", cwd=seed)
     script_dir = tmp_path / "scripts"
@@ -938,6 +940,13 @@ def test_coder_runs_model_in_no_remote_workspace_then_trusted_runner_pushes(
     assert pushed != dispatched
     assert run("git", "rev-parse", "HEAD", cwd=executor) == pushed
     assert (executor / "result.txt").read_text(encoding="utf-8") == "done\n"
+    assert (executor / ".awf" / "artifacts" / "impl.md").read_text(encoding="utf-8") == (
+        "implemented in isolation\n"
+    )
+    assert (
+        ".awf/artifacts/impl.md"
+        in run("git", "ls-tree", "-r", "--name-only", pushed, cwd=executor).splitlines()
+    )
     assert (executor / "late-rogue.txt").is_file()
     assert (
         run("git", "ls-tree", "-r", "--name-only", pushed, cwd=executor)
@@ -1378,6 +1387,39 @@ def test_reviewer_missing_report_gate(monkeypatch, tmp_path, tool, review_attr):
     assert not tool_calls, f"{tool} review tool should not be invoked before report gate"
 
 
+def test_reviewer_rejects_ignored_stale_implementation_report(repositories):
+    _, _, executor = repositories
+    (executor / ".gitignore").write_text(".awf/\n", encoding="utf-8")
+    run("git", "add", ".gitignore", cwd=executor)
+    run("git", "commit", "-m", "ignore runtime artifacts", cwd=executor)
+    report = executor / ".awf" / "artifacts" / "impl.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("stale local evidence\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit):
+        awf_role.check_report_tracked_at_head(str(executor), ".awf/artifacts/impl.md")
+
+
+def test_import_model_report_includes_ignored_configured_artifact(repositories, tmp_path):
+    _, seed, executor = repositories
+    (seed / ".gitignore").write_text(".awf/\n", encoding="utf-8")
+    run("git", "add", ".gitignore", cwd=seed)
+    dispatched = commit(seed, "ignore runtime artifacts", "task.md", "task\n")
+    run("git", "push", "origin", "feature/task", cwd=seed)
+    awf_role.fetch_and_checkout(str(executor), "feature/task", dispatched)
+    workspace = Path(
+        awf_role.prepare_model_workspace(str(executor), dispatched, state_dir=tmp_path / "state")
+    )
+    report_path = ".awf/artifacts/review.md"
+    report = workspace / report_path
+    report.parent.mkdir(parents=True)
+    report.write_text(_review_markdown("PASS"), encoding="utf-8")
+
+    imported = awf_role.import_model_report(str(workspace), str(executor), report_path)
+
+    assert imported.read_text(encoding="utf-8") == _review_markdown("PASS")
+
+
 @pytest.mark.parametrize("field", ["card", "report"])
 @pytest.mark.parametrize("escaped_path", ["absolute", "../outside.md"])
 def test_reviewer_rejects_repo_path_escape_before_model(monkeypatch, tmp_path, field, escaped_path):
@@ -1466,7 +1508,13 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
     monkeypatch.setattr(
         awf_role,
         "git_out",
-        lambda _repo, *args: "" if args and args[0] == "ls-files" else "base-sha",
+        lambda _repo, *args: (
+            "implementation.md"
+            if args == ("ls-files", "--", "implementation.md")
+            else ""
+            if args and args[0] == "ls-files"
+            else "base-sha"
+        ),
     )
     monkeypatch.setattr(
         awf_role,
@@ -2005,6 +2053,7 @@ def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
     monkeypatch.setattr(awf_role, "assert_model_git_metadata", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "stage_model_artifact", lambda *a, **kw: report)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "import_model_delta", lambda *a, **kw: "verified-tree")
 
@@ -2245,6 +2294,7 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(awf_role, "assert_model_git_metadata", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "assert_model_git_state", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "run_verifications", lambda *a, **kw: None)
+    monkeypatch.setattr(awf_role, "stage_model_artifact", lambda *a, **kw: report)
     monkeypatch.setattr(awf_role, "run_postflight_delta_gates", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "import_model_delta", lambda *a, **kw: "verified-tree")
     monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)

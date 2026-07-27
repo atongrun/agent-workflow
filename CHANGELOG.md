@@ -16,8 +16,9 @@
   their ordinary Git command path to read operations, import only verified file/report deltas into
   the trusted checkout, refresh local/remote refs before publication, and generate Lore-compliant
   trusted commits. Reject authenticated proxy environment URLs before model launch while preserving
-  credential-free proxy connectivity. Same-user hostile-code isolation remains an explicit
-  operating boundary.
+  credential-free proxy connectivity. Force-include configured report artifacts from ignored
+  directories and reject reviewer evidence absent from the dispatched commit. Same-user
+  hostile-code isolation remains an explicit operating boundary.
 
 ## [0.3.0-rc.1] — 2026-07-19
 

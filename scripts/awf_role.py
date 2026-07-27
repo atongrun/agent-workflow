@@ -639,14 +639,25 @@ def import_model_delta(workspace: str, trusted_repo: str) -> str:
     return model_tree
 
 
+def stage_model_artifact(workspace: str, relative_path: str, label: str) -> Path:
+    """Force-add one configured artifact even when the target repository ignores it."""
+    source = resolve_repo_file(workspace, relative_path, label)
+    if not source.is_file():
+        die(f"isolated model did not create the requested {label}")
+    assert_model_git_metadata(workspace)
+    staged = postflight_git(workspace, "add", "-f", "--", relative_path)
+    if staged.returncode != 0:
+        die(f"failed to stage the isolated {label}")
+    freeze_model_git_metadata(workspace)
+    return source
+
+
 def import_model_report(workspace: str, trusted_repo: str, report_path: str) -> Path:
     """Copy the sole reviewer output from an isolated workspace."""
-    source = resolve_repo_file(workspace, report_path, "ReviewReport")
+    source = stage_model_artifact(workspace, report_path, "ReviewReport")
     delta_paths = _collect_delta_paths(workspace)
     if delta_paths != [report_path]:
         die("isolated reviewer may only create the requested ReviewReport")
-    if not source.is_file():
-        die("isolated reviewer did not create the requested ReviewReport")
     destination = resolve_repo_file(trusted_repo, report_path, "ReviewReport")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
@@ -737,6 +748,13 @@ def check_report(report_path: str) -> None:
         die("--report is required; ImplementationReport must exist before commit or review")
     if not Path(report_path).is_file():
         die(f"ImplementationReport not found: {report_path}")
+
+
+def check_report_tracked_at_head(repo: str, relative_path: str) -> None:
+    """Reject ignored or stale local reports that are absent from the dispatched commit."""
+    tracked = git_out(repo, "ls-files", "--", relative_path).splitlines()
+    if relative_path not in tracked:
+        die("ImplementationReport is not tracked by the dispatched commit")
 
 
 _REVIEW_REPORT_RE = re.compile(r"<!--\s*awf-review-report\s*\n(.*?)\n\s*-->", re.DOTALL)
@@ -1551,6 +1569,7 @@ def role_coder(a: argparse.Namespace) -> int:
         # 5. Rerun every verification command from the frozen contract
         run_verifications(model_repo, contract)
         assert_model_git_metadata(model_repo)
+        stage_model_artifact(model_repo, a.report, "ImplementationReport")
 
         # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
         run_postflight_delta_gates(model_repo, contract)
@@ -1625,6 +1644,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     # ImplementationReport gate — fail before any model invocation
     implementation_report = resolve_repo_file(repo, a.report, "ImplementationReport")
     check_report(str(implementation_report))
+    check_report_tracked_at_head(repo, a.report)
     review_report_path = resolve_review_report_path(
         repo,
         a.review_report,
