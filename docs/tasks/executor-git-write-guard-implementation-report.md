@@ -92,16 +92,19 @@ principal/container and network policy, which is outside this recovery patch.
   mutation.
 - `git interpret-trailers --parse` recognizes the generated executor commit trailers.
 - Full Mac suite after the final security rework: 200 passed, 1 Windows-only skip.
-- Exact-head Windows Python 3.12 role module: 155 passed, 1 expected platform skip; the focused
-  `git -c ... push --no-verify` bypass regression passed through the Windows `cmd` resolution path.
-- A diagnostic full-repository Windows run had 190 passes, the same expected skip, and one unrelated
-  pre-existing CLI newline assertion (`\r\n` vs `\n`); PR #22 does not change that CLI surface.
+- Exact-head Windows Python 3.12 role module: 160 passed, 1 expected platform skip. This includes
+  the real current-directory `git.cmd` shadow regression, verification-time Git metadata mutation,
+  and trusted `core.autocrlf` normalization paths.
+- A diagnostic full-repository Windows run with `PYTHONPATH=src` had 199 passes, the same expected
+  skip, and one unrelated pre-existing CLI newline assertion (`\r\n` vs `\n`); PR #22 does not
+  change that CLI surface. Ruff check/format, `git diff --check`, exact SHA, and clean-tree checks
+  passed in the fresh checkout.
 - Ruff check and format, shell syntax, and `git diff --check`: passed.
 
 ## Remaining Verification
 
-- Fresh exact-head Windows Python 3.12 role/full verification, independent native Codex security
-  review, GitHub CI, merge, and three-machine exact-version rollout.
+- Fresh independent native Codex security review, GitHub CI, merge, and three-machine exact-version
+  rollout.
 - The pre-existing retry gap after a successful push but failed downstream event send remains a
   separate operations issue. It requires a durable/idempotent outbox design and is intentionally
   not mixed into this Git-boundary security patch. No historical event is acknowledged, requeued,
