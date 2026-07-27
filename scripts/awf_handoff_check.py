@@ -76,10 +76,25 @@ def parse_env_file(path: Path) -> dict:
     return out
 
 
+def parse_icacls_aces(dest: Path, output: str) -> list[tuple[str, str]]:
+    """Extract ACL principals without treating the echoed target path as an ACE."""
+    target = str(dest)
+    aces = []
+    for line in output.splitlines():
+        entry = line.strip()
+        if entry.casefold().startswith(target.casefold()):
+            entry = entry[len(target) :].strip()
+        match = re.fullmatch(r"(.+?):((?:\([A-Za-z,]+\))+)", entry)
+        if match:
+            aces.append((match.group(1), match.group(2)))
+        elif ":(" in entry:
+            return []
+    return aces
+
+
 def check_windows_acl(dest: Path) -> None:
-    """On Windows, os.chmod can't express owner-only, so assert via icacls that
-    the file's ACL was tightened (no inherited ACEs granting Administrators /
-    Users / Everyone). awf_bootstrap.py sets this with `icacls /inheritance:r`.
+    """On Windows, assert that every ACE belongs to the current principal and
+    that none are inherited. awf_bootstrap.py sets this with `icacls /inheritance:r`.
 
     icacls echoes the file PATH on the first output line, then one ACE per line
     like `  DOMAIN\\user:(F)`. We must inspect only the ACE lines — the path
@@ -87,27 +102,30 @@ def check_windows_acl(dest: Path) -> None:
     naive substring scan of the whole blob."""
     proc = subprocess.run(["icacls", str(dest)], capture_output=True, text=True)
     if proc.returncode != 0:
-        record(WARN, "dispatch.env is owner-only", "icacls could not read the ACL")
+        record(FAIL, "dispatch.env is owner-only", "icacls could not read the ACL")
         return
-    # icacls prints `<path> PRINCIPAL:(perms)` on line 1, then indented
-    # `PRINCIPAL:(perms)` lines. Extract the ACE tokens with a regex so the
-    # file path (which lives under C:\Users\...) can't be mistaken for a
-    # 'Users' grant. Each ACE = a principal followed by :(...) permission flags.
-    aces = re.findall(r"([A-Za-z0-9 \\_.-]+):(\([A-Za-z,()]*\)+)", proc.stdout)
+    aces = parse_icacls_aces(dest, proc.stdout)
     if not aces:
-        record(WARN, "dispatch.env is owner-only", "could not parse icacls ACEs")
+        record(FAIL, "dispatch.env is owner-only", "could not parse icacls ACEs")
         return
+
+    whoami = subprocess.run(["whoami"], capture_output=True, text=True)
+    principal = whoami.stdout.strip() if whoami.returncode == 0 else ""
+    if not principal:
+        record(FAIL, "dispatch.env is owner-only", "could not determine the current principal")
+        return
+
     inherited = any("(I)" in perms for _principal, perms in aces)
-    broad_names = ("Administrators", "Users", "Everyone", "Authenticated Users")
-    broad = any(any(b in principal for b in broad_names) for principal, _perms in aces)
-    if inherited or broad:
+    unexpected = any(ace_principal.casefold() != principal.casefold() for ace_principal, _ in aces)
+    if inherited or unexpected:
         record(
             FAIL,
             "dispatch.env is owner-only",
-            "ACL grants more than the owner - re-run awf_bootstrap.py (icacls lockdown)",
+            "ACL is inherited or grants another principal - re-run awf_bootstrap.py "
+            "(icacls lockdown)",
         )
     else:
-        record(PASS, "dispatch.env is owner-only", "icacls: no inherited/broad ACEs")
+        record(PASS, "dispatch.env is owner-only", "icacls: current principal only")
 
 
 def check_dispatch_env(dest: Path, role: str) -> dict:

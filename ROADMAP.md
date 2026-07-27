@@ -67,6 +67,7 @@ Completed engineering gates:
 - [x] Close the full Windows Python 3.12 portability suite and trusted postflight gate.
 - [x] Complete one fresh isolated cross-machine semantic `PASS` route through architect ACK.
 - [x] Fail closed before dispatch when the TaskCard branch cannot be pushed for remote checkout.
+- [x] Verify Windows credential ACLs without treating the target path as a broad `Users` grant.
 
 Remaining Phase 2 work:
 

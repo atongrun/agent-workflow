@@ -72,6 +72,10 @@ Refresh refs before relying on this snapshot.
 5. **Dispatch push fail-closed gate.** `awf-dispatch.sh` now exits before Agent Bus delivery when
    its TaskCard branch push fails. A regression test proves the bus command is not invoked on that
    path; explicit `--no-push` remains a local-only mode.
+6. **Windows ACL readiness accuracy.** The handoff check strips the exact echoed credential-file
+   path before parsing ACE principals, so `C:\Users\...` does not masquerade as a broad `Users`
+   grant. ACL read/parse uncertainty, inherited ACEs, and any principal other than the current user
+   remain blocking failures.
 
 ## Repository Truth Consistency
 
@@ -86,8 +90,8 @@ Proven with deterministic tests and live operations evidence: exact checkout, tr
 model-process and postflight gates, allowed-path/secret/diff checks, commit/push plus remote-SHA
 proof, durable handler evidence, Windows handler-return/ACK, semantic verdict validation and
 fail-closed routing, fail-closed dispatch when a TaskCard branch cannot be pushed, Windows Python
-3.12 default-locale portability, and one fresh uninterrupted cross-machine `PASS` route through
-architect consumption and ACK.
+3.12 default-locale portability, path-safe Windows ACL validation, and one fresh uninterrupted
+cross-machine `PASS` route through architect consumption and ACK.
 
 Still missing: recorded capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), automatic continuation into a next
