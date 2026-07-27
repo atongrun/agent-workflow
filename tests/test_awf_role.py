@@ -65,6 +65,31 @@ def commit(repo: Path, message: str, filename: str, content: str) -> str:
     return run("git", "rev-parse", "HEAD", cwd=repo)
 
 
+def dispatch_bash() -> str:
+    if os.name != "nt":
+        return "bash"
+    git_exe = shutil.which("git")
+    if git_exe:
+        candidate = Path(git_exe).resolve().parent.parent / "usr" / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    for prog_files in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if prog_files:
+            candidate = Path(prog_files) / "Git" / "usr" / "bin" / "bash.exe"
+            if candidate.is_file():
+                return str(candidate)
+    return "bash"
+
+
+def dispatch_shell_path(path: Path) -> str:
+    if os.name != "nt":
+        return str(path)
+    resolved = path.resolve()
+    drive = resolved.drive.lower().rstrip(":")
+    rest = str(resolved).replace("\\", "/").split(":", 1)[1]
+    return f"/{drive}{rest}"
+
+
 # ---------------------------------------------------------------------------
 # Durable handler exit evidence
 # ---------------------------------------------------------------------------
@@ -1076,30 +1101,9 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
     (repo / "task.md").write_text("task\n", encoding="utf-8")
 
-    def _find_git_bash():
-        if os.name != "nt":
-            return "bash"
-        git_exe = shutil.which("git")
-        if git_exe:
-            candidate = Path(git_exe).resolve().parent.parent / "usr" / "bin" / "bash.exe"
-            if candidate.is_file():
-                return str(candidate)
-        for prog_files in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
-            if prog_files:
-                candidate = Path(prog_files) / "Git" / "usr" / "bin" / "bash.exe"
-                if candidate.is_file():
-                    return str(candidate)
-        return "bash"
-
-    def _win_path_to_msys(path: str) -> str:
-        p = Path(path).resolve()
-        drive = p.drive.lower().rstrip(":")
-        rest = str(p).replace("\\", "/").split(":", 1)[1]
-        return f"/{drive}{rest}"
-
-    bash = _find_git_bash()
-    script_path = str(DISPATCH_PATH) if os.name != "nt" else _win_path_to_msys(str(DISPATCH_PATH))
-    repo_path = str(repo) if os.name != "nt" else _win_path_to_msys(str(repo))
+    bash = dispatch_bash()
+    script_path = dispatch_shell_path(DISPATCH_PATH)
+    repo_path = dispatch_shell_path(repo)
 
     completed = subprocess.run(
         [
@@ -1124,6 +1128,51 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     payload = json.loads(payload_line.split("payload=", 1)[1])
     assert payload["report"] == ".awf/artifacts/impl-report-task.md"
     assert payload["review_report"] == ".awf/artifacts/review-report-task.md"
+
+
+def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
+    repo = tmp_path / "repo"
+    run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    (repo / "task.md").write_text("task\n", encoding="utf-8")
+
+    marker = tmp_path / "agent-bus-called"
+    if os.name == "nt":
+        fake_bus = tmp_path / "fake-agent-bus.cmd"
+        fake_bus.write_text(f'@echo called>"{marker}"\r\n', encoding="utf-8")
+    else:
+        fake_bus = tmp_path / "fake-agent-bus"
+        fake_bus.write_text(f"#!/usr/bin/env sh\nprintf called > {marker}\n", encoding="utf-8")
+        fake_bus.chmod(0o755)
+
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "AGENT_BUS_URL": "http://controlled.invalid",
+            "AWF_ARCH_TOKEN": "controlled-test-token",
+            "AWF_BUS_BIN": dispatch_shell_path(fake_bus),
+        }
+    )
+    completed = subprocess.run(
+        [
+            dispatch_bash(),
+            dispatch_shell_path(DISPATCH_PATH),
+            "--repo",
+            dispatch_shell_path(repo),
+            "--card",
+            "task.md",
+            "--branch",
+            "feature/task",
+        ],
+        env=environment,
+        capture_output=True,
+    )
+
+    stderr = completed.stderr.decode("utf-8", errors="replace")
+    assert completed.returncode == 2
+    assert "push failed; refusing to send an event" in stderr
+    assert not marker.exists()
 
 
 # ---------------------------------------------------------------------------

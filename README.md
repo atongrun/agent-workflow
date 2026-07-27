@@ -90,7 +90,9 @@ model or advances a Workflow Run.
 `scripts/` is a separate **operations surface** produced by real dogfood. It has demonstrated exact
 checkout synchronization, trusted model-process boundaries, postflight verification, allowed-path
 and secret gates, commit/push plus remote-SHA proof, durable handler evidence, and a real Windows
-handler-return/ACK gate over Agent Bus. The trusted reviewer now validates structured `PASS`,
+handler-return/ACK gate over Agent Bus. Dispatch also fails before event delivery when its TaskCard
+branch cannot be pushed, so a remote executor is never pointed at an unavailable commit. The
+trusted reviewer now validates structured `PASS`,
 deterministic `REQUEST_CHANGES`, and `BLOCKED` reports, embeds the normalized report in its verdict
 event, selects exactly one route, and fails closed before ACK when report validation or delivery
 fails. A fresh 2026-07-26 run completed one uninterrupted Mac architect → Windows coder → Mac

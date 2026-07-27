@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop dispatch before Agent Bus delivery when the TaskCard branch push fails, preventing remote
+  executors from receiving a pointer to an unavailable commit.
+
 ## [0.3.0-rc.1] — 2026-07-19
 
 ### Core method and contracts
