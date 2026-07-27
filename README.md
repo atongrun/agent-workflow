@@ -94,7 +94,8 @@ handler-return/ACK gate over Agent Bus. Dispatch also fails before event deliver
 branch cannot be pushed, so a remote executor is never pointed at an unavailable commit. The
 Windows handoff check parses ACL principals independently from the echoed `C:\Users\...` target
 path, preserving fail-closed owner-only enforcement without path-based false failures. The trusted
-reviewer now validates structured `PASS`,
+operations entry points also add the configured Bus host to `NO_PROXY`, so private Tailscale
+traffic cannot be diverted through a desktop HTTP proxy. The trusted reviewer now validates structured `PASS`,
 deterministic `REQUEST_CHANGES`, and `BLOCKED` reports, embeds the normalized report in its verdict
 event, selects exactly one route, and fails closed before ACK when report validation or delivery
 fails. A fresh 2026-07-26 run completed one uninterrupted Mac architect → Windows coder → Mac

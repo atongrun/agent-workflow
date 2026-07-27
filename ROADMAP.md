@@ -68,6 +68,7 @@ Completed engineering gates:
 - [x] Complete one fresh isolated cross-machine semantic `PASS` route through architect ACK.
 - [x] Fail closed before dispatch when the TaskCard branch cannot be pushed for remote checkout.
 - [x] Verify Windows credential ACLs without treating the target path as a broad `Users` grant.
+- [x] Keep configured private Agent Bus traffic out of inherited HTTP proxy routes.
 
 Remaining Phase 2 work:
 

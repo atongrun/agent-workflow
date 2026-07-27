@@ -25,6 +25,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from awf_network import add_url_host_to_no_proxy
+
 DEFAULT_ON_TYPE = {"coder": "task:awf-impl", "reviewer": "task:awf-review"}
 
 
@@ -109,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     # from defaulting to the gbk locale codec and crashing on non-ASCII output.
     os.environ["PYTHONUTF8"] = "1"
     os.environ["PYTHONIOENCODING"] = "utf-8"
+    add_url_host_to_no_proxy(os.environ, url)
 
     # Config the handler needs is passed via the ENVIRONMENT (inherited by the
     # agent-bus listener and thus by each handler process it spawns).

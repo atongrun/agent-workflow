@@ -13,20 +13,24 @@ from pathlib import Path
 
 import pytest
 
-MODULE_PATH = Path(__file__).parents[1] / "scripts" / "awf_role.py"
+SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+MODULE_PATH = SCRIPTS_DIR / "awf_role.py"
 SPEC = importlib.util.spec_from_file_location("awf_role", MODULE_PATH)
 assert SPEC and SPEC.loader
 awf_role = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(awf_role)
 
-LISTEN_MODULE_PATH = Path(__file__).parents[1] / "scripts" / "awf_listen.py"
+LISTEN_MODULE_PATH = SCRIPTS_DIR / "awf_listen.py"
 LISTEN_SPEC = importlib.util.spec_from_file_location("awf_listen", LISTEN_MODULE_PATH)
 assert LISTEN_SPEC and LISTEN_SPEC.loader
 awf_listen = importlib.util.module_from_spec(LISTEN_SPEC)
 LISTEN_SPEC.loader.exec_module(awf_listen)
 DISPATCH_PATH = Path(__file__).parents[1] / "scripts" / "awf-dispatch.sh"
 
-HANDOFF_MODULE_PATH = Path(__file__).parents[1] / "scripts" / "awf_handoff_check.py"
+HANDOFF_MODULE_PATH = SCRIPTS_DIR / "awf_handoff_check.py"
 HANDOFF_SPEC = importlib.util.spec_from_file_location("awf_handoff_check", HANDOFF_MODULE_PATH)
 assert HANDOFF_SPEC and HANDOFF_SPEC.loader
 awf_handoff_check = importlib.util.module_from_spec(HANDOFF_SPEC)
@@ -125,6 +129,19 @@ def test_rework_handler_maps_report_path_and_structured_feedback():
 
     assert "--review-report {payload.review_report_path}" in handler
     assert "--review-feedback {payload.review_report}" in handler
+
+
+def test_listener_adds_bus_host_to_existing_no_proxy_entries():
+    environment = {
+        "NO_PROXY": "localhost,127.0.0.1",
+        "no_proxy": "internal.example",
+    }
+
+    awf_listen.add_url_host_to_no_proxy(environment, "http://100.108.67.47:8800")
+
+    expected = "localhost,127.0.0.1,internal.example,100.108.67.47"
+    assert environment["NO_PROXY"] == expected
+    assert environment["no_proxy"] == expected
 
 
 @pytest.mark.parametrize(
@@ -1179,6 +1196,91 @@ def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
     assert completed.returncode == 2
     assert "push failed; refusing to send an event" in stderr
     assert not marker.exists()
+
+
+def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path):
+    repo = tmp_path / "repo"
+    run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    (repo / "task.md").write_text("task\n", encoding="utf-8")
+
+    marker = tmp_path / "no-proxy.txt"
+    if os.name == "nt":
+        fake_bus = tmp_path / "fake-agent-bus.cmd"
+        fake_bus.write_text(
+            f'@echo %NO_PROXY%>"{marker}"\r\n@echo %no_proxy%>>"{marker}"\r\n',
+            encoding="utf-8",
+        )
+    else:
+        fake_bus = tmp_path / "fake-agent-bus"
+        fake_bus.write_text(
+            f'#!/usr/bin/env sh\nprintf "%s\\n%s\\n" "$NO_PROXY" "$no_proxy" > {marker}\n',
+            encoding="utf-8",
+        )
+        fake_bus.chmod(0o755)
+
+    environment = dict(os.environ)
+    environment.pop("NO_PROXY", None)
+    environment.pop("no_proxy", None)
+    environment.update(
+        {
+            "AGENT_BUS_URL": "http://100.108.67.47:8800",
+            "AWF_ARCH_TOKEN": "controlled-test-token",
+            "AWF_BUS_BIN": dispatch_shell_path(fake_bus),
+            "NO_PROXY": "localhost,127.0.0.1",
+        }
+    )
+    completed = subprocess.run(
+        [
+            dispatch_bash(),
+            dispatch_shell_path(DISPATCH_PATH),
+            "--repo",
+            dispatch_shell_path(repo),
+            "--card",
+            "task.md",
+            "--branch",
+            "feature/task",
+            "--no-push",
+        ],
+        env=environment,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0
+    assert marker.read_text(encoding="utf-8").splitlines() == [
+        "localhost,127.0.0.1,100.108.67.47",
+        "localhost,127.0.0.1,100.108.67.47",
+    ]
+
+
+def test_handoff_bus_probe_adds_bus_host_to_no_proxy(monkeypatch):
+    monkeypatch.setattr(awf_handoff_check, "is_file", lambda _path: True)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, "0\n", "")
+
+    monkeypatch.setattr(awf_handoff_check.subprocess, "run", fake_run)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+    awf_handoff_check.results.clear()
+
+    awf_handoff_check.check_bus_reachable(
+        {
+            "AGENT_BUS_URL": "http://100.108.67.47:8800",
+            "AWF_CODER_TOKEN": "controlled-test-token",
+            "AWF_BUS_BIN": "agent-bus",
+        },
+        "coder",
+    )
+
+    child = calls[-1][1]["env"]
+    expected = "localhost,127.0.0.1,100.108.67.47"
+    assert child["NO_PROXY"] == expected
+    assert child["no_proxy"] == expected
 
 
 def test_windows_acl_check_does_not_treat_users_in_target_path_as_a_principal(monkeypatch):
