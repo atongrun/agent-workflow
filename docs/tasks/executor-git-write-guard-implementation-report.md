@@ -18,6 +18,8 @@ preserved as evidence; it was not reset, acknowledged, or requeued.
   environment. Listener `AWF_*`, Agent Bus, inherited process Git config, cloud credentials,
   provider API keys, arbitrary secrets, and executable-injection variables are absent. The runner
   reintroduces only the isolated workspace path and the interpreter needed by the Git shim.
+  Credential-free proxy URLs remain available for model inference, while proxy values containing
+  embedded username or password information fail before the model subprocess starts.
 - Git shim and hook assets are copied to a fresh event-local guard directory. Neither `PATH` nor
   `core.hooksPath` discloses the trusted Agent Workflow checkout, and inherited `PATH` entries below
   that checkout are removed.
@@ -74,7 +76,8 @@ principal/container and network policy, which is outside this recovery patch.
   no reflogs or `FETCH_HEAD`, and no source-checkout path in any `.git` metadata file while local Git
   inspection remains available.
 - Environment tests prove trusted runner paths, Bus metadata, inherited Git config, cloud/provider
-  credentials, arbitrary secrets, and injection variables do not reach the model process.
+  credentials, arbitrary secrets, injection variables, and authenticated proxy URLs do not reach
+  the model process. Credential-free proxy URLs remain available.
 - A malicious repository-local `diff.external` configuration is rejected by the raw metadata gate
   before any Git command runs with trusted state.
 - A verification command that mutates `.git/config` is rejected before delta discovery performs
@@ -91,11 +94,11 @@ principal/container and network policy, which is outside this recovery patch.
 - Ref-integrity tests reject local `HEAD`, remote task-branch, model remote, and reviewer-base
   mutation.
 - `git interpret-trailers --parse` recognizes the generated executor commit trailers.
-- Full Mac suite after the final security rework: 200 passed, 1 Windows-only skip.
-- Exact-head Windows Python 3.12 role module: 160 passed, 1 expected platform skip. This includes
+- Full Mac suite after the authenticated-proxy security rework: 203 passed, 1 Windows-only skip.
+- Previous-candidate Windows Python 3.12 role module: 160 passed, 1 expected platform skip. This includes
   the real current-directory `git.cmd` shadow regression, verification-time Git metadata mutation,
   and trusted `core.autocrlf` normalization paths.
-- A diagnostic full-repository Windows run with `PYTHONPATH=src` had 199 passes, the same expected
+- The previous-candidate diagnostic full-repository Windows run with `PYTHONPATH=src` had 199 passes, the same expected
   skip, and one unrelated pre-existing CLI newline assertion (`\r\n` vs `\n`); PR #22 does not
   change that CLI surface. Ruff check/format, `git diff --check`, exact SHA, and clean-tree checks
   passed in the fresh checkout.
@@ -103,8 +106,8 @@ principal/container and network policy, which is outside this recovery patch.
 
 ## Remaining Verification
 
-- Fresh independent native Codex security review, GitHub CI, merge, and three-machine exact-version
-  rollout.
+- Exact-head Windows verification, GitHub CI, fresh independent native Codex security review,
+  merge, and three-machine exact-version rollout.
 - The pre-existing retry gap after a successful push but failed downstream event send remains a
   separate operations issue. It requires a durable/idempotent outbox design and is intentionally
   not mixed into this Git-boundary security patch. No historical event is acknowledged, requeued,

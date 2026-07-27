@@ -87,7 +87,9 @@ Refresh refs before relying on this snapshot.
    protocol denial plus hooks remain defense in depth. The runner verifies the isolated refs and
    refreshed remote task ref, runs frozen postflight in the isolated clone, imports an exact tree
    delta, and alone commits/pushes with git-native Lore trailers. This closes the observed ordinary
-   Git-write class; hostile same-user arbitrary code still requires OS/network isolation.
+   Git-write class. Model inference keeps credential-free proxy settings, but embedded proxy
+   username/password values fail before model launch. Hostile same-user arbitrary code still
+   requires OS/network isolation.
 
 ## Repository Truth Consistency
 

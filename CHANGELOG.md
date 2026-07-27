@@ -15,7 +15,9 @@
 - Move OpenCode coder and fallback reviewer runs into fresh event-scoped no-remote clones, restrict
   their ordinary Git command path to read operations, import only verified file/report deltas into
   the trusted checkout, refresh local/remote refs before publication, and generate Lore-compliant
-  trusted commits. Same-user hostile-code isolation remains an explicit operating boundary.
+  trusted commits. Reject authenticated proxy environment URLs before model launch while preserving
+  credential-free proxy connectivity. Same-user hostile-code isolation remains an explicit
+  operating boundary.
 
 ## [0.3.0-rc.1] — 2026-07-19
 

@@ -634,6 +634,21 @@ def test_postflight_git_env_is_credential_free(monkeypatch):
     assert "core.autocrlf" in environment.values()
 
 
+@pytest.mark.parametrize("key", ["HTTP_PROXY", "https_proxy"])
+def test_model_env_rejects_credential_proxy(monkeypatch, capsys, key):
+    monkeypatch.setenv(key, "http://runner:secret@proxy.invalid:8080")
+
+    with pytest.raises(SystemExit):
+        awf_role.model_env()
+    assert "must not contain embedded credentials" in capsys.readouterr().err
+
+
+def test_model_env_preserves_credential_free_proxy(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+
+    assert awf_role.model_env()["HTTPS_PROXY"] == "http://127.0.0.1:7890"
+
+
 def test_model_env_blocks_git_commit(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

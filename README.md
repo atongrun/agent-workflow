@@ -98,7 +98,9 @@ operations entry points also add the configured Bus host to `NO_PROXY`, so priva
 traffic cannot be diverted through a desktop HTTP proxy. OpenCode coder and fallback reviewer
 subprocesses run in fresh event-scoped clones with no remotes or source-checkout path in their
 ordinary runtime context. A read-only Git command shim, stripped credential channels, denied Git
-protocols, and hooks block the observed prompt-violating commit/push class in depth. After the
+protocols, and hooks block the observed prompt-violating commit/push class in depth. Credential-free
+proxy settings remain available for inference, while authenticated proxy URLs fail before model
+launch instead of exposing their userinfo. After the
 model returns, the trusted runner verifies both workspaces and the real remote ref, runs postflight
 in the isolated clone, imports the exact tree delta, and retains the only normal credentialed
 commit/push path. This is not an adversarial same-user OS sandbox; hostile arbitrary code still

@@ -39,6 +39,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def log(msg: str) -> None:
@@ -225,15 +226,26 @@ _MODEL_ENV_ALLOWLIST = {
     "XDG_STATE_HOME",
 }
 
+_PROXY_ENV_KEYS = {"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"}
+
+
+def _reject_credential_proxy(key: str, value: str) -> None:
+    """Fail closed rather than expose proxy userinfo to an untrusted process."""
+    parsed = urlsplit(value if "://" in value else f"//{value}")
+    if parsed.username is not None or parsed.password is not None:
+        die(f"{key.upper()} must not contain embedded credentials for model subprocesses")
+
 
 def _model_base_env() -> dict[str, str]:
     """Build a minimal cross-platform environment for untrusted processes."""
     inherited = child_env()
-    e = {
-        key: value
-        for key, value in inherited.items()
-        if key.upper() in _MODEL_ENV_ALLOWLIST or key.upper().startswith("LC_")
-    }
+    e: dict[str, str] = {}
+    for key, value in inherited.items():
+        upper = key.upper()
+        if upper in _PROXY_ENV_KEYS:
+            _reject_credential_proxy(key, value)
+        if upper in _MODEL_ENV_ALLOWLIST or upper.startswith("LC_"):
+            e[key] = value
     trusted_root = Path(__file__).resolve().parent.parent
     trusted_text = str(trusted_root)
     path_entries = []
