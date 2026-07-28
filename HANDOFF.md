@@ -146,15 +146,18 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Define and implement the external run control plane** — add a versioned run ledger and bounded
-   context packet contract, plus a pre-authorized operations manifest. A fresh session must recover
-   from those artifacts and live Git/CI state rather than from chat history.
-2. **Guard before model launch** — make route coverage, task state, rework budget, and terminal state
-   a trusted preflight. Redelivery must not start an unbudgeted model invocation.
+1. **Land the external control-plane PR** — the feature branch implements a versioned run ledger,
+   bounded context packet, fresh-session recovery CLI, trusted pre-invocation route/stage/budget/
+   terminal gate, and a narrow operations authority manifest. It must pass CI and independent
+   review before merge.
+2. **Run one fresh disposable proof event** — after merge, use a new isolated event to prove ledger
+   recovery and authorized/rejected paths end to end. Do not inspect, ACK, requeue, redispatch, or
+   restart any preserved historical event, and do not resume the stopped Dousansi v3 TaskCard.
 3. **Close the measurement record and verification tiers** — record role/reason counters without raw
    token claims, then classify ordinary TaskCard checks separately from infrastructure/security gates.
-4. **Only then resume downstream dogfood** — design a deliberate terminal recovery for the preserved
-   interrupted run; do not reuse it as an automatic retry.
+4. **Record a terminal recovery decision** — only after the disposable proof, create an explicit
+   decision artifact for the preserved interrupted run. A new product TaskCard requires that
+   decision; the preserved event itself is never an automatic retry source.
 
 ## Standing Rules
 

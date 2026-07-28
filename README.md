@@ -122,6 +122,13 @@ the [Windows portability report](docs/tasks/windows-python312-utf8-closeout-v7-i
 the [executor Git-boundary report](docs/tasks/executor-git-write-guard-implementation-report.md),
 and the current [repository handoff](HANDOFF.md).
 
+The operations surface now persists a versioned run ledger and bounded context packet outside
+checkouts. `python scripts/awf_control_plane.py recover --run-id <id>` is the fresh-session
+recovery contract. Trusted listeners perform route, stage, attempt, rework, replay, and terminal
+checks before starting a model; denials are durable and do not ACK or alter retained history. See
+the [run control-plane report](docs/tasks/run-control-plane-implementation-report.md) and the
+example [authority manifest](scripts/authority-manifest.example.json).
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream

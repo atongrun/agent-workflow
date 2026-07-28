@@ -26,6 +26,7 @@ These metrics describe whether the Agent Workflow product itself is converging s
 | Artifact integrity | Whether required handoff artifacts exist and are well formed | TaskCards, reports, decisions |
 | Rework determinism | Whether local failures close through deterministic rework | implementation and review outcomes |
 | Recovery evidence | Whether interrupted or resumed work can be proven from files | run context, logs, checkpoints |
+| Control-plane gate outcomes | Whether route, stage, budget, replay, and terminal decisions are durable before model launch | versioned run ledger and context packet |
 | Cross-machine evidence | Whether dogfood proves the intended runner/listener boundaries | operations artifacts, PR evidence |
 | Test coverage of contracts | Whether the contract surface is protected by regression tests | test suite |
 | Human intervention points | Where a human still had to step in | task notes, review notes, decision packets |
@@ -66,6 +67,11 @@ When a high-value model is used, record:
 - whether the call resolved the issue or merely informed the next step.
 
 Avoid recording exact token or cost numbers unless the runtime already exposes them reliably. If the data is unavailable, leave it absent and note the gap instead of approximating.
+
+For every disposable or downstream run, also retain the run-ledger ID, context-packet checksum, gate
+decision (authorized or rejected), denial reason, and the single recorded next action. Do not record
+raw prompts, credentials, retained historical payloads, ACK/requeue actions, or unavailable token
+counts.
 
 ## Reason Codes
 

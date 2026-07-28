@@ -41,6 +41,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from awf_control_plane import (
+    DEFAULT_ROUTES,
+    ControlPlaneDenied,
+    RunLedger,
+    authority_manifest_binding,
+    build_context_packet,
+    load_authority_manifest,
+)
+
 
 def log(msg: str) -> None:
     print(f"[awf_role] {msg}", flush=True)
@@ -284,6 +293,106 @@ def validate_input_delivery(
         "payload_sha256": actual_hash,
         "source_event_id": source_event_id,
     }
+
+
+def _control_plane_enabled() -> bool:
+    """The listener enables this gate; legacy direct handlers remain testable."""
+    return os.environ.get("AWF_CONTROL_PLANE", "0") == "1"
+
+
+def pre_invocation_gate(
+    a: argparse.Namespace, role: str, evidence: RunEvidence | None
+) -> object | None:
+    """Persist and atomically authorize the stage before any model adapter call."""
+    if not _control_plane_enabled():
+        return None
+    event_type = getattr(a, "input_type", "") or (
+        "task:awf-review-v2" if role == "reviewer" else "task:awf-impl-v2"
+    )
+    task_id = a.branch.rsplit("/", 1)[-1]
+    run_id = getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
+    stage = (
+        getattr(a, "stage", "")
+        or os.environ.get("AWF_STAGE")
+        or ("review" if role == "reviewer" else "rework" if "rework" in event_type else "implement")
+    )
+    state_root = (
+        evidence.state_dir
+        if evidence is not None
+        else Path(
+            os.environ.get("AWF_STATE_ROOT", str(Path.home() / ".local/state/agent-workflow"))
+        )
+    )
+    ledger = RunLedger(state_root, run_id)
+    authority_path = Path(
+        os.environ.get(
+            "AWF_AUTHORITY_MANIFEST",
+            str(Path(__file__).resolve().parent / "authority-manifest.example.json"),
+        )
+    )
+    try:
+        authority = authority_manifest_binding(load_authority_manifest(authority_path))
+    except ControlPlaneDenied as exc:
+        record(evidence, "pre_invocation_rejected", reason=str(exc))
+        die(f"pre-invocation gate denied: {exc}")
+    packet = build_context_packet(
+        run_id=run_id,
+        taskcard=a.card,
+        frozen_base=a.commit,
+        branch=a.branch,
+        pull_request=getattr(a, "pull_request", ""),
+        phase=getattr(a, "phase", ""),
+        transition=event_type,
+        evidence=[str(getattr(a, "report", ""))],
+        prohibited_actions=[
+            "read historical event payloads",
+            "ACK/requeue/redispatch preserved events",
+            "credentials, destructive operations, or trust-gate bypass",
+        ],
+        authority_manifest=authority,
+        next_action=f"run trusted {role} preflight for {event_type}",
+        stage=stage,
+    )
+    try:
+        ledger.initialize(
+            packet,
+            stage=stage,
+            max_attempts=int(
+                getattr(a, "max_attempts", 1) or os.environ.get("AWF_MAX_ATTEMPTS", "1")
+            ),
+            rework_budget=int(
+                getattr(a, "rework_budget", 1) or os.environ.get("AWF_REWORK_BUDGET", "1")
+            ),
+        )
+        active_raw = os.environ.get("AWF_ACTIVE_ROUTE_TYPES", "")
+        active_routes = DEFAULT_ROUTES
+        if active_raw:
+            active_routes = {item: [role] for item in active_raw.split(",") if item}
+        decision = ledger.pre_invocation_gate(
+            event_id=evidence.event_id if evidence is not None else int(getattr(a, "event_id", 1)),
+            event_type=event_type,
+            role=role,
+            delivery_id=getattr(a, "delivery_id", "")
+            or f"legacy-event-{getattr(a, 'event_id', 0)}",
+            payload_sha256=getattr(a, "payload_sha256", "") or "legacy",
+            stage=stage,
+            route_override=getattr(a, "route_override", ""),
+            attempt=int(getattr(a, "attempt", 1) or 1),
+            rework="rework" in event_type,
+            active_routes=active_routes,
+            terminal_state=getattr(a, "terminal_state", ""),
+        )
+    except ControlPlaneDenied as exc:
+        record(evidence, "pre_invocation_rejected", reason=str(exc))
+        die(f"pre-invocation gate denied: {exc}")
+    if not decision.allowed and decision.reason != "duplicate_event":
+        record(evidence, "pre_invocation_rejected", reason=decision.reason)
+        die(f"pre-invocation gate denied: {decision.reason}")
+    if decision.reason == "duplicate_event":
+        record(evidence, "pre_invocation_replay", control_plane_sequence=decision.sequence)
+    else:
+        record(evidence, "pre_invocation_authorized", control_plane_sequence=decision.sequence)
+    return decision
 
 
 def delivery_state_path(
@@ -530,7 +639,17 @@ def model_env(repo: str | None = None) -> dict[str, str]:
         )
         _append_process_git_config(e, "credential.helper", "")
         e["PATH"] = str(model_bin) + os.pathsep + e.get("PATH", "")
-        e["AWF_PYTHON"] = sys.executable
+        if os.name == "nt":
+            candidates = [Path(sys.base_prefix) / "python.exe"]
+        else:
+            candidates = [
+                Path(sys.base_prefix) / "bin/python3",
+                Path(sys.base_prefix) / "bin/python3.12",
+            ]
+        base_python = next(
+            (candidate for candidate in candidates if candidate.is_file()), Path(sys.executable)
+        )
+        e["AWF_PYTHON"] = str(base_python)
         if os.name == "nt":
             extensions = [part for part in e.get("PATHEXT", "").split(";") if part]
             extensions = [part for part in extensions if part.upper() != ".CMD"]
@@ -2004,10 +2123,13 @@ def role_coder(a: argparse.Namespace) -> int:
     no_push = env("AWF_NO_PUSH", "0") == "1"
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "coder", evidence)
+    gate = pre_invocation_gate(a, "coder", evidence)
 
     if resume_outbox(a, "coder", repo, evidence, input_context):
         record(evidence, "outbox_replay_complete")
         return 0
+    if gate is not None and getattr(gate, "reason", "") == "duplicate_event":
+        die("duplicate Workflow event has no durable downstream outbox")
 
     fetch_and_checkout(repo, a.branch, a.commit)
     card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
@@ -2144,10 +2266,13 @@ def role_reviewer(a: argparse.Namespace) -> int:
     base = env("AWF_BASE", a.base or "master")
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "reviewer", evidence)
+    gate = pre_invocation_gate(a, "reviewer", evidence)
 
     if resume_outbox(a, "reviewer", repo, evidence, input_context):
         record(evidence, "outbox_replay_complete")
         return 0
+    if gate is not None and getattr(gate, "reason", "") == "duplicate_event":
+        die("duplicate Workflow event has no durable downstream outbox")
 
     fetch_and_checkout(repo, a.branch, a.commit)
     card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
@@ -2278,6 +2403,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--review-report", dest="review_report", default="")
     p.add_argument("--review-feedback", dest="review_feedback", default="")
     p.add_argument("--base", default="")
+    p.add_argument("--run-id", default="")
+    p.add_argument("--stage", default="")
+    p.add_argument("--attempt", type=int, default=1)
+    p.add_argument("--max-attempts", type=int, default=1)
+    p.add_argument("--rework-budget", type=int, default=1)
+    p.add_argument("--terminal-state", default="")
+    p.add_argument("--route-override", default="")
     a = p.parse_args(argv)
     if a.event_id < 1:
         p.error("--event-id must be a positive integer")
