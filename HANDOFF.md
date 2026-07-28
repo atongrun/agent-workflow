@@ -1,8 +1,8 @@
 # Repository Handoff
 
-> Current through the 2026-07-26 live semantic-loop acceptance closeout. The `main` baseline before
-> this closeout is `3612ab5`; repository files and live Git refs are authoritative. This document
-> contains no private endpoint, credential, host, or personal-path data.
+> Current through the 2026-07-28 downstream Dousansi dogfood stop. The current `main` baseline is
+> `453cb83`; repository files and live Git refs are authoritative. This document contains no private
+> endpoint, credential, host, personal-path, or event-payload data.
 
 ## Product Position
 
@@ -111,15 +111,50 @@ cross-machine `PASS` route
 through architect consumption and ACK.
 
 Still missing: recorded capacity-isolation metrics for the live run
-(`docs/product-metrics.md` counters have not yet been filled), automatic continuation into a next
-TaskCard, and the first non-infrastructure downstream dogfood.
+(`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
+downstream TaskCard, and a durable run-control contract for long-lived, cross-repository dogfood.
+
+## Dousansi Dogfood Stop: Proven Gaps
+
+The first real downstream run was intentionally stopped before product completion. Its artifacts and
+safe event metadata are preserved in the downstream project's `docs/HANDOFF.md`; do not inspect,
+ACK, requeue, or redispatch preserved historical events to recreate the run.
+
+The run exposed these Workflow-owned gaps:
+
+1. **No durable run control plane.** The method defines self-contained TaskCards and artifacts, but
+   does not yet require one versioned run ledger or compact context packet that records the current
+   TaskCard, frozen base, branch/PR, evidence, state transition, prohibited actions, and next action.
+   Conversation context is therefore an unsafe source of truth after compaction or a new session.
+2. **No pre-invocation workflow budget gate.** A transport redelivery can reach a model before the
+   Workflow's one-rework policy is checked. Rework allowance, route, and terminal state must be
+   atomically checked and recorded by the trusted runtime before it starts a model process.
+3. **Route coverage is configuration-dependent.** The default coder listener did not automatically
+   cover the rework event type. A dispatch preflight must prove that the selected event type has
+   exactly one compatible active handler and that its TaskCard state permits the transition.
+4. **Operational authority is not encoded.** The user had authorized reversible recovery actions,
+   yet endpoint discovery and listener restart were treated as conversational escalation. A
+   machine-readable authority manifest must distinguish pre-authorized diagnostics/restarts from
+   destructive, credential, historical-event, and policy-bypass actions.
+5. **Verification lacks proportional tiers.** The same cross-machine gates were repeatedly applied
+   to infrastructure and product work. The runtime needs a small normal-path gate for ordinary
+   TaskCards and a full cross-machine/security gate only for transport, trust-boundary, or first-rollout
+   changes.
+
+These are operations-surface requirements proven by dogfood. They do not justify adding a generic
+Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Close the live-run measurement record** — record the capacity-isolation counters defined in
-   `docs/product-metrics.md` without rewriting preserved event evidence.
-2. **First downstream multi-TaskCard dogfood** — run a real non-infrastructure project, measuring
-   high-value-model invocations per completed TaskCard against the metrics doc.
+1. **Define and implement the external run control plane** — add a versioned run ledger and bounded
+   context packet contract, plus a pre-authorized operations manifest. A fresh session must recover
+   from those artifacts and live Git/CI state rather than from chat history.
+2. **Guard before model launch** — make route coverage, task state, rework budget, and terminal state
+   a trusted preflight. Redelivery must not start an unbudgeted model invocation.
+3. **Close the measurement record and verification tiers** — record role/reason counters without raw
+   token claims, then classify ordinary TaskCard checks separately from infrastructure/security gates.
+4. **Only then resume downstream dogfood** — design a deliberate terminal recovery for the preserved
+   interrupted run; do not reuse it as an automatic retry.
 
 ## Standing Rules
 
