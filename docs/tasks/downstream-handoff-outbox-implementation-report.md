@@ -74,12 +74,22 @@ reset, force-push, or rerun a model after the trusted branch has advanced.
 - Resource validation: roles 6/6, workflows 4/4, examples 3/3.
 - `git diff --check`: passed.
 
+## External Acceptance
+
+- Fresh Windows checkout at frozen head `98312300f0a48967a110b3bfd64764d517ce2b76`
+  passed the focused role suite (`173 passed, 1 skipped`), Ruff, format, dispatch shell syntax,
+  resource validation, exact-SHA, and clean-tree checks. Its full diagnostic passed 212 tests,
+  skipped 1, and retained only the pre-existing CRLF-only CLI assertion.
+- A fresh independent native Codex review approved the exact frozen head with no findings.
+- GitHub CI passed, and PR #23 merged as `f34b9aa1d72ecf88b358ccb470ef52c8e226b18d`.
+  The merge tree exactly matches the reviewed head.
+- Post-merge audit found that the GitHub CLI stored the intended squash trailers with literal
+  `\\n` separators, so Git cannot parse them as native trailers. This follow-up records that
+  metadata defect without rewriting published `main` history or changing runtime behavior.
+
 ## Remaining Verification
 
-- Fresh Windows exact-head role suite, Ruff, format, dispatch shell syntax, SHA, and clean-tree
-  checks.
-- Fresh independent native Codex review at the final exact head.
-- GitHub CI, PR merge, and Mac/Windows/VPS exact-version rollout.
+- Fresh Mac, Windows, and VPS exact-version rollout of the final `origin/main` head.
 
 No Agent Bus code, deployment, payload history, ACK, or requeue state was changed or inspected by
 this implementation.
