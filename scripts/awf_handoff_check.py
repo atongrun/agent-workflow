@@ -209,7 +209,7 @@ def check_bus_reachable(env: dict, role: str) -> None:
     # CreateProcess needs D:\... form to actually launch the binary.
     argv = [posix_to_native(bus), "pending", "--count"]
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
-        argv = ["cmd", "/c", *argv]
+        argv = ["cmd.exe", "/d", "/s", "/c", *argv]
     try:
         proc = subprocess.run(argv, env=child, capture_output=True, text=True, timeout=20)
     except FileNotFoundError:

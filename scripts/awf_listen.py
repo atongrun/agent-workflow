@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     listen_argv += ["--on", on_type, handler]
 
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
-        listen_argv = ["cmd", "/c", *listen_argv]
+        listen_argv = ["cmd.exe", "/d", "/s", "/c", *listen_argv]
 
     return subprocess.run(listen_argv).returncode
 

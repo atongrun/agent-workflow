@@ -12,6 +12,13 @@
 - Bypass environment HTTP proxies for the configured Agent Bus host at handoff, listener, and
   dispatch boundaries, preserving existing `NO_PROXY` entries while keeping private mesh traffic
   off localhost or corporate proxies.
+- Move OpenCode coder and fallback reviewer runs into fresh event-scoped no-remote clones, restrict
+  their ordinary Git command path to read operations, import only verified file/report deltas into
+  the trusted checkout, refresh local/remote refs before publication, and generate Lore-compliant
+  trusted commits. Reject authenticated proxy environment URLs before model launch while preserving
+  credential-free proxy connectivity. Force-include configured report artifacts from ignored
+  directories and reject reviewer evidence absent from the dispatched commit. Same-user
+  hostile-code isolation remains an explicit operating boundary.
 
 ## [0.3.0-rc.1] — 2026-07-19
 

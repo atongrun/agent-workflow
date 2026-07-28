@@ -63,8 +63,9 @@ Refresh refs before relying on this snapshot.
    passed, and push plus remote SHA verified. The accepted executor commit remains preserved at
    `archive/event-80-windows-python312-utf8-closeout-v7-success`.
 4. **Reviewer compatibility and live semantic-loop closeout.** The operations runner now keeps
-   model-side Git writes disabled, drives Codex review through a read-only prompt with the canonical
-   ReviewReport contract, and passes only validated deterministic failures into rework. A fresh
+   model-side Git publishing credentialless, drives Codex review through a read-only prompt with
+   the canonical ReviewReport contract, and passes only validated deterministic failures into
+   rework. A fresh
    isolated Mac architect → Windows coder → Mac reviewer → architect run completed on events
    94–96: coder postflight, commit/push, and remote SHA `451cc60` matched; reviewer emitted a
    structured `PASS`; architect consumed the verdict; every event was ACKed with retry count zero
@@ -79,6 +80,17 @@ Refresh refs before relying on this snapshot.
 7. **Private Bus proxy bypass.** Handoff, listener, and dispatch subprocesses add the configured
    Agent Bus host to both `NO_PROXY` variants without discarding existing exclusions. This prevents
    Windows proxy settings from turning a healthy Tailscale Bus route into HTTP 502/SSE retries.
+8. **Isolated model Git boundary.** A real downstream run proved prompt-only Git ownership was
+   insufficient when OpenCode committed and pushed before trusted postflight. OpenCode coder and
+   fallback reviewer processes now run in fresh event-scoped clones with no remotes. Their normal
+   Git path is read-only, credential channels and source-checkout path variables are removed, and
+   protocol denial plus hooks remain defense in depth. The runner verifies the isolated refs and
+   refreshed remote task ref, runs frozen postflight in the isolated clone, imports an exact tree
+   delta, and alone commits/pushes with git-native Lore trailers. This closes the observed ordinary
+   Git-write class. Model inference keeps credential-free proxy settings, but embedded proxy
+   username/password values fail before model launch. Configured report artifacts are imported even
+   from ignored directories, while reviewer evidence must be tracked by the dispatched commit.
+   Hostile same-user arbitrary code still requires OS/network isolation.
 
 ## Repository Truth Consistency
 
@@ -93,8 +105,10 @@ Proven with deterministic tests and live operations evidence: exact checkout, tr
 model-process and postflight gates, allowed-path/secret/diff checks, commit/push plus remote-SHA
 proof, durable handler evidence, Windows handler-return/ACK, semantic verdict validation and
 fail-closed routing, fail-closed dispatch when a TaskCard branch cannot be pushed, Windows Python
-3.12 default-locale portability, path-safe Windows ACL validation, private-Bus proxy bypass, and
-one fresh uninterrupted cross-machine `PASS` route through architect consumption and ACK.
+3.12 default-locale portability, path-safe Windows ACL validation, private-Bus proxy bypass,
+event-scoped no-remote OpenCode workspaces with trusted delta import, and one fresh uninterrupted
+cross-machine `PASS` route
+through architect consumption and ACK.
 
 Still missing: recorded capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), automatic continuation into a next

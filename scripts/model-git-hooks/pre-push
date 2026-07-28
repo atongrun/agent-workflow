@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "awf: model process cannot publish Git refs; trusted runner owns pushes" >&2
+exit 1
