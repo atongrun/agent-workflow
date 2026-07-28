@@ -25,6 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from awf_control_plane import ControlPlaneDenied, authorize_operation, load_authority_manifest
 from awf_network import add_url_host_to_no_proxy
 
 DEFAULT_ON_TYPE = {"coder": "task:awf-impl-v2", "reviewer": "task:awf-review-v2"}
@@ -94,6 +95,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--base", default="master")
     p.add_argument("--exit-after-idle", dest="idle", type=int, default=None)
     p.add_argument("--no-push", dest="no_push", action="store_true")
+    p.add_argument(
+        "--authority-manifest",
+        type=Path,
+        default=Path(__file__).resolve().parent / "authority-manifest.example.json",
+    )
     a = p.parse_args(argv)
 
     script_dir = Path(__file__).resolve().parent
@@ -113,6 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     if not token:
         die(f"set {token_var} (source your dispatch.env)")
     bus = os.environ.get("AWF_BUS_BIN", "agent-bus")
+    try:
+        authority = load_authority_manifest(a.authority_manifest)
+        authorize_operation(authority, "listener_restart")
+    except ControlPlaneDenied as exc:
+        die(f"authority manifest denied listener operation: {exc}")
 
     # Force UTF-8 for the whole process tree (the agent-bus listener and every handler
     # it spawns inherit this). No-op on macOS/Linux; on Windows it stops child Python
@@ -129,6 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AWF_MODEL"] = a.model
     os.environ["AWF_BASE"] = a.base
     os.environ["AWF_NO_PUSH"] = "1" if a.no_push else "0"
+    os.environ["AWF_CONTROL_PLANE"] = "1"
+    os.environ["AWF_AUTHORITY_MANIFEST"] = str(a.authority_manifest.resolve())
+    active_types = [on_type]
+    if a.role == "coder" and on_type == DEFAULT_ON_TYPE["coder"]:
+        active_types.append("task:awf-rework-v2")
+    os.environ["AWF_ACTIVE_ROUTE_TYPES"] = ",".join(active_types)
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
 
@@ -151,6 +168,14 @@ def main(argv: list[str] | None = None) -> int:
     if a.idle is not None:
         listen_argv += ["--exit-after-idle", str(a.idle)]
     listen_argv += ["--on", on_type, handler]
+    if len(active_types) > 1:
+        rework_handler = build_handler(
+            sys.executable,
+            role_script,
+            a.role,
+            on_type=active_types[1],
+        )
+        listen_argv += ["--on", active_types[1], rework_handler]
 
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
         listen_argv = ["cmd.exe", "/d", "/s", "/c", *listen_argv]

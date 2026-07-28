@@ -71,12 +71,19 @@ Completed engineering gates:
 - [x] Keep configured private Agent Bus traffic out of inherited HTTP proxy routes.
 - [x] Isolate ordinary OpenCode Git writes in no-remote event workspaces and keep trusted-runner
   ownership of imported commits and pushes.
+- [x] Persist a versioned external run ledger and bounded recovery context packet.
+- [x] Gate route coverage, TaskCard stage, attempt/rework budget, replay identity, and terminal
+  state before any model process starts.
+- [x] Encode reversible diagnostic/endpoint/listener authority while retaining hard stops for
+  credentials, destructive actions, historical events, ACK/requeue/redispatch, and trust bypass.
 
 Remaining Phase 2 work:
 
 - [ ] Record the capacity-isolation metrics defined in
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
+- [ ] Run a fresh disposable proof event for ledger recovery and pre-invocation denial paths after
+  the control-plane PR is accepted; never reuse preserved dogfood events.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
 the stable core or modify Agent Bus protocol.

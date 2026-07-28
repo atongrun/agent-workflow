@@ -1,0 +1,19 @@
+{
+  "format": "awf.authority-manifest.v1",
+  "version": "1",
+  "allowed_operations": [
+    "diagnose",
+    "endpoint_discovery",
+    "listener_restart"
+  ],
+  "forbidden_operations": [
+    "credentials",
+    "destructive",
+    "historical_event",
+    "ack",
+    "requeue",
+    "redispatch",
+    "ci_bypass",
+    "trust_gate_bypass"
+  ]
+}
