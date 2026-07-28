@@ -361,27 +361,6 @@ class RunLedger:
                     payload_sha256,
                     ledger=ledger,
                 )
-            current_terminal = str(ledger.get("terminal_state") or terminal_state)
-            if current_terminal in TERMINAL_STATES:
-                return self._deny(
-                    "terminal_state",
-                    event_id,
-                    event_type,
-                    role,
-                    delivery_id,
-                    payload_sha256,
-                    ledger=ledger,
-                )
-            if terminal_state and terminal_state in TERMINAL_STATES:
-                return self._deny(
-                    "terminal_state",
-                    event_id,
-                    event_type,
-                    role,
-                    delivery_id,
-                    payload_sha256,
-                    ledger=ledger,
-                )
             events = ledger.setdefault("events", [])
             if not isinstance(events, list):
                 raise ControlPlaneDenied("run ledger events are invalid")
@@ -417,6 +396,27 @@ class RunLedger:
                         payload_sha256,
                         ledger=ledger,
                     )
+            current_terminal = str(ledger.get("terminal_state") or terminal_state)
+            if current_terminal in TERMINAL_STATES:
+                return self._deny(
+                    "terminal_state",
+                    event_id,
+                    event_type,
+                    role,
+                    delivery_id,
+                    payload_sha256,
+                    ledger=ledger,
+                )
+            if terminal_state and terminal_state in TERMINAL_STATES:
+                return self._deny(
+                    "terminal_state",
+                    event_id,
+                    event_type,
+                    role,
+                    delivery_id,
+                    payload_sha256,
+                    ledger=ledger,
+                )
             current_stage = str(ledger.get("stage"))
             rework_transition = stage == "rework" and current_stage in {"implement", "rework"}
             review_transition = stage == "review" and current_stage == "implement"
@@ -536,6 +536,68 @@ class RunLedger:
             return GateDecision(
                 True, "authorized", self.run_id, sequence, self.ledger_path, self.packet_path
             )
+
+    def finish(
+        self,
+        terminal_state: str,
+        *,
+        next_action: str,
+        evidence: str = "",
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        """Persist one idempotent terminal transition for fresh-session recovery."""
+        if terminal_state not in TERMINAL_STATES:
+            raise ControlPlaneDenied("terminal state is invalid")
+        next_action = _safe_text(next_action, "next_action")
+        evidence = _safe_text(evidence, "evidence", 512)
+        with _lock(self.lock_path):
+            ledger = self._load()
+            if ledger is None:
+                raise ControlPlaneDenied("run ledger/context packet is missing")
+            current = str(ledger.get("terminal_state", ""))
+            if current:
+                if current != terminal_state:
+                    raise ControlPlaneDenied("run already has a different terminal state")
+                return self.recover()
+
+            packet = ledger.get("context_packet")
+            if not isinstance(packet, dict):
+                raise ControlPlaneDenied("run ledger has no embedded context packet")
+            sequence = int(ledger.get("sequence", 0)) + 1
+            previous_stage = str(ledger.get("stage", ""))
+            packet_evidence = list(packet.get("evidence", []))
+            if evidence and evidence not in packet_evidence:
+                packet_evidence.append(evidence)
+            packet = {
+                **packet,
+                "ledger_sequence": sequence,
+                "transition": f"terminal:{terminal_state}",
+                "stage": terminal_state,
+                "next_action": next_action,
+                "evidence": packet_evidence[:32],
+                "created_at": _now(),
+            }
+            packet.pop("packet_sha256", None)
+            packet["packet_sha256"] = _sha(packet)
+            verify_context_packet(packet)
+
+            ledger["sequence"] = sequence
+            ledger["stage"] = terminal_state
+            ledger["terminal_state"] = terminal_state
+            ledger["transitions"] = [
+                *list(ledger.get("transitions", [])),
+                {
+                    "sequence": sequence,
+                    "from": previous_stage,
+                    "to": terminal_state,
+                    "event_type": f"terminal:{terminal_state}",
+                },
+            ]
+            ledger["packet_sha256"] = packet["packet_sha256"]
+            ledger["context_packet"] = packet
+            ledger["updated_at"] = _now()
+            _atomic_write(self.packet_path, packet)
+            self._save(ledger)
+            return self.recover()
 
     def _append_decision(
         self,
@@ -665,6 +727,12 @@ def main(argv: list[str] | None = None) -> int:
     auth = sub.add_parser("authorize")
     auth.add_argument("--manifest", type=Path, required=True)
     auth.add_argument("operation")
+    finish = sub.add_parser("finish")
+    finish.add_argument("--state-root", type=Path, default=default_state_root())
+    finish.add_argument("--run-id", required=True)
+    finish.add_argument("--terminal-state", choices=sorted(TERMINAL_STATES), required=True)
+    finish.add_argument("--next-action", default="stop; run is terminal")
+    finish.add_argument("--evidence", default="")
     args = parser.parse_args(argv)
     try:
         if args.command == "recover":
@@ -677,10 +745,30 @@ def main(argv: list[str] | None = None) -> int:
                     sort_keys=True,
                 )
             )
-        else:
+        elif args.command == "authorize":
             manifest = load_authority_manifest(args.manifest)
             authorize_operation(manifest, args.operation)
             print("AUTHORIZED")
+        else:
+            ledger, packet = RunLedger(args.state_root, args.run_id).finish(
+                args.terminal_state,
+                next_action=args.next_action,
+                evidence=args.evidence,
+            )
+            print(
+                json.dumps(
+                    {
+                        "run_id": args.run_id,
+                        "sequence": ledger["sequence"],
+                        "terminal_state": ledger["terminal_state"],
+                        "packet_sha256": packet["packet_sha256"],
+                        "next_action": packet["next_action"],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
         return 0
     except ControlPlaneDenied as exc:
         print(f"awf_control_plane: denied: {exc}", file=sys.stderr)

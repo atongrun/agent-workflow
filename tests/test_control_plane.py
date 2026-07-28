@@ -274,7 +274,44 @@ def test_gate_rejects_over_budget_terminal_and_replay(tmp_path: Path):
         payload_sha256="sha256:terminal-replay",
         stage="implement",
     )
-    assert not terminal_replay.allowed and terminal_replay.reason == "terminal_state"
+    assert not terminal_replay.allowed and terminal_replay.reason == "duplicate_event"
+
+
+def test_finish_persists_terminal_packet_and_remains_idempotent(tmp_path: Path):
+    ledger = make_ledger(tmp_path)
+    first = ledger.pre_invocation_gate(
+        event_id=1,
+        event_type="task:awf-impl-v2",
+        role="coder",
+        delivery_id="delivery-1",
+        payload_sha256="sha256:one",
+        stage="implement",
+    )
+    assert first.allowed
+
+    finished, packet = RunLedger(tmp_path, "run-1").finish(
+        "completed",
+        next_action="stop; disposable proof complete",
+        evidence="review verdict PASS",
+    )
+
+    assert finished["terminal_state"] == packet["stage"] == "completed"
+    assert packet["transition"] == "terminal:completed"
+    assert packet["next_action"] == "stop; disposable proof complete"
+    assert packet["evidence"][-1] == "review verdict PASS"
+    assert finished["sequence"] == packet["ledger_sequence"] == 2
+
+    repeated, repeated_packet = RunLedger(tmp_path, "run-1").finish(
+        "completed",
+        next_action="ignored after the first terminal transition",
+    )
+    assert repeated["sequence"] == 2
+    assert repeated_packet["next_action"] == "stop; disposable proof complete"
+    with pytest.raises(ControlPlaneDenied, match="different terminal state"):
+        RunLedger(tmp_path, "run-1").finish(
+            "failed",
+            next_action="must not rewrite the terminal disposition",
+        )
 
 
 def test_authority_manifest_allows_only_reversible_operations():
