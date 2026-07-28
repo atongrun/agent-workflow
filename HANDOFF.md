@@ -14,16 +14,21 @@ expected platform skip; Ruff, format, contract validation, independent native re
 PR CI passed.
 
 The disposable live proof did not start. A fresh Windows exact-commit checkout passed clone/SHA/
-clean-tree gates, but its trusted push dry-run was rejected by the remote. The isolated transport
-identity also could not be used on Windows without a credential change, which is a hard stop under
-the authority manifest. No Bus event was created. Read-only fixed-column evidence established an
+clean-tree gates, but the preflight incorrectly tested a direct push to the read-only upstream
+repository. That rejection is expected for the Windows contributor workflow; Windows should publish
+to its fork and open a pull request. The current trusted runner hard-codes `origin` as both the
+dispatch source and evidence-push target, so the proof still needs a reviewed fork/PR-aware
+publication path rather than upstream write access. The isolated transport identity also could not
+be used on Windows without a credential change, which is a hard stop under the authority manifest.
+No Bus event was created. Read-only fixed-column evidence established an
 empty reviewer/architect baseline and retained coder events 97 and 100; every non-payload mutable
 column for those retained rows was unchanged at the stop. Their payloads were not read or hashed.
 
 The proof TaskCard is preserved on `proof/pr27-disposable-20260729-001` at `f211448`, but it has
 never been dispatched. It is infrastructure-only disposable evidence, not a product TaskCard.
-Do not dispatch it until an explicitly authorized operator restores repo-scoped Windows write
-readiness and an isolation-safe transport identity without inspecting or modifying retained events.
+Do not dispatch it until the trusted runner can verify the Windows fork/PR head without granting
+Windows write access to the upstream repository, and an isolation-safe transport identity is
+available without inspecting or modifying retained events.
 
 ## Product Position
 
@@ -131,8 +136,9 @@ event-scoped no-remote OpenCode workspaces with trusted delta import, and one fr
 cross-machine `PASS` route
 through architect consumption and ACK.
 
-Still missing: merge or rejection of draft PR #28, the fresh disposable end-to-end proof after
-Windows write/identity readiness is explicitly restored, recorded capacity-isolation metrics for a live run
+Still missing: merge or rejection of draft PR #28, a fork/PR-aware trusted publication path, the
+fresh disposable end-to-end proof after isolation-safe identity readiness is explicitly restored,
+recorded capacity-isolation metrics for a live run
 (`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
 downstream TaskCard, and a terminal recovery decision for the preserved interrupted run.
 
@@ -175,9 +181,10 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 1. **Review draft PR #28 without merging it automatically.** Its deterministic verification, CI,
    and independent review are green; live acceptance remains intentionally absent.
-2. **Restore live readiness only with new explicit authority.** Re-establish repo-scoped Windows
-   push and an isolation-safe transport identity without reading/copying credentials or connecting
-   the shared coder listener. Do not reinterpret the current credential hard stop.
+2. **Restore live readiness without upstream Windows write.** Add and review a fork/PR-aware trusted
+   publication path so Windows pushes only to its fork and the reviewer verifies the exact PR head.
+   Separately provide an isolation-safe transport identity without reading/copying credentials or
+   connecting the shared coder listener. Do not reinterpret the current credential hard stop.
 3. **Then run exactly one fresh disposable proof event.** Prove ledger persistence,
    fresh-session recovery, route/stage/attempt/rework/terminal checks, replay handling, and the
    refusal paths before model invocation. Use only a new isolated event and only reversible actions

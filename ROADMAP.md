@@ -84,9 +84,10 @@ Remaining Phase 2 work:
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
 - [ ] Run a fresh disposable proof event for ledger recovery and pre-invocation denial paths after
   the control-plane PR is accepted; never reuse preserved dogfood events. The first post-merge
-  preflight stopped before event creation because the fresh Windows checkout could not prove
-  trusted push readiness and an isolation-safe transport identity was unavailable without crossing
-  the credential hard stop.
+  preflight stopped before event creation because it incorrectly tested a direct Windows push to
+  the read-only upstream repository. The trusted runner currently lacks the intended fork/PR-aware
+  publication and exact-PR-head verification path, and an isolation-safe transport identity was
+  unavailable without crossing the credential hard stop.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
 the stable core or modify Agent Bus protocol.

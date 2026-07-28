@@ -48,10 +48,14 @@ state. Focused tests recorded 10 passed; the full suite recorded 223 passed and 
 platform skip. Ruff, format, contract validation, independent review, and PR CI passed.
 
 The disposable proof preflight then stopped before event creation. A fresh Windows clone matched
-the frozen proof commit and was clean, but its trusted push dry-run was rejected. The empty
-transport identity could not be used on Windows without a credential change, which the authority
-manifest forbids. No listener connected to the retained coder identity; no proof or historical
-event was delivered, consumed, ACKed, requeued, or redispatched.
+the frozen proof commit and was clean, but the preflight incorrectly treated a direct push to the
+read-only upstream repository as the readiness test. That rejection is expected: the Windows
+contributor is intended to push to a fork and open a pull request, without upstream write access.
+The current trusted runner hard-codes `origin` for checkout, evidence push, and refreshed remote-SHA
+verification, so it does not yet represent the intended fork/PR boundary or verify an exact PR
+head. Independently, the empty transport identity could not be used on Windows without a credential
+change, which the authority manifest forbids. No listener connected to the retained coder identity;
+no proof or historical event was delivered, consumed, ACKed, requeued, or redispatched.
 
 Read-only SQLite evidence recorded the complete non-payload mutable columns for retained rows 97
 and 100 (`status`, timestamps, retry count, and last-error digest) and confirmed empty reviewer and
