@@ -149,6 +149,7 @@ def build_context_packet(
     authority_manifest: dict[str, object] | None = None,
     next_action: str,
     stage: str,
+    current_stage_evidence_commit: str = "",
     ledger_sequence: int = 0,
 ) -> dict[str, object]:
     """Build a bounded, credential-free recovery packet."""
@@ -170,6 +171,11 @@ def build_context_packet(
         "authority_manifest": dict(authority_manifest or {}),
         "next_action": _safe_text(next_action, "next_action"),
         "stage": _safe_text(stage, "stage", 128),
+        "current_stage_evidence_commit": _safe_text(
+            current_stage_evidence_commit or frozen_base,
+            "current_stage_evidence_commit",
+            128,
+        ),
         "ledger_sequence": ledger_sequence,
         "created_at": _now(),
     }
@@ -314,6 +320,7 @@ class RunLedger:
         rework: bool = False,
         active_routes: dict[str, list[str]] | None = None,
         terminal_state: str = "",
+        current_stage_evidence_commit: str = "",
     ) -> GateDecision:
         """Atomically authorize exactly one model attempt before process start."""
         with _lock(self.lock_path):
@@ -412,7 +419,8 @@ class RunLedger:
                     )
             current_stage = str(ledger.get("stage"))
             rework_transition = stage == "rework" and current_stage in {"implement", "rework"}
-            if stage and current_stage != stage and not rework_transition:
+            review_transition = stage == "review" and current_stage == "implement"
+            if stage and current_stage != stage and not rework_transition and not review_transition:
                 return self._deny(
                     "stage_mismatch",
                     event_id,
@@ -506,6 +514,13 @@ class RunLedger:
                 "ledger_sequence": sequence,
                 "transition": event_type,
                 "stage": stage,
+                "current_stage_evidence_commit": _safe_text(
+                    current_stage_evidence_commit
+                    or packet.get("current_stage_evidence_commit")
+                    or packet.get("frozen_base"),
+                    "current_stage_evidence_commit",
+                    128,
+                ),
                 "updated_at": _now(),
             }
             packet["packet_sha256"] = _sha(

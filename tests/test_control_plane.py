@@ -59,6 +59,54 @@ def test_packet_is_bounded_and_recoverable_from_a_fresh_session(tmp_path: Path):
     assert len(json.dumps(packet).encode()) < 32 * 1024
 
 
+def test_coder_commit_can_advance_same_run_to_reviewer_before_model(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
+    state_root = tmp_path / "state"
+    original_commit = "a" * 40
+    executor_commit = "b" * 40
+    common = {
+        "branch": "feature/task-1",
+        "card": "docs/task.md",
+        "report": "docs/implementation.md",
+        "pull_request": "",
+        "phase": "execute",
+        "route_override": "",
+        "attempt": 1,
+        "max_attempts": 1,
+        "rework_budget": 1,
+        "terminal_state": "",
+    }
+    coder = Namespace(
+        **common,
+        commit=original_commit,
+        input_type="task:awf-impl-v2",
+        delivery_id="coder-delivery",
+        payload_sha256="sha256:coder",
+    )
+    coder_evidence = awf_role.RunEvidence(101, "coder", state_root=state_root)
+
+    coder_decision = awf_role.pre_invocation_gate(coder, "coder", coder_evidence)
+
+    assert coder_decision is not None and coder_decision.allowed
+
+    reviewer = Namespace(
+        **common,
+        commit=executor_commit,
+        input_type="task:awf-review-v2",
+        delivery_id="reviewer-delivery",
+        payload_sha256="sha256:reviewer",
+    )
+    reviewer_evidence = awf_role.RunEvidence(102, "reviewer", state_root=state_root)
+
+    reviewer_decision = awf_role.pre_invocation_gate(reviewer, "reviewer", reviewer_evidence)
+
+    assert reviewer_decision is not None and reviewer_decision.allowed
+    ledger, packet = RunLedger(state_root, "task-task-1").recover()
+    assert ledger["stage"] == packet["stage"] == "review"
+    assert packet["frozen_base"] == original_commit
+    assert packet["current_stage_evidence_commit"] == executor_commit
+
+
 def test_gate_rejects_missing_route_before_authorization(tmp_path: Path):
     ledger = make_ledger(tmp_path)
     decision = ledger.pre_invocation_gate(
@@ -131,7 +179,7 @@ def test_gate_rejects_over_budget_terminal_and_replay(tmp_path: Path):
         role="reviewer",
         delivery_id="delivery-mismatch",
         payload_sha256="sha256:mismatch",
-        stage="review",
+        stage="plan",
     )
     assert not mismatch.allowed and mismatch.reason == "stage_mismatch"
 

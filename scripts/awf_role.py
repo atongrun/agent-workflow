@@ -324,6 +324,10 @@ def pre_invocation_gate(
         )
     )
     ledger = RunLedger(state_root, run_id)
+    frozen_base = a.commit
+    if ledger.ledger_path.exists():
+        _, current_packet = ledger.recover()
+        frozen_base = str(current_packet["frozen_base"])
     authority_path = Path(
         os.environ.get(
             "AWF_AUTHORITY_MANIFEST",
@@ -338,7 +342,7 @@ def pre_invocation_gate(
     packet = build_context_packet(
         run_id=run_id,
         taskcard=a.card,
-        frozen_base=a.commit,
+        frozen_base=frozen_base,
         branch=a.branch,
         pull_request=getattr(a, "pull_request", ""),
         phase=getattr(a, "phase", ""),
@@ -352,6 +356,7 @@ def pre_invocation_gate(
         authority_manifest=authority,
         next_action=f"run trusted {role} preflight for {event_type}",
         stage=stage,
+        current_stage_evidence_commit=a.commit,
     )
     try:
         ledger.initialize(
@@ -381,6 +386,7 @@ def pre_invocation_gate(
             rework="rework" in event_type,
             active_routes=active_routes,
             terminal_state=getattr(a, "terminal_state", ""),
+            current_stage_evidence_commit=a.commit,
         )
     except ControlPlaneDenied as exc:
         record(evidence, "pre_invocation_rejected", reason=str(exc))

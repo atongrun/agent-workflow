@@ -1,8 +1,33 @@
 # Repository Handoff
 
 > Current through the 2026-07-28 downstream Dousansi dogfood stop. The current `main` baseline is
-> `453cb83`; repository files and live Git refs are authoritative. This document contains no private
+> `ff1bee3`; repository files and live Git refs are authoritative. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
+
+## Current Handoff State: 2026-07-29
+
+The control-plane implementation is on feature branch `codex/run-control-plane-gate` and is open
+as [PR #27](https://github.com/atongrun/agent-workflow/pull/27). The PR is not merged and must
+remain open until its current live head passes both GitHub CI and a new independent native review.
+Repository files and live Git/GitHub are authoritative for the exact head and check state.
+
+The prior independent native review returned `REQUEST CHANGES` for one HIGH finding. The branch now
+contains the narrow repair and a regression that authorizes coder delivery, records the executor
+commit as current-stage evidence, and authorizes reviewer delivery under the same run before model
+invocation. The immutable planning/base commit remains frozen. This repair still requires complete
+local verification, current-head CI, and a new independent review before merge or any fresh live
+event.
+
+No listener is running, no preserved event was read or mutated, and no ACK, requeue, redispatch, or
+product TaskCard resume is authorized.
+
+### Repaired Review Finding, Pending Reverification
+
+Coder and reviewer continue to share the run key `task-{task_id}`. The control plane now permits
+only the explicit `implement -> review` continuation in addition to its existing transitions.
+`frozen_base` remains the original TaskCard/planning commit and remains part of the immutable
+context binding; `current_stage_evidence_commit` records the executor commit separately and
+advances only when the reviewer stage is authorized.
 
 ## Product Position
 
@@ -110,9 +135,15 @@ event-scoped no-remote OpenCode workspaces with trusted delta import, and one fr
 cross-machine `PASS` route
 through architect consumption and ACK.
 
-Still missing: recorded capacity-isolation metrics for the live run
+Still missing: current-head CI and independent review for the repaired control-plane PR, the fresh
+disposable end-to-end proof after merge, recorded capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
-downstream TaskCard, and a durable run-control contract for long-lived, cross-repository dogfood.
+downstream TaskCard, and a terminal recovery decision for the preserved interrupted run.
+
+The versioned run ledger, bounded context packet, fresh-session recovery CLI, pre-invocation gate,
+durable denial/replay decisions, and narrow authority manifest are implemented on PR #27 and
+covered by deterministic tests. They are not yet a merged or live operational capability until the
+repair passes current-head CI and independent review.
 
 ## Dousansi Dogfood Stop: Proven Gaps
 
@@ -146,18 +177,32 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Land the external control-plane PR** — the feature branch implements a versioned run ledger,
-   bounded context packet, fresh-session recovery CLI, trusted pre-invocation route/stage/budget/
-   terminal gate, and a narrow operations authority manifest. It must pass CI and independent
-   review before merge.
-2. **Run one fresh disposable proof event** — after merge, use a new isolated event to prove ledger
-   recovery and authorized/rejected paths end to end. Do not inspect, ACK, requeue, redispatch, or
-   restart any preserved historical event, and do not resume the stopped Dousansi v3 TaskCard.
-3. **Close the measurement record and verification tiers** — record role/reason counters without raw
-   token claims, then classify ordinary TaskCard checks separately from infrastructure/security gates.
-4. **Record a terminal recovery decision** — only after the disposable proof, create an explicit
-   decision artifact for the preserved interrupted run. A new product TaskCard requires that
-   decision; the preserved event itself is never an automatic retry source.
+1. **Finish current-head verification for PR #27.** Run focused and full local verification, push
+   the repair, and obtain both GitHub CI and a new independent native review. Do not merge while
+   either is pending or failing.
+2. **Keep the repair narrow during review follow-up.** The legal coder-to-reviewer continuation must
+   retain the immutable planning/base commit, record the executor commit separately as current-stage
+   evidence, and remain behind the trusted pre-invocation gate.
+3. **After merge, run exactly one fresh disposable proof event.** Prove ledger persistence,
+   fresh-session recovery, route/stage/attempt/rework/terminal checks, replay handling, and the
+   refusal paths before model invocation. Use only a new isolated event and only reversible actions
+   listed in the authority manifest. Never inspect, ACK, requeue, redispatch, or restart preserved
+   historical events, and never resume Dousansi v3.
+4. **Write the proof evidence and metrics update.** Record role/reason counters, ledger ID,
+   context-packet checksum, gate decisions, and denial reasons without raw prompts, credentials,
+   retained payloads, ACK/requeue actions, or token counts.
+5. **Create the terminal-recovery decision artifact.** Decide the disposition of the preserved
+   interrupted run only after the disposable proof. No new product TaskCard may begin before that
+   explicit decision.
+
+## Next-Agent Start Sequence
+
+Begin with `git status --short --branch`, `git fetch origin`, and a fresh check of PR #27 and CI;
+do not assume this snapshot's remote state. Read this handoff and
+`docs/tasks/run-control-plane-implementation-report.md`, then confirm the coder-to-reviewer
+regression, full verification, current-head CI, and independent review. Keep all changes on the
+feature branch and use Lore-formatted commits. The disposable live proof is a later gate, not part
+of this repair.
 
 ## Standing Rules
 

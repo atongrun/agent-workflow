@@ -18,6 +18,14 @@ packet as the atomic recovery source and mirrors it to `context-packet.json`.
 The listener enables the gate and the default coder route covers both
 implementation and deterministic rework.
 
+Coder and reviewer share one run ledger. The legal `implement -> review`
+transition preserves the original TaskCard/planning commit as immutable
+`frozen_base` while recording the executor commit separately as
+`current_stage_evidence_commit`. That evidence commit advances only with an
+authorized stage transition, so reviewer continuation remains behind the
+pre-invocation gate and fresh-session recovery retains both the frozen baseline
+and current review evidence.
+
 `authority-manifest.example.json` is loaded by the trusted listener and bound by
 hash into every recovery packet. It permits only reversible diagnostics,
 endpoint discovery, and listener restart. Credentials, destructive operations,
