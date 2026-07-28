@@ -117,6 +117,10 @@ def test_listener_handler_passes_event_id_once():
 
     assert handler.split().count("--event-id") == 1
     assert "--event-id {id}" in handler
+    assert "--input-type {type}" in handler
+    assert "--delivery-id {payload.awf_delivery_id}" in handler
+    assert "--payload-sha256 {payload.awf_payload_sha256}" in handler
+    assert "--source-event-id {payload.awf_source_event_id}" in handler
 
 
 def test_listener_handler_passes_distinct_report_paths():
@@ -184,6 +188,19 @@ def test_event_run_directory_uses_os_state_location(os_name, environ, home, expe
         )
         == expected
     )
+
+
+def test_delivery_state_paths_stay_outside_checkout(tmp_path):
+    evidence = awf_role.RunEvidence(70, "coder", state_root=tmp_path / "state")
+
+    outbox = awf_role.delivery_state_path(evidence, "outbox", "awf:delivery:one")
+    inbox = awf_role.delivery_state_path(evidence, "inbox", "awf:delivery:one")
+
+    assert outbox.parent.parent == tmp_path / "state" / "outbox"
+    assert inbox.parent.parent == tmp_path / "state" / "inbox"
+    assert outbox.name.endswith(".json")
+    assert inbox.name.endswith(".json")
+    assert outbox != inbox
 
 
 def test_run_evidence_appends_log_and_atomically_updates_result(tmp_path):
@@ -385,8 +402,24 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
         child_environment["XDG_STATE_HOME"] = str(state_root)
 
     handler = awf_listen.build_handler(sys.executable, str(MODULE_PATH), "reviewer")
+    input_payload = {
+        "task_id": "task",
+        "branch": "feature/task",
+        "card": "task.md",
+        "commit": remote_head,
+        "tool": "opencode",
+        "model": "controlled/model",
+        "report": "report.md",
+        "review_report": ".awf/artifacts/review-report-task.md",
+    }
+    input_hash = awf_role.canonical_payload_sha256(input_payload)
+    delivery_id = awf_role.make_delivery_id("coder", "task:awf-review-v2", input_hash, 61)
     replacements = {
         "{id}": "63",
+        "{type}": "task:awf-review-v2",
+        "{payload.awf_delivery_id}": delivery_id,
+        "{payload.awf_payload_sha256}": input_hash,
+        "{payload.awf_source_event_id}": "61",
         "{payload.branch}": "feature/task",
         "{payload.card}": "task.md",
         "{payload.commit}": remote_head,
@@ -413,7 +446,7 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
     run_dir = state_root / "agent-workflow" / "runs" / "event-63"
     result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     assert result["last_phase"] == "handler_exit"
-    assert result["last_phase_before_exit"] == "opencode_exit"
+    assert result["last_phase_before_exit"] == "outbox_sent"
     assert result["handler_rc"] == 0
     assert result["opencode_pid"] != os.getpid()
     assert result["opencode_rc"] == 0
@@ -1594,6 +1627,49 @@ def test_reviewer_routes_exactly_one_valid_verdict(
 
 
 @pytest.mark.parametrize(
+    ("content", "event_type"),
+    [
+        (_review_markdown("PASS"), "decision:awf-ready-v2"),
+        (
+            _review_markdown("REQUEST_CHANGES", failures=[_COMMAND_FAILURE]),
+            "task:awf-rework-v2",
+        ),
+        (
+            _review_markdown("BLOCKED", blocked_reason="Conflicting requirements"),
+            "decision:awf-blocked-v2",
+        ),
+    ],
+)
+def test_reviewer_v2_routes_are_persisted_in_sent_outbox(
+    monkeypatch, tmp_path, content, event_type
+):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(monkeypatch, tmp_path, content)
+    ns.input_type = "task:awf-review-v2"
+    ns.source_event_id = 71
+    input_hash = awf_role.canonical_payload_sha256(awf_role.input_payload(ns, "reviewer"))
+    ns.payload_sha256 = input_hash
+    ns.delivery_id = awf_role.make_delivery_id(
+        "coder", ns.input_type, input_hash, ns.source_event_id
+    )
+    ns.evidence = awf_role.RunEvidence(82, "reviewer", state_root=tmp_path / "state")
+
+    assert awf_role.role_reviewer(ns) == 0
+
+    outbox_path = awf_role.delivery_state_path(ns.evidence, "outbox", ns.delivery_id)
+    outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+    assert outbox["status"] == "sent"
+    assert outbox["event_type"] == event_type
+    assert outbox["payload"]["awf_delivery_id"].startswith("awf:")
+    assert len(send_calls) == 1
+    assert len(tool_calls) == 1
+
+    ns.evidence = awf_role.RunEvidence(83, "reviewer", state_root=tmp_path / "state")
+    assert awf_role.role_reviewer(ns) == 0
+    assert len(send_calls) == 1
+    assert len(tool_calls) == 1
+
+
+@pytest.mark.parametrize(
     "content",
     [
         "",
@@ -1749,6 +1825,14 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     payload = json.loads(payload_line.split("payload=", 1)[1])
     assert payload["report"] == ".awf/artifacts/impl-report-task.md"
     assert payload["review_report"] == ".awf/artifacts/review-report-task.md"
+    assert "type=task:awf-impl-v2" in stdout
+    base_payload = {key: value for key, value in payload.items() if not key.startswith("awf_")}
+    payload_hash = awf_role.canonical_payload_sha256(base_payload)
+    assert payload["awf_payload_sha256"] == payload_hash
+    assert payload["awf_source_event_id"] == 0
+    assert payload["awf_delivery_id"] == awf_role.make_delivery_id(
+        "architect", "task:awf-impl-v2", payload_hash, 0
+    )
 
 
 def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
@@ -2072,6 +2156,189 @@ def _prepare_coder_handoff_test(monkeypatch, tmp_path, *, no_push=False):
     return ns, send_calls
 
 
+def _bind_delivery(ns, event_type="task:awf-impl-v2", source_role="architect", source_event_id=0):
+    ns.input_type = event_type
+    ns.source_event_id = source_event_id
+    payload = awf_role.input_payload(ns, "coder")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        source_role,
+        event_type,
+        ns.payload_sha256,
+        source_event_id,
+    )
+    return ns
+
+
+def test_coder_ambiguous_outbox_replays_before_checkout(monkeypatch, tmp_path):
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    _bind_delivery(ns)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(71, "coder", state_root=state_root)
+    model_calls = []
+    checkout_calls = []
+    sends = []
+    monkeypatch.setattr(
+        awf_role,
+        "fetch_and_checkout",
+        lambda *args: checkout_calls.append(args),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: model_calls.append(args) or 0,
+    )
+    monkeypatch.setattr(awf_role, "git", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(awf_role, "git_out", lambda *args, **kwargs: "verified-sha")
+    monkeypatch.setattr(awf_role, "push_and_verify_remote_head", lambda *args: "verified-sha")
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: sends.append(args) or False,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    outbox_path = awf_role.delivery_state_path(ns.evidence, "outbox", ns.delivery_id)
+    first_outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+    assert first_outbox["status"] == "ambiguous"
+    assert first_outbox["evidence_commit"] == "verified-sha"
+    assert first_outbox["payload"]["awf_delivery_id"].startswith("awf:")
+    assert len(checkout_calls) == 1
+    assert len(model_calls) == 1
+
+    ns.evidence = awf_role.RunEvidence(72, "coder", state_root=state_root)
+    monkeypatch.setattr(
+        awf_role,
+        "fetch_and_checkout",
+        lambda *args: pytest.fail("replay must happen before strict checkout"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: pytest.fail("replay must not rerun the model"),
+    )
+    monkeypatch.setattr(awf_role, "verify_outbox_evidence", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: sends.append(args) or True,
+    )
+
+    assert awf_role.role_coder(ns) == 0
+    replayed = json.loads(outbox_path.read_text(encoding="utf-8"))
+    assert replayed["status"] == "sent"
+    assert sends[0][3] == sends[1][3]
+
+    ns.evidence = awf_role.RunEvidence(73, "coder", state_root=state_root)
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: pytest.fail("sent delivery must not be emitted again"),
+    )
+    assert awf_role.role_coder(ns) == 0
+
+
+def test_outbox_remote_drift_blocks_replay_before_send(monkeypatch, tmp_path):
+    evidence = awf_role.RunEvidence(74, "coder", state_root=tmp_path / "state")
+    payload = awf_role.build_delivery_payload(
+        "coder",
+        "task:awf-review-v2",
+        {
+            "task_id": "task",
+            "branch": "feature/task",
+            "card": "task.md",
+            "commit": "abc1234",
+            "report": "report.md",
+            "review_report": "review.md",
+            "tool": "opencode",
+            "model": "",
+        },
+        evidence,
+    )
+    record = {
+        "action": "coder.review_handoff",
+        "branch": "feature/task",
+        "evidence_commit": "abc1234",
+        "payload": payload,
+    }
+    monkeypatch.setattr(awf_role, "git", lambda *args, **kwargs: 0)
+
+    def fake_git_out(_repo, *args):
+        return "different" if args[-1].startswith("refs/remotes/") else "abc1234"
+
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: pytest.fail("remote drift must block before send"),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.verify_outbox_evidence(str(tmp_path), record)
+
+
+def test_completed_reviewer_delivery_skips_model_and_send(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    monkeypatch.setenv("AWF_REPO_DIR", str(repo))
+    monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
+    ns = argparse.Namespace(
+        branch="feature/task",
+        card="task.md",
+        commit="abc1234",
+        model="review-model",
+        tool="codex",
+        report="report.md",
+        review_report=".awf/review.md",
+        review_feedback="",
+        base="main",
+        input_type="task:awf-review-v2",
+        source_event_id=71,
+    )
+    payload = awf_role.input_payload(ns, "reviewer")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "coder",
+        ns.input_type,
+        ns.payload_sha256,
+        ns.source_event_id,
+    )
+    ns.evidence = awf_role.RunEvidence(80, "reviewer", state_root=tmp_path / "state")
+    awf_role.complete_inbox(ns.evidence, ns.delivery_id, ns.payload_sha256)
+    monkeypatch.setattr(
+        awf_role,
+        "fetch_and_checkout",
+        lambda *args: pytest.fail("completed delivery must skip checkout"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_codex_review",
+        lambda *args: pytest.fail("completed delivery must skip review"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args: pytest.fail("completed delivery must not send again"),
+    )
+
+    assert awf_role.role_reviewer(ns) == 0
+
+
+def test_delivery_id_reuse_with_different_payload_fails_closed(monkeypatch, tmp_path):
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    _bind_delivery(ns)
+    ns.evidence = awf_role.RunEvidence(81, "coder", state_root=tmp_path / "state")
+    awf_role.complete_inbox(ns.evidence, ns.delivery_id, ns.payload_sha256)
+    ns.card = "different-task.md"
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+
 def test_coder_push_failure_blocks_review_event(monkeypatch, tmp_path):
     ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
 
@@ -2328,6 +2595,8 @@ def test_coder_successful_send_returns_zero(monkeypatch, tmp_path):
         "commit",
         "push",
         "remote_sha_verified",
+        "outbox_prepared",
+        "outbox_sent",
         "review_event_sent",
     ]
 

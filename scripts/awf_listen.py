@@ -27,7 +27,7 @@ from pathlib import Path
 
 from awf_network import add_url_host_to_no_proxy
 
-DEFAULT_ON_TYPE = {"coder": "task:awf-impl", "reviewer": "task:awf-review"}
+DEFAULT_ON_TYPE = {"coder": "task:awf-impl-v2", "reviewer": "task:awf-review-v2"}
 
 
 def die(msg: str):
@@ -51,6 +51,14 @@ def build_handler(
     fields = [
         "--event-id",
         "{id}",
+        "--input-type",
+        "{type}",
+        "--delivery-id",
+        "{payload.awf_delivery_id}",
+        "--payload-sha256",
+        "{payload.awf_payload_sha256}",
+        "--source-event-id",
+        "{payload.awf_source_event_id}",
         "--branch",
         "{payload.branch}",
         "--card",
@@ -64,7 +72,7 @@ def build_handler(
         "--report",
         "{payload.report}",
     ]
-    if role == "coder" and on_type == "task:awf-rework":
+    if role == "coder" and on_type in {"task:awf-rework", "task:awf-rework-v2"}:
         fields += [
             "--review-report",
             "{payload.review_report_path}",

@@ -72,14 +72,13 @@ def child_env() -> dict[str, str]:
     return e
 
 
-def event_run_directory(
-    event_id: int,
+def workflow_state_directory(
     *,
     os_name: str | None = None,
     environ: dict[str, str] | None = None,
     home: Path | None = None,
 ) -> Path:
-    """Return the event-scoped OS state directory, always outside the checkout."""
+    """Return the per-user Agent Workflow state root outside Git checkouts."""
     platform = os_name or os.name
     values = os.environ if environ is None else environ
     if platform == "nt":
@@ -90,7 +89,22 @@ def event_run_directory(
     else:
         xdg_state_home = values.get("XDG_STATE_HOME")
         root = Path(xdg_state_home) if xdg_state_home else (home or Path.home()) / ".local/state"
-    return root / "agent-workflow" / "runs" / f"event-{event_id}"
+    return root / "agent-workflow"
+
+
+def event_run_directory(
+    event_id: int,
+    *,
+    os_name: str | None = None,
+    environ: dict[str, str] | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Return the event-scoped OS state directory, always outside the checkout."""
+    return (
+        workflow_state_directory(os_name=os_name, environ=environ, home=home)
+        / "runs"
+        / f"event-{event_id}"
+    )
 
 
 def _utc_now() -> str:
@@ -109,11 +123,16 @@ class RunEvidence:
     ) -> None:
         self.event_id = event_id
         self.role = role
-        self.run_dir = (
-            Path(state_root) / f"event-{event_id}"
-            if state_root is not None
-            else event_run_directory(event_id)
-        )
+        if state_root is not None:
+            self.state_dir = Path(state_root)
+            self.run_dir = self.state_dir / f"event-{event_id}"
+        else:
+            self.run_dir = event_run_directory(event_id)
+            self.state_dir = (
+                self.run_dir.parent.parent
+                if self.run_dir.parent.name == "runs"
+                else self.run_dir.parent
+            )
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.run_dir / "handler.log"
         self.result_path = self.run_dir / "result.json"
@@ -160,6 +179,197 @@ class RunEvidence:
 def record(evidence: RunEvidence | None, phase: str, **fields: object) -> None:
     if evidence is not None:
         evidence.record(phase, **fields)
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_payload_sha256(payload: dict[str, object]) -> str:
+    digest = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def make_delivery_id(
+    source_role: str,
+    event_type: str,
+    payload_sha256: str,
+    source_event_id: int,
+) -> str:
+    seed = {
+        "format": "awf.delivery.v1",
+        "source_role": source_role,
+        "event_type": event_type,
+        "payload_sha256": payload_sha256,
+        "source_event_id": source_event_id,
+    }
+    return f"awf:{hashlib.sha256(_canonical_json(seed).encode('utf-8')).hexdigest()}"
+
+
+_INPUT_TYPES = {
+    "task:awf-impl": ("architect", "coder"),
+    "task:awf-impl-v2": ("architect", "coder"),
+    "task:awf-review": ("coder", "reviewer"),
+    "task:awf-review-v2": ("coder", "reviewer"),
+    "task:awf-rework": ("reviewer", "coder"),
+    "task:awf-rework-v2": ("reviewer", "coder"),
+}
+
+
+def input_payload(a: argparse.Namespace, role: str) -> dict[str, object]:
+    """Reconstruct the metadata-free payload delivered to a role handler."""
+    input_type = getattr(a, "input_type", "")
+    expected = _INPUT_TYPES.get(input_type)
+    if expected is None or expected[1] != role:
+        die(f"unsupported Workflow input type {input_type!r} for role {role}")
+    payload: dict[str, object] = {
+        "task_id": a.branch.rsplit("/", 1)[-1],
+        "branch": a.branch,
+        "card": a.card,
+        "commit": a.commit,
+        "tool": a.tool,
+        "model": a.model,
+        "report": a.report,
+    }
+    if input_type in {"task:awf-rework", "task:awf-rework-v2"}:
+        try:
+            feedback = json.loads(getattr(a, "review_feedback", ""))
+        except json.JSONDecodeError:
+            die("rework review feedback must be valid JSON")
+        if not isinstance(feedback, dict):
+            die("rework review feedback must be a JSON object")
+        payload["review_report_path"] = a.review_report
+        payload["review_report"] = feedback
+    else:
+        payload["review_report"] = a.review_report
+    return payload
+
+
+def validate_input_delivery(
+    a: argparse.Namespace,
+    role: str,
+    evidence: RunEvidence | None,
+) -> dict[str, object]:
+    delivery_id = getattr(a, "delivery_id", "")
+    payload_sha256 = getattr(a, "payload_sha256", "")
+    input_type = getattr(a, "input_type", "")
+    source_event_id = getattr(a, "source_event_id", 0)
+    if not delivery_id and not payload_sha256 and not input_type:
+        event_id = evidence.event_id if evidence is not None else 0
+        return {
+            "key": f"legacy-event-{event_id}",
+            "delivery_id": "",
+            "payload_sha256": "",
+            "source_event_id": event_id,
+        }
+    if not (delivery_id and payload_sha256 and input_type):
+        die("Workflow delivery metadata must be provided together")
+    if not isinstance(source_event_id, int) or source_event_id < 0:
+        die("Workflow source event ID must be a non-negative integer")
+    expected_roles = _INPUT_TYPES.get(input_type)
+    if expected_roles is None or expected_roles[1] != role:
+        die(f"unsupported Workflow input type {input_type!r} for role {role}")
+    payload = input_payload(a, role)
+    actual_hash = canonical_payload_sha256(payload)
+    if actual_hash != payload_sha256:
+        die("Workflow input payload hash mismatch")
+    expected_delivery = make_delivery_id(
+        expected_roles[0], input_type, actual_hash, source_event_id
+    )
+    if delivery_id != expected_delivery:
+        die("Workflow delivery ID does not match its bound input")
+    return {
+        "key": delivery_id,
+        "delivery_id": delivery_id,
+        "payload_sha256": actual_hash,
+        "source_event_id": source_event_id,
+    }
+
+
+def delivery_state_path(
+    evidence: RunEvidence,
+    category: str,
+    delivery_key: str,
+) -> Path:
+    if category not in {"outbox", "inbox"}:
+        die(f"invalid delivery state category {category!r}")
+    digest = hashlib.sha256(delivery_key.encode("utf-8")).hexdigest()
+    return evidence.state_dir / category / evidence.role / f"{digest}.json"
+
+
+def _atomic_write_json(path: Path, value: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
+    with temp_path.open("x", encoding="utf-8", newline="\n") as output:
+        json.dump(value, output, ensure_ascii=False, indent=2, sort_keys=True)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temp_path, path)
+    try:
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _load_delivery_record(path: Path, label: str) -> dict[str, object] | None:
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        die(f"{label} state must be a regular file")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        die(f"{label} state is unreadable or invalid JSON")
+    if not isinstance(value, dict):
+        die(f"{label} state must be a JSON object")
+    return value
+
+
+def complete_inbox(
+    evidence: RunEvidence | None,
+    delivery_id: str,
+    payload_sha256: str,
+) -> None:
+    if evidence is None or not delivery_id:
+        return
+    path = delivery_state_path(evidence, "inbox", delivery_id)
+    existing = _load_delivery_record(path, "inbox")
+    expected = {
+        "format": "awf.inbox.v1",
+        "role": evidence.role,
+        "delivery_id": delivery_id,
+        "payload_sha256": payload_sha256,
+        "status": "completed",
+    }
+    if existing is not None and existing != expected:
+        die("Workflow delivery ID was already completed with different input")
+    _atomic_write_json(path, expected)
+
+
+def inbox_completed(
+    evidence: RunEvidence | None,
+    delivery_id: str,
+    payload_sha256: str,
+) -> bool:
+    if evidence is None or not delivery_id:
+        return False
+    existing = _load_delivery_record(delivery_state_path(evidence, "inbox", delivery_id), "inbox")
+    if existing is None:
+        return False
+    if (
+        existing.get("format") != "awf.inbox.v1"
+        or existing.get("role") != evidence.role
+        or existing.get("delivery_id") != delivery_id
+        or existing.get("payload_sha256") != payload_sha256
+        or existing.get("status") != "completed"
+    ):
+        die("Workflow delivery ID was already used with different input")
+    return True
 
 
 def _append_process_git_config(environment: dict[str, str], key: str, value: str) -> None:
@@ -1510,6 +1720,274 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
     return rc == 0
 
 
+def build_delivery_payload(
+    source_role: str,
+    event_type: str,
+    payload: dict[str, object],
+    evidence: RunEvidence | None,
+) -> dict[str, object]:
+    payload_sha256 = canonical_payload_sha256(payload)
+    source_event_id = evidence.event_id if evidence is not None else 0
+    delivery_id = make_delivery_id(
+        source_role,
+        event_type,
+        payload_sha256,
+        source_event_id,
+    )
+    return {
+        **payload,
+        "awf_delivery_id": delivery_id,
+        "awf_payload_sha256": payload_sha256,
+        "awf_source_event_id": source_event_id,
+    }
+
+
+def _outbox_immutable(record_value: dict[str, object]) -> dict[str, object]:
+    return {
+        key: value for key, value in record_value.items() if key not in {"status", "updated_at"}
+    }
+
+
+_OUTBOX_ROUTES = {
+    "coder.review_handoff": (
+        "coder",
+        "reviewer",
+        {"task:awf-review", "task:awf-review-v2"},
+    ),
+    "reviewer.pass": (
+        "reviewer",
+        "architect",
+        {"decision:awf-ready", "decision:awf-ready-v2"},
+    ),
+    "reviewer.request_changes": (
+        "reviewer",
+        "coder",
+        {"task:awf-rework", "task:awf-rework-v2"},
+    ),
+    "reviewer.blocked": (
+        "reviewer",
+        "architect",
+        {"decision:awf-blocked", "decision:awf-blocked-v2"},
+    ),
+}
+
+
+def validate_outbox_record(record_value: dict[str, object]) -> None:
+    if record_value.get("format") != "awf.outbox.v1":
+        die("outbox format is invalid")
+    action = record_value.get("action")
+    route = _OUTBOX_ROUTES.get(action)
+    if route is None:
+        die("outbox action is invalid")
+    source_role, to_role, event_types = route
+    event_type = record_value.get("event_type")
+    if (
+        record_value.get("source_role") != source_role
+        or record_value.get("to_role") != to_role
+        or event_type not in event_types
+    ):
+        die("outbox route does not match its Workflow action")
+    payload = record_value.get("payload")
+    if not isinstance(payload, dict):
+        die("outbox payload is invalid")
+    if record_value.get("envelope_sha256") != canonical_payload_sha256(payload):
+        die("outbox payload integrity check failed")
+    payload_base = {key: value for key, value in payload.items() if not key.startswith("awf_")}
+    payload_sha256 = canonical_payload_sha256(payload_base)
+    if (
+        payload.get("awf_payload_sha256") != payload_sha256
+        or record_value.get("payload_sha256") != payload_sha256
+    ):
+        die("outbox canonical payload hash is inconsistent")
+    delivery_id = payload.get("awf_delivery_id")
+    source_event_id = payload.get("awf_source_event_id")
+    if not isinstance(delivery_id, str) or not isinstance(source_event_id, int):
+        die("outbox delivery metadata is invalid")
+    if source_event_id < 1:
+        die("outbox source event ID must be positive")
+    expected_delivery = make_delivery_id(
+        source_role,
+        str(event_type),
+        payload_sha256,
+        source_event_id,
+    )
+    if delivery_id != expected_delivery or record_value.get("delivery_id") != expected_delivery:
+        die("outbox delivery ID is inconsistent")
+
+
+def prepare_outbox(
+    evidence: RunEvidence | None,
+    input_context: dict[str, object],
+    *,
+    action: str,
+    branch: str,
+    source_commit: str,
+    evidence_commit: str,
+    to_role: str,
+    event_type: str,
+    payload: dict[str, object],
+) -> tuple[Path, dict[str, object]] | None:
+    if evidence is None:
+        return None
+    delivery_id = payload.get("awf_delivery_id")
+    payload_sha256 = payload.get("awf_payload_sha256")
+    source_event_id = payload.get("awf_source_event_id")
+    if not isinstance(delivery_id, str) or not isinstance(payload_sha256, str):
+        die("outbox payload is missing Workflow delivery metadata")
+    expected_delivery = make_delivery_id(
+        evidence.role,
+        event_type,
+        payload_sha256,
+        int(source_event_id),
+    )
+    if delivery_id != expected_delivery:
+        die("outbox payload delivery ID is invalid")
+    record_value: dict[str, object] = {
+        "format": "awf.outbox.v1",
+        "source_role": evidence.role,
+        "input_key": input_context["key"],
+        "input_delivery_id": input_context["delivery_id"],
+        "input_payload_sha256": input_context["payload_sha256"],
+        "input_source_event_id": input_context["source_event_id"],
+        "action": action,
+        "branch": branch,
+        "source_commit": source_commit,
+        "evidence_commit": evidence_commit,
+        "to_role": to_role,
+        "event_type": event_type,
+        "delivery_id": delivery_id,
+        "payload_sha256": payload_sha256,
+        "envelope_sha256": canonical_payload_sha256(payload),
+        "payload": payload,
+        "status": "prepared",
+        "updated_at": _utc_now(),
+    }
+    validate_outbox_record(record_value)
+    path = delivery_state_path(evidence, "outbox", str(input_context["key"]))
+    existing = _load_delivery_record(path, "outbox")
+    if existing is not None:
+        if _outbox_immutable(existing) != _outbox_immutable(record_value):
+            die("existing outbox does not match the current Workflow input")
+        return path, existing
+    _atomic_write_json(path, record_value)
+    record(evidence, "outbox_prepared", delivery_id=delivery_id, event_type=event_type)
+    return path, record_value
+
+
+def _set_outbox_status(
+    path: Path,
+    record_value: dict[str, object],
+    status: str,
+) -> dict[str, object]:
+    updated = {**record_value, "status": status, "updated_at": _utc_now()}
+    _atomic_write_json(path, updated)
+    return updated
+
+
+def deliver_outbox(
+    evidence: RunEvidence,
+    path: Path,
+    record_value: dict[str, object],
+) -> bool:
+    validate_outbox_record(record_value)
+    attempting = _set_outbox_status(path, record_value, "attempting")
+    try:
+        sent = send_event(
+            str(attempting["source_role"]),
+            str(attempting["to_role"]),
+            str(attempting["event_type"]),
+            dict(attempting["payload"]),
+        )
+    except BaseException:
+        _set_outbox_status(path, attempting, "ambiguous")
+        record(evidence, "outbox_ambiguous", delivery_id=attempting["delivery_id"])
+        raise
+    if not sent:
+        _set_outbox_status(path, attempting, "ambiguous")
+        record(evidence, "outbox_ambiguous", delivery_id=attempting["delivery_id"])
+        return False
+    sent_record = _set_outbox_status(path, attempting, "sent")
+    record(evidence, "outbox_sent", delivery_id=sent_record["delivery_id"])
+    return True
+
+
+def verify_outbox_evidence(repo: str, record_value: dict[str, object]) -> None:
+    branch = str(record_value.get("branch", ""))
+    evidence_commit = str(record_value.get("evidence_commit", ""))
+    if git(repo, "check-ref-format", "--branch", branch) != 0:
+        die("outbox branch is invalid")
+    if not _COMMIT_RE.fullmatch(evidence_commit):
+        die("outbox evidence commit is invalid")
+    remote_ref = f"refs/remotes/origin/{branch}"
+    refspec = f"+refs/heads/{branch}:{remote_ref}"
+    if git(repo, "fetch", "--no-tags", "origin", refspec) != 0:
+        die("cannot refresh the outbox remote branch")
+    resolved = git_out(repo, "rev-parse", "--verify", f"{evidence_commit}^{{commit}}")
+    remote_head = git_out(repo, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
+    if not resolved or resolved != evidence_commit or remote_head != evidence_commit:
+        die("outbox evidence no longer matches the remote task branch")
+    if record_value.get("action") == "coder.review_handoff":
+        payload = record_value.get("payload")
+        report_path = payload.get("report") if isinstance(payload, dict) else None
+        if not isinstance(report_path, str):
+            die("coder outbox is missing its ImplementationReport path")
+        tracked = git_out(
+            repo,
+            "ls-tree",
+            "-r",
+            "--name-only",
+            evidence_commit,
+            "--",
+            report_path,
+        ).splitlines()
+        if report_path not in tracked:
+            die("coder outbox ImplementationReport is not tracked at the evidence commit")
+
+
+def resume_outbox(
+    a: argparse.Namespace,
+    role: str,
+    repo: str,
+    evidence: RunEvidence | None,
+    input_context: dict[str, object],
+) -> bool:
+    delivery_id = str(input_context["delivery_id"])
+    payload_sha256 = str(input_context["payload_sha256"])
+    if inbox_completed(evidence, delivery_id, payload_sha256):
+        return True
+    if evidence is None:
+        return False
+    path = delivery_state_path(evidence, "outbox", str(input_context["key"]))
+    existing = _load_delivery_record(path, "outbox")
+    if existing is None:
+        return False
+    expected_bindings = {
+        "format": "awf.outbox.v1",
+        "source_role": role,
+        "input_key": input_context["key"],
+        "input_delivery_id": input_context["delivery_id"],
+        "input_payload_sha256": input_context["payload_sha256"],
+        "input_source_event_id": input_context["source_event_id"],
+        "branch": a.branch,
+        "source_commit": a.commit,
+    }
+    for key, expected in expected_bindings.items():
+        if existing.get(key) != expected:
+            die(f"outbox {key} does not match the current Workflow input")
+    validate_outbox_record(existing)
+    status = existing.get("status")
+    if status == "sent":
+        complete_inbox(evidence, delivery_id, payload_sha256)
+        return True
+    if status not in {"prepared", "attempting", "ambiguous"}:
+        die(f"outbox has unsupported status {status!r}")
+    verify_outbox_evidence(repo, existing)
+    if not deliver_outbox(evidence, path, existing):
+        die("failed to replay downstream outbox; source event remains unacknowledged")
+    complete_inbox(evidence, delivery_id, payload_sha256)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # roles
 # ---------------------------------------------------------------------------
@@ -1525,6 +2003,11 @@ def role_coder(a: argparse.Namespace) -> int:
     model = env("AWF_MODEL", a.model or "")
     no_push = env("AWF_NO_PUSH", "0") == "1"
     evidence = getattr(a, "evidence", None)
+    input_context = validate_input_delivery(a, "coder", evidence)
+
+    if resume_outbox(a, "coder", repo, evidence, input_context):
+        record(evidence, "outbox_replay_complete")
+        return 0
 
     fetch_and_checkout(repo, a.branch, a.commit)
     card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
@@ -1607,10 +2090,12 @@ def role_coder(a: argparse.Namespace) -> int:
     record(evidence, "push", push_started=True)
     new_commit = push_and_verify_remote_head(repo, a.branch)
     record(evidence, "remote_sha_verified", remote_sha=new_commit)
-    if not send_event(
+    review_type = (
+        "task:awf-review-v2" if getattr(a, "input_type", "").endswith("-v2") else "task:awf-review"
+    )
+    review_payload = build_delivery_payload(
         "coder",
-        "reviewer",
-        "task:awf-review",
+        review_type,
         {
             "task_id": a.branch.rsplit("/", 1)[-1],
             "branch": a.branch,
@@ -1621,8 +2106,31 @@ def role_coder(a: argparse.Namespace) -> int:
             "tool": tool,
             "model": model,
         },
-    ):
+        evidence,
+    )
+    outbox = prepare_outbox(
+        evidence,
+        input_context,
+        action="coder.review_handoff",
+        branch=a.branch,
+        source_commit=a.commit,
+        evidence_commit=new_commit,
+        to_role="reviewer",
+        event_type=review_type,
+        payload=review_payload,
+    )
+    sent = (
+        deliver_outbox(evidence, *outbox)
+        if evidence is not None and outbox is not None
+        else send_event("coder", "reviewer", review_type, review_payload)
+    )
+    if not sent:
         die("failed to send reviewer event; implementation will not be ACKed")
+    complete_inbox(
+        evidence,
+        str(input_context["delivery_id"]),
+        str(input_context["payload_sha256"]),
+    )
     record(evidence, "review_event_sent", review_event_sent=True)
     return 0
 
@@ -1635,6 +2143,11 @@ def role_reviewer(a: argparse.Namespace) -> int:
     model = env("AWF_MODEL", a.model or "")
     base = env("AWF_BASE", a.base or "master")
     evidence = getattr(a, "evidence", None)
+    input_context = validate_input_delivery(a, "reviewer", evidence)
+
+    if resume_outbox(a, "reviewer", repo, evidence, input_context):
+        record(evidence, "outbox_replay_complete")
+        return 0
 
     fetch_and_checkout(repo, a.branch, a.commit)
     card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
@@ -1701,19 +2214,47 @@ def role_reviewer(a: argparse.Namespace) -> int:
         "REQUEST_CHANGES": ("coder", "task:awf-rework"),
         "BLOCKED": ("architect", "decision:awf-blocked"),
     }[verdict]
-    payload = {
-        "task_id": a.branch.rsplit("/", 1)[-1],
-        "branch": a.branch,
-        "card": a.card,
-        "commit": a.commit,
-        "report": a.report,
-        "review_report_path": a.review_report,
-        "review_report": review_report,
-        "tool": a.tool,
-        "model": a.model,
-    }
-    if not send_event("reviewer", route[0], route[1], payload):
+    if getattr(a, "input_type", "").endswith("-v2"):
+        route = (route[0], f"{route[1]}-v2")
+    payload = build_delivery_payload(
+        "reviewer",
+        route[1],
+        {
+            "task_id": a.branch.rsplit("/", 1)[-1],
+            "branch": a.branch,
+            "card": a.card,
+            "commit": a.commit,
+            "report": a.report,
+            "review_report_path": a.review_report,
+            "review_report": review_report,
+            "tool": a.tool,
+            "model": a.model,
+        },
+        evidence,
+    )
+    outbox = prepare_outbox(
+        evidence,
+        input_context,
+        action=f"reviewer.{verdict.lower()}",
+        branch=a.branch,
+        source_commit=a.commit,
+        evidence_commit=a.commit,
+        to_role=route[0],
+        event_type=route[1],
+        payload=payload,
+    )
+    sent = (
+        deliver_outbox(evidence, *outbox)
+        if evidence is not None and outbox is not None
+        else send_event("reviewer", route[0], route[1], payload)
+    )
+    if not sent:
         die(f"failed to send {route[1]}; review event will not be ACKed")
+    complete_inbox(
+        evidence,
+        str(input_context["delivery_id"]),
+        str(input_context["payload_sha256"]),
+    )
     return 0
 
 
@@ -1724,6 +2265,10 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="awf_role", description="Agent Workflow role handler")
     p.add_argument("role", choices=sorted(ROLES))
     p.add_argument("--event-id", required=True, type=int)
+    p.add_argument("--input-type", default="")
+    p.add_argument("--delivery-id", default="")
+    p.add_argument("--payload-sha256", default="")
+    p.add_argument("--source-event-id", type=int, default=0)
     p.add_argument("--branch", required=True)
     p.add_argument("--card", default="")
     p.add_argument("--commit", default="")

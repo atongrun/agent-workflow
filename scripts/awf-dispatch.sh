@@ -25,7 +25,7 @@
 #     [--model opencode-go/deepseek-v4-flash] \
 #     [--report .awf/artifacts/NN-implementation-report.md]  (impl-report path hint) \
 #     [--review-report .awf/artifacts/review-report-<task-id>.md] \
-#     [--type  task:awf-impl]      (event type; default: task:awf-impl) \
+#     [--type  task:awf-impl-v2]   (event type; default: task:awf-impl-v2) \
 #     [--no-push]                  (skip git push — LOCAL-ONLY; cross-machine needs push) \
 #     [--dry-run]                  (print the event that WOULD be sent, send nothing)
 #
@@ -37,7 +37,7 @@ set -uo pipefail
 # ---- defaults ----
 REPO="" CARD="" BRANCH="" TO="coder" TOOL="opencode" MODEL="" REPORT="" REVIEW_REPORT=""
 DO_PUSH=1 DRY_RUN=0
-EVENT_TYPE="task:awf-impl"
+EVENT_TYPE="task:awf-impl-v2"
 
 die() { echo "awf-dispatch: $*" >&2; exit 2; }
 
@@ -91,8 +91,19 @@ task_id="${BRANCH##*/}"
 # report path hint: default to a conventional per-task artifact path if not given.
 [ -n "$REPORT" ] || REPORT=".awf/artifacts/impl-report-$task_id.md"
 [ -n "$REVIEW_REPORT" ] || REVIEW_REPORT=".awf/artifacts/review-report-$task_id.md"
-payload="$(printf '{"task_id":"%s","branch":"%s","card":"%s","commit":"%s","tool":"%s","model":"%s","report":"%s","review_report":"%s"}' \
-  "$task_id" "$BRANCH" "$CARD" "$COMMIT" "$TOOL" "$MODEL" "$REPORT" "$REVIEW_REPORT")"
+AWF_PYTHON="${AWF_PYTHON_BIN:-}"
+if [ -z "$AWF_PYTHON" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    AWF_PYTHON="python3"
+  elif command -v python >/dev/null 2>&1; then
+    AWF_PYTHON="python"
+  else
+    die "python 3 is required to compute Workflow delivery metadata"
+  fi
+fi
+payload="$("$AWF_PYTHON" -c 'import hashlib,json,sys; p=dict(zip(("task_id","branch","card","commit","tool","model","report","review_report"),sys.argv[2:])); c=lambda v: json.dumps(v,ensure_ascii=False,sort_keys=True,separators=(",",":")); h="sha256:"+hashlib.sha256(c(p).encode()).hexdigest(); s={"format":"awf.delivery.v1","source_role":"architect","event_type":sys.argv[1],"payload_sha256":h,"source_event_id":0}; p.update(awf_delivery_id="awf:"+hashlib.sha256(c(s).encode()).hexdigest(),awf_payload_sha256=h,awf_source_event_id=0); print(c(p))' \
+  "$EVENT_TYPE" "$task_id" "$BRANCH" "$CARD" "$COMMIT" "$TOOL" "$MODEL" "$REPORT" "$REVIEW_REPORT")" \
+  || die "cannot compute Workflow delivery metadata"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "[dispatch] --dry-run: would send event"
