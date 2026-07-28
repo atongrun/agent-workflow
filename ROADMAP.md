@@ -83,7 +83,10 @@ Remaining Phase 2 work:
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
 - [ ] Run a fresh disposable proof event for ledger recovery and pre-invocation denial paths after
-  the control-plane PR is accepted; never reuse preserved dogfood events.
+  the control-plane PR is accepted; never reuse preserved dogfood events. The first post-merge
+  preflight stopped before event creation because the fresh Windows checkout could not prove
+  trusted push readiness and an isolation-safe transport identity was unavailable without crossing
+  the credential hard stop.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
 the stable core or modify Agent Bus protocol.

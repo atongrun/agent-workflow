@@ -1,33 +1,29 @@
 # Repository Handoff
 
-> Current through the 2026-07-28 downstream Dousansi dogfood stop. The current `main` baseline is
-> `ff1bee3`; repository files and live Git refs are authoritative. This document contains no private
+> Current through the 2026-07-29 disposable-proof preflight stop. The current `main` baseline is
+> `f24b5fb`; repository files and live Git refs are authoritative. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
 
 ## Current Handoff State: 2026-07-29
 
-The control-plane implementation is on feature branch `codex/run-control-plane-gate` and is open
-as [PR #27](https://github.com/atongrun/agent-workflow/pull/27). The PR is not merged and must
-remain open until its current live head passes both GitHub CI and a new independent native review.
-Repository files and live Git/GitHub are authoritative for the exact head and check state.
+PR #27 merged at `f24b5fb1a4097a24b37210643dc15277f7b5dbe6`; merge-main CI passed.
+Post-merge independent review then found that terminal-state denial ran before duplicate delivery
+recovery. Draft [PR #28](https://github.com/atongrun/agent-workflow/pull/28) contains the narrow
+repair plus an idempotent terminal transition command. Its local suite recorded 223 passed and one
+expected platform skip; Ruff, format, contract validation, independent native review, and current
+PR CI passed.
 
-The prior independent native review returned `REQUEST CHANGES` for one HIGH finding. The branch now
-contains the narrow repair and a regression that authorizes coder delivery, records the executor
-commit as current-stage evidence, and authorizes reviewer delivery under the same run before model
-invocation. The immutable planning/base commit remains frozen. This repair still requires complete
-local verification, current-head CI, and a new independent review before merge or any fresh live
-event.
+The disposable live proof did not start. A fresh Windows exact-commit checkout passed clone/SHA/
+clean-tree gates, but its trusted push dry-run was rejected by the remote. The isolated transport
+identity also could not be used on Windows without a credential change, which is a hard stop under
+the authority manifest. No Bus event was created. Read-only fixed-column evidence established an
+empty reviewer/architect baseline and retained coder events 97 and 100; every non-payload mutable
+column for those retained rows was unchanged at the stop. Their payloads were not read or hashed.
 
-No listener is running, no preserved event was read or mutated, and no ACK, requeue, redispatch, or
-product TaskCard resume is authorized.
-
-### Repaired Review Finding, Pending Reverification
-
-Coder and reviewer continue to share the run key `task-{task_id}`. The control plane now permits
-only the explicit `implement -> review` continuation in addition to its existing transitions.
-`frozen_base` remains the original TaskCard/planning commit and remains part of the immutable
-context binding; `current_stage_evidence_commit` records the executor commit separately and
-advances only when the reviewer stage is authorized.
+The proof TaskCard is preserved on `proof/pr27-disposable-20260729-001` at `f211448`, but it has
+never been dispatched. It is infrastructure-only disposable evidence, not a product TaskCard.
+Do not dispatch it until an explicitly authorized operator restores repo-scoped Windows write
+readiness and an isolation-safe transport identity without inspecting or modifying retained events.
 
 ## Product Position
 
@@ -53,8 +49,8 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Commit `db5a45c` is the audited implementation
-  baseline before this documentation refresh and contains merged PR #1 through PR #14.
+- The authoritative product branch is `main`. Commit `f24b5fb` merged PR #27's run control plane.
+  Refresh refs before relying on this snapshot.
 - All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
   prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
   evidence, not product direction.
@@ -135,15 +131,15 @@ event-scoped no-remote OpenCode workspaces with trusted delta import, and one fr
 cross-machine `PASS` route
 through architect consumption and ACK.
 
-Still missing: current-head CI and independent review for the repaired control-plane PR, the fresh
-disposable end-to-end proof after merge, recorded capacity-isolation metrics for the live run
+Still missing: merge or rejection of draft PR #28, the fresh disposable end-to-end proof after
+Windows write/identity readiness is explicitly restored, recorded capacity-isolation metrics for a live run
 (`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
 downstream TaskCard, and a terminal recovery decision for the preserved interrupted run.
 
 The versioned run ledger, bounded context packet, fresh-session recovery CLI, pre-invocation gate,
-durable denial/replay decisions, and narrow authority manifest are implemented on PR #27 and
-covered by deterministic tests. They are not yet a merged or live operational capability until the
-repair passes current-head CI and independent review.
+durable denial/replay decisions, and narrow authority manifest are merged from PR #27 and covered
+by deterministic tests. Terminal duplicate recovery and an explicit terminal transition are on
+draft PR #28. Neither branch has a successful disposable live proof.
 
 ## Dousansi Dogfood Stop: Proven Gaps
 
@@ -177,13 +173,12 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Finish current-head verification for PR #27.** Run focused and full local verification, push
-   the repair, and obtain both GitHub CI and a new independent native review. Do not merge while
-   either is pending or failing.
-2. **Keep the repair narrow during review follow-up.** The legal coder-to-reviewer continuation must
-   retain the immutable planning/base commit, record the executor commit separately as current-stage
-   evidence, and remain behind the trusted pre-invocation gate.
-3. **After merge, run exactly one fresh disposable proof event.** Prove ledger persistence,
+1. **Review draft PR #28 without merging it automatically.** Its deterministic verification, CI,
+   and independent review are green; live acceptance remains intentionally absent.
+2. **Restore live readiness only with new explicit authority.** Re-establish repo-scoped Windows
+   push and an isolation-safe transport identity without reading/copying credentials or connecting
+   the shared coder listener. Do not reinterpret the current credential hard stop.
+3. **Then run exactly one fresh disposable proof event.** Prove ledger persistence,
    fresh-session recovery, route/stage/attempt/rework/terminal checks, replay handling, and the
    refusal paths before model invocation. Use only a new isolated event and only reversible actions
    listed in the authority manifest. Never inspect, ACK, requeue, redispatch, or restart preserved
@@ -197,12 +192,11 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next-Agent Start Sequence
 
-Begin with `git status --short --branch`, `git fetch origin`, and a fresh check of PR #27 and CI;
-do not assume this snapshot's remote state. Read this handoff and
-`docs/tasks/run-control-plane-implementation-report.md`, then confirm the coder-to-reviewer
-regression, full verification, current-head CI, and independent review. Keep all changes on the
-feature branch and use Lore-formatted commits. The disposable live proof is a later gate, not part
-of this repair.
+Begin with `git status --short --branch`, `git fetch origin`, and fresh checks of merged PR #27,
+draft PR #28, and CI. Read this handoff and
+`docs/tasks/run-control-plane-implementation-report.md`. Do not send the preserved proof TaskCard
+until a new task explicitly authorizes resolution of both live-readiness blockers. Keep all changes
+on a feature branch and use Lore-formatted commits.
 
 ## Standing Rules
 

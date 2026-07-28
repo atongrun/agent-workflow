@@ -125,7 +125,9 @@ and the current [repository handoff](HANDOFF.md).
 The operations surface now persists a versioned run ledger and bounded context packet outside
 checkouts. `python scripts/awf_control_plane.py recover --run-id <id>` is the fresh-session
 recovery contract. Trusted listeners perform route, stage, attempt, rework, replay, and terminal
-checks before starting a model; denials are durable and do not ACK or alter retained history. See
+checks before starting a model. A terminal transition is recoverable and completed-delivery replay
+remains idempotent. Denials are durable, but transport replay isolation still requires an empty
+recipient baseline because Agent Bus `--on` is not a server-side replay filter. See
 the [run control-plane report](docs/tasks/run-control-plane-implementation-report.md) and the
 example [authority manifest](scripts/authority-manifest.example.json).
 

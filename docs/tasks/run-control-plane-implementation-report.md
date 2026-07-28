@@ -37,3 +37,23 @@ unrecoverable sequence is authorized.
 The next proof is a fresh disposable event after the PR is accepted. It must
 verify recovery and every denial path without reading or mutating preserved
 historical events.
+
+## Post-Merge Review and Disposable Preflight
+
+PR #27 merged at `f24b5fb1a4097a24b37210643dc15277f7b5dbe6`; merge-main CI passed. An
+independent post-merge review found one terminal replay ordering defect: terminal denial preceded
+duplicate delivery recovery. Draft PR #28 moves duplicate/reuse checks ahead of terminal denial and
+adds an idempotent `finish` transition so a fresh process can persist and recover one terminal
+state. Focused tests recorded 10 passed; the full suite recorded 223 passed and one expected
+platform skip. Ruff, format, contract validation, independent review, and PR CI passed.
+
+The disposable proof preflight then stopped before event creation. A fresh Windows clone matched
+the frozen proof commit and was clean, but its trusted push dry-run was rejected. The empty
+transport identity could not be used on Windows without a credential change, which the authority
+manifest forbids. No listener connected to the retained coder identity; no proof or historical
+event was delivered, consumed, ACKed, requeued, or redispatched.
+
+Read-only SQLite evidence recorded the complete non-payload mutable columns for retained rows 97
+and 100 (`status`, timestamps, retry count, and last-error digest) and confirmed empty reviewer and
+architect pending baselines. Those retained columns remained unchanged at the stop. Retained
+payloads were neither selected nor hashed.
