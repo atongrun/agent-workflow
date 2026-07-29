@@ -28,7 +28,7 @@ from pathlib import Path
 from awf_control_plane import ControlPlaneDenied, authorize_operation, load_authority_manifest
 from awf_network import add_url_host_to_no_proxy
 
-DEFAULT_ON_TYPE = {"coder": "task:awf-impl-v2", "reviewer": "task:awf-review-v2"}
+DEFAULT_ON_TYPE = {"coder": "task:awf-impl-v3", "reviewer": "task:awf-review-v3"}
 
 
 def die(msg: str):
@@ -73,7 +73,30 @@ def build_handler(
         "--report",
         "{payload.report}",
     ]
-    if role == "coder" and on_type in {"task:awf-rework", "task:awf-rework-v2"}:
+    if on_type.endswith("-v3"):
+        fields += [
+            "--provenance-version",
+            "{payload.provenance_version}",
+            "--upstream-repo",
+            "{payload.upstream_repo}",
+            "--base-ref",
+            "{payload.base_ref}",
+            "--base-sha",
+            "{payload.base_sha}",
+            "--head-repo",
+            "{payload.head_repo}",
+            "--head-ref",
+            "{payload.head_ref}",
+            "--head-sha",
+            "{payload.head_sha}",
+            "--pull-request",
+            "{payload.pull_request}",
+        ]
+    if role == "coder" and on_type in {
+        "task:awf-rework",
+        "task:awf-rework-v2",
+        "task:awf-rework-v3",
+    }:
         fields += [
             "--review-report",
             "{payload.review_report_path}",
@@ -93,6 +116,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="")
     p.add_argument("--on-type", dest="on_type", default="")
     p.add_argument("--base", default="master")
+    p.add_argument("--upstream-repo", default="")
+    p.add_argument("--upstream-remote", default="upstream")
+    p.add_argument("--head-repo", default="")
+    p.add_argument("--head-remote", default="fork")
+    p.add_argument("--base-ref", default="main")
+    p.add_argument("--gh-bin", default="gh")
     p.add_argument("--exit-after-idle", dest="idle", type=int, default=None)
     p.add_argument("--no-push", dest="no_push", action="store_true")
     p.add_argument(
@@ -107,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
     if a.role not in DEFAULT_ON_TYPE and not a.on_type:
         die(f"role '{a.role}' has no default --on-type; pass --on-type")
     on_type = a.on_type or DEFAULT_ON_TYPE[a.role]
+    if on_type.endswith("-v3") and (not a.upstream_repo or not a.head_repo):
+        die("v3 listeners require --upstream-repo and --head-repo trusted local configuration")
 
     if not Path(a.repo).is_dir():
         die(f"repo not found: {a.repo}")
@@ -139,12 +170,18 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AWF_TOOL"] = a.tool
     os.environ["AWF_MODEL"] = a.model
     os.environ["AWF_BASE"] = a.base
+    os.environ["AWF_UPSTREAM_REPO"] = a.upstream_repo
+    os.environ["AWF_UPSTREAM_REMOTE"] = a.upstream_remote
+    os.environ["AWF_HEAD_REPO"] = a.head_repo
+    os.environ["AWF_HEAD_REMOTE"] = a.head_remote
+    os.environ["AWF_BASE_REF"] = a.base_ref
+    os.environ["AWF_GH_BIN"] = a.gh_bin
     os.environ["AWF_NO_PUSH"] = "1" if a.no_push else "0"
     os.environ["AWF_CONTROL_PLANE"] = "1"
     os.environ["AWF_AUTHORITY_MANIFEST"] = str(a.authority_manifest.resolve())
     active_types = [on_type]
     if a.role == "coder" and on_type == DEFAULT_ON_TYPE["coder"]:
-        active_types.append("task:awf-rework-v2")
+        active_types.append("task:awf-rework-v3")
     os.environ["AWF_ACTIVE_ROUTE_TYPES"] = ",".join(active_types)
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
