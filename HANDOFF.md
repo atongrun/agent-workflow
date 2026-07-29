@@ -1,7 +1,7 @@
 # Repository Handoff
 
-> Current through the 2026-07-29 fork/PR-aware trusted-runner implementation. The current `main`
-> baseline is `f24b5fb`; repository files and live Git refs are authoritative. This document contains no private
+> Current through the 2026-07-29 post-merge fork/PR live proof. The current `main`
+> baseline is `88c7001`; repository files and live Git refs are authoritative. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
 
 ## Current Handoff State: 2026-07-29
@@ -10,17 +10,29 @@ PR #27 merged successfully as `f24b5fb1a4097a24b37210643dc15277f7b5dbe6`; its CI
 Draft PR #28 remains a separate terminal-replay/disposable-proof record and is not part of the
 current change.
 
-Fork/PR-aware trusted-runner work is on `codex/fork-pr-trusted-runner` in ready
-[PR #29](https://github.com/atongrun/agent-workflow/pull/29), based exactly on that merged main. It
-introduces v3 routes that separate a read-only upstream from a writable contribution fork and bind
-reviewer/replay to an exact upstream/base, fork/head, and PR tuple. The contributor boundary
-explicitly does not require or test upstream write permission. Focused/full local verification and
-independent native security/code review passed; final-head GitHub CI remains the live merge gate.
+Fork/PR-aware trusted-runner [PR #29](https://github.com/atongrun/agent-workflow/pull/29) merged as
+`88c70012697510c9959a7823d6af5529b5fe0395` after green CI and independent native security/code
+review. A fresh contributor-machine proof then pushed only to the configured fork, freshly matched
+the remote SHA, created [proof PR #30](https://github.com/atongrun/agent-workflow/pull/30), and
+completed Mac review from that PR's exact persisted head SHA with a `PASS` verdict. Upstream write
+permission was neither required nor tested.
 
-No listener is running, no preserved event was read or mutated, and no ACK, requeue, redispatch, or
-product TaskCard resume is authorized.
+The proof exposed a GitHub eventual-consistency race: PR creation succeeded while
+`gh pr list --head` remained empty even though direct lookup by PR number worked. The runner
+correctly withheld reviewer delivery and ACK. The current follow-up strictly parses the canonical
+PR URL returned by trusted `gh pr create`, binds its exact number, and verifies the full tuple
+without branch-list rediscovery. It also normalizes v3's initial `pull_request: 0` before
+control-plane persistence.
 
-### Fork/PR boundary under review
+Agent Bus event handling was separately authorized. Historical coder events #97 and #100 were
+classified as superseded/terminal and ACKed without executing their old product TaskCards. Proof
+event #101 exposed a fixture-path failure plus an existing duplicate-without-outbox recovery gap;
+it was terminally closed via the Bus-required requeue-then-ACK transition. Fresh event #102 passed
+the Windows coder model isolation, postflight, fork push, fresh SHA, and PR #31 creation. Its
+reviewer handoff remains unACKed and recoverable because Windows-to-Bus sends currently fail through
+both the proxy and direct private route. The Mac reviewer queue remained empty.
+
+### Fork/PR boundary
 
 Default listeners subscribe only to v3 operations routes. Trusted local configuration owns remote
 names and allowed repository identities; payloads contain no remote URL or credentials. Legacy
@@ -52,8 +64,8 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Commit `f24b5fb` is the fresh baseline for the
-  current fork/PR runner change and includes merged PR #27.
+- The authoritative product branch is `main`. Commit `88c7001` is the fresh baseline and includes
+  merged PR #29's fork/PR-aware v3 trusted runner.
 - All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
   prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
   evidence, not product direction.
@@ -138,8 +150,7 @@ PR #27's control plane is merged and its deterministic CI passed. The fork/PR-aw
 implemented and locally testable on its current feature branch, but is not a merged or live
 operational capability until current-head CI and independent security/code review pass.
 
-Still missing: current-head CI and independent review for the fork/PR feature, a fresh
-fork-based cross-machine proof after merge and separate authorization, recorded
+Still missing: completion of the Agent Bus reviewer handoff for retained event #102, recorded
 capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
 downstream TaskCard, and a terminal recovery decision for the preserved interrupted run.
@@ -176,15 +187,13 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Finish the fork/PR feature PR.** Complete focused/full verification, independent native
-   security/code review, push the reviewed head, create the PR, and require green GitHub CI. Do not
-   merge it in this task.
+1. **Finish the fork/PR proof follow-up PR.** Complete independent review, push the reviewed head,
+   create the PR, and require green GitHub CI. Do not merge it in this task.
 2. **Keep PR #28 separate.** It remains a narrow disposable-proof record; do not rewrite or expand
    it to carry the fork/PR change.
-3. **After merge and separate authorization, run exactly one fresh fork-based proof event.** Prove
-   upstream read-only operation, fork push, exact PR-head review, ledger persistence, replay, and
-   refusal paths. Never inspect, ACK, requeue, redispatch, or restart preserved historical events,
-   and never resume Dousansi v3.
+3. **Recover retained event #102 after Bus connectivity returns.** Deliver only its already-fixed
+   PR #31 provenance to reviewer, then ACK coder only after send success. Do not restart the coder
+   model or create another proof event.
 4. **Write the proof evidence and metrics update.** Record role/reason counters, ledger ID,
    context-packet checksum, gate decisions, and denial reasons without raw prompts, credentials,
    retained payloads, ACK/requeue actions, or token counts.

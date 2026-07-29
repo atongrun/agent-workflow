@@ -107,6 +107,33 @@ def test_coder_commit_can_advance_same_run_to_reviewer_before_model(monkeypatch,
     assert packet["current_stage_evidence_commit"] == executor_commit
 
 
+def test_v3_initial_pr_zero_is_persisted_before_model(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
+    args = Namespace(
+        branch="proof/fork-task",
+        card="docs/task.md",
+        commit="a" * 40,
+        report="docs/implementation.md",
+        pull_request=0,
+        phase="",
+        input_type="task:awf-impl-v3",
+        route_override="",
+        attempt=1,
+        max_attempts=1,
+        rework_budget=1,
+        terminal_state="",
+        delivery_id="v3-delivery",
+        payload_sha256="sha256:v3",
+    )
+    evidence = awf_role.RunEvidence(103, "coder", state_root=tmp_path / "state")
+
+    decision = awf_role.pre_invocation_gate(args, "coder", evidence)
+
+    assert decision is not None and decision.allowed
+    _, packet = RunLedger(tmp_path / "state", "task-fork-task").recover()
+    assert packet["pull_request"] == "0"
+
+
 def test_gate_rejects_missing_route_before_authorization(tmp_path: Path):
     ledger = make_ledger(tmp_path)
     decision = ledger.pre_invocation_gate(

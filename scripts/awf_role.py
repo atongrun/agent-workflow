@@ -481,7 +481,7 @@ def pre_invocation_gate(
         taskcard=a.card,
         frozen_base=frozen_base,
         branch=a.branch,
-        pull_request=getattr(a, "pull_request", ""),
+        pull_request=str(getattr(a, "pull_request", "")),
         phase=getattr(a, "phase", ""),
         transition=event_type,
         evidence=[str(getattr(a, "report", ""))],
@@ -1196,16 +1196,34 @@ def _gh_json(repo: str, *args: str) -> object:
         die("trusted GitHub CLI returned invalid JSON")
 
 
-def _gh_call(repo: str, *args: str) -> None:
+def _gh_create_pull_request(repo: str, provenance: dict[str, object]) -> int:
     gh = env("AWF_GH_BIN", "gh")
+    upstream_repo = str(provenance["upstream_repo"])
+    head_owner = str(provenance["head_repo"]).split("/", 1)[0]
     try:
         completed = subprocess.run(
-            [gh, *args],
+            [
+                gh,
+                "pr",
+                "create",
+                "--repo",
+                upstream_repo,
+                "--base",
+                str(provenance["base_ref"]),
+                "--head",
+                f"{head_owner}:{provenance['head_ref']}",
+                "--title",
+                f"Agent Workflow contribution: {provenance['head_ref']}",
+                "--body",
+                "Published by the trusted Agent Workflow runner for independent review.",
+            ],
             cwd=repo,
             env=child_env(),
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
             timeout=60,
             check=False,
         )
@@ -1213,6 +1231,25 @@ def _gh_call(repo: str, *args: str) -> None:
         die("trusted GitHub CLI operation failed")
     if completed.returncode != 0:
         die("trusted GitHub CLI operation failed")
+    output = completed.stdout.strip()
+    parsed = urlsplit(output)
+    path_prefix = f"/{upstream_repo}/pull/"
+    number_text = parsed.path.removeprefix(path_prefix)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.startswith(path_prefix)
+        or "/" in number_text
+        or not number_text.isdigit()
+        or int(number_text) < 1
+    ):
+        die("trusted GitHub CLI returned an invalid pull request URL")
+    return int(number_text)
 
 
 def verify_pr_head(
@@ -1281,38 +1318,7 @@ def ensure_pull_request(
     if not isinstance(matches, list) or len(matches) > 1:
         die("cannot select one matching pull request")
     if not matches:
-        _gh_call(
-            repo,
-            "pr",
-            "create",
-            "--repo",
-            str(provenance["upstream_repo"]),
-            "--base",
-            str(provenance["base_ref"]),
-            "--head",
-            f"{head_owner}:{provenance['head_ref']}",
-            "--title",
-            f"Agent Workflow contribution: {provenance['head_ref']}",
-            "--body",
-            "Published by the trusted Agent Workflow runner for independent review.",
-        )
-        matches = _gh_json(
-            repo,
-            "pr",
-            "list",
-            "--repo",
-            str(provenance["upstream_repo"]),
-            "--state",
-            "open",
-            "--base",
-            str(provenance["base_ref"]),
-            "--head",
-            f"{head_owner}:{provenance['head_ref']}",
-            "--json",
-            "number",
-            "--limit",
-            "2",
-        )
+        matches = [{"number": _gh_create_pull_request(repo, provenance)}]
     if (
         not isinstance(matches, list)
         or len(matches) != 1

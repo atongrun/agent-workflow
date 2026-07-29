@@ -729,12 +729,10 @@ def test_fork_push_fresh_sha_equality_proceeds_to_exact_pr(monkeypatch, tmp_path
 
 def test_pr_create_then_verify_binds_exact_repo_base_ref_and_sha(monkeypatch, tmp_path):
     provenance = _pr_provenance(head_sha="d" * 40, pull_request=0)
-    list_results = iter([[], [{"number": 23}]])
-    create_calls = []
 
     def fake_json(_repo, *args):
         if args[:2] == ("pr", "list"):
-            return next(list_results)
+            return []
         assert args[:3] == ("pr", "view", "23")
         return {
             "number": 23,
@@ -748,18 +746,64 @@ def test_pr_create_then_verify_binds_exact_repo_base_ref_and_sha(monkeypatch, tm
         }
 
     monkeypatch.setattr(awf_role, "_gh_json", fake_json)
-    monkeypatch.setattr(
-        awf_role,
-        "_gh_call",
-        lambda _repo, *args: create_calls.append(args),
-    )
+    monkeypatch.setattr(awf_role, "_gh_create_pull_request", lambda *_args: 23)
 
     result = awf_role.ensure_pull_request(str(tmp_path), provenance)
 
     assert result["pull_request"] == 23
-    assert create_calls[0][:4] == ("pr", "create", "--repo", "upstream/project")
-    assert "--head" in create_calls[0]
-    assert "contributor:feature/task" in create_calls[0]
+
+
+def test_pr_create_returns_exact_number_without_branch_list_rediscovery(monkeypatch, tmp_path):
+    provenance = _pr_provenance(head_sha="d" * 40, pull_request=0)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="https://github.com/upstream/project/pull/23\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(awf_role.subprocess, "run", fake_run)
+
+    assert awf_role._gh_create_pull_request(str(tmp_path), provenance) == 23
+    assert calls[0][0][:4] == ["gh", "pr", "create", "--repo"]
+    assert calls[0][1]["stderr"] is subprocess.DEVNULL
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "https://user@github.com/upstream/project/pull/23",
+        "http://github.com/upstream/project/pull/23",
+        "https://example.com/upstream/project/pull/23",
+        "https://github.com/other/project/pull/23",
+        "https://github.com/upstream/project/pull/not-a-number",
+        "https://github.com/upstream/project/pull/23?token=secret",
+        "diagnostic\nhttps://github.com/upstream/project/pull/23",
+    ],
+)
+def test_pr_create_rejects_noncanonical_result_without_logging_it(
+    monkeypatch, tmp_path, capsys, output
+):
+    provenance = _pr_provenance(head_sha="d" * 40, pull_request=0)
+    monkeypatch.setattr(
+        awf_role.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=output,
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._gh_create_pull_request(str(tmp_path), provenance)
+
+    assert output not in capsys.readouterr().err
 
 
 def test_existing_pr_update_path_reuses_and_verifies_without_create(monkeypatch, tmp_path):
@@ -784,7 +828,7 @@ def test_existing_pr_update_path_reuses_and_verifies_without_create(monkeypatch,
     )
     monkeypatch.setattr(
         awf_role,
-        "_gh_call",
+        "_gh_create_pull_request",
         lambda *args: pytest.fail("existing matching PR must not be recreated"),
     )
 
