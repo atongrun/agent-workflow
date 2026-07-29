@@ -49,7 +49,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from awf_config import ConfigError, native_executable, serialize_config, validate_config_path
+from awf_config import (
+    ConfigError,
+    _parse_icacls_aces,
+    native_executable,
+    serialize_config,
+    validate_config_path,
+)
 
 # Map the VPS role name -> the env var awf_dispatch/awf_listen/awf_role expect.
 # NOTE the architect -> ARCH abbreviation, matching the existing dispatch.env.
@@ -344,17 +350,44 @@ def lock_permissions(path: Path) -> str:
         except OSError as e:
             die(f"could not restrict configuration permissions: {e}")
     # Windows: lock via ACL.
-    user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
-    if not user:
+    identity = subprocess.run(["whoami"], capture_output=True, text=True)
+    principal = identity.stdout.strip() if identity.returncode == 0 else ""
+    if not principal:
         die("could not determine the current Windows principal for ACL lockdown")
     proc = subprocess.run(
-        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"],
         capture_output=True,
         text=True,
     )
-    if proc.returncode == 0:
-        return "icacls: owner-only"
-    die("could not restrict the Windows configuration ACL")
+    if proc.returncode != 0:
+        die("could not restrict the Windows configuration ACL")
+    acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+    if acl.returncode != 0:
+        die("could not verify the Windows configuration ACL")
+    aces = _parse_icacls_aces(path, acl.stdout)
+    if not aces:
+        die("could not parse the Windows configuration ACL")
+    for other, _permissions in aces:
+        if other.casefold() == principal.casefold():
+            continue
+        for removal in ("/remove:g", "/remove:d"):
+            removed = subprocess.run(
+                ["icacls", str(path), removal, other],
+                capture_output=True,
+                text=True,
+            )
+            if removed.returncode != 0:
+                die("could not remove an extra Windows configuration principal")
+    try:
+        validate_config_path(
+            path,
+            platform="windows",
+            expected_uid=None,
+            runner=subprocess.run,
+        )
+    except ConfigError:
+        die("could not establish an owner-only Windows configuration ACL")
+    return "icacls: owner-only"
 
 
 def _lock_and_write_open_fd(fd: int, path: Path, content: bytes) -> str:

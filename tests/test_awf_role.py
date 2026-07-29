@@ -3138,6 +3138,38 @@ def test_bootstrap_write_is_atomic_and_rejects_symlink_destination(tmp_path, mon
     assert target.read_text(encoding="utf-8") == "do not replace\n"
 
 
+def test_windows_permission_lock_removes_every_non_owner_ace(monkeypatch, tmp_path):
+    path = tmp_path / "dispatch.env"
+    path.write_text("AWF_CODER_TOKEN=controlled\n", encoding="utf-8")
+    extra_present = True
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        nonlocal extra_present
+        calls.append(argv)
+        if argv == ["whoami"]:
+            return subprocess.CompletedProcess(argv, 0, "HOST\\owner\n", "")
+        if argv[:2] == ["icacls", str(path)] and len(argv) == 2:
+            extra = "SYSTEM:(F)\n" if extra_present else ""
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                f"{path} HOST\\owner:(F)\n{extra}",
+                "",
+            )
+        if "/remove:g" in argv:
+            extra_present = False
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(awf_bootstrap.os, "name", "nt")
+    monkeypatch.setattr(awf_bootstrap.subprocess, "run", fake_run)
+
+    assert awf_bootstrap.lock_permissions(path) == "icacls: owner-only"
+    assert any("/remove:g" in argv and "SYSTEM" in argv for argv in calls)
+    assert any("/remove:d" in argv and "SYSTEM" in argv for argv in calls)
+    assert not extra_present
+
+
 def test_curl_bootstrap_locks_secret_temp_file_before_write(monkeypatch):
     locked: list[Path] = []
     events: list[str] = []

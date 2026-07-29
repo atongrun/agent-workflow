@@ -56,13 +56,15 @@ if [ "${AWF_CONFIG_LOADED:-0}" != "1" ]; then
     fi
   fi
   AWF_DISPATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+  AWF_DISPATCH_BASH="bash"
   case "$(uname -s 2>/dev/null || true)" in
     MINGW*|MSYS*|CYGWIN*)
       AWF_DISPATCH_DIR="$(cd "$(dirname "$0")" && pwd -W)"
+      AWF_DISPATCH_BASH="$(cygpath -w "$(command -v bash)")"
       ;;
   esac
   exec "$AWF_CONFIG_PYTHON" "$AWF_DISPATCH_DIR/awf_config.py" --optional -- \
-    bash "$0" "$@"
+    "$AWF_DISPATCH_BASH" "$0" "$@"
 fi
 
 # ---- defaults ----
