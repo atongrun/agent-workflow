@@ -2320,6 +2320,230 @@ def test_each_reviewer_route_send_failure_is_nonzero(monkeypatch, tmp_path, verd
     assert len(send_calls) == 1
 
 
+def test_v3_reviewer_send_failure_replay_does_not_rerun_model(monkeypatch, tmp_path):
+    content = _review_markdown("PASS")
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        content,
+        send_result=False,
+    )
+    provenance = _pr_provenance()
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-review-v3"
+    ns.source_event_id = 102
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    payload = awf_role.input_payload(ns, "reviewer")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "coder",
+        ns.input_type,
+        ns.payload_sha256,
+        ns.source_event_id,
+    )
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+    gates = iter(("authorized", "duplicate_event"))
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason=next(gates)),
+    )
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "assert_model_pr_git_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "verify_pr_remote_tuple", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "git_out",
+        lambda _repo, *args: (
+            "implementation.md"
+            if args == ("ls-files", "--", "implementation.md")
+            else ""
+            if args and args[0] == "ls-files"
+            else provenance["base_sha"]
+            if args[:2] == ("rev-parse", "--verify") and args[2] == "awf-review-base^{commit}"
+            else provenance["head_sha"]
+        ),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_manifest_sha256",
+        lambda *args, **kwargs: "manifest-sha",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "restore_durable_model_manifest",
+        lambda *args, **kwargs: str(tmp_path / "repo"),
+    )
+    monkeypatch.setattr(awf_role, "verify_outbox_evidence", lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+    assert len(tool_calls) == 1
+    assert len(send_calls) == 1
+
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: send_calls.append((args, kwargs)) or True,
+    )
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+
+    assert awf_role.role_reviewer(ns) == 0
+    assert len(tool_calls) == 1
+    assert len(send_calls) == 2
+
+
+def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
+    monkeypatch,
+    tmp_path,
+):
+    content = _review_markdown("PASS")
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        content,
+    )
+    provenance = _pr_provenance()
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-review-v3"
+    ns.source_event_id = 102
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    payload = awf_role.input_payload(ns, "reviewer")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "coder",
+        ns.input_type,
+        ns.payload_sha256,
+        ns.source_event_id,
+    )
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+    gates = iter(("authorized", "duplicate_event"))
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason=next(gates)),
+    )
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "assert_model_pr_git_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "git_out",
+        lambda _repo, *args: (
+            "implementation.md"
+            if args == ("ls-files", "--", "implementation.md")
+            else ""
+            if args and args[0] == "ls-files"
+            else provenance["base_sha"]
+            if args[:2] == ("rev-parse", "--verify") and args[2] == "awf-review-base^{commit}"
+            else provenance["head_sha"]
+        ),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_manifest_sha256",
+        lambda *args, **kwargs: "manifest-sha",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "restore_durable_model_manifest",
+        lambda *args, **kwargs: str(tmp_path / "repo"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "import_model_report",
+        lambda _workspace, trusted, path: (
+            (Path(trusted) / path).write_text(content, encoding="utf-8") and Path(trusted) / path
+        ),
+    )
+    pr_checks = []
+
+    def verify_pr(*args, **kwargs):
+        pr_checks.append((args, kwargs))
+        if len(pr_checks) == 1:
+            raise SystemExit(1)
+
+    monkeypatch.setattr(awf_role, "verify_pr_remote_tuple", verify_pr)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+    assert len(tool_calls) == 1
+    assert not send_calls
+
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+
+    assert awf_role.role_reviewer(ns) == 0
+    assert len(tool_calls) == 1
+    assert len(send_calls) == 1
+    assert len(pr_checks) == 2
+
+
+def test_v3_reviewer_ambiguous_model_started_checkpoint_fails_cleanly(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        _review_markdown("PASS"),
+    )
+    provenance = _pr_provenance()
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-review-v3"
+    ns.source_event_id = 102
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    payload = awf_role.input_payload(ns, "reviewer")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "coder",
+        ns.input_type,
+        ns.payload_sha256,
+        ns.source_event_id,
+    )
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+    input_context = awf_role.validate_input_delivery(ns, "reviewer", ns.evidence)
+    checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
+        ns.evidence,
+        input_context,
+        role="reviewer",
+        branch=ns.branch,
+        source_commit=ns.commit,
+        provenance=provenance,
+    )
+    awf_role.advance_recovery_checkpoint(
+        ns.evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_started",
+        model_workspace=str(ns.evidence.run_dir / "model-workspace-proof"),
+        model_manifest_sha256="manifest-sha",
+        model_event_id=103,
+    )
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="duplicate_event"),
+    )
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert "outcome is ambiguous" in capsys.readouterr().err
+    assert not tool_calls
+    assert not send_calls
+
+
 @pytest.mark.parametrize(
     "path",
     ["", "/tmp/review.md", "../review.md", "C:/review.md", ".awf\\review.md"],
@@ -3056,6 +3280,88 @@ def test_legacy_bounded_pr_failure_without_remote_log_resumes_before_fork_verify
     assert "head_sha" not in checkpoint["facts"]
 
 
+def test_legacy_completed_reviewer_imports_model_checkpoint_without_reinvocation(
+    monkeypatch,
+    tmp_path,
+):
+    evidence = awf_role.RunEvidence(103, "reviewer", state_root=tmp_path / "state")
+    model_workspace = evidence.run_dir / "model-workspace-proof"
+    model_workspace.mkdir()
+    evidence.record(
+        "opencode_start",
+        opencode_cwd=str(model_workspace),
+        opencode_pid=123,
+    )
+    evidence.record(
+        "opencode_exit",
+        opencode_rc=0,
+        opencode_duration_seconds=1.0,
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_manifest_sha256",
+        lambda workspace: "manifest-sha" if workspace == str(model_workspace) else "",
+    )
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 102,
+    }
+
+    recovered = awf_role.recover_legacy_reviewer_checkpoint(
+        evidence,
+        input_context,
+        branch="feature/task",
+        source_commit="d" * 40,
+        provenance=_pr_provenance(),
+    )
+
+    assert recovered is not None
+    _, checkpoint = recovered
+    assert checkpoint["role"] == "reviewer"
+    assert checkpoint["phase"] == "model_completed"
+    assert checkpoint["facts"]["model_workspace"] == str(model_workspace)
+    assert checkpoint["facts"]["model_manifest_sha256"] == "manifest-sha"
+
+
+def test_reviewer_checkpoint_skips_coder_only_commit_and_fork_phases(tmp_path):
+    evidence = awf_role.RunEvidence(103, "reviewer", state_root=tmp_path / "state")
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 102,
+    }
+    path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="reviewer",
+        branch="feature/task",
+        source_commit="d" * 40,
+        provenance=_pr_provenance(),
+    )
+    transitions = [
+        ("model_started", {"model_workspace": "workspace"}),
+        ("model_completed", {"model_workspace": "workspace"}),
+        ("model_imported", {"review_report_sha256": "a" * 64}),
+        ("pr_tuple_verified", {"verified_provenance": _pr_provenance()}),
+        ("outbox_prepared", {"outbox_delivery_id": "awf:delivery"}),
+        ("outbox_sent", {"outbox_delivery_id": "awf:delivery"}),
+    ]
+
+    for phase, facts in transitions:
+        checkpoint = awf_role.advance_recovery_checkpoint(
+            evidence,
+            path,
+            checkpoint,
+            phase,
+            **facts,
+        )
+
+    assert checkpoint["phase"] == "outbox_sent"
+
+
 def test_upstream_base_allows_only_fast_forward_advance(monkeypatch):
     provenance = _pr_provenance()
     live_base = "f" * 40
@@ -3180,8 +3486,9 @@ def test_prepared_outbox_replay_reconciles_checkpoint_before_send(monkeypatch, t
     assert json.loads(outbox_path.read_text(encoding="utf-8"))["status"] == "sent"
 
 
-def test_process_crash_after_zero_model_exit_recovers_durable_workspace(tmp_path):
-    evidence = awf_role.RunEvidence(104, "coder", state_root=tmp_path / "state")
+@pytest.mark.parametrize("role", ["coder", "reviewer"])
+def test_process_crash_after_zero_model_exit_recovers_durable_workspace(tmp_path, role):
+    evidence = awf_role.RunEvidence(104, role, state_root=tmp_path / "state")
     workspace = evidence.run_dir / "model-workspace-proof"
     git_dir = workspace / ".git"
     git_dir.mkdir(parents=True)
@@ -3196,7 +3503,7 @@ def test_process_crash_after_zero_model_exit_recovers_durable_workspace(tmp_path
     checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
         evidence,
         input_context,
-        role="coder",
+        role=role,
         branch="feature/task",
         source_commit="a" * 40,
         provenance=_pr_provenance(pull_request=0),

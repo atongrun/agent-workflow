@@ -582,7 +582,7 @@ def _load_delivery_record(path: Path, label: str) -> dict[str, object] | None:
     return value
 
 
-_RECOVERY_PHASES = (
+_CODER_RECOVERY_PHASES = (
     "model_not_started",
     "model_started",
     "model_completed",
@@ -593,6 +593,19 @@ _RECOVERY_PHASES = (
     "outbox_prepared",
     "outbox_sent",
 )
+_REVIEWER_RECOVERY_PHASES = (
+    "model_not_started",
+    "model_started",
+    "model_completed",
+    "model_imported",
+    "pr_tuple_verified",
+    "outbox_prepared",
+    "outbox_sent",
+)
+_RECOVERY_PHASES_BY_ROLE = {
+    "coder": _CODER_RECOVERY_PHASES,
+    "reviewer": _REVIEWER_RECOVERY_PHASES,
+}
 
 
 def _checkpoint_immutable(record_value: dict[str, object]) -> dict[str, object]:
@@ -615,12 +628,14 @@ def _checkpoint_immutable(record_value: dict[str, object]) -> dict[str, object]:
 def validate_recovery_checkpoint(record_value: dict[str, object]) -> None:
     if record_value.get("format") != "awf.recovery-checkpoint.v1":
         die("recovery checkpoint format is invalid")
-    if record_value.get("role") != "coder":
+    role = record_value.get("role")
+    phases = _RECOVERY_PHASES_BY_ROLE.get(str(role))
+    if phases is None:
         die("recovery checkpoint role is invalid")
     phase = record_value.get("phase")
-    if phase not in _RECOVERY_PHASES:
+    if phase not in phases:
         die("recovery checkpoint phase is invalid")
-    if record_value.get("phase_index") != _RECOVERY_PHASES.index(str(phase)):
+    if record_value.get("phase_index") != phases.index(str(phase)):
         die("recovery checkpoint phase index is inconsistent")
     for field in (
         "input_key",
@@ -688,10 +703,11 @@ def advance_recovery_checkpoint(
     **facts: object,
 ) -> dict[str, object]:
     validate_recovery_checkpoint(record_value)
-    if phase not in _RECOVERY_PHASES:
+    phases = _RECOVERY_PHASES_BY_ROLE[str(record_value["role"])]
+    if phase not in phases:
         die("recovery checkpoint phase is invalid")
     current_index = int(record_value["phase_index"])
-    next_index = _RECOVERY_PHASES.index(phase)
+    next_index = phases.index(phase)
     if next_index < current_index or next_index > current_index + 1:
         die("recovery checkpoint transition is not monotonic")
     existing_facts = dict(record_value["facts"])
@@ -839,6 +855,98 @@ def recover_legacy_publication_checkpoint(
     return path, checkpoint
 
 
+def recover_legacy_reviewer_checkpoint(
+    evidence: RunEvidence,
+    input_context: dict[str, object],
+    *,
+    branch: str,
+    source_commit: str,
+    provenance: dict[str, object],
+) -> tuple[Path, dict[str, object]] | None:
+    """Import one completed pre-checkpoint reviewer process without rerunning it."""
+    if not evidence.log_path.is_file():
+        return None
+    try:
+        entries = [
+            json.loads(line)
+            for line in evidence.log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError):
+        die("legacy reviewer recovery evidence is unreadable or invalid JSON")
+    candidates = [
+        item
+        for item in entries
+        if isinstance(item, dict)
+        and item.get("event_id") == evidence.event_id
+        and item.get("role") == "reviewer"
+    ]
+    start_index = next(
+        (
+            index
+            for index in range(len(candidates) - 1, -1, -1)
+            if candidates[index].get("phase") == "opencode_start"
+        ),
+        -1,
+    )
+    if start_index < 0:
+        return None
+    start = candidates[start_index]
+    exit_record = next(
+        (item for item in candidates[start_index + 1 :] if item.get("phase") == "opencode_exit"),
+        None,
+    )
+    model_workspace = start.get("opencode_cwd")
+    if (
+        not isinstance(exit_record, dict)
+        or exit_record.get("opencode_rc") != 0
+        or not isinstance(model_workspace, str)
+        or not model_workspace
+    ):
+        return None
+    workspace = Path(model_workspace).resolve()
+    try:
+        workspace.relative_to(evidence.run_dir.resolve())
+    except ValueError:
+        die("legacy reviewer workspace is outside the durable event state")
+    if workspace.is_symlink() or not workspace.is_dir():
+        die("legacy reviewer workspace is unavailable")
+    manifest_sha256 = durable_model_manifest_sha256(str(workspace))
+    path, checkpoint = begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="reviewer",
+        branch=branch,
+        source_commit=source_commit,
+        provenance=provenance,
+    )
+    facts = {
+        "model_workspace": str(workspace),
+        "model_manifest_sha256": manifest_sha256,
+        "model_event_id": evidence.event_id,
+    }
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_started",
+        **facts,
+    )
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_completed",
+        **facts,
+    )
+    record(
+        evidence,
+        "legacy_recovery_checkpoint_imported",
+        recovery_phase="model_completed",
+    )
+    return path, checkpoint
+
+
 def reconcile_recovery_checkpoint_with_outbox(
     evidence: RunEvidence,
     input_context: dict[str, object],
@@ -865,12 +973,22 @@ def reconcile_recovery_checkpoint_with_outbox(
         die("outbox does not match its recovery checkpoint input")
     facts = dict(checkpoint["facts"])
     verified_provenance = facts.get("verified_provenance")
+    role = checkpoint.get("role")
+    action = outbox.get("action")
+    expected_evidence_commit = (
+        facts.get("head_sha") if role == "coder" else checkpoint.get("source_commit")
+    )
+    action_matches = (
+        action == "coder.review_handoff"
+        if role == "coder"
+        else isinstance(action, str) and action.startswith("reviewer.")
+    )
     if (
         outbox.get("format") != "awf.outbox.v2"
-        or outbox.get("action") != "coder.review_handoff"
+        or not action_matches
         or not isinstance(verified_provenance, dict)
         or outbox.get("provenance") != verified_provenance
-        or outbox.get("evidence_commit") != facts.get("head_sha")
+        or outbox.get("evidence_commit") != expected_evidence_commit
     ):
         die("outbox does not match its verified recovery provenance")
     delivery_id = outbox.get("delivery_id")
@@ -1336,10 +1454,13 @@ def recover_completed_model_checkpoint(
     workspace = facts.get("model_workspace")
     manifest_sha256 = facts.get("model_manifest_sha256")
     model_event_id = facts.get("model_event_id")
+    checkpoint_role = checkpoint.get("role")
     if (
         not isinstance(workspace, str)
         or not isinstance(manifest_sha256, str)
         or not isinstance(model_event_id, int)
+        or checkpoint_role not in _RECOVERY_PHASES_BY_ROLE
+        or evidence.role != checkpoint_role
         or not evidence.log_path.is_file()
     ):
         return None
@@ -1357,7 +1478,7 @@ def recover_completed_model_checkpoint(
         if (
             isinstance(item, dict)
             and item.get("event_id") == model_event_id
-            and item.get("role") == "coder"
+            and item.get("role") == checkpoint_role
             and item.get("phase") == "opencode_start"
         ):
             started = index
@@ -1366,7 +1487,7 @@ def recover_completed_model_checkpoint(
             and index > started
             and isinstance(item, dict)
             and item.get("event_id") == model_event_id
-            and item.get("role") == "coder"
+            and item.get("role") == checkpoint_role
             and item.get("phase") == "opencode_exit"
             and item.get("opencode_rc") == 0
         ):
@@ -3419,8 +3540,61 @@ def role_reviewer(a: argparse.Namespace) -> int:
     except SystemExit:
         record(evidence, "fork_pr_rejected", reason="outbox_provenance_drift")
         raise
-    if gate is not None and getattr(gate, "reason", "") == "duplicate_event":
+    duplicate = gate is not None and getattr(gate, "reason", "") == "duplicate_event"
+    checkpoint_path: Path | None = None
+    checkpoint: dict[str, object] | None = None
+    if provenance is not None and evidence is not None and tool == "opencode":
+        checkpoint_path = delivery_state_path(
+            evidence,
+            "checkpoint",
+            str(input_context["key"]),
+        )
+        existing_checkpoint = _load_delivery_record(
+            checkpoint_path,
+            "recovery checkpoint",
+        )
+        if duplicate and existing_checkpoint is None:
+            recovered = recover_legacy_reviewer_checkpoint(
+                evidence,
+                input_context,
+                branch=a.branch,
+                source_commit=a.commit,
+                provenance=provenance,
+            )
+            if recovered is None:
+                die("duplicate reviewer event has no durable recovery checkpoint or outbox")
+            checkpoint_path, existing_checkpoint = recovered
+        checkpoint_path, checkpoint = begin_recovery_checkpoint(
+            evidence,
+            input_context,
+            role="reviewer",
+            branch=a.branch,
+            source_commit=a.commit,
+            provenance=provenance,
+        )
+    elif duplicate:
         die("duplicate Workflow event has no durable downstream outbox")
+
+    recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_not_started"
+    if checkpoint is not None and recovery_phase in {
+        "model_imported",
+        "pr_tuple_verified",
+        "outbox_prepared",
+    }:
+        facts = dict(checkpoint["facts"])
+        expected_report_sha256 = facts.get("review_report_sha256")
+        persisted_report = resolve_review_report_path(
+            repo,
+            a.review_report,
+            a.report,
+        )
+        if (
+            not isinstance(expected_report_sha256, str)
+            or not persisted_report.is_file()
+            or hashlib.sha256(persisted_report.read_bytes()).hexdigest() != expected_report_sha256
+        ):
+            die("trusted ReviewReport does not match its recovery checkpoint")
+        persisted_report.unlink()
 
     if provenance is not None:
         try:
@@ -3446,16 +3620,29 @@ def role_reviewer(a: argparse.Namespace) -> int:
     if git_out(repo, "ls-files", "--", a.review_report):
         die("ReviewReport path must not replace a tracked repository file")
     review_report_path.parent.mkdir(parents=True, exist_ok=True)
-    if review_report_path.exists():
+    if recovery_phase == "model_started":
+        if checkpoint is not None and checkpoint_path is not None and evidence is not None:
+            recovered_checkpoint = recover_completed_model_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+            )
+            if recovered_checkpoint is not None:
+                checkpoint = recovered_checkpoint
+                recovery_phase = str(checkpoint["phase"])
+        if recovery_phase == "model_started":
+            die("reviewer model invocation outcome is ambiguous; refusing to invoke it again")
+    if recovery_phase == "model_not_started" and review_report_path.exists():
         review_report_path.unlink()
 
-    log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
     base_commit = (
         str(provenance["base_sha"]) if provenance is not None else resolve_review_base(repo, base)
     )
-    if tool == "codex":
+    if recovery_phase == "model_not_started":
+        log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
+    if tool == "codex" and checkpoint is None:
         rc = tool_codex_review(repo, base_commit, prompt_file, card_file, model, a.review_report)
-    elif tool == "opencode":
+    elif tool == "opencode" and recovery_phase == "model_not_started":
         model_state_dir = evidence.run_dir if evidence is not None else None
         model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
         model_base = "awf-review-base"
@@ -3468,6 +3655,17 @@ def role_reviewer(a: argparse.Namespace) -> int:
             a.review_report,
             a.report,
         )
+        if checkpoint is not None and checkpoint_path is not None:
+            model_manifest_sha256 = durable_model_manifest_sha256(model_repo)
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "model_started",
+                model_workspace=str(Path(model_repo).resolve()),
+                model_manifest_sha256=model_manifest_sha256,
+                model_event_id=evidence.event_id,
+            )
         rc = tool_opencode_review(
             model_repo,
             model_base,
@@ -3477,12 +3675,46 @@ def role_reviewer(a: argparse.Namespace) -> int:
             str(model_review_report_path),
             evidence,
         )
+        if rc == 0:
+            if checkpoint is not None and checkpoint_path is not None:
+                checkpoint = advance_recovery_checkpoint(
+                    evidence,
+                    checkpoint_path,
+                    checkpoint,
+                    "model_completed",
+                    model_workspace=str(Path(model_repo).resolve()),
+                    model_manifest_sha256=model_manifest_sha256,
+                    model_event_id=evidence.event_id,
+                )
+            recovery_phase = "model_completed"
+    elif tool == "opencode" and recovery_phase != "model_not_started":
+        facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
+        model_workspace = facts.get("model_workspace")
+        manifest_sha256 = facts.get("model_manifest_sha256")
+        if not isinstance(model_workspace, str) or not isinstance(manifest_sha256, str):
+            die("completed reviewer checkpoint is missing its durable workspace")
+        model_repo = restore_durable_model_manifest(
+            evidence,
+            model_workspace,
+            manifest_sha256,
+        )
+        model_base = "awf-review-base"
+        rc = 0
+    elif checkpoint is None:
+        die("reviewer tool must be codex or opencode")
     else:
+        rc = 0
+    if checkpoint is not None and recovery_phase not in {
+        "model_not_started",
+        "model_completed",
+    }:
+        rc = 0
+    if tool not in {"codex", "opencode"}:
         die("reviewer tool must be codex or opencode")
     if rc != 0:
         die(f"reviewer tool '{tool}' failed (rc={rc}); no verdict routed")
 
-    if tool == "opencode":
+    if tool == "opencode" and recovery_phase != "model_not_started":
         assert_model_workspace_state(model_repo, a.commit)
         if git_out(model_repo, "rev-parse", "--verify", f"{model_base}^{{commit}}") != base_commit:
             die("model process changed the isolated reviewer base ref")
@@ -3491,6 +3723,44 @@ def role_reviewer(a: argparse.Namespace) -> int:
         else:
             assert_model_git_state(repo, a.branch, a.commit)
         review_report_path = import_model_report(model_repo, repo, a.review_report)
+        if (
+            checkpoint is not None
+            and checkpoint_path is not None
+            and recovery_phase == "model_completed"
+        ):
+            report_sha256 = hashlib.sha256(review_report_path.read_bytes()).hexdigest()
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "model_imported",
+                review_report_sha256=report_sha256,
+            )
+            recovery_phase = "model_imported"
+    elif checkpoint is not None:
+        facts = dict(checkpoint["facts"])
+        report_sha256 = facts.get("review_report_sha256")
+        if (
+            not isinstance(report_sha256, str)
+            or not review_report_path.is_file()
+            or hashlib.sha256(review_report_path.read_bytes()).hexdigest() != report_sha256
+        ):
+            die("trusted ReviewReport does not match its recovery checkpoint")
+    if checkpoint is not None and checkpoint_path is not None and provenance is not None:
+        if str(checkpoint["phase"]) == "model_imported":
+            verify_pr_remote_tuple(repo, provenance, verify_pr=True)
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "pr_tuple_verified",
+                verified_provenance=provenance_payload(provenance),
+            )
+        else:
+            facts = dict(checkpoint["facts"])
+            if facts.get("verified_provenance") != provenance_payload(provenance):
+                die("reviewer PR checkpoint does not match persisted provenance")
+            verify_pr_remote_tuple(repo, provenance, verify_pr=True)
 
     review_report = parse_review_report(review_report_path)
     verdict = review_report["verdict"]
@@ -3534,6 +3804,17 @@ def role_reviewer(a: argparse.Namespace) -> int:
         payload=payload,
         provenance=provenance,
     )
+    if checkpoint is not None and checkpoint_path is not None:
+        if str(checkpoint["phase"]) == "pr_tuple_verified":
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "outbox_prepared",
+                outbox_delivery_id=payload["awf_delivery_id"],
+            )
+        elif str(checkpoint["phase"]) != "outbox_prepared":
+            die("reviewer recovery checkpoint is inconsistent with the durable outbox")
     sent = (
         deliver_outbox(evidence, *outbox)
         if evidence is not None and outbox is not None
@@ -3541,6 +3822,14 @@ def role_reviewer(a: argparse.Namespace) -> int:
     )
     if not sent:
         die(f"failed to send {route[1]}; review event will not be ACKed")
+    if checkpoint is not None and checkpoint_path is not None:
+        checkpoint = advance_recovery_checkpoint(
+            evidence,
+            checkpoint_path,
+            checkpoint,
+            "outbox_sent",
+            outbox_delivery_id=payload["awf_delivery_id"],
+        )
     complete_inbox(
         evidence,
         str(input_context["delivery_id"]),
