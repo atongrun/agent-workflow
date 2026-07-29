@@ -225,6 +225,12 @@ _INPUT_TYPES = {
     "task:awf-rework": ("reviewer", "coder"),
     "task:awf-rework-v2": ("reviewer", "coder"),
     "task:awf-rework-v3": ("reviewer", "coder"),
+    "decision:awf-ready": ("reviewer", "architect"),
+    "decision:awf-ready-v2": ("reviewer", "architect"),
+    "decision:awf-ready-v3": ("reviewer", "architect"),
+    "decision:awf-blocked": ("reviewer", "architect"),
+    "decision:awf-blocked-v2": ("reviewer", "architect"),
+    "decision:awf-blocked-v3": ("reviewer", "architect"),
 }
 
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9_.-]{1,100}$")
@@ -375,13 +381,23 @@ def input_payload(a: argparse.Namespace, role: str) -> dict[str, object]:
         "model": a.model,
         "report": a.report,
     }
-    if input_type in {"task:awf-rework", "task:awf-rework-v2", "task:awf-rework-v3"}:
+    if input_type in {
+        "task:awf-rework",
+        "task:awf-rework-v2",
+        "task:awf-rework-v3",
+        "decision:awf-ready",
+        "decision:awf-ready-v2",
+        "decision:awf-ready-v3",
+        "decision:awf-blocked",
+        "decision:awf-blocked-v2",
+        "decision:awf-blocked-v3",
+    }:
         try:
             feedback = json.loads(getattr(a, "review_feedback", ""))
         except json.JSONDecodeError:
-            die("rework review feedback must be valid JSON")
+            die("structured review feedback must be valid JSON")
         if not isinstance(feedback, dict):
-            die("rework review feedback must be a JSON object")
+            die("structured review feedback must be a JSON object")
         payload["review_report_path"] = a.review_report
         payload["review_report"] = feedback
     else:
@@ -727,6 +743,17 @@ def advance_recovery_checkpoint(
     _atomic_write_json(path, updated)
     record(evidence, "recovery_checkpoint", recovery_phase=phase)
     return updated
+
+
+def recovery_model_policy(checkpoint: dict[str, object]) -> str:
+    """Return the only permitted model action for a validated checkpoint."""
+    validate_recovery_checkpoint(checkpoint)
+    phase = str(checkpoint["phase"])
+    if phase == "model_not_started":
+        return "invoke_once"
+    if phase == "model_started":
+        return "recover_or_fail"
+    return "skip"
 
 
 def recover_legacy_publication_checkpoint(
@@ -1454,11 +1481,13 @@ def recover_completed_model_checkpoint(
     workspace = facts.get("model_workspace")
     manifest_sha256 = facts.get("model_manifest_sha256")
     model_event_id = facts.get("model_event_id")
+    model_process = facts.get("model_process", "opencode")
     checkpoint_role = checkpoint.get("role")
     if (
         not isinstance(workspace, str)
         or not isinstance(manifest_sha256, str)
         or not isinstance(model_event_id, int)
+        or model_process not in {"opencode", "codex"}
         or checkpoint_role not in _RECOVERY_PHASES_BY_ROLE
         or evidence.role != checkpoint_role
         or not evidence.log_path.is_file()
@@ -1479,7 +1508,7 @@ def recover_completed_model_checkpoint(
             isinstance(item, dict)
             and item.get("event_id") == model_event_id
             and item.get("role") == checkpoint_role
-            and item.get("phase") == "opencode_start"
+            and item.get("phase") == f"{model_process}_start"
         ):
             started = index
         if (
@@ -1488,8 +1517,8 @@ def recover_completed_model_checkpoint(
             and isinstance(item, dict)
             and item.get("event_id") == model_event_id
             and item.get("role") == checkpoint_role
-            and item.get("phase") == "opencode_exit"
-            and item.get("opencode_rc") == 0
+            and item.get("phase") == f"{model_process}_exit"
+            and item.get(f"{model_process}_rc") == 0
         ):
             completed = index
             break
@@ -1508,6 +1537,7 @@ def recover_completed_model_checkpoint(
         model_workspace=restored,
         model_manifest_sha256=manifest_sha256,
         model_event_id=model_event_id,
+        model_process=model_process,
         recovered_from_process_log=True,
     )
 
@@ -2030,9 +2060,14 @@ def check_report(report_path: str) -> None:
 
 def check_report_tracked_at_head(repo: str, relative_path: str) -> None:
     """Reject ignored or stale local reports that are absent from the dispatched commit."""
+    check_repo_file_tracked_at_head(repo, relative_path, "ImplementationReport")
+
+
+def check_repo_file_tracked_at_head(repo: str, relative_path: str, label: str) -> None:
+    """Reject a local file unless its exact repository-relative path is tracked at HEAD."""
     tracked = git_out(repo, "ls-files", "--", relative_path).splitlines()
     if relative_path not in tracked:
-        die("ImplementationReport is not tracked by the dispatched commit")
+        die(f"{label} is not tracked by the dispatched commit")
 
 
 _REVIEW_REPORT_RE = re.compile(r"<!--\s*awf-review-report\s*\n(.*?)\n\s*-->", re.DOTALL)
@@ -2163,6 +2198,10 @@ def parse_review_report(report_path: Path) -> dict[str, object]:
     if not isinstance(data, dict) or set(data) != _REVIEW_REPORT_KEYS:
         die("ReviewReport machine object has missing or unknown fields")
 
+    return _normalize_review_report(data, markdown)
+
+
+def _normalize_review_report(data: dict[str, object], markdown: str) -> dict[str, object]:
     verdict = data["verdict"]
     if not isinstance(verdict, str) or verdict not in _REVIEW_VERDICTS:
         die("ReviewReport verdict must be exactly PASS, REQUEST_CHANGES, or BLOCKED")
@@ -2198,6 +2237,42 @@ def parse_review_report(report_path: Path) -> dict[str, object]:
     encoded = json.dumps(normalized).encode("utf-8")
     if len(encoded) > _REVIEW_REPORT_MAX_BYTES:
         die("normalized ReviewReport exceeds 16 KiB")
+    return normalized
+
+
+def validate_embedded_review_report(data: object) -> dict[str, object]:
+    """Revalidate the exact normalized ReviewReport carried by a decision event."""
+    expected_keys = {
+        "format",
+        "verdict",
+        "deterministic_failures",
+        "blocked_reason",
+        "markdown",
+    }
+    if not isinstance(data, dict) or set(data) != expected_keys:
+        die("embedded ReviewReport has missing or unknown fields")
+    if data.get("format") != "awf.review-report.v1":
+        die("embedded ReviewReport format is unsupported")
+    markdown = data.get("markdown")
+    if not isinstance(markdown, str) or not markdown.strip():
+        die("embedded ReviewReport markdown is missing")
+    if _DIFF_BODY_RE.search(markdown):
+        die("embedded ReviewReport must not contain full diff or patch bodies")
+    secret_label = _scan_text(markdown)
+    if secret_label:
+        die(f"embedded ReviewReport contains prohibited {secret_label} material")
+    blocks = _REVIEW_REPORT_RE.findall(markdown)
+    if len(blocks) != 1:
+        die("embedded ReviewReport must contain exactly one awf-review-report object")
+    try:
+        machine = json.loads(blocks[0], object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, DuplicateReviewReportKey):
+        die("embedded ReviewReport machine object is malformed or contains duplicate fields")
+    if not isinstance(machine, dict) or set(machine) != _REVIEW_REPORT_KEYS:
+        die("embedded ReviewReport machine object has missing or unknown fields")
+    normalized = _normalize_review_report(machine, markdown)
+    if normalized != data:
+        die("embedded ReviewReport does not match its normalized machine object")
     return normalized
 
 
@@ -2687,6 +2762,7 @@ def tool_codex_review(
     card_file: str,
     model: str,
     review_report_path: str,
+    evidence: RunEvidence | None = None,
 ) -> int:
     """Run Codex review and persist its final response at the exact report path."""
     binp = env("AWF_CODEX_BIN", "codex")
@@ -2718,7 +2794,14 @@ def tool_codex_review(
     )
     if card_file and Path(card_file).is_file():
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
-    return spawn(argv, cwd=repo, stdin=stdin, env=model_env(repo))
+    return spawn(
+        argv,
+        cwd=repo,
+        stdin=stdin,
+        env=model_env(repo),
+        evidence=evidence,
+        tracked_phase="codex" if evidence is not None else None,
+    )
 
 
 def tool_opencode_review(
@@ -3186,7 +3269,8 @@ def role_coder(a: argparse.Namespace) -> int:
 
     contract: PostflightContract | None = None
     recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_not_started"
-    if recovery_phase == "model_started":
+    model_policy = recovery_model_policy(checkpoint) if checkpoint is not None else "invoke_once"
+    if model_policy == "recover_or_fail":
         if checkpoint is not None and checkpoint_path is not None and evidence is not None:
             checkpoint = recover_completed_model_checkpoint(
                 evidence,
@@ -3228,6 +3312,7 @@ def role_coder(a: argparse.Namespace) -> int:
                 model_workspace=str(Path(model_repo).resolve()),
                 model_manifest_sha256=model_manifest_sha256,
                 model_event_id=evidence.event_id,
+                model_process=tool,
             )
         model_card_file = str(resolve_repo_file(model_repo, a.card, "TaskCard"))
         log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
@@ -3253,6 +3338,7 @@ def role_coder(a: argparse.Namespace) -> int:
                 model_workspace=str(Path(model_repo).resolve()),
                 model_manifest_sha256=model_manifest_sha256,
                 model_event_id=evidence.event_id,
+                model_process=tool,
             )
         recovery_phase = "model_completed"
     elif recovery_phase == "model_completed":
@@ -3576,6 +3662,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         die("duplicate Workflow event has no durable downstream outbox")
 
     recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_not_started"
+    model_policy = recovery_model_policy(checkpoint) if checkpoint is not None else "invoke_once"
     if checkpoint is not None and recovery_phase in {
         "model_imported",
         "pr_tuple_verified",
@@ -3620,7 +3707,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     if git_out(repo, "ls-files", "--", a.review_report):
         die("ReviewReport path must not replace a tracked repository file")
     review_report_path.parent.mkdir(parents=True, exist_ok=True)
-    if recovery_phase == "model_started":
+    if model_policy == "recover_or_fail":
         if checkpoint is not None and checkpoint_path is not None and evidence is not None:
             recovered_checkpoint = recover_completed_model_checkpoint(
                 evidence,
@@ -3642,7 +3729,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
     if tool == "codex" and checkpoint is None:
         rc = tool_codex_review(repo, base_commit, prompt_file, card_file, model, a.review_report)
-    elif tool == "opencode" and recovery_phase == "model_not_started":
+    elif tool in {"codex", "opencode"} and recovery_phase == "model_not_started":
         model_state_dir = evidence.run_dir if evidence is not None else None
         model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
         model_base = "awf-review-base"
@@ -3665,16 +3752,28 @@ def role_reviewer(a: argparse.Namespace) -> int:
                 model_workspace=str(Path(model_repo).resolve()),
                 model_manifest_sha256=model_manifest_sha256,
                 model_event_id=evidence.event_id,
+                model_process=tool,
             )
-        rc = tool_opencode_review(
-            model_repo,
-            model_base,
-            prompt_file,
-            model_card_file,
-            model,
-            str(model_review_report_path),
-            evidence,
-        )
+        if tool == "codex":
+            rc = tool_codex_review(
+                model_repo,
+                model_base,
+                prompt_file,
+                model_card_file,
+                model,
+                str(model_review_report_path),
+                evidence,
+            )
+        else:
+            rc = tool_opencode_review(
+                model_repo,
+                model_base,
+                prompt_file,
+                model_card_file,
+                model,
+                str(model_review_report_path),
+                evidence,
+            )
         if rc == 0:
             if checkpoint is not None and checkpoint_path is not None:
                 checkpoint = advance_recovery_checkpoint(
@@ -3685,13 +3784,19 @@ def role_reviewer(a: argparse.Namespace) -> int:
                     model_workspace=str(Path(model_repo).resolve()),
                     model_manifest_sha256=model_manifest_sha256,
                     model_event_id=evidence.event_id,
+                    model_process=tool,
                 )
             recovery_phase = "model_completed"
-    elif tool == "opencode" and recovery_phase != "model_not_started":
+    elif tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
         facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
         model_workspace = facts.get("model_workspace")
         manifest_sha256 = facts.get("model_manifest_sha256")
-        if not isinstance(model_workspace, str) or not isinstance(manifest_sha256, str):
+        model_process = facts.get("model_process", "opencode")
+        if (
+            not isinstance(model_workspace, str)
+            or not isinstance(manifest_sha256, str)
+            or model_process != tool
+        ):
             die("completed reviewer checkpoint is missing its durable workspace")
         model_repo = restore_durable_model_manifest(
             evidence,
@@ -3714,7 +3819,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     if rc != 0:
         die(f"reviewer tool '{tool}' failed (rc={rc}); no verdict routed")
 
-    if tool == "opencode" and recovery_phase != "model_not_started":
+    if tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
         assert_model_workspace_state(model_repo, a.commit)
         if git_out(model_repo, "rev-parse", "--verify", f"{model_base}^{{commit}}") != base_commit:
             die("model process changed the isolated reviewer base ref")
@@ -3838,7 +3943,63 @@ def role_reviewer(a: argparse.Namespace) -> int:
     return 0
 
 
-ROLES = {"coder": role_coder, "reviewer": role_reviewer}
+def role_architect(a: argparse.Namespace) -> int:
+    """Consume a terminal reviewer decision without invoking a model or routing again."""
+    repo = env("AWF_REPO_DIR", required=True)
+    evidence = getattr(a, "evidence", None)
+    input_context = validate_input_delivery(a, "architect", evidence)
+    if inbox_completed(
+        evidence,
+        str(input_context["delivery_id"]),
+        str(input_context["payload_sha256"]),
+    ):
+        if evidence is not None:
+            evidence.record("terminal_decision_replayed", decision_type=a.input_type)
+        return 0
+
+    try:
+        embedded = json.loads(a.review_feedback)
+    except json.JSONDecodeError:
+        die("architect review feedback must be valid JSON")
+    review_report = validate_embedded_review_report(embedded)
+    expected_verdict = "PASS" if "ready" in a.input_type else "BLOCKED"
+    if review_report["verdict"] != expected_verdict:
+        die("architect decision type does not match the embedded ReviewReport verdict")
+
+    provenance = None
+    if _is_v3(a):
+        provenance = provenance_from_args(a, repo, require_pr=True)
+        fetch_and_checkout_pr_head(repo, provenance, verify_pr=True)
+    else:
+        fetch_and_checkout(repo, a.branch, a.commit)
+
+    card_path = resolve_repo_file(repo, a.card, "TaskCard")
+    if not card_path.is_file():
+        die("TaskCard is not tracked at the terminal decision commit")
+    check_repo_file_tracked_at_head(repo, a.card, "TaskCard")
+    report_path = resolve_repo_file(repo, a.report, "ImplementationReport")
+    check_report(str(report_path))
+    check_report_tracked_at_head(repo, a.report)
+    resolve_review_report_path(repo, a.review_report, a.report)
+
+    if evidence is not None:
+        evidence.record(
+            "terminal_decision_verified",
+            decision_type=a.input_type,
+            verdict=expected_verdict,
+            branch=a.branch,
+            commit=a.commit,
+            pull_request=provenance["pull_request"] if provenance is not None else 0,
+        )
+    complete_inbox(
+        evidence,
+        str(input_context["delivery_id"]),
+        str(input_context["payload_sha256"]),
+    )
+    return 0
+
+
+ROLES = {"architect": role_architect, "coder": role_coder, "reviewer": role_reviewer}
 
 
 def main(argv: list[str] | None = None) -> int:

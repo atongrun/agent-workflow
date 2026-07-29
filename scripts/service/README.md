@@ -14,14 +14,16 @@ of the core method contract.
 
 | File | OS | Role |
 |------|----|----|
-| `awf-listen-service.sh` | macOS / Linux | wrapper: sources `dispatch.env`, execs `awf_listen.py` |
-| `awf-listen-service.cmd` | Windows | shim: runs the `.sh` via git-bash |
+| `awf-listen-service.sh` | macOS / Linux | thin launcher for native `awf_service.py` |
+| `awf-listen-service.cmd` | Windows | thin launcher for native `awf_service.py` |
+| `../awf_service.py` | all | strict config load + listener argv assembly |
 | `com.agentworkflow.listener.plist.template` | macOS | launchd service template |
 | `agent-workflow-listener.service.template` | Linux | systemd service template |
 | `agent-workflow-listener.xml` | Windows | WinSW service definition |
 
-**No secrets live in any of these.** Tokens stay in `~/.config/awf/dispatch.env` (0600);
-the wrapper sources it. Service definitions carry only role/repo/tool.
+**No secrets live in any of these.** Tokens stay in `~/.config/awf/dispatch.env` (owner-only).
+The shared Python loader treats that file as data, validates its path/owner/permissions/keys, and
+never invokes a shell. Service definitions carry only role/repo/tool.
 
 ## Prerequisites
 
@@ -60,7 +62,7 @@ reliable crash detection.
    (WinSW pairs `<name>.exe` with `<name>.xml`).
 3. Edit `agent-workflow-listener.xml`, filling the `__PLACEHOLDERS__`:
    `__ROLE__`, `__REPO__`, `__TOOL__`, `__CMD_WRAPPER__` (absolute path to
-   `awf-listen-service.cmd`), `__GITBASH__` (e.g. `C:\Program Files\Git\bin\bash.exe`).
+   `awf-listen-service.cmd`), and `__PYTHON__` (absolute native Python executable).
 4. From an admin shell:
    ```
    agent-workflow-listener.exe install

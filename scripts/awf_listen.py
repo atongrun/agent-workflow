@@ -8,7 +8,7 @@ executor side has no bash/cmd/WSL shell-dialect problems on Windows.
     python awf_listen.py --role coder    --repo /path/to/repo --tool opencode --model M
     python awf_listen.py --role reviewer --repo /path/to/repo --tool codex --base master
 
-Config comes from the environment (source your dispatch.env first, or export):
+Config comes from the strict, shell-free Python loader (or an explicit environment):
     AGENT_BUS_URL, AWF_<ROLE>_TOKEN            (required)
     AWF_BUS_BIN                                (agent-bus binary; default: agent-bus)
     AWF_OPENCODE_BIN / AWF_CODEX_BIN           (tool binaries; optional)
@@ -25,10 +25,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_control_plane import ControlPlaneDenied, authorize_operation, load_authority_manifest
 from awf_network import add_url_host_to_no_proxy
 
-DEFAULT_ON_TYPE = {"coder": "task:awf-impl-v3", "reviewer": "task:awf-review-v3"}
+DEFAULT_ON_TYPE = {
+    "architect": "decision:awf-ready-v3",
+    "coder": "task:awf-impl-v3",
+    "reviewer": "task:awf-review-v3",
+}
 
 
 def die(msg: str):
@@ -92,11 +97,15 @@ def build_handler(
             "--pull-request",
             "{payload.pull_request}",
         ]
-    if role == "coder" and on_type in {
-        "task:awf-rework",
-        "task:awf-rework-v2",
-        "task:awf-rework-v3",
-    }:
+    if (
+        role == "coder"
+        and on_type
+        in {
+            "task:awf-rework",
+            "task:awf-rework-v2",
+            "task:awf-rework-v3",
+        }
+    ) or (role == "architect" and on_type.startswith("decision:awf-")):
         fields += [
             "--review-report",
             "{payload.review_report_path}",
@@ -125,11 +134,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--exit-after-idle", dest="idle", type=int, default=None)
     p.add_argument("--no-push", dest="no_push", action="store_true")
     p.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="strict dispatch.env path (default: AWF_DISPATCH_ENV or ~/.config/awf/dispatch.env)",
+    )
+    p.add_argument(
         "--authority-manifest",
         type=Path,
         default=Path(__file__).resolve().parent / "authority-manifest.example.json",
     )
     a = p.parse_args(argv)
+
+    try:
+        config_path = a.config or default_config_path()
+    except RuntimeError:
+        config_path = None
+    if config_path is not None and config_path.exists():
+        try:
+            load_into_environment(config_path)
+        except ConfigError as exc:
+            die(f"invalid operations configuration: {exc}")
+    elif a.config is not None:
+        die("configured operations file is unavailable")
 
     script_dir = Path(__file__).resolve().parent
     role_script = str(script_dir / "awf_role.py")
@@ -144,12 +171,13 @@ def main(argv: list[str] | None = None) -> int:
 
     url = os.environ.get("AGENT_BUS_URL")
     if not url:
-        die("set AGENT_BUS_URL (source your dispatch.env)")
-    token_var = f"AWF_{a.role.upper()}_TOKEN"
+        die("set AGENT_BUS_URL or create the strict operations configuration")
+    token_var = "AWF_ARCH_TOKEN" if a.role == "architect" else f"AWF_{a.role.upper()}_TOKEN"
     token = os.environ.get(token_var)
     if not token:
-        die(f"set {token_var} (source your dispatch.env)")
-    bus = os.environ.get("AWF_BUS_BIN", "agent-bus")
+        die(f"set {token_var} or create the strict operations configuration")
+    configured_bus = os.environ.get("AWF_BUS_BIN", "agent-bus")
+    bus = native_executable(configured_bus)
     try:
         authority = load_authority_manifest(a.authority_manifest)
         authorize_operation(authority, "listener_restart")
@@ -182,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     active_types = [on_type]
     if a.role == "coder" and on_type == DEFAULT_ON_TYPE["coder"]:
         active_types.append("task:awf-rework-v3")
+    elif a.role == "architect" and on_type == DEFAULT_ON_TYPE["architect"]:
+        active_types.append("decision:awf-blocked-v3")
     os.environ["AWF_ACTIVE_ROUTE_TYPES"] = ",".join(active_types)
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
@@ -214,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         listen_argv += ["--on", active_types[1], rework_handler]
 
-    if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
+    if os.name == "nt" and configured_bus.lower().endswith((".cmd", ".bat")):
         listen_argv = ["cmd.exe", "/d", "/s", "/c", *listen_argv]
 
     return subprocess.run(listen_argv).returncode

@@ -31,10 +31,41 @@
 #     [--no-push]                  (skip git push — LOCAL-ONLY; cross-machine needs push) \
 #     [--dry-run]                  (print the event that WOULD be sent, send nothing)
 #
-# Required environment for the Agent Bus leg (source ~/.config/awf/dispatch.env):
+# Agent Bus configuration is loaded by strict Python parsing of dispatch.env:
 #   AGENT_BUS_URL, AWF_ARCH_TOKEN         (tokens read from env, never CLI args)
 #   Optional: AWF_BUS_BIN                 (path to the agent-bus binary; default: agent-bus)
 set -uo pipefail
+
+# Load the shared configuration exactly once, without sourcing or printing it.
+# Explicit process environment values win, which keeps one-shot overrides possible.
+if [ "${AWF_CONFIG_LOADED:-0}" != "1" ]; then
+  AWF_CONFIG_PYTHON="${AWF_PYTHON_BIN:-}"
+  if [ -z "$AWF_CONFIG_PYTHON" ]; then
+    case "$(uname -s 2>/dev/null || true)" in
+      MINGW*|MSYS*|CYGWIN*)
+        command -v python >/dev/null 2>&1 && AWF_CONFIG_PYTHON="python"
+        ;;
+    esac
+    if [ -z "$AWF_CONFIG_PYTHON" ] && command -v python3 >/dev/null 2>&1; then
+      AWF_CONFIG_PYTHON="python3"
+    elif [ -z "$AWF_CONFIG_PYTHON" ] && command -v python >/dev/null 2>&1; then
+      AWF_CONFIG_PYTHON="python"
+    elif [ -z "$AWF_CONFIG_PYTHON" ]; then
+      echo "awf-dispatch: python 3 is required to load operations configuration" >&2
+      exit 2
+    fi
+  fi
+  AWF_DISPATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+  AWF_DISPATCH_BASH="bash"
+  case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*)
+      AWF_DISPATCH_DIR="$(cd "$(dirname "$0")" && pwd -W)"
+      AWF_DISPATCH_BASH="$(cygpath -w "$(command -v bash)")"
+      ;;
+  esac
+  exec "$AWF_CONFIG_PYTHON" "$AWF_DISPATCH_DIR/awf_config.py" --optional -- \
+    "$AWF_DISPATCH_BASH" "$0" "$@"
+fi
 
 # ---- defaults ----
 REPO="" CARD="" BRANCH="" TO="coder" TOOL="opencode" MODEL="" REPORT="" REVIEW_REPORT=""
@@ -177,8 +208,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
-: "${AGENT_BUS_URL:?set AGENT_BUS_URL (source ~/.config/awf/dispatch.env)}"
-: "${AWF_ARCH_TOKEN:?set AWF_ARCH_TOKEN (source ~/.config/awf/dispatch.env)}"
+: "${AGENT_BUS_URL:?set AGENT_BUS_URL or create strict dispatch.env}"
+: "${AWF_ARCH_TOKEN:?set AWF_ARCH_TOKEN or create strict dispatch.env}"
 AWF_BUS="${AWF_BUS_BIN:-agent-bus}"
 bus_host="${AGENT_BUS_URL#*://}"
 bus_host="${bus_host%%/*}"

@@ -2,7 +2,7 @@
 """awf_bootstrap — one-shot credential/config bootstrap for Agent Workflow.
 
 Fetches this machine's Agent Bus role tokens from the *source of truth* and
-assembles `~/.config/awf/dispatch.env` (chmod 600, never committed). It removes
+assembles `~/.config/awf/dispatch.env` (owner-only, never committed). It removes
 the "every time I switch machine / hand off, I ssh in and hand-write
 dispatch.env" pain without ever recording a token in git or memory.
 
@@ -27,7 +27,7 @@ Two transports (`--via`):
 Hard rules (do not weaken):
   - Token VALUES are never printed to the terminal, the chat, or any log, and
     never written to git. They flow: bus stdout -> this process -> dispatch.env
-    (0600). They never pass through argv.
+    (owner-only). They never pass through argv.
   - The bootstrap secret is likewise never in argv: curl reads it from a 0600
     config file (`curl -K`), and it is read from the environment, not a flag.
   - The core Agent Workflow package holds no credentials/transport; this is an
@@ -49,6 +49,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+from awf_config import (
+    ConfigError,
+    _parse_icacls_aces,
+    native_executable,
+    serialize_config,
+    validate_config_path,
+)
+
 # Map the VPS role name -> the env var awf_dispatch/awf_listen/awf_role expect.
 # NOTE the architect -> ARCH abbreviation, matching the existing dispatch.env.
 ROLE_TO_TOKEN_VAR = {
@@ -57,22 +65,19 @@ ROLE_TO_TOKEN_VAR = {
     "reviewer": "AWF_REVIEWER_TOKEN",
 }
 
-DEFAULT_SOURCE_HOST = "tx-vps"
+DEFAULT_SOURCE_HOST = ""
 DEFAULT_SOURCE_PATH = "/etc/agent-bus/.env"
-DEFAULT_URL = "http://100.108.67.47:8800"
 
-# Known-good defaults per platform, used only when probing finds nothing.
-# These match what has actually run cross-machine (see AI Memory notes).
 PLATFORM_DEFAULTS = {
     "darwin": {
-        "agent_bus_repo": str(Path.home() / "AI/01_Project/agent-bus"),
+        "agent_bus_repo": "",
         "bus_bin_rel": ".venv/bin/agent-bus",
-        "opencode_bin": "",  # on PATH on Mac; leave unset
+        "opencode_bin": "",
     },
     "win": {
-        "agent_bus_repo": "/d/Work/AI/01_Project/agent-bus",
+        "agent_bus_repo": "",
         "bus_bin_rel": ".venv/Scripts/agent-bus.exe",
-        "opencode_bin": "/d/npm-global/opencode.cmd",
+        "opencode_bin": "",
     },
 }
 
@@ -114,14 +119,12 @@ def fetch_tokens_line(host: str, path: str) -> str:
     except FileNotFoundError:
         die("ssh not found on PATH")
     except subprocess.TimeoutExpired:
-        die(f"ssh {host} timed out (is it online? try `tailscale status`)")
+        die("ssh token source timed out")
     if proc.returncode != 0:
-        # stderr may carry ssh diagnostics; it does NOT carry token values.
-        err = proc.stderr.strip() or f"ssh exited {proc.returncode}"
-        die(f"could not read {path} on {host}: {err}")
+        die(f"could not read the SSH token source (ssh exit {proc.returncode})")
     value = proc.stdout.strip()
     if not value or "=" not in value:
-        die(f"no AGENT_BUS_AGENT_TOKENS found in {path} on {host}")
+        die("no AGENT_BUS_AGENT_TOKENS found in the SSH token source")
     return value
 
 
@@ -145,18 +148,20 @@ def fetch_tokens_curl(url: str, secret: str, roles: list) -> dict:
         # from ROLE_TO_TOKEN_VAR, so this is not attacker-influenced.
         body = '{"agent": "%s"}' % role
         fd, cfg_path = tempfile.mkstemp(suffix=".curlcfg")
-        os.close(fd)
         try:
-            os.chmod(cfg_path, 0o600)
-            # url/request/header/data all live in the config file; secret never in argv.
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                f.write(f'url = "{endpoint}"\n')
-                f.write('request = "POST"\n')
-                f.write('header = "Content-Type: application/json"\n')
-                f.write(f'header = "X-Bootstrap-Secret: {secret}"\n')
-                f.write(f'data = "{body.replace(chr(34), chr(92) + chr(34))}"\n')
-                f.write("silent\n")
-                f.write("show-error\n")
+            # The file will contain the bootstrap secret. os.chmod is not an
+            # owner-only ACL operation on Windows, so use the shared platform
+            # lockdown before writing any sensitive bytes.
+            curl_config = (
+                f'url = "{endpoint}"\n'
+                'request = "POST"\n'
+                'header = "Content-Type: application/json"\n'
+                f'header = "X-Bootstrap-Secret: {secret}"\n'
+                f'data = "{body.replace(chr(34), chr(92) + chr(34))}"\n'
+                "silent\n"
+                "show-error\n"
+            )
+            _lock_and_write_open_fd(fd, Path(cfg_path), curl_config.encode("utf-8"))
             try:
                 proc = subprocess.run(
                     ["curl", "-K", cfg_path, "-w", "\n%{http_code}"],
@@ -169,7 +174,7 @@ def fetch_tokens_curl(url: str, secret: str, roles: list) -> dict:
             except FileNotFoundError:
                 die("curl not found on PATH")
             except subprocess.TimeoutExpired:
-                die(f"curl to {endpoint} timed out (is the bus online? try `tailscale status`)")
+                die("curl to the bootstrap endpoint timed out")
         finally:
             try:
                 os.unlink(cfg_path)
@@ -181,8 +186,7 @@ def fetch_tokens_curl(url: str, secret: str, roles: list) -> dict:
         body_text = raw[0] if len(raw) == 2 else proc.stdout
         status = raw[1].strip() if len(raw) == 2 else ""
         if proc.returncode != 0:
-            err = proc.stderr.strip() or f"curl exited {proc.returncode}"
-            die(f"curl request for role '{role}' failed: {err}")
+            die(f"curl request for role '{role}' failed (exit {proc.returncode})")
         if status == "401":
             die("bootstrap secret rejected (401) — check AGENT_BUS_BOOTSTRAP_SECRET")
         if status == "404":
@@ -232,16 +236,8 @@ def parse_tokens(line: str) -> dict:
 
 
 def posix_to_native(path: str) -> str:
-    """Convert a git-bash POSIX path (/d/Work/...) to a native one (D:\\Work\\...)
-    for existence probing under *native* Windows Python. No-op elsewhere.
-
-    dispatch.env is sourced by git-bash on Windows, so we STORE the POSIX form;
-    we only convert a copy here to check the file actually exists on disk."""
-    if os.name != "nt":
-        return path
-    if len(path) >= 3 and path[0] == "/" and path[2] == "/" and path[1].isalpha():
-        path = f"{path[1].upper()}:/" + path[3:]
-    return path.replace("/", "\\")
+    """Translate legacy Git-Bash paths while migrating to native Windows paths."""
+    return native_executable(path)
 
 
 def probe_is_file(path: str) -> bool:
@@ -251,23 +247,21 @@ def probe_is_file(path: str) -> bool:
 def resolve_bus_bin(cli_val: str, agent_bus_repo: str) -> tuple:
     """Return (path, note). Probe order: --bus-bin > env > repo venv > PATH > default.
 
-    The RETURNED value stays in the caller's path style (git-bash POSIX on
-    Windows, since dispatch.env is sourced by git-bash); only existence probing
-    converts to native form."""
+    New Windows files store native paths. Legacy Git-Bash paths remain probeable."""
     env_val = os.environ.get("AWF_BUS_BIN", "")
     if cli_val:
         return cli_val, "from --bus-bin"
     if env_val:
         return env_val, "from existing AWF_BUS_BIN env"
     defaults = PLATFORM_DEFAULTS[platform_key()]
-    # Join POSIX-style (not pathlib) so the stored value keeps its /d/... form.
-    candidate = agent_bus_repo.rstrip("/") + "/" + defaults["bus_bin_rel"]
-    if probe_is_file(candidate):
+    # Forward slashes are accepted by native Windows Python and remain portable data.
+    candidate = agent_bus_repo.rstrip("/") + "/" + defaults["bus_bin_rel"] if agent_bus_repo else ""
+    if candidate and probe_is_file(candidate):
         return candidate, "probed agent-bus repo venv"
     on_path = shutil.which("agent-bus")
     if on_path:
         return on_path, "found on PATH"
-    return candidate, "DEFAULT (not verified - please check this path)"
+    return "agent-bus", "default command name (not yet verified)"
 
 
 def resolve_opencode_bin(cli_val: str) -> tuple:
@@ -303,24 +297,27 @@ def build_env_lines(url, tokens, roles, bus_bin, opencode_bin, via="curl") -> li
         if via == "curl"
         else "the VPS /etc/agent-bus/.env AGENT_BUS_AGENT_TOKENS source of truth"
     )
-    lines = [
+    comments = [
         "# Agent Workflow dispatch/listen credentials.",
         f"# Generated by scripts/awf_bootstrap.py (via {via}) from",
         f"# {src}. Do NOT commit. chmod 600.",
-        f"export AGENT_BUS_URL={url}",
     ]
+    values = {"AGENT_BUS_URL": url}
     for role in roles:
         var = ROLE_TO_TOKEN_VAR[role]
         tok = tokens.get(role)
         if not tok:
             die(f"role '{role}' requested but no token for it on the VPS")
-        lines.append(f"export {var}={tok}")
+        values[var] = tok
     if bus_bin:
-        lines.append(f"export AWF_BUS_BIN={bus_bin}")
+        values["AWF_BUS_BIN"] = bus_bin
     if opencode_bin:
-        lines.append(f"export AWF_OPENCODE_BIN={opencode_bin}")
-    lines.append("")  # trailing newline
-    return lines
+        values["AWF_OPENCODE_BIN"] = opencode_bin
+    try:
+        body = serialize_config(values).splitlines()
+    except ConfigError as exc:
+        die(f"refusing to write invalid operations configuration: {exc}")
+    return [*comments, *body, ""]
 
 
 def redact_lines(lines: list) -> list:
@@ -330,8 +327,9 @@ def redact_lines(lines: list) -> list:
     for ln in lines:
         masked = ln
         for var in token_vars:
-            if ln.startswith(f"export {var}="):
-                masked = f"export {var}=****(redacted)"
+            prefix = "export " if ln.startswith("export ") else ""
+            if ln.startswith(f"{prefix}{var}="):
+                masked = f"{prefix}{var}=****(redacted)"
                 break
         out.append(masked)
     return out
@@ -350,37 +348,103 @@ def lock_permissions(path: Path) -> str:
             os.chmod(path, 0o600)
             return "chmod 600"
         except OSError as e:
-            return f"chmod failed ({e})"
+            die(f"could not restrict configuration permissions: {e}")
     # Windows: lock via ACL.
-    user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
-    if not user:
-        return "WARN: could not determine USERNAME; ACL not tightened"
+    identity = subprocess.run(["whoami"], capture_output=True, text=True)
+    principal = identity.stdout.strip() if identity.returncode == 0 else ""
+    if not principal:
+        die("could not determine the current Windows principal for ACL lockdown")
     proc = subprocess.run(
-        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"],
         capture_output=True,
         text=True,
     )
-    if proc.returncode == 0:
-        return f"icacls: owner-only ({user})"
-    return f"WARN: icacls failed (rc={proc.returncode}); file may be readable by others"
+    if proc.returncode != 0:
+        die("could not restrict the Windows configuration ACL")
+    acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+    if acl.returncode != 0:
+        die("could not verify the Windows configuration ACL")
+    aces = _parse_icacls_aces(path, acl.stdout)
+    if not aces:
+        die("could not parse the Windows configuration ACL")
+    for other, _permissions in aces:
+        if other.casefold() == principal.casefold():
+            continue
+        for removal in ("/remove:g", "/remove:d"):
+            removed = subprocess.run(
+                ["icacls", str(path), removal, other],
+                capture_output=True,
+                text=True,
+            )
+            if removed.returncode != 0:
+                die("could not remove an extra Windows configuration principal")
+    try:
+        validate_config_path(
+            path,
+            platform="windows",
+            expected_uid=None,
+            runner=subprocess.run,
+        )
+    except ConfigError:
+        die("could not establish an owner-only Windows configuration ACL")
+    return "icacls: owner-only"
+
+
+def _lock_and_write_open_fd(fd: int, path: Path, content: bytes) -> str:
+    """Lock a mkstemp path, then write through its still-open descriptor."""
+    try:
+        note = lock_permissions(path)
+    except BaseException:
+        os.close(fd)
+        raise
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return note
+
+
+def _atomic_owner_only_write(target: Path, content: bytes, *, prefix: str) -> str:
+    """Create, lock, then populate a same-directory temp before atomic replace."""
+    fd, temporary_name = tempfile.mkstemp(prefix=prefix, dir=str(target.parent))
+    temporary = Path(temporary_name)
+    try:
+        note = _lock_and_write_open_fd(fd, temporary, content)
+        os.replace(temporary, target)
+        return note
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def write_env_file(dest: Path, lines: list, force: bool) -> None:
+    if not dest.is_absolute():
+        die("configuration destination must be an absolute path")
     if dest.exists() and not force:
-        die(f"{dest} already exists; pass --force to overwrite (a .bak is kept)")
+        die("destination already exists; pass --force to overwrite (a .bak is kept)")
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and force:
+        try:
+            validate_config_path(
+                dest,
+                platform="windows" if os.name == "nt" else "posix",
+                expected_uid=None,
+                runner=subprocess.run,
+            )
+        except ConfigError as exc:
+            die(f"existing configuration path is unsafe: {exc}")
         backup = dest.with_suffix(dest.suffix + ".bak")
-        shutil.copy2(dest, backup)
-        lock_permissions(backup)
+        if backup.exists() or backup.is_symlink():
+            die("refusing to replace an existing configuration backup")
+        _atomic_owner_only_write(backup, dest.read_bytes(), prefix=".dispatch-backup-")
         log(f"backed up existing file -> {backup.name}")
-    # Write with restrictive perms from the start (avoid a 0644 window on POSIX).
-    fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-    finally:
-        note = lock_permissions(dest)
+    note = _atomic_owner_only_write(
+        dest,
+        "\n".join(lines).encode("utf-8"),
+        prefix=".dispatch-",
+    )
     log(f"permissions: {note}")
 
 
@@ -409,17 +473,15 @@ def main(argv=None) -> int:
     )
     p.add_argument(
         "--source-host",
-        default=DEFAULT_SOURCE_HOST,
-        help=f"[--via ssh] ssh alias of the token source (default: {DEFAULT_SOURCE_HOST})",
+        default=os.environ.get("AWF_BOOTSTRAP_SOURCE_HOST", DEFAULT_SOURCE_HOST),
+        help="[--via ssh] ssh alias of the token source (or AWF_BOOTSTRAP_SOURCE_HOST)",
     )
     p.add_argument(
         "--source-path",
         default=DEFAULT_SOURCE_PATH,
         help=f"path to the source .env on the host (default: {DEFAULT_SOURCE_PATH})",
     )
-    p.add_argument(
-        "--url", default="", help=f"AGENT_BUS_URL (default: existing value or {DEFAULT_URL})"
-    )
+    p.add_argument("--url", default="", help="AGENT_BUS_URL (default: existing environment value)")
     p.add_argument(
         "--roles",
         default="architect,coder,reviewer",
@@ -453,7 +515,11 @@ def main(argv=None) -> int:
             die(f"unknown role '{r}' (known: {', '.join(ROLE_TO_TOKEN_VAR)})")
 
     dest = Path(a.dest) if a.dest else Path.home() / ".config/awf/dispatch.env"
-    url = a.url or os.environ.get("AGENT_BUS_URL", "") or DEFAULT_URL
+    url = a.url or os.environ.get("AGENT_BUS_URL", "")
+    if not url:
+        die("AGENT_BUS_URL must be supplied through --url or the environment")
+    if a.via == "ssh" and not a.source_host:
+        die("--via ssh requires --source-host or AWF_BOOTSTRAP_SOURCE_HOST")
 
     defaults = PLATFORM_DEFAULTS[platform_key()]
     agent_bus_repo = a.agent_bus_repo or defaults["agent_bus_repo"]
@@ -463,17 +529,17 @@ def main(argv=None) -> int:
     # For --via curl the bootstrap secret must be in the environment (never a flag).
     boot_secret = os.environ.get("AGENT_BUS_BOOTSTRAP_SECRET", "").strip()
 
-    log(f"platform={platform_key()} dest={dest} via={a.via}")
+    log(f"platform={platform_key()} destination=withheld via={a.via}")
     if a.via == "ssh":
-        log(f"source={a.source_host}:{a.source_path} roles={','.join(roles)}")
+        log(f"source=ssh (location withheld) roles={','.join(roles)}")
     else:
-        log(f"source={url}/bootstrap/token roles={','.join(roles)}")
-    log(f"AGENT_BUS_URL={url}")
-    log(f"AWF_BUS_BIN={bus_bin}  ({bus_note})")
-    log(f"AWF_OPENCODE_BIN={opencode_bin or '<unset>'}  ({oc_note})")
-    if "DEFAULT" in bus_note:
+        log(f"source=bootstrap endpoint (location withheld) roles={','.join(roles)}")
+    log("AGENT_BUS_URL=configured (value withheld)")
+    log(f"AWF_BUS_BIN={'configured' if bus_bin else 'unset'} ({bus_note})")
+    log(f"AWF_OPENCODE_BIN={'configured' if opencode_bin else 'unset'} ({oc_note})")
+    if "not yet verified" in bus_note:
         log("WARN: AWF_BUS_BIN is an unverified default - confirm the path or pass --bus-bin")
-    if "DEFAULT" in oc_note:
+    if "not yet verified" in oc_note:
         log("WARN: AWF_OPENCODE_BIN is an unverified default - confirm or pass --opencode-bin")
 
     if a.via == "curl" and not boot_secret:
@@ -483,19 +549,19 @@ def main(argv=None) -> int:
         )
 
     if a.dry_run:
-        how = "curl POST /bootstrap/token" if a.via == "curl" else f"ssh {a.source_host}"
+        how = "curl POST /bootstrap/token" if a.via == "curl" else "ssh token source"
         log(f"--dry-run: would fetch tokens via {how} and write dispatch.env. Nothing done.")
         return 0
 
     # Refuse an existing file BEFORE the network round-trip (only when actually writing).
     if not a.do_print and dest.exists() and not a.force:
-        die(f"{dest} already exists; pass --force to overwrite (a .bak is kept)")
+        die("destination already exists; pass --force to overwrite (a .bak is kept)")
 
     if a.via == "curl":
         log(f"fetching {len(roles)} token(s) via curl (values are never printed)...")
         tokens = fetch_tokens_curl(url, boot_secret, roles)
     else:
-        log(f"fetching tokens from {a.source_host} over ssh (values are never printed)...")
+        log("fetching tokens over ssh (source and values withheld)...")
         tokens = parse_tokens(fetch_tokens_line(a.source_host, a.source_path))
     missing = [r for r in roles if r not in tokens]
     if missing:
@@ -511,7 +577,7 @@ def main(argv=None) -> int:
         return 0
 
     write_env_file(dest, lines, a.force)
-    log(f"wrote {dest} (chmod 600). {len(roles)} role token(s) installed.")
+    log(f"wrote owner-only configuration. {len(roles)} role token(s) installed.")
     log("next: `awf-handoff-check` to verify this machine can dispatch/execute.")
     return 0
 

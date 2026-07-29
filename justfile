@@ -3,7 +3,7 @@
 # A fixed verb menu so a weak model (or you) can run/stop/inspect the listener
 # without remembering launchctl/systemctl/WinSW syntax. Each mutating verb guards
 # before it acts (idempotent). Secrets never appear here — they live in the 0600
-# ~/.config/awf/dispatch.env that the service wrapper sources.
+# ~/.config/awf/dispatch.env that native Python parses strictly as data.
 #
 # `just` is NOT auto-installed. Install it once per machine:
 #   macOS:    brew install just
@@ -72,7 +72,7 @@ install-service: _need-repo
 install-service: _need-repo
     @echo "Windows: WinSW is manual (download WinSW.exe once). See scripts/service/README.md."
     @echo "  1) copy scripts/service/agent-workflow-listener.xml next to WinSW.exe (renamed agent-workflow-listener.exe)"
-    @echo "  2) fill __ROLE__/__REPO__/__TOOL__/__CMD_WRAPPER__/__GITBASH__ placeholders"
+    @echo "  2) fill __ROLE__/__REPO__/__TOOL__/__CMD_WRAPPER__/__PYTHON__ placeholders"
     @echo "  3) agent-workflow-listener.exe install && agent-workflow-listener.exe start"
 
 # --- uninstall-service ------------------------------------------------------
