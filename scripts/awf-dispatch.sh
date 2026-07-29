@@ -41,16 +41,26 @@ set -uo pipefail
 if [ "${AWF_CONFIG_LOADED:-0}" != "1" ]; then
   AWF_CONFIG_PYTHON="${AWF_PYTHON_BIN:-}"
   if [ -z "$AWF_CONFIG_PYTHON" ]; then
-    if command -v python3 >/dev/null 2>&1; then
+    case "$(uname -s 2>/dev/null || true)" in
+      MINGW*|MSYS*|CYGWIN*)
+        command -v python >/dev/null 2>&1 && AWF_CONFIG_PYTHON="python"
+        ;;
+    esac
+    if [ -z "$AWF_CONFIG_PYTHON" ] && command -v python3 >/dev/null 2>&1; then
       AWF_CONFIG_PYTHON="python3"
-    elif command -v python >/dev/null 2>&1; then
+    elif [ -z "$AWF_CONFIG_PYTHON" ] && command -v python >/dev/null 2>&1; then
       AWF_CONFIG_PYTHON="python"
-    else
+    elif [ -z "$AWF_CONFIG_PYTHON" ]; then
       echo "awf-dispatch: python 3 is required to load operations configuration" >&2
       exit 2
     fi
   fi
   AWF_DISPATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+  case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*)
+      AWF_DISPATCH_DIR="$(cd "$(dirname "$0")" && pwd -W)"
+      ;;
+  esac
   exec "$AWF_CONFIG_PYTHON" "$AWF_DISPATCH_DIR/awf_config.py" --optional -- \
     bash "$0" "$@"
 fi

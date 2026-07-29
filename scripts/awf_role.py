@@ -225,6 +225,12 @@ _INPUT_TYPES = {
     "task:awf-rework": ("reviewer", "coder"),
     "task:awf-rework-v2": ("reviewer", "coder"),
     "task:awf-rework-v3": ("reviewer", "coder"),
+    "decision:awf-ready": ("reviewer", "architect"),
+    "decision:awf-ready-v2": ("reviewer", "architect"),
+    "decision:awf-ready-v3": ("reviewer", "architect"),
+    "decision:awf-blocked": ("reviewer", "architect"),
+    "decision:awf-blocked-v2": ("reviewer", "architect"),
+    "decision:awf-blocked-v3": ("reviewer", "architect"),
 }
 
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9_.-]{1,100}$")
@@ -375,13 +381,23 @@ def input_payload(a: argparse.Namespace, role: str) -> dict[str, object]:
         "model": a.model,
         "report": a.report,
     }
-    if input_type in {"task:awf-rework", "task:awf-rework-v2", "task:awf-rework-v3"}:
+    if input_type in {
+        "task:awf-rework",
+        "task:awf-rework-v2",
+        "task:awf-rework-v3",
+        "decision:awf-ready",
+        "decision:awf-ready-v2",
+        "decision:awf-ready-v3",
+        "decision:awf-blocked",
+        "decision:awf-blocked-v2",
+        "decision:awf-blocked-v3",
+    }:
         try:
             feedback = json.loads(getattr(a, "review_feedback", ""))
         except json.JSONDecodeError:
-            die("rework review feedback must be valid JSON")
+            die("structured review feedback must be valid JSON")
         if not isinstance(feedback, dict):
-            die("rework review feedback must be a JSON object")
+            die("structured review feedback must be a JSON object")
         payload["review_report_path"] = a.review_report
         payload["review_report"] = feedback
     else:
@@ -2044,9 +2060,14 @@ def check_report(report_path: str) -> None:
 
 def check_report_tracked_at_head(repo: str, relative_path: str) -> None:
     """Reject ignored or stale local reports that are absent from the dispatched commit."""
+    check_repo_file_tracked_at_head(repo, relative_path, "ImplementationReport")
+
+
+def check_repo_file_tracked_at_head(repo: str, relative_path: str, label: str) -> None:
+    """Reject a local file unless its exact repository-relative path is tracked at HEAD."""
     tracked = git_out(repo, "ls-files", "--", relative_path).splitlines()
     if relative_path not in tracked:
-        die("ImplementationReport is not tracked by the dispatched commit")
+        die(f"{label} is not tracked by the dispatched commit")
 
 
 _REVIEW_REPORT_RE = re.compile(r"<!--\s*awf-review-report\s*\n(.*?)\n\s*-->", re.DOTALL)
@@ -2177,6 +2198,10 @@ def parse_review_report(report_path: Path) -> dict[str, object]:
     if not isinstance(data, dict) or set(data) != _REVIEW_REPORT_KEYS:
         die("ReviewReport machine object has missing or unknown fields")
 
+    return _normalize_review_report(data, markdown)
+
+
+def _normalize_review_report(data: dict[str, object], markdown: str) -> dict[str, object]:
     verdict = data["verdict"]
     if not isinstance(verdict, str) or verdict not in _REVIEW_VERDICTS:
         die("ReviewReport verdict must be exactly PASS, REQUEST_CHANGES, or BLOCKED")
@@ -2212,6 +2237,42 @@ def parse_review_report(report_path: Path) -> dict[str, object]:
     encoded = json.dumps(normalized).encode("utf-8")
     if len(encoded) > _REVIEW_REPORT_MAX_BYTES:
         die("normalized ReviewReport exceeds 16 KiB")
+    return normalized
+
+
+def validate_embedded_review_report(data: object) -> dict[str, object]:
+    """Revalidate the exact normalized ReviewReport carried by a decision event."""
+    expected_keys = {
+        "format",
+        "verdict",
+        "deterministic_failures",
+        "blocked_reason",
+        "markdown",
+    }
+    if not isinstance(data, dict) or set(data) != expected_keys:
+        die("embedded ReviewReport has missing or unknown fields")
+    if data.get("format") != "awf.review-report.v1":
+        die("embedded ReviewReport format is unsupported")
+    markdown = data.get("markdown")
+    if not isinstance(markdown, str) or not markdown.strip():
+        die("embedded ReviewReport markdown is missing")
+    if _DIFF_BODY_RE.search(markdown):
+        die("embedded ReviewReport must not contain full diff or patch bodies")
+    secret_label = _scan_text(markdown)
+    if secret_label:
+        die(f"embedded ReviewReport contains prohibited {secret_label} material")
+    blocks = _REVIEW_REPORT_RE.findall(markdown)
+    if len(blocks) != 1:
+        die("embedded ReviewReport must contain exactly one awf-review-report object")
+    try:
+        machine = json.loads(blocks[0], object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, DuplicateReviewReportKey):
+        die("embedded ReviewReport machine object is malformed or contains duplicate fields")
+    if not isinstance(machine, dict) or set(machine) != _REVIEW_REPORT_KEYS:
+        die("embedded ReviewReport machine object has missing or unknown fields")
+    normalized = _normalize_review_report(machine, markdown)
+    if normalized != data:
+        die("embedded ReviewReport does not match its normalized machine object")
     return normalized
 
 
@@ -3882,7 +3943,63 @@ def role_reviewer(a: argparse.Namespace) -> int:
     return 0
 
 
-ROLES = {"coder": role_coder, "reviewer": role_reviewer}
+def role_architect(a: argparse.Namespace) -> int:
+    """Consume a terminal reviewer decision without invoking a model or routing again."""
+    repo = env("AWF_REPO_DIR", required=True)
+    evidence = getattr(a, "evidence", None)
+    input_context = validate_input_delivery(a, "architect", evidence)
+    if inbox_completed(
+        evidence,
+        str(input_context["delivery_id"]),
+        str(input_context["payload_sha256"]),
+    ):
+        if evidence is not None:
+            evidence.record("terminal_decision_replayed", decision_type=a.input_type)
+        return 0
+
+    try:
+        embedded = json.loads(a.review_feedback)
+    except json.JSONDecodeError:
+        die("architect review feedback must be valid JSON")
+    review_report = validate_embedded_review_report(embedded)
+    expected_verdict = "PASS" if "ready" in a.input_type else "BLOCKED"
+    if review_report["verdict"] != expected_verdict:
+        die("architect decision type does not match the embedded ReviewReport verdict")
+
+    provenance = None
+    if _is_v3(a):
+        provenance = provenance_from_args(a, repo, require_pr=True)
+        fetch_and_checkout_pr_head(repo, provenance, verify_pr=True)
+    else:
+        fetch_and_checkout(repo, a.branch, a.commit)
+
+    card_path = resolve_repo_file(repo, a.card, "TaskCard")
+    if not card_path.is_file():
+        die("TaskCard is not tracked at the terminal decision commit")
+    check_repo_file_tracked_at_head(repo, a.card, "TaskCard")
+    report_path = resolve_repo_file(repo, a.report, "ImplementationReport")
+    check_report(str(report_path))
+    check_report_tracked_at_head(repo, a.report)
+    resolve_review_report_path(repo, a.review_report, a.report)
+
+    if evidence is not None:
+        evidence.record(
+            "terminal_decision_verified",
+            decision_type=a.input_type,
+            verdict=expected_verdict,
+            branch=a.branch,
+            commit=a.commit,
+            pull_request=provenance["pull_request"] if provenance is not None else 0,
+        )
+    complete_inbox(
+        evidence,
+        str(input_context["delivery_id"]),
+        str(input_context["payload_sha256"]),
+    )
+    return 0
+
+
+ROLES = {"architect": role_architect, "coder": role_coder, "reviewer": role_reviewer}
 
 
 def main(argv: list[str] | None = None) -> int:

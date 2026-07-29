@@ -93,6 +93,8 @@ Remaining Phase 2 work:
   model/process, artifact/tree, commit, fork, PR, and prepared/attempting/ambiguous/sent outbox
   boundaries. Both reviewer model adapters preserve zero additional invocations after
   `model_started`.
+- [x] Add a no-model architect terminal consumer for validated ready/blocked decisions so terminal
+  ACK and pending-empty do not depend on a manual handler.
 - [ ] Record the capacity-isolation metrics defined in
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.

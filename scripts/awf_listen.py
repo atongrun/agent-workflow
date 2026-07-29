@@ -29,7 +29,11 @@ from awf_config import ConfigError, default_config_path, load_into_environment, 
 from awf_control_plane import ControlPlaneDenied, authorize_operation, load_authority_manifest
 from awf_network import add_url_host_to_no_proxy
 
-DEFAULT_ON_TYPE = {"coder": "task:awf-impl-v3", "reviewer": "task:awf-review-v3"}
+DEFAULT_ON_TYPE = {
+    "architect": "decision:awf-ready-v3",
+    "coder": "task:awf-impl-v3",
+    "reviewer": "task:awf-review-v3",
+}
 
 
 def die(msg: str):
@@ -93,11 +97,15 @@ def build_handler(
             "--pull-request",
             "{payload.pull_request}",
         ]
-    if role == "coder" and on_type in {
-        "task:awf-rework",
-        "task:awf-rework-v2",
-        "task:awf-rework-v3",
-    }:
+    if (
+        role == "coder"
+        and on_type
+        in {
+            "task:awf-rework",
+            "task:awf-rework-v2",
+            "task:awf-rework-v3",
+        }
+    ) or (role == "architect" and on_type.startswith("decision:awf-")):
         fields += [
             "--review-report",
             "{payload.review_report_path}",
@@ -138,8 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     a = p.parse_args(argv)
 
-    config_path = a.config or default_config_path()
-    if config_path.exists():
+    try:
+        config_path = a.config or default_config_path()
+    except RuntimeError:
+        config_path = None
+    if config_path is not None and config_path.exists():
         try:
             load_into_environment(config_path)
         except ConfigError as exc:
@@ -161,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     url = os.environ.get("AGENT_BUS_URL")
     if not url:
         die("set AGENT_BUS_URL or create the strict operations configuration")
-    token_var = f"AWF_{a.role.upper()}_TOKEN"
+    token_var = "AWF_ARCH_TOKEN" if a.role == "architect" else f"AWF_{a.role.upper()}_TOKEN"
     token = os.environ.get(token_var)
     if not token:
         die(f"set {token_var} or create the strict operations configuration")
@@ -199,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     active_types = [on_type]
     if a.role == "coder" and on_type == DEFAULT_ON_TYPE["coder"]:
         active_types.append("task:awf-rework-v3")
+    elif a.role == "architect" and on_type == DEFAULT_ON_TYPE["architect"]:
+        active_types.append("decision:awf-blocked-v3")
     os.environ["AWF_ACTIVE_ROUTE_TYPES"] = ",".join(active_types)
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role

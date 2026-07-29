@@ -16,8 +16,21 @@ def write_config(path: Path, text: str) -> Path:
     return path
 
 
-@pytest.mark.parametrize("platform", ["darwin", "linux"])
-def test_parse_accepts_legacy_export_without_shell_interpretation(tmp_path, platform):
+def host_uid(path: Path) -> int:
+    getter = getattr(os, "geteuid", None)
+    return getter() if getter is not None else path.stat().st_uid
+
+
+def owner_acl_runner(path: Path):
+    def run_acl(argv, **_kwargs):
+        if argv[0] == "whoami":
+            return subprocess.CompletedProcess(argv, 0, "HOST\\owner\n", "")
+        return subprocess.CompletedProcess(argv, 0, f"{path} HOST\\owner:(F)\n", "")
+
+    return run_acl
+
+
+def test_parse_accepts_legacy_export_without_shell_interpretation(tmp_path):
     path = write_config(
         tmp_path / "dispatch.env",
         "\n".join(
@@ -31,7 +44,7 @@ def test_parse_accepts_legacy_export_without_shell_interpretation(tmp_path, plat
         ),
     )
 
-    loaded = awf_config.load_config(path, platform=platform, expected_uid=os.geteuid())
+    loaded = awf_config.parse_config_text(path.read_text(encoding="utf-8"))
 
     assert loaded["AGENT_BUS_URL"] == "http://bus.invalid:8800"
     assert loaded["AWF_CODER_TOKEN"] == "controlled-token"
@@ -51,11 +64,9 @@ def test_parse_accepts_legacy_export_without_shell_interpretation(tmp_path, plat
         ("AWF_CODER_TOKEN=value\x00tail\n", "NUL"),
     ],
 )
-def test_parse_fails_closed_without_echoing_values(tmp_path, text, reason):
-    path = write_config(tmp_path / "dispatch.env", text)
-
+def test_parse_fails_closed_without_echoing_values(text, reason):
     with pytest.raises(awf_config.ConfigError) as exc:
-        awf_config.load_config(path, platform="posix", expected_uid=os.geteuid())
+        awf_config.parse_config_text(text)
 
     assert reason.casefold() in str(exc.value).casefold()
     assert "one" not in str(exc.value)
@@ -63,26 +74,27 @@ def test_parse_fails_closed_without_echoing_values(tmp_path, text, reason):
     assert "value\x00tail" not in str(exc.value)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode contract")
 def test_posix_permissions_owner_and_regular_path_are_fail_closed(tmp_path, monkeypatch):
     path = write_config(tmp_path / "dispatch.env", "AWF_CODER_TOKEN=secret\n")
     path.chmod(0o640)
     with pytest.raises(awf_config.ConfigError, match="owner-only"):
-        awf_config.load_config(path, platform="posix", expected_uid=os.geteuid())
+        awf_config.load_config(path, platform="posix", expected_uid=host_uid(path))
 
     path.chmod(0o600)
     with pytest.raises(awf_config.ConfigError, match="owner"):
-        awf_config.load_config(path, platform="posix", expected_uid=os.geteuid() + 1)
+        awf_config.load_config(path, platform="posix", expected_uid=host_uid(path) + 1)
 
     target = write_config(tmp_path / "target.env", "AWF_CODER_TOKEN=secret\n")
     link = tmp_path / "link.env"
     link.symlink_to(target)
     with pytest.raises(awf_config.ConfigError, match="symbolic link"):
-        awf_config.load_config(link, platform="posix", expected_uid=os.geteuid())
+        awf_config.load_config(link, platform="posix", expected_uid=host_uid(target))
 
     relative = Path("dispatch.env")
     monkeypatch.chdir(tmp_path)
     with pytest.raises(awf_config.ConfigError, match="absolute"):
-        awf_config.load_config(relative, platform="posix", expected_uid=os.geteuid())
+        awf_config.load_config(relative, platform="posix", expected_uid=host_uid(path))
 
 
 def test_windows_acl_validation_is_deterministic_and_does_not_echo_secrets(tmp_path):
@@ -123,11 +135,12 @@ def test_apply_config_overrides_only_allowlisted_keys(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("AWF_REVIEWER_TOKEN", "old")
 
-    loaded = awf_config.load_into_environment(
-        path,
-        platform="posix",
-        expected_uid=os.geteuid(),
+    kwargs = (
+        {"platform": "windows", "runner": owner_acl_runner(path)}
+        if os.name == "nt"
+        else {"platform": "posix", "expected_uid": host_uid(path)}
     )
+    loaded = awf_config.load_into_environment(path, **kwargs)
 
     assert loaded["AWF_REVIEWER_TOKEN"] == "from-file"
     assert os.environ["AWF_REVIEWER_TOKEN"] == "old"

@@ -7,12 +7,15 @@ gates.
 
 ## Scope
 
-This change closes two operations-surface gaps without changing the stateless `awf` core:
+This change closes three operations-surface gaps without changing the stateless `awf` core:
 
 1. one strict, shell-free Python configuration loader shared by bootstrap, handoff checks,
    listeners, dispatch, and native service entry points;
 2. an automated coder/reviewer recovery matrix covering every durable phase and downstream outbox
-   status.
+   status;
+3. a deterministic architect terminal consumer that validates the same delivery, embedded
+   ReviewReport, PR provenance, tracked ImplementationReport, and exact head before completing the
+   inbox. It invokes no model and emits no replacement event.
 
 It does not claim that the required three-card uninterrupted Mac → Windows → Mac → architect
 dogfood has passed.

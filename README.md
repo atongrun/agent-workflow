@@ -153,6 +153,9 @@ handoff checks, listeners, dispatch, and native service entry points share the s
 parser. Production wrappers no longer source `dispatch.env`, and the Windows service no longer
 depends on Git Bash. CI exercises the recovery/configuration suite on Linux and Windows; this is
 automated infrastructure evidence, not the separate three-card live dogfood gate.
+The architect listener also consumes validated `PASS` and `BLOCKED` terminal decisions
+deterministically, so a successful route can reach automatic ACK and pending-empty without a manual
+terminal handler.
 
 ## Product Gate
 

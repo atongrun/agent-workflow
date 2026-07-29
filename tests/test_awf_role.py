@@ -162,6 +162,19 @@ def test_rework_handler_maps_report_path_and_structured_feedback():
     assert "--review-feedback {payload.review_report}" in handler
 
 
+def test_architect_handler_maps_terminal_report_and_provenance():
+    handler = awf_listen.build_handler(
+        "python",
+        "awf_role.py",
+        "architect",
+        on_type="decision:awf-ready-v3",
+    )
+
+    assert "--review-report {payload.review_report_path}" in handler
+    assert "--review-feedback {payload.review_report}" in handler
+    assert "--pull-request {payload.pull_request}" in handler
+
+
 def test_listener_adds_bus_host_to_existing_no_proxy_entries():
     environment = {
         "NO_PROXY": "localhost,127.0.0.1",
@@ -2057,6 +2070,92 @@ _COMMAND_FAILURE = {
 }
 
 
+def _architect_decision_args(tmp_path, verdict="PASS"):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "task.md").write_text("card\n", encoding="utf-8")
+    (repo / "implementation.md").write_text("implementation\n", encoding="utf-8")
+    review_source = tmp_path / "review.md"
+    review_source.write_text(
+        _review_markdown(
+            verdict,
+            blocked_reason="External constraint" if verdict == "BLOCKED" else "",
+        ),
+        encoding="utf-8",
+    )
+    normalized = awf_role.parse_review_report(review_source)
+    provenance = _pr_provenance()
+    event_type = "decision:awf-ready-v3" if verdict == "PASS" else "decision:awf-blocked-v3"
+    ns = argparse.Namespace(
+        input_type=event_type,
+        source_event_id=88,
+        branch=provenance["head_ref"],
+        card="task.md",
+        commit=provenance["head_sha"],
+        model="",
+        tool="codex",
+        report="implementation.md",
+        review_report=".awf/review.md",
+        review_feedback=json.dumps(normalized),
+        **awf_role.provenance_payload(provenance),
+    )
+    payload = awf_role.input_payload(ns, "architect")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "reviewer", event_type, ns.payload_sha256, ns.source_event_id
+    )
+    return repo, provenance, ns
+
+
+@pytest.mark.parametrize("verdict", ["PASS", "BLOCKED"])
+def test_architect_terminal_consumer_completes_and_replays_without_model(
+    monkeypatch, tmp_path, verdict
+):
+    repo, provenance, ns = _architect_decision_args(tmp_path, verdict)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(201, "architect", state_root=state_root)
+    monkeypatch.setenv("AWF_REPO_DIR", str(repo))
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    checkout_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "fetch_and_checkout_pr_head",
+        lambda *args, **kwargs: checkout_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(awf_role, "check_report_tracked_at_head", lambda *args: None)
+    monkeypatch.setattr(awf_role, "check_repo_file_tracked_at_head", lambda *args: None)
+
+    assert awf_role.role_architect(ns) == 0
+    assert len(checkout_calls) == 1
+    inbox = awf_role.delivery_state_path(ns.evidence, "inbox", ns.delivery_id)
+    assert json.loads(inbox.read_text(encoding="utf-8"))["status"] == "completed"
+
+    ns.evidence = awf_role.RunEvidence(202, "architect", state_root=state_root)
+    monkeypatch.setattr(
+        awf_role,
+        "fetch_and_checkout_pr_head",
+        lambda *args, **kwargs: pytest.fail("completed terminal delivery must replay directly"),
+    )
+    assert awf_role.role_architect(ns) == 0
+
+
+def test_architect_terminal_consumer_rejects_report_drift_without_completing_inbox(
+    monkeypatch, tmp_path
+):
+    repo, provenance, ns = _architect_decision_args(tmp_path)
+    ns.evidence = awf_role.RunEvidence(203, "architect", state_root=tmp_path / "state")
+    monkeypatch.setenv("AWF_REPO_DIR", str(repo))
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    embedded = json.loads(ns.review_feedback)
+    embedded["verdict"] = "BLOCKED"
+    ns.review_feedback = json.dumps(embedded)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_architect(ns)
+
+    assert not awf_role.delivery_state_path(ns.evidence, "inbox", ns.delivery_id).exists()
+
+
 def _prepare_reviewer_routing(
     monkeypatch,
     tmp_path,
@@ -2999,7 +3098,8 @@ def test_bootstrap_write_is_atomic_and_rejects_symlink_destination(tmp_path, mon
         force=False,
     )
     assert destination.read_text(encoding="utf-8").endswith("\n")
-    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o600
 
     locked: list[Path] = []
     events: list[str] = []
