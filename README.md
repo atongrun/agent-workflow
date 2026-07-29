@@ -147,6 +147,13 @@ boundaries. Duplicate deliveries resume from the last trusted boundary; an ambig
 invocation is never repeated. A retained Windows-to-Mac proof recovered the same coder and reviewer
 deliveries, routed a structured PASS, and completed architect ACK without repeating either model.
 
+The operations surface also has one strict, cross-platform Python
+[configuration loader](docs/tasks/config-recovery-maturity-implementation-report.md). Bootstrap,
+handoff checks, listeners, dispatch, and native service entry points share the same data-only
+parser. Production wrappers no longer source `dispatch.env`, and the Windows service no longer
+depends on Git Bash. CI exercises the recovery/configuration suite on Linux and Windows; this is
+automated infrastructure evidence, not the separate three-card live dogfood gate.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream

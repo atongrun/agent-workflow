@@ -9,8 +9,8 @@
     3.  agent-workflow-listener.exe install
         agent-workflow-listener.exe start
 
-  Holds NO secrets — only role/repo/tool. The .cmd shim runs the POSIX wrapper via
-  git-bash, which sources dispatch.env for AGENT_BUS_URL / AWF_<ROLE>_TOKEN / AWF_BUS_BIN.
+  Holds NO secrets — only role/repo/tool. The .cmd shim starts native Python,
+  which strictly parses dispatch.env as data.
 
   onfailure restart => auto-restart on a crash. A clean stop (control:shutdown or
   `stop`) does not loop.
@@ -27,7 +27,7 @@
   <env name="AWF_ROLE" value="__ROLE__"/>
   <env name="AWF_REPO" value="__REPO__"/>
   <env name="AWF_TOOL" value="__TOOL__"/>
-  <env name="AWF_GITBASH" value="__GITBASH__"/>
+  <env name="AWF_PYTHON" value="__PYTHON__"/>
 
   <onfailure action="restart" delay="10 sec"/>
   <resetfailure>1 hour</resetfailure>

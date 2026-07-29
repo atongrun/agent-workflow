@@ -5,8 +5,8 @@
 # matching the existing agent-bus.service), then `systemctl daemon-reload` +
 # `systemctl enable --now`.
 #
-# Holds NO secrets — only role/repo/user. The wrapper (__WRAPPER__) sources the
-# user's ~/.config/awf/dispatch.env for AGENT_BUS_URL / AWF_<ROLE>_TOKEN / AWF_BUS_BIN.
+# Holds NO secrets — only role/repo/user. Native Python strictly parses the
+# user's ~/.config/awf/dispatch.env as data.
 #
 # --user variant: to run as `systemctl --user` instead of system-level, drop the
 # [Install] WantedBy to default.target, remove User=, install under

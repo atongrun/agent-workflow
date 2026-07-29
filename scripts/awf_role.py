@@ -729,6 +729,17 @@ def advance_recovery_checkpoint(
     return updated
 
 
+def recovery_model_policy(checkpoint: dict[str, object]) -> str:
+    """Return the only permitted model action for a validated checkpoint."""
+    validate_recovery_checkpoint(checkpoint)
+    phase = str(checkpoint["phase"])
+    if phase == "model_not_started":
+        return "invoke_once"
+    if phase == "model_started":
+        return "recover_or_fail"
+    return "skip"
+
+
 def recover_legacy_publication_checkpoint(
     evidence: RunEvidence,
     input_context: dict[str, object],
@@ -1454,11 +1465,13 @@ def recover_completed_model_checkpoint(
     workspace = facts.get("model_workspace")
     manifest_sha256 = facts.get("model_manifest_sha256")
     model_event_id = facts.get("model_event_id")
+    model_process = facts.get("model_process", "opencode")
     checkpoint_role = checkpoint.get("role")
     if (
         not isinstance(workspace, str)
         or not isinstance(manifest_sha256, str)
         or not isinstance(model_event_id, int)
+        or model_process not in {"opencode", "codex"}
         or checkpoint_role not in _RECOVERY_PHASES_BY_ROLE
         or evidence.role != checkpoint_role
         or not evidence.log_path.is_file()
@@ -1479,7 +1492,7 @@ def recover_completed_model_checkpoint(
             isinstance(item, dict)
             and item.get("event_id") == model_event_id
             and item.get("role") == checkpoint_role
-            and item.get("phase") == "opencode_start"
+            and item.get("phase") == f"{model_process}_start"
         ):
             started = index
         if (
@@ -1488,8 +1501,8 @@ def recover_completed_model_checkpoint(
             and isinstance(item, dict)
             and item.get("event_id") == model_event_id
             and item.get("role") == checkpoint_role
-            and item.get("phase") == "opencode_exit"
-            and item.get("opencode_rc") == 0
+            and item.get("phase") == f"{model_process}_exit"
+            and item.get(f"{model_process}_rc") == 0
         ):
             completed = index
             break
@@ -1508,6 +1521,7 @@ def recover_completed_model_checkpoint(
         model_workspace=restored,
         model_manifest_sha256=manifest_sha256,
         model_event_id=model_event_id,
+        model_process=model_process,
         recovered_from_process_log=True,
     )
 
@@ -2687,6 +2701,7 @@ def tool_codex_review(
     card_file: str,
     model: str,
     review_report_path: str,
+    evidence: RunEvidence | None = None,
 ) -> int:
     """Run Codex review and persist its final response at the exact report path."""
     binp = env("AWF_CODEX_BIN", "codex")
@@ -2718,7 +2733,14 @@ def tool_codex_review(
     )
     if card_file and Path(card_file).is_file():
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
-    return spawn(argv, cwd=repo, stdin=stdin, env=model_env(repo))
+    return spawn(
+        argv,
+        cwd=repo,
+        stdin=stdin,
+        env=model_env(repo),
+        evidence=evidence,
+        tracked_phase="codex" if evidence is not None else None,
+    )
 
 
 def tool_opencode_review(
@@ -3186,7 +3208,8 @@ def role_coder(a: argparse.Namespace) -> int:
 
     contract: PostflightContract | None = None
     recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_not_started"
-    if recovery_phase == "model_started":
+    model_policy = recovery_model_policy(checkpoint) if checkpoint is not None else "invoke_once"
+    if model_policy == "recover_or_fail":
         if checkpoint is not None and checkpoint_path is not None and evidence is not None:
             checkpoint = recover_completed_model_checkpoint(
                 evidence,
@@ -3228,6 +3251,7 @@ def role_coder(a: argparse.Namespace) -> int:
                 model_workspace=str(Path(model_repo).resolve()),
                 model_manifest_sha256=model_manifest_sha256,
                 model_event_id=evidence.event_id,
+                model_process=tool,
             )
         model_card_file = str(resolve_repo_file(model_repo, a.card, "TaskCard"))
         log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
@@ -3253,6 +3277,7 @@ def role_coder(a: argparse.Namespace) -> int:
                 model_workspace=str(Path(model_repo).resolve()),
                 model_manifest_sha256=model_manifest_sha256,
                 model_event_id=evidence.event_id,
+                model_process=tool,
             )
         recovery_phase = "model_completed"
     elif recovery_phase == "model_completed":
@@ -3576,6 +3601,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         die("duplicate Workflow event has no durable downstream outbox")
 
     recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_not_started"
+    model_policy = recovery_model_policy(checkpoint) if checkpoint is not None else "invoke_once"
     if checkpoint is not None and recovery_phase in {
         "model_imported",
         "pr_tuple_verified",
@@ -3620,7 +3646,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     if git_out(repo, "ls-files", "--", a.review_report):
         die("ReviewReport path must not replace a tracked repository file")
     review_report_path.parent.mkdir(parents=True, exist_ok=True)
-    if recovery_phase == "model_started":
+    if model_policy == "recover_or_fail":
         if checkpoint is not None and checkpoint_path is not None and evidence is not None:
             recovered_checkpoint = recover_completed_model_checkpoint(
                 evidence,
@@ -3642,7 +3668,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
     if tool == "codex" and checkpoint is None:
         rc = tool_codex_review(repo, base_commit, prompt_file, card_file, model, a.review_report)
-    elif tool == "opencode" and recovery_phase == "model_not_started":
+    elif tool in {"codex", "opencode"} and recovery_phase == "model_not_started":
         model_state_dir = evidence.run_dir if evidence is not None else None
         model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
         model_base = "awf-review-base"
@@ -3665,16 +3691,28 @@ def role_reviewer(a: argparse.Namespace) -> int:
                 model_workspace=str(Path(model_repo).resolve()),
                 model_manifest_sha256=model_manifest_sha256,
                 model_event_id=evidence.event_id,
+                model_process=tool,
             )
-        rc = tool_opencode_review(
-            model_repo,
-            model_base,
-            prompt_file,
-            model_card_file,
-            model,
-            str(model_review_report_path),
-            evidence,
-        )
+        if tool == "codex":
+            rc = tool_codex_review(
+                model_repo,
+                model_base,
+                prompt_file,
+                model_card_file,
+                model,
+                str(model_review_report_path),
+                evidence,
+            )
+        else:
+            rc = tool_opencode_review(
+                model_repo,
+                model_base,
+                prompt_file,
+                model_card_file,
+                model,
+                str(model_review_report_path),
+                evidence,
+            )
         if rc == 0:
             if checkpoint is not None and checkpoint_path is not None:
                 checkpoint = advance_recovery_checkpoint(
@@ -3685,13 +3723,19 @@ def role_reviewer(a: argparse.Namespace) -> int:
                     model_workspace=str(Path(model_repo).resolve()),
                     model_manifest_sha256=model_manifest_sha256,
                     model_event_id=evidence.event_id,
+                    model_process=tool,
                 )
             recovery_phase = "model_completed"
-    elif tool == "opencode" and recovery_phase != "model_not_started":
+    elif tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
         facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
         model_workspace = facts.get("model_workspace")
         manifest_sha256 = facts.get("model_manifest_sha256")
-        if not isinstance(model_workspace, str) or not isinstance(manifest_sha256, str):
+        model_process = facts.get("model_process", "opencode")
+        if (
+            not isinstance(model_workspace, str)
+            or not isinstance(manifest_sha256, str)
+            or model_process != tool
+        ):
             die("completed reviewer checkpoint is missing its durable workspace")
         model_repo = restore_durable_model_manifest(
             evidence,
@@ -3714,7 +3758,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     if rc != 0:
         die(f"reviewer tool '{tool}' failed (rc={rc}); no verdict routed")
 
-    if tool == "opencode" and recovery_phase != "model_not_started":
+    if tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
         assert_model_workspace_state(model_repo, a.commit)
         if git_out(model_repo, "rev-parse", "--verify", f"{model_base}^{{commit}}") != base_commit:
             die("model process changed the isolated reviewer base ref")

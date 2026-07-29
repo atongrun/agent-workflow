@@ -27,6 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from awf_config import ConfigError, load_config, native_executable
 from awf_network import add_url_host_to_no_proxy
 
 ROLE_TO_TOKEN_VAR = {
@@ -48,14 +49,8 @@ def record(status: str, label: str, detail: str = "") -> None:
 
 
 def posix_to_native(path: str) -> str:
-    """Convert a git-bash POSIX path (/d/...) to native (D:\\...) for probing on
-    native Windows Python. dispatch.env stores POSIX form (git-bash sources it);
-    we only convert for on-disk existence checks. No-op off Windows."""
-    if os.name != "nt":
-        return path
-    if len(path) >= 3 and path[0] == "/" and path[2] == "/" and path[1].isalpha():
-        path = f"{path[1].upper()}:/" + path[3:]
-    return path.replace("/", "\\")
+    """Translate legacy Git-Bash paths for native Windows probes."""
+    return native_executable(path)
 
 
 def is_file(path: str) -> bool:
@@ -63,19 +58,8 @@ def is_file(path: str) -> bool:
 
 
 def parse_env_file(path: Path) -> dict:
-    """Parse `export KEY=VALUE` lines into a dict. Values are held, never logged."""
-    out: dict = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :]
-        if "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        out[k.strip()] = v.strip()
-    return out
+    """Compatibility wrapper around the single strict configuration loader."""
+    return load_config(path)
 
 
 def parse_icacls_aces(dest: Path, output: str) -> list[tuple[str, str]]:
@@ -132,32 +116,39 @@ def check_windows_acl(dest: Path) -> None:
 
 def check_dispatch_env(dest: Path, role: str) -> dict:
     if not dest.is_file():
-        record(FAIL, "dispatch.env exists", f"{dest} not found -run awf_bootstrap.py")
+        record(FAIL, "dispatch.env exists", "not found - run awf_bootstrap.py")
         return {}
-    record(PASS, "dispatch.env exists", str(dest))
+    record(PASS, "dispatch.env exists", "configured path withheld")
 
     # permissions must be owner-only -never group/world/Administrators readable.
     if os.name != "nt":
         mode = stat.S_IMODE(dest.stat().st_mode)
         if mode & 0o077:
             record(
-                FAIL, "dispatch.env is owner-only", f"mode is {oct(mode)} -run: chmod 600 {dest}"
+                FAIL,
+                "dispatch.env is owner-only",
+                f"mode is {oct(mode)} - run chmod 600 on configured dispatch.env",
             )
         else:
             record(PASS, "dispatch.env is owner-only", oct(mode))
     else:
         check_windows_acl(dest)
 
-    env = parse_env_file(dest)
+    try:
+        env = parse_env_file(dest)
+        record(PASS, "dispatch.env parses strictly", "known keys only; values withheld")
+    except ConfigError as exc:
+        record(FAIL, "dispatch.env parses strictly", str(exc))
+        return {}
     # required: URL + the token var for this role + bus bin.
     need = ["AGENT_BUS_URL", ROLE_TO_TOKEN_VAR[role]]
     for key in need:
         if env.get(key):
-            record(PASS, f"{key} set", "(value withheld)" if "TOKEN" in key else env[key])
+            record(PASS, f"{key} set", "(value withheld)")
         else:
             record(FAIL, f"{key} set", "missing from dispatch.env")
     if env.get("AWF_BUS_BIN"):
-        record(PASS, "AWF_BUS_BIN set", env["AWF_BUS_BIN"])
+        record(PASS, "AWF_BUS_BIN set", "(value withheld)")
     else:
         record(WARN, "AWF_BUS_BIN set", "unset -falls back to `agent-bus` on PATH")
     return env
@@ -176,9 +167,9 @@ def check_tool(env: dict, bin_key: str, default_name: str, label: str, required:
         == 0
     )
     if ok:
-        record(PASS, f"{label} present", path)
+        record(PASS, f"{label} present", "configured executable found")
     else:
-        record(FAIL if required else WARN, f"{label} present", f"not found: {path}")
+        record(FAIL if required else WARN, f"{label} present", "configured executable not found")
 
 
 def check_bus_reachable(env: dict, role: str) -> None:
@@ -198,32 +189,41 @@ def check_bus_reachable(env: dict, role: str) -> None:
         ).returncode
         == 0
     ):
-        record(WARN, "agent-bus reachable + token scope", f"agent-bus binary not found: {bus}")
+        record(WARN, "agent-bus reachable + token scope", "configured binary not found")
         return
     child = dict(os.environ)
     child["AGENT_BUS_URL"] = url
     child["AGENT_BUS_TOKEN"] = token
     child["AGENT_BUS_AGENT"] = role
     add_url_host_to_no_proxy(child, url)
-    # dispatch.env stores the git-bash POSIX path; native Windows Python's
-    # CreateProcess needs D:\... form to actually launch the binary.
+    # Legacy files may still contain Git-Bash drive paths during migration;
+    # native Windows CreateProcess needs the translated drive form.
     argv = [posix_to_native(bus), "pending", "--count"]
     if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
         argv = ["cmd.exe", "/d", "/s", "/c", *argv]
     try:
         proc = subprocess.run(argv, env=child, capture_output=True, text=True, timeout=20)
     except FileNotFoundError:
-        record(WARN, "agent-bus reachable + token scope", f"cannot exec {bus}")
+        record(WARN, "agent-bus reachable + token scope", "cannot exec configured binary")
         return
     except subprocess.TimeoutExpired:
-        record(FAIL, "agent-bus reachable + token scope", f"timed out talking to {url}")
+        record(FAIL, "agent-bus reachable + token scope", "timed out; endpoint withheld")
         return
-    if proc.returncode == 0:
-        record(PASS, "agent-bus reachable + token scope", f"{url} (pending --count ok)")
+    count = proc.stdout.strip()
+    if proc.returncode == 0 and count.isdigit():
+        record(
+            PASS,
+            "agent-bus reachable + token scope",
+            f"pending count={count}; endpoint withheld",
+        )
+    elif proc.returncode == 0:
+        record(FAIL, "agent-bus reachable + token scope", "pending count was not an integer")
     else:
-        err = (proc.stderr or proc.stdout).strip().splitlines()
-        detail = err[-1] if err else f"exit {proc.returncode}"
-        record(FAIL, "agent-bus reachable + token scope", detail)
+        record(
+            FAIL,
+            "agent-bus reachable + token scope",
+            f"command failed (exit {proc.returncode}); endpoint withheld",
+        )
 
 
 def check_git_push(repo: str) -> None:
@@ -232,7 +232,7 @@ def check_git_push(repo: str) -> None:
         return
     rp = Path(repo)
     if not (rp / ".git").exists():
-        record(WARN, "git can push", f"{repo} is not a git work tree; skipped")
+        record(WARN, "git can push", "repo path withheld; not a git work tree")
         return
     # --dry-run tests auth + connectivity WITHOUT pushing anything.
     proc = subprocess.run(
@@ -242,11 +242,9 @@ def check_git_push(repo: str) -> None:
         timeout=45,
     )
     if proc.returncode == 0:
-        record(PASS, "git can push", f"{repo} (push --dry-run ok)")
+        record(PASS, "git can push", "push --dry-run ok; repo path withheld")
     else:
-        err = (proc.stderr or proc.stdout).strip().splitlines()
-        detail = err[-1] if err else f"exit {proc.returncode}"
-        record(FAIL, "git can push", detail)
+        record(FAIL, "git can push", f"push --dry-run failed (exit {proc.returncode})")
 
 
 def main(argv=None) -> int:

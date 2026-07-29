@@ -85,9 +85,14 @@ Completed engineering gates:
 
 Remaining Phase 2 work:
 
-- [ ] Replace shell/Git-Bash `dispatch.env` sourcing with one strict cross-platform Python
+- [x] Replace shell/Git-Bash `dispatch.env` sourcing with one strict cross-platform Python
   configuration loader shared by listener, dispatch, bootstrap, and service entry points. No
-  PowerShell dependency, credential output, interpolation, or permissive parsing is allowed.
+  PowerShell dependency, credential output, interpolation, or permissive parsing is allowed. See
+  [`docs/tasks/config-recovery-maturity-implementation-report.md`](docs/tasks/config-recovery-maturity-implementation-report.md).
+- [x] Exercise coder and reviewer recovery with an automated same-delivery fault matrix across
+  model/process, artifact/tree, commit, fork, PR, and prepared/attempting/ambiguous/sent outbox
+  boundaries. Both reviewer model adapters preserve zero additional invocations after
+  `model_started`.
 - [ ] Record the capacity-isolation metrics defined in
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.

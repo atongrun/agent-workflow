@@ -8,7 +8,7 @@ executor side has no bash/cmd/WSL shell-dialect problems on Windows.
     python awf_listen.py --role coder    --repo /path/to/repo --tool opencode --model M
     python awf_listen.py --role reviewer --repo /path/to/repo --tool codex --base master
 
-Config comes from the environment (source your dispatch.env first, or export):
+Config comes from the strict, shell-free Python loader (or an explicit environment):
     AGENT_BUS_URL, AWF_<ROLE>_TOKEN            (required)
     AWF_BUS_BIN                                (agent-bus binary; default: agent-bus)
     AWF_OPENCODE_BIN / AWF_CODEX_BIN           (tool binaries; optional)
@@ -25,6 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_control_plane import ControlPlaneDenied, authorize_operation, load_authority_manifest
 from awf_network import add_url_host_to_no_proxy
 
@@ -125,11 +126,26 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--exit-after-idle", dest="idle", type=int, default=None)
     p.add_argument("--no-push", dest="no_push", action="store_true")
     p.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="strict dispatch.env path (default: AWF_DISPATCH_ENV or ~/.config/awf/dispatch.env)",
+    )
+    p.add_argument(
         "--authority-manifest",
         type=Path,
         default=Path(__file__).resolve().parent / "authority-manifest.example.json",
     )
     a = p.parse_args(argv)
+
+    config_path = a.config or default_config_path()
+    if config_path.exists():
+        try:
+            load_into_environment(config_path)
+        except ConfigError as exc:
+            die(f"invalid operations configuration: {exc}")
+    elif a.config is not None:
+        die("configured operations file is unavailable")
 
     script_dir = Path(__file__).resolve().parent
     role_script = str(script_dir / "awf_role.py")
@@ -144,12 +160,13 @@ def main(argv: list[str] | None = None) -> int:
 
     url = os.environ.get("AGENT_BUS_URL")
     if not url:
-        die("set AGENT_BUS_URL (source your dispatch.env)")
+        die("set AGENT_BUS_URL or create the strict operations configuration")
     token_var = f"AWF_{a.role.upper()}_TOKEN"
     token = os.environ.get(token_var)
     if not token:
-        die(f"set {token_var} (source your dispatch.env)")
-    bus = os.environ.get("AWF_BUS_BIN", "agent-bus")
+        die(f"set {token_var} or create the strict operations configuration")
+    configured_bus = os.environ.get("AWF_BUS_BIN", "agent-bus")
+    bus = native_executable(configured_bus)
     try:
         authority = load_authority_manifest(a.authority_manifest)
         authorize_operation(authority, "listener_restart")
@@ -214,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         listen_argv += ["--on", active_types[1], rework_handler]
 
-    if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
+    if os.name == "nt" and configured_bus.lower().endswith((".cmd", ".bat")):
         listen_argv = ["cmd.exe", "/d", "/s", "/c", *listen_argv]
 
     return subprocess.run(listen_argv).returncode

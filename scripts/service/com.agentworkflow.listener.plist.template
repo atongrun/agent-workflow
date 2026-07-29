@@ -8,8 +8,8 @@
   and copies the result to ~/Library/LaunchAgents/com.agentworkflow.listener.__ROLE__.plist,
   then `launchctl bootstrap gui/$UID <file>`.
 
-  It holds NO secrets — only the role/repo/tool. The wrapper (__WRAPPER__) sources
-  ~/.config/awf/dispatch.env for AGENT_BUS_URL / AWF_<ROLE>_TOKEN / AWF_BUS_BIN.
+  It holds NO secrets — only the role/repo/tool. Native Python strictly parses
+  ~/.config/awf/dispatch.env as data.
 
   KeepAlive/SuccessfulExit=false => restart on a crash, but NOT after a clean stop
   (so `control:shutdown` and `launchctl bootout` really stop it).

@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,12 @@ HANDOFF_SPEC = importlib.util.spec_from_file_location("awf_handoff_check", HANDO
 assert HANDOFF_SPEC and HANDOFF_SPEC.loader
 awf_handoff_check = importlib.util.module_from_spec(HANDOFF_SPEC)
 HANDOFF_SPEC.loader.exec_module(awf_handoff_check)
+
+BOOTSTRAP_MODULE_PATH = SCRIPTS_DIR / "awf_bootstrap.py"
+BOOTSTRAP_SPEC = importlib.util.spec_from_file_location("awf_bootstrap", BOOTSTRAP_MODULE_PATH)
+assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
+awf_bootstrap = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
+BOOTSTRAP_SPEC.loader.exec_module(awf_bootstrap)
 
 
 _VALID_POSTFLIGHT_CARD = """# Card
@@ -979,7 +986,7 @@ def test_v3_rework_reconstructs_structured_feedback_for_delivery_hash():
     assert context["payload_sha256"] == awf_role.canonical_payload_sha256(expected_payload)
 
 
-@pytest.mark.parametrize("status", ["prepared", "ambiguous", "sent"])
+@pytest.mark.parametrize("status", ["prepared", "attempting", "ambiguous", "sent"])
 def test_v3_outbox_replay_revalidates_same_provenance_without_model(monkeypatch, tmp_path, status):
     evidence = awf_role.RunEvidence(92, "coder", state_root=tmp_path / "state")
     provenance = _pr_provenance()
@@ -2050,7 +2057,15 @@ _COMMAND_FAILURE = {
 }
 
 
-def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=True, tool_rc=0):
+def _prepare_reviewer_routing(
+    monkeypatch,
+    tmp_path,
+    content,
+    *,
+    send_result=True,
+    tool_rc=0,
+    tool="opencode",
+):
     repo = tmp_path / "repo"
     repo.mkdir()
     script_dir = tmp_path / "scripts"
@@ -2062,7 +2077,7 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
 
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
     monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
-    monkeypatch.setenv("AWF_TOOL", "opencode")
+    monkeypatch.setenv("AWF_TOOL", tool)
     monkeypatch.setattr(awf_role, "fetch_and_checkout", lambda *a, **kw: None)
     monkeypatch.setattr(awf_role, "prepare_model_workspace", lambda *a, **kw: str(repo))
     monkeypatch.setattr(awf_role, "freeze_model_git_metadata", lambda *a, **kw: None)
@@ -2095,7 +2110,11 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
             (Path(args[0]) / args[5]).write_text(content, encoding="utf-8")
         return tool_rc
 
-    monkeypatch.setattr(awf_role, "tool_opencode_review", fake_review)
+    monkeypatch.setattr(
+        awf_role,
+        "tool_codex_review" if tool == "codex" else "tool_opencode_review",
+        fake_review,
+    )
     send_calls = []
     monkeypatch.setattr(
         awf_role,
@@ -2107,7 +2126,7 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
         card="task.md",
         commit="abc1234",
         model="",
-        tool="opencode",
+        tool=tool,
         report="implementation.md",
         review_report=".awf/artifacts/review-report-task.md",
         base="main",
@@ -2320,13 +2339,15 @@ def test_each_reviewer_route_send_failure_is_nonzero(monkeypatch, tmp_path, verd
     assert len(send_calls) == 1
 
 
-def test_v3_reviewer_send_failure_replay_does_not_rerun_model(monkeypatch, tmp_path):
+@pytest.mark.parametrize("tool", ["opencode", "codex"])
+def test_v3_reviewer_send_failure_replay_does_not_rerun_model(monkeypatch, tmp_path, tool):
     content = _review_markdown("PASS")
     ns, send_calls, tool_calls = _prepare_reviewer_routing(
         monkeypatch,
         tmp_path,
         content,
         send_result=False,
+        tool=tool,
     )
     provenance = _pr_provenance()
     ns.commit = provenance["head_sha"]
@@ -2970,6 +2991,93 @@ def test_windows_acl_check_rejects_inherited_owner_ace(monkeypatch):
     assert records[0][0] == awf_handoff_check.FAIL
 
 
+def test_bootstrap_write_is_atomic_and_rejects_symlink_destination(tmp_path, monkeypatch):
+    destination = (tmp_path / "dispatch.env").resolve()
+    awf_bootstrap.write_env_file(
+        destination,
+        ["AGENT_BUS_URL=http://bus.invalid", "AWF_CODER_TOKEN=controlled-token", ""],
+        force=False,
+    )
+    assert destination.read_text(encoding="utf-8").endswith("\n")
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+
+    locked: list[Path] = []
+    events: list[str] = []
+    real_fdopen = os.fdopen
+    monkeypatch.setattr(
+        awf_bootstrap,
+        "lock_permissions",
+        lambda path: (events.append("lock"), locked.append(Path(path)))[1] or "owner-only",
+    )
+
+    def guarded_fdopen(fd, *args, **kwargs):
+        events.append("fdopen")
+        assert events[-2] == "lock"
+        return real_fdopen(fd, *args, **kwargs)
+
+    monkeypatch.setattr(awf_bootstrap.os, "fdopen", guarded_fdopen)
+    awf_bootstrap.write_env_file(
+        destination,
+        ["AGENT_BUS_URL=http://bus.invalid", "AWF_CODER_TOKEN=replacement", ""],
+        force=True,
+    )
+    assert len(locked) == 2
+    assert events == ["lock", "fdopen", "lock", "fdopen"]
+    assert destination.with_suffix(".env.bak").is_file()
+
+    target = tmp_path / "target.env"
+    target.write_text("do not replace\n", encoding="utf-8")
+    link = tmp_path / "linked.env"
+    link.symlink_to(target)
+    with pytest.raises(SystemExit, match="2"):
+        awf_bootstrap.write_env_file(
+            link,
+            ["AWF_CODER_TOKEN=replacement", ""],
+            force=True,
+        )
+    assert target.read_text(encoding="utf-8") == "do not replace\n"
+
+
+def test_curl_bootstrap_locks_secret_temp_file_before_write(monkeypatch):
+    locked: list[Path] = []
+    events: list[str] = []
+    real_fdopen = os.fdopen
+
+    monkeypatch.setattr(
+        awf_bootstrap,
+        "lock_permissions",
+        lambda path: (events.append("lock"), locked.append(Path(path)))[1] or "owner-only",
+    )
+
+    def guarded_fdopen(fd, *args, **kwargs):
+        events.append("fdopen")
+        assert events[-2] == "lock"
+        return real_fdopen(fd, *args, **kwargs)
+
+    monkeypatch.setattr(awf_bootstrap.os, "fdopen", guarded_fdopen)
+    monkeypatch.setattr(
+        awf_bootstrap.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            0,
+            '{"agent":"coder","token":"controlled-token"}\n200',
+            "",
+        ),
+    )
+
+    tokens = awf_bootstrap.fetch_tokens_curl(
+        "https://bus.invalid",
+        "bootstrap-secret",
+        ["coder"],
+    )
+
+    assert tokens == {"coder": "controlled-token"}
+    assert len(locked) == 1
+    assert events == ["lock", "fdopen"]
+    assert not locked[0].exists()
+
+
 # ---------------------------------------------------------------------------
 # Fail-closed coder handoff
 # ---------------------------------------------------------------------------
@@ -3360,6 +3468,108 @@ def test_reviewer_checkpoint_skips_coder_only_commit_and_fork_phases(tmp_path):
         )
 
     assert checkpoint["phase"] == "outbox_sent"
+
+
+_RECOVERY_MATRIX_TRANSITIONS = {
+    "coder": [
+        ("model_started", {"model_workspace": "workspace", "model_process": "opencode"}),
+        ("model_completed", {"model_workspace": "workspace", "model_process": "opencode"}),
+        ("model_imported", {"imported_tree": "c" * 40}),
+        ("commit_created", {"commit_sha": "d" * 40}),
+        ("fork_sha_verified", {"head_sha": "d" * 40}),
+        ("pr_tuple_verified", {"verified_provenance": _pr_provenance()}),
+        ("outbox_prepared", {"outbox_delivery_id": "awf:downstream"}),
+        ("outbox_sent", {"outbox_delivery_id": "awf:downstream"}),
+    ],
+    "reviewer": [
+        ("model_started", {"model_workspace": "workspace", "model_process": "codex"}),
+        ("model_completed", {"model_workspace": "workspace", "model_process": "codex"}),
+        ("model_imported", {"review_report_sha256": "e" * 64}),
+        ("pr_tuple_verified", {"verified_provenance": _pr_provenance()}),
+        ("outbox_prepared", {"outbox_delivery_id": "awf:downstream"}),
+        ("outbox_sent", {"outbox_delivery_id": "awf:downstream"}),
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    ("role", "crash_phase"),
+    [
+        (role, phase)
+        for role, transitions in _RECOVERY_MATRIX_TRANSITIONS.items()
+        for phase in ("model_not_started", *(item[0] for item in transitions))
+    ],
+)
+def test_same_delivery_crash_replay_matrix_preserves_phase_and_model_count(
+    tmp_path,
+    role,
+    crash_phase,
+):
+    """Every durable boundary reloads monotonically under the exact same delivery."""
+    state_root = tmp_path / "state"
+    first = awf_role.RunEvidence(201, role, state_root=state_root)
+    provenance = _pr_provenance(pull_request=0)
+    input_context = {
+        "key": f"{role}-input",
+        "delivery_id": f"{role}-input",
+        "payload_sha256": f"sha256:{role}-input",
+        "source_event_id": 200,
+    }
+    path, checkpoint = awf_role.begin_recovery_checkpoint(
+        first,
+        input_context,
+        role=role,
+        branch="feature/task",
+        source_commit="a" * 40,
+        provenance=provenance,
+    )
+    for phase, facts in _RECOVERY_MATRIX_TRANSITIONS[role]:
+        if crash_phase == "model_not_started":
+            break
+        checkpoint = awf_role.advance_recovery_checkpoint(
+            first,
+            path,
+            checkpoint,
+            phase,
+            **facts,
+        )
+        if phase == crash_phase:
+            break
+
+    replay = awf_role.RunEvidence(202, role, state_root=state_root)
+    replay_path, reloaded = awf_role.begin_recovery_checkpoint(
+        replay,
+        input_context,
+        role=role,
+        branch="feature/task",
+        source_commit="a" * 40,
+        provenance=provenance,
+    )
+
+    assert replay_path == path
+    assert reloaded["phase"] == crash_phase
+    assert reloaded["facts"] == checkpoint["facts"]
+    # Only a never-started checkpoint may invoke a model. Every later boundary
+    # must recover/continue with zero additional invocations.
+    expected_policy = (
+        "invoke_once"
+        if crash_phase == "model_not_started"
+        else ("recover_or_fail" if crash_phase == "model_started" else "skip")
+    )
+    assert awf_role.recovery_model_policy(reloaded) == expected_policy
+    additional_model_invocations = int(expected_policy == "invoke_once")
+    assert additional_model_invocations == (1 if crash_phase == "model_not_started" else 0)
+
+    drifted = {**provenance, "head_ref": "feature/drift"}
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.begin_recovery_checkpoint(
+            replay,
+            input_context,
+            role=role,
+            branch="feature/task",
+            source_commit="a" * 40,
+            provenance=drifted,
+        )
 
 
 def test_upstream_base_allows_only_fast_forward_advance(monkeypatch):
