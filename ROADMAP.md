@@ -95,6 +95,8 @@ Remaining Phase 2 work:
   `model_started`.
 - [x] Add a no-model architect terminal consumer for validated ready/blocked decisions so terminal
   ACK and pending-empty do not depend on a manual handler.
+- [x] Replace the production Bash TaskCard dispatcher with a native Python entry point; retain the
+  shell file only as a POSIX compatibility shim and remove Git Bash/WSL from Windows dispatch.
 - [ ] Record the capacity-isolation metrics defined in
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.

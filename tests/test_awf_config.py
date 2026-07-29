@@ -167,12 +167,13 @@ def test_config_module_never_uses_shell_execution():
     assert stat.S_ISREG(Path(awf_config.__file__).stat().st_mode)
 
 
-def test_production_entrypoints_do_not_source_configuration_or_require_git_bash():
+def test_production_entrypoints_use_native_python_without_sourcing_configuration():
     root = Path(__file__).resolve().parents[1]
     sources = {
         path: (root / path).read_text(encoding="utf-8").casefold()
         for path in (
             "scripts/awf-dispatch.sh",
+            "scripts/awf_dispatch.py",
             "scripts/service/awf-listen-service.sh",
             "scripts/service/awf-listen-service.cmd",
             "scripts/awf_service.py",
@@ -181,5 +182,7 @@ def test_production_entrypoints_do_not_source_configuration_or_require_git_bash(
     assert '. "$dispatch_env"' not in sources["scripts/service/awf-listen-service.sh"]
     assert "source dispatch.env" not in "\n".join(sources.values())
     assert "awf_gitbash" not in sources["scripts/service/awf-listen-service.cmd"]
-    assert "awf_config.py" in sources["scripts/awf-dispatch.sh"]
+    assert "awf_dispatch.py" in sources["scripts/awf-dispatch.sh"]
+    assert "load_into_environment" in sources["scripts/awf_dispatch.py"]
+    assert "shell=true" not in sources["scripts/awf_dispatch.py"]
     assert "load_into_environment" in sources["scripts/awf_service.py"]

@@ -112,7 +112,7 @@ Refresh refs before relying on this snapshot.
    94–96: coder postflight, commit/push, and remote SHA `451cc60` matched; reviewer emitted a
    structured `PASS`; architect consumed the verdict; every event was ACKed with retry count zero
    and no last error. Agent Bus remained an unchanged opaque transport.
-5. **Dispatch push fail-closed gate.** `awf-dispatch.sh` now exits before Agent Bus delivery when
+5. **Dispatch push fail-closed gate.** `awf_dispatch.py` exits before Agent Bus delivery when
    its TaskCard branch push fails. A regression test proves the bus command is not invoked on that
    path; explicit `--no-push` remains a local-only mode.
 6. **Windows ACL readiness accuracy.** The handoff check strips the exact echoed credential-file

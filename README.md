@@ -157,6 +157,12 @@ The architect listener also consumes validated `PASS` and `BLOCKED` terminal dec
 deterministically, so a successful route can reach automatic ACK and pending-empty without a manual
 terminal handler.
 
+TaskCard dispatch is native Python on every supported host:
+`python scripts/awf_dispatch.py ...`. The retained `scripts/awf-dispatch.sh` file is a small POSIX
+compatibility shim only; Windows dispatch, listeners, bootstrap, and services require neither Git
+Bash nor WSL. Windows dispatch also requires a native Agent Bus executable rather than a `.cmd` or
+`.bat` wrapper, keeping task-controlled payload bytes outside `cmd.exe`.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream

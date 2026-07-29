@@ -6,7 +6,6 @@ import argparse
 import importlib.util
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -30,6 +29,11 @@ assert LISTEN_SPEC and LISTEN_SPEC.loader
 awf_listen = importlib.util.module_from_spec(LISTEN_SPEC)
 LISTEN_SPEC.loader.exec_module(awf_listen)
 DISPATCH_PATH = Path(__file__).parents[1] / "scripts" / "awf-dispatch.sh"
+NATIVE_DISPATCH_PATH = Path(__file__).parents[1] / "scripts" / "awf_dispatch.py"
+DISPATCH_SPEC = importlib.util.spec_from_file_location("awf_dispatch", NATIVE_DISPATCH_PATH)
+assert DISPATCH_SPEC and DISPATCH_SPEC.loader
+awf_dispatch = importlib.util.module_from_spec(DISPATCH_SPEC)
+DISPATCH_SPEC.loader.exec_module(awf_dispatch)
 
 HANDOFF_MODULE_PATH = SCRIPTS_DIR / "awf_handoff_check.py"
 HANDOFF_SPEC = importlib.util.spec_from_file_location("awf_handoff_check", HANDOFF_MODULE_PATH)
@@ -89,22 +93,6 @@ def commit(repo: Path, message: str, filename: str, content: str) -> str:
     return run("git", "rev-parse", "HEAD", cwd=repo)
 
 
-def dispatch_bash() -> str:
-    if os.name != "nt":
-        return "bash"
-    git_exe = shutil.which("git")
-    if git_exe:
-        candidate = Path(git_exe).resolve().parent.parent / "usr" / "bin" / "bash.exe"
-        if candidate.is_file():
-            return str(candidate)
-    for prog_files in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
-        if prog_files:
-            candidate = Path(prog_files) / "Git" / "usr" / "bin" / "bash.exe"
-            if candidate.is_file():
-                return str(candidate)
-    return "bash"
-
-
 def dispatch_shell_path(path: Path) -> str:
     if os.name != "nt":
         return str(path)
@@ -112,6 +100,16 @@ def dispatch_shell_path(path: Path) -> str:
     drive = resolved.drive.lower().rstrip(":")
     rest = str(resolved).replace("\\", "/").split(":", 1)[1]
     return f"/{drive}{rest}"
+
+
+def native_dispatch_argv(repo: Path, *args: str) -> list[str]:
+    return [
+        sys.executable,
+        str(NATIVE_DISPATCH_PATH),
+        "--repo",
+        str(repo),
+        *args,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -2714,16 +2712,9 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
     (repo / "task.md").write_text("task\n", encoding="utf-8")
 
-    bash = dispatch_bash()
-    script_path = dispatch_shell_path(DISPATCH_PATH)
-    repo_path = dispatch_shell_path(repo)
-
     completed = subprocess.run(
-        [
-            bash,
-            script_path,
-            "--repo",
-            repo_path,
+        native_dispatch_argv(
+            repo,
             "--card",
             "task.md",
             "--branch",
@@ -2732,7 +2723,7 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
             "task:awf-impl-v2",
             "--no-push",
             "--dry-run",
-        ],
+        ),
         check=True,
         capture_output=True,
     )
@@ -2751,6 +2742,67 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
     assert payload["awf_delivery_id"] == awf_role.make_delivery_id(
         "architect", "task:awf-impl-v2", payload_hash, 0
     )
+
+
+def test_native_v3_dispatch_payload_preserves_exact_provenance_contract():
+    provenance = awf_role.provenance_payload(_pr_provenance(pull_request=0))
+
+    payload = awf_dispatch.build_payload(
+        event_type="task:awf-impl-v3",
+        task_id="task",
+        branch="feature/task",
+        card="task.md",
+        commit="b" * 40,
+        tool="opencode",
+        model="",
+        report="implementation.md",
+        review_report="review.md",
+        provenance=provenance,
+    )
+
+    base_payload = {key: value for key, value in payload.items() if not key.startswith("awf_")}
+    assert base_payload == {
+        "task_id": "task",
+        "branch": "feature/task",
+        "card": "task.md",
+        "commit": "b" * 40,
+        "tool": "opencode",
+        "model": "",
+        "report": "implementation.md",
+        "review_report": "review.md",
+        **provenance,
+    }
+    payload_hash = awf_role.canonical_payload_sha256(base_payload)
+    assert payload["awf_payload_sha256"] == payload_hash
+    assert payload["awf_delivery_id"] == awf_role.make_delivery_id(
+        "architect", "task:awf-impl-v3", payload_hash, 0
+    )
+
+
+def test_native_v2_dispatch_rejects_option_like_branch_before_git_mutation(tmp_path):
+    repo = tmp_path / "repo"
+    run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    (repo / "task.md").write_text("task\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        native_dispatch_argv(
+            repo,
+            "--card",
+            "task.md",
+            "--branch=-dangerous",
+            "--type",
+            "task:awf-impl-v2",
+            "--no-push",
+            "--dry-run",
+        ),
+        capture_output=True,
+    )
+
+    assert completed.returncode == 2
+    assert b"invalid Git branch" in completed.stderr
+    assert run("git", "status", "--porcelain", cwd=repo) == "?? task.md"
 
 
 def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
@@ -2778,18 +2830,15 @@ def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
         }
     )
     completed = subprocess.run(
-        [
-            dispatch_bash(),
-            dispatch_shell_path(DISPATCH_PATH),
-            "--repo",
-            dispatch_shell_path(repo),
+        native_dispatch_argv(
+            repo,
             "--card",
             "task.md",
             "--branch",
             "feature/task",
             "--type",
             "task:awf-impl-v2",
-        ],
+        ),
         env=environment,
         capture_output=True,
     )
@@ -2835,11 +2884,8 @@ def test_v3_dispatch_rejects_unsafe_fork_pushurl_under_python_optimization(tmp_p
 
     environment = {**os.environ, "PYTHONOPTIMIZE": "1"}
     completed = subprocess.run(
-        [
-            dispatch_bash(),
-            dispatch_shell_path(DISPATCH_PATH),
-            "--repo",
-            dispatch_shell_path(repo),
+        native_dispatch_argv(
+            repo,
             "--card",
             "task.md",
             "--branch",
@@ -2849,7 +2895,7 @@ def test_v3_dispatch_rejects_unsafe_fork_pushurl_under_python_optimization(tmp_p
             "--head-repo",
             "contributor/project",
             "--dry-run",
-        ],
+        ),
         env=environment,
         capture_output=True,
     )
@@ -2859,7 +2905,7 @@ def test_v3_dispatch_rejects_unsafe_fork_pushurl_under_python_optimization(tmp_p
     assert run("git", "status", "--porcelain", cwd=repo) == "?? task.md"
 
 
-def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path):
+def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
     run("git", "config", "user.name", "AWF Test", cwd=repo)
@@ -2868,11 +2914,7 @@ def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path):
 
     marker = tmp_path / "no-proxy.txt"
     if os.name == "nt":
-        fake_bus = tmp_path / "fake-agent-bus.cmd"
-        fake_bus.write_text(
-            f'@echo %NO_PROXY%>"{marker}"\r\n@echo %no_proxy%>>"{marker}"\r\n',
-            encoding="utf-8",
-        )
+        fake_bus = tmp_path / "fake-agent-bus.exe"
     else:
         fake_bus = tmp_path / "fake-agent-bus"
         fake_bus.write_text(
@@ -2892,29 +2934,74 @@ def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path):
             "NO_PROXY": "localhost,127.0.0.1",
         }
     )
-    completed = subprocess.run(
-        [
-            dispatch_bash(),
-            dispatch_shell_path(DISPATCH_PATH),
-            "--repo",
-            dispatch_shell_path(repo),
-            "--card",
-            "task.md",
-            "--branch",
-            "feature/task",
-            "--type",
-            "task:awf-impl-v2",
-            "--no-push",
-        ],
-        env=environment,
-        capture_output=True,
-    )
+    dispatch_args = [
+        "--repo",
+        str(repo),
+        "--card",
+        "task.md",
+        "--branch",
+        "feature/task",
+        "--type",
+        "task:awf-impl-v2",
+        "--no-push",
+    ]
+    if os.name == "nt":
+        real_run = subprocess.run
 
-    assert completed.returncode == 0
+        def intercept_bus(argv, **kwargs):
+            if argv[0] == str(fake_bus):
+                child_environment = kwargs["env"]
+                marker.write_text(
+                    f"{child_environment['NO_PROXY']}\n{child_environment['no_proxy']}\n",
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            return real_run(argv, **kwargs)
+
+        for key in ("NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in environment.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setattr(awf_dispatch.subprocess, "run", intercept_bus)
+        completed_returncode = awf_dispatch.main(dispatch_args)
+    else:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(NATIVE_DISPATCH_PATH),
+                *dispatch_args,
+            ],
+            env=environment,
+            capture_output=True,
+        )
+        completed_returncode = completed.returncode
+
+    assert completed_returncode == 0
     assert marker.read_text(encoding="utf-8").splitlines() == [
         "localhost,127.0.0.1,100.108.67.47",
         "localhost,127.0.0.1,100.108.67.47",
     ]
+
+
+def test_windows_native_dispatch_rejects_command_wrappers():
+    with pytest.raises(
+        awf_dispatch.DispatchError,
+        match="must resolve to a native executable",
+    ):
+        awf_dispatch.resolve_bus_executable(
+            "C:\\tools\\agent-bus.cmd",
+            platform="windows",
+        )
+
+
+def test_dispatch_shell_is_a_posix_compatibility_shim_only():
+    source = DISPATCH_PATH.read_text(encoding="utf-8")
+
+    assert "awf_dispatch.py" in source
+    assert "git -C" not in source
+    assert "agent-bus send" not in source
+    assert "payload=" not in source
+    assert len(source.splitlines()) <= 20
 
 
 def test_handoff_bus_probe_adds_bus_host_to_no_proxy(monkeypatch):
