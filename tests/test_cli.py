@@ -21,10 +21,11 @@ def run_awf(*args: str) -> subprocess.CompletedProcess:
         [sys.executable, "-m", "agent_workflow.cli", *args],
         cwd=PROJECT_ROOT,
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
     )
-    completed.stdout = completed.stdout.decode("utf-8")
-    completed.stderr = completed.stderr.decode("utf-8")
     return completed
 
 
