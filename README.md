@@ -136,6 +136,9 @@ and binds the reviewer to an exact, persisted upstream/base and fork/head/PR pro
 Only canonical credential-free GitHub HTTPS remotes are accepted, and model workspaces still have
 no remote or publishing credentials. See the
 [fork/PR implementation report](docs/tasks/fork-pr-trusted-runner-implementation-report.md).
+A post-merge Mac/Windows proof confirmed contributor-fork publication and exact-PR-head review;
+the [live-proof closeout](docs/tasks/fork-pr-live-proof-closeout-20260729.md) records the evidence
+and the exact PR-number recovery fix found during that run.
 
 ## Product Gate
 
