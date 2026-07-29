@@ -808,10 +808,11 @@ def test_pr_create_rejects_noncanonical_result_without_logging_it(
 
 def test_existing_pr_update_path_reuses_and_verifies_without_create(monkeypatch, tmp_path):
     provenance = _pr_provenance(head_sha="d" * 40, pull_request=0)
-    monkeypatch.setattr(
-        awf_role,
-        "_gh_json",
-        lambda _repo, *args: (
+    calls = []
+
+    def fake_json(_repo, *args):
+        calls.append(args)
+        return (
             [{"number": 23}]
             if args[:2] == ("pr", "list")
             else {
@@ -824,7 +825,12 @@ def test_existing_pr_update_path_reuses_and_verifies_without_create(monkeypatch,
                 "headRepository": {"name": "project"},
                 "headRepositoryOwner": {"login": "contributor"},
             }
-        ),
+        )
+
+    monkeypatch.setattr(
+        awf_role,
+        "_gh_json",
+        fake_json,
     )
     monkeypatch.setattr(
         awf_role,
@@ -833,6 +839,8 @@ def test_existing_pr_update_path_reuses_and_verifies_without_create(monkeypatch,
     )
 
     assert awf_role.ensure_pull_request(str(tmp_path), provenance)["pull_request"] == 23
+    list_call = calls[0]
+    assert list_call[list_call.index("--head") + 1] == "feature/task"
 
 
 def test_github_cli_failure_is_fail_closed_without_exposing_stderr(monkeypatch, tmp_path, capsys):

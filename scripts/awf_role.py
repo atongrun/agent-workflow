@@ -1709,7 +1709,6 @@ def ensure_pull_request(
     repo: str,
     provenance: dict[str, object],
 ) -> dict[str, object]:
-    head_owner = str(provenance["head_repo"]).split("/", 1)[0]
     matches = _gh_json(
         repo,
         "pr",
@@ -1721,7 +1720,7 @@ def ensure_pull_request(
         "--base",
         str(provenance["base_ref"]),
         "--head",
-        f"{head_owner}:{provenance['head_ref']}",
+        str(provenance["head_ref"]),
         "--json",
         "number",
         "--limit",
