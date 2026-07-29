@@ -108,7 +108,12 @@ and a v3 structured-rework hash omission. Both findings were fixed with Python/B
 regressions and an exact v3 `REQUEST_CHANGES` delivery-hash regression. Re-review then found that
 Python optimization could strip Bash's embedded `assert` checks; explicit fail-closed checks plus
 a `PYTHONOPTIMIZE=1` regression closed that path. The final independent re-review returned
-`APPROVED`. The PR URL and GitHub CI status are recorded after those gates complete.
+`APPROVED`.
+
+Ready PR [#29](https://github.com/atongrun/agent-workflow/pull/29) was created from exact
+implementation commit `2aa0ad8350585f22409cc1407e1bfc0faa98c5ee` against base
+`f24b5fb1a4097a24b37210643dc15277f7b5dbe6`. Its GitHub Actions `test` job passed. Any later
+documentation-only closeout commit must also pass CI before this task is considered closed.
 
 ## Explicitly not performed
 

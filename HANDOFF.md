@@ -10,12 +10,12 @@ PR #27 merged successfully as `f24b5fb1a4097a24b37210643dc15277f7b5dbe6`; its CI
 Draft PR #28 remains a separate terminal-replay/disposable-proof record and is not part of the
 current change.
 
-Fork/PR-aware trusted-runner work is on `codex/fork-pr-trusted-runner`, based exactly on that merged
-main. It introduces v3 routes that separate a read-only upstream from a writable contribution fork
-and bind reviewer/replay to an exact upstream/base, fork/head, and PR tuple. The contributor
-boundary explicitly does not require or test upstream write permission. The feature must remain
-unmerged until its focused/full verification, current-head CI, and independent native
-security/code review all pass.
+Fork/PR-aware trusted-runner work is on `codex/fork-pr-trusted-runner` in ready
+[PR #29](https://github.com/atongrun/agent-workflow/pull/29), based exactly on that merged main. It
+introduces v3 routes that separate a read-only upstream from a writable contribution fork and bind
+reviewer/replay to an exact upstream/base, fork/head, and PR tuple. The contributor boundary
+explicitly does not require or test upstream write permission. Focused/full local verification and
+independent native security/code review passed; final-head GitHub CI remains the live merge gate.
 
 No listener is running, no preserved event was read or mutated, and no ACK, requeue, redispatch, or
 product TaskCard resume is authorized.
