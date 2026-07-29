@@ -1,33 +1,32 @@
 # Repository Handoff
 
-> Current through the 2026-07-28 downstream Dousansi dogfood stop. The current `main` baseline is
-> `ff1bee3`; repository files and live Git refs are authoritative. This document contains no private
+> Current through the 2026-07-29 fork/PR-aware trusted-runner implementation. The current `main`
+> baseline is `f24b5fb`; repository files and live Git refs are authoritative. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
 
 ## Current Handoff State: 2026-07-29
 
-The control-plane implementation is on feature branch `codex/run-control-plane-gate` and is open
-as [PR #27](https://github.com/atongrun/agent-workflow/pull/27). The PR is not merged and must
-remain open until its current live head passes both GitHub CI and a new independent native review.
-Repository files and live Git/GitHub are authoritative for the exact head and check state.
+PR #27 merged successfully as `f24b5fb1a4097a24b37210643dc15277f7b5dbe6`; its CI was green.
+Draft PR #28 remains a separate terminal-replay/disposable-proof record and is not part of the
+current change.
 
-The prior independent native review returned `REQUEST CHANGES` for one HIGH finding. The branch now
-contains the narrow repair and a regression that authorizes coder delivery, records the executor
-commit as current-stage evidence, and authorizes reviewer delivery under the same run before model
-invocation. The immutable planning/base commit remains frozen. This repair still requires complete
-local verification, current-head CI, and a new independent review before merge or any fresh live
-event.
+Fork/PR-aware trusted-runner work is on `codex/fork-pr-trusted-runner`, based exactly on that merged
+main. It introduces v3 routes that separate a read-only upstream from a writable contribution fork
+and bind reviewer/replay to an exact upstream/base, fork/head, and PR tuple. The contributor
+boundary explicitly does not require or test upstream write permission. The feature must remain
+unmerged until its focused/full verification, current-head CI, and independent native
+security/code review all pass.
 
 No listener is running, no preserved event was read or mutated, and no ACK, requeue, redispatch, or
 product TaskCard resume is authorized.
 
-### Repaired Review Finding, Pending Reverification
+### Fork/PR boundary under review
 
-Coder and reviewer continue to share the run key `task-{task_id}`. The control plane now permits
-only the explicit `implement -> review` continuation in addition to its existing transitions.
-`frozen_base` remains the original TaskCard/planning commit and remains part of the immutable
-context binding; `current_stage_evidence_commit` records the executor commit separately and
-advances only when the reviewer stage is authorized.
+Default listeners subscribe only to v3 operations routes. Trusted local configuration owns remote
+names and allowed repository identities; payloads contain no remote URL or credentials. Legacy
+v1/v2 routes are explicit compatibility paths and do not consume v3 payloads. The complete
+contract is in
+[`docs/tasks/fork-pr-trusted-runner-implementation-report.md`](docs/tasks/fork-pr-trusted-runner-implementation-report.md).
 
 ## Product Position
 
@@ -53,8 +52,8 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Commit `db5a45c` is the audited implementation
-  baseline before this documentation refresh and contains merged PR #1 through PR #14.
+- The authoritative product branch is `main`. Commit `f24b5fb` is the fresh baseline for the
+  current fork/PR runner change and includes merged PR #27.
 - All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
   prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
   evidence, not product direction.
@@ -135,15 +134,15 @@ event-scoped no-remote OpenCode workspaces with trusted delta import, and one fr
 cross-machine `PASS` route
 through architect consumption and ACK.
 
-Still missing: current-head CI and independent review for the repaired control-plane PR, the fresh
-disposable end-to-end proof after merge, recorded capacity-isolation metrics for the live run
+PR #27's control plane is merged and its deterministic CI passed. The fork/PR-aware v3 route is
+implemented and locally testable on its current feature branch, but is not a merged or live
+operational capability until current-head CI and independent security/code review pass.
+
+Still missing: current-head CI and independent review for the fork/PR feature, a fresh
+fork-based cross-machine proof after merge and separate authorization, recorded
+capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
 downstream TaskCard, and a terminal recovery decision for the preserved interrupted run.
-
-The versioned run ledger, bounded context packet, fresh-session recovery CLI, pre-invocation gate,
-durable denial/replay decisions, and narrow authority manifest are implemented on PR #27 and
-covered by deterministic tests. They are not yet a merged or live operational capability until the
-repair passes current-head CI and independent review.
 
 ## Dousansi Dogfood Stop: Proven Gaps
 
@@ -177,17 +176,15 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Finish current-head verification for PR #27.** Run focused and full local verification, push
-   the repair, and obtain both GitHub CI and a new independent native review. Do not merge while
-   either is pending or failing.
-2. **Keep the repair narrow during review follow-up.** The legal coder-to-reviewer continuation must
-   retain the immutable planning/base commit, record the executor commit separately as current-stage
-   evidence, and remain behind the trusted pre-invocation gate.
-3. **After merge, run exactly one fresh disposable proof event.** Prove ledger persistence,
-   fresh-session recovery, route/stage/attempt/rework/terminal checks, replay handling, and the
-   refusal paths before model invocation. Use only a new isolated event and only reversible actions
-   listed in the authority manifest. Never inspect, ACK, requeue, redispatch, or restart preserved
-   historical events, and never resume Dousansi v3.
+1. **Finish the fork/PR feature PR.** Complete focused/full verification, independent native
+   security/code review, push the reviewed head, create the PR, and require green GitHub CI. Do not
+   merge it in this task.
+2. **Keep PR #28 separate.** It remains a narrow disposable-proof record; do not rewrite or expand
+   it to carry the fork/PR change.
+3. **After merge and separate authorization, run exactly one fresh fork-based proof event.** Prove
+   upstream read-only operation, fork push, exact PR-head review, ledger persistence, replay, and
+   refusal paths. Never inspect, ACK, requeue, redispatch, or restart preserved historical events,
+   and never resume Dousansi v3.
 4. **Write the proof evidence and metrics update.** Record role/reason counters, ledger ID,
    context-packet checksum, gate decisions, and denial reasons without raw prompts, credentials,
    retained payloads, ACK/requeue actions, or token counts.
@@ -197,12 +194,12 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next-Agent Start Sequence
 
-Begin with `git status --short --branch`, `git fetch origin`, and a fresh check of PR #27 and CI;
-do not assume this snapshot's remote state. Read this handoff and
-`docs/tasks/run-control-plane-implementation-report.md`, then confirm the coder-to-reviewer
-regression, full verification, current-head CI, and independent review. Keep all changes on the
-feature branch and use Lore-formatted commits. The disposable live proof is a later gate, not part
-of this repair.
+Begin with `git status --short --branch`, a fresh fetch, and a live check of the fork/PR feature PR
+and CI; do not assume this snapshot's remote state. Read this handoff,
+`docs/tasks/fork-pr-trusted-runner.md`, and its implementation report. Confirm the exact
+provenance tests, full verification, current-head CI, and independent review. Keep all changes on
+the feature branch and use Lore-formatted commits. A live proof is a later separately authorized
+gate, not part of this repair.
 
 ## Standing Rules
 

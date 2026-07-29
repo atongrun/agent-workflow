@@ -129,6 +129,14 @@ checks before starting a model; denials are durable and do not ACK or alter reta
 the [run control-plane report](docs/tasks/run-control-plane-implementation-report.md) and the
 example [authority manifest](scripts/authority-manifest.example.json).
 
+The default operations route is also fork/PR-aware. Trusted local configuration separates a
+read-only upstream remote from a writable contribution fork; contributor machines do not need
+upstream write permission. The runner alone pushes the verified commit, creates or reuses the PR,
+and binds the reviewer to an exact, persisted upstream/base and fork/head/PR provenance tuple.
+Only canonical credential-free GitHub HTTPS remotes are accepted, and model workspaces still have
+no remote or publishing credentials. See the
+[fork/PR implementation report](docs/tasks/fork-pr-trusted-runner-implementation-report.md).
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream

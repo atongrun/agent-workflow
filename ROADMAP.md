@@ -76,6 +76,8 @@ Completed engineering gates:
   state before any model process starts.
 - [x] Encode reversible diagnostic/endpoint/listener authority while retaining hard stops for
   credentials, destructive actions, historical events, ACK/requeue/redispatch, and trust bypass.
+- [x] Separate read-only upstream and writable contribution-fork remotes; bind reviewer and outbox
+  replay to one exact verified PR provenance tuple.
 
 Remaining Phase 2 work:
 

@@ -40,10 +40,13 @@ FORBIDDEN_OPERATIONS = {
 DEFAULT_ROUTES = {
     "task:awf-impl": ["coder"],
     "task:awf-impl-v2": ["coder"],
+    "task:awf-impl-v3": ["coder"],
     "task:awf-review": ["reviewer"],
     "task:awf-review-v2": ["reviewer"],
+    "task:awf-review-v3": ["reviewer"],
     "task:awf-rework": ["coder"],
     "task:awf-rework-v2": ["coder"],
+    "task:awf-rework-v3": ["coder"],
 }
 
 

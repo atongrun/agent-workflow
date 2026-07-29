@@ -130,6 +130,19 @@ def test_listener_handler_passes_distinct_report_paths():
     assert "--review-report {payload.review_report}" in handler
 
 
+def test_v3_listener_handler_passes_complete_pr_provenance():
+    handler = awf_listen.build_handler(
+        "python",
+        "awf_role.py",
+        "reviewer",
+        on_type="task:awf-review-v3",
+    )
+
+    for field in awf_role._PROVENANCE_FIELDS:
+        option = "--" + field.replace("_", "-")
+        assert f"{option} {{payload.{field}}}" in handler
+
+
 def test_rework_handler_maps_report_path_and_structured_feedback():
     handler = awf_listen.build_handler(
         "python",
@@ -525,6 +538,473 @@ def test_fetch_and_checkout_finds_task_branch_from_single_branch_clone(
     awf_role.fetch_and_checkout(str(single), "feature/task", task_head)
 
     assert run("git", "rev-parse", "HEAD", cwd=single) == task_head
+
+
+# ---------------------------------------------------------------------------
+# Fork/PR trusted publication and provenance
+# ---------------------------------------------------------------------------
+
+
+def _pr_provenance(**overrides):
+    value = {
+        "provenance_version": "awf.pr-provenance.v1",
+        "upstream_repo": "upstream/project",
+        "upstream_remote": "upstream",
+        "base_ref": "main",
+        "base_sha": "a" * 40,
+        "head_repo": "contributor/project",
+        "head_remote": "fork",
+        "head_ref": "feature/task",
+        "head_sha": "b" * 40,
+        "pull_request": 17,
+    }
+    value.update(overrides)
+    return value
+
+
+@pytest.mark.parametrize(
+    "remote_url",
+    [
+        "https://user:secret@github.com/upstream/project.git",
+        "file:///tmp/project.git",
+        "ssh://git@github.com/upstream/project.git",
+        "https://example.invalid/upstream/project.git",
+        "/tmp/project.git",
+    ],
+)
+def test_remote_binding_rejects_credentials_protocols_and_local_paths(
+    monkeypatch, tmp_path, remote_url
+):
+    monkeypatch.setattr(awf_role, "git_out", lambda *args: remote_url)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.validate_remote_binding(str(tmp_path), "upstream", "upstream/project")
+
+
+def test_remote_binding_accepts_canonical_credential_free_github_https(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        awf_role,
+        "git_out",
+        lambda *args: "https://github.com/upstream/project.git",
+    )
+
+    awf_role.validate_remote_binding(str(tmp_path), "upstream", "upstream/project")
+
+
+def test_remote_binding_rejects_separate_or_multiple_push_urls(monkeypatch, tmp_path):
+    fetch_url = "https://github.com/contributor/project.git"
+
+    def fake_git_out(_repo, *args):
+        if "--push" in args:
+            return "\n".join(
+                [
+                    fetch_url,
+                    "https://github.com/attacker/project.git",
+                ]
+            )
+        return fetch_url
+
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.validate_remote_binding(
+            str(tmp_path),
+            "fork",
+            "contributor/project",
+        )
+
+
+def test_trusted_config_rejects_collapsed_upstream_and_fork(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWF_UPSTREAM_REPO", "owner/project")
+    monkeypatch.setenv("AWF_HEAD_REPO", "owner/project")
+    monkeypatch.setattr(
+        awf_role,
+        "validate_remote_binding",
+        lambda *args, **kwargs: pytest.fail("collapsed repositories must fail first"),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.trusted_remote_config(str(tmp_path))
+
+
+def test_v3_incomplete_provenance_is_rejected_before_trusted_config_lookup(tmp_path):
+    args = argparse.Namespace(
+        input_type="task:awf-review-v3",
+        branch="feature/task",
+        provenance_version="",
+        upstream_repo="",
+        base_ref="",
+        base_sha="",
+        head_repo="",
+        head_ref="",
+        head_sha="",
+        pull_request=0,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.provenance_from_args(args, str(tmp_path), require_pr=True)
+
+
+@pytest.mark.parametrize(
+    "repo_slug",
+    [
+        "owner/repo --upload-pack=evil",
+        "https://github.com/owner/repo",
+        "owner/repo.git",
+        "../repo",
+        "owner/repo/extra",
+    ],
+)
+def test_repository_slug_injection_is_rejected(repo_slug):
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.validate_repo_slug(repo_slug, "repository")
+
+
+@pytest.mark.parametrize("ref", ["-evil", "refs/heads/task", "task name", "../task", "task..x"])
+def test_ref_injection_is_rejected(monkeypatch, tmp_path, ref):
+    monkeypatch.setattr(awf_role, "git", lambda *args: 1)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.validate_git_ref(str(tmp_path), ref, "head ref")
+
+
+@pytest.mark.parametrize(
+    ("push_rc", "remote_sha"),
+    [
+        (1, "b" * 40),
+        (0, "c" * 40),
+    ],
+)
+def test_fork_push_failure_or_fresh_sha_mismatch_fails_closed(
+    monkeypatch, tmp_path, push_rc, remote_sha
+):
+    provenance = _pr_provenance(pull_request=0)
+    calls = []
+
+    def fake_git(_repo, *args):
+        calls.append(args)
+        if args[0] == "push":
+            return push_rc
+        return 0
+
+    def fake_git_out(_repo, *args):
+        return "b" * 40 if args[-1] == "HEAD^{commit}" else remote_sha
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+    monkeypatch.setattr(
+        awf_role,
+        "ensure_pull_request",
+        lambda *args: pytest.fail("PR operation must not run after fork publication denial"),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.push_and_verify_pr_head(str(tmp_path), provenance)
+
+    assert calls[0][:3] == ("push", "-u", "fork")
+
+
+def test_fork_push_fresh_sha_equality_proceeds_to_exact_pr(monkeypatch, tmp_path):
+    provenance = _pr_provenance(pull_request=0)
+    calls = []
+    monkeypatch.setattr(awf_role, "git", lambda _repo, *args: calls.append(args) or 0)
+    monkeypatch.setattr(awf_role, "git_out", lambda *args: "d" * 40)
+    monkeypatch.setattr(
+        awf_role,
+        "ensure_pull_request",
+        lambda _repo, value: {**value, "pull_request": 23},
+    )
+
+    result = awf_role.push_and_verify_pr_head(str(tmp_path), provenance)
+
+    assert result["head_sha"] == "d" * 40
+    assert result["pull_request"] == 23
+    assert (
+        "fetch",
+        "--no-tags",
+        "fork",
+        "+refs/heads/feature/task:refs/remotes/fork/feature/task",
+    ) in calls
+
+
+def test_pr_create_then_verify_binds_exact_repo_base_ref_and_sha(monkeypatch, tmp_path):
+    provenance = _pr_provenance(head_sha="d" * 40, pull_request=0)
+    list_results = iter([[], [{"number": 23}]])
+    create_calls = []
+
+    def fake_json(_repo, *args):
+        if args[:2] == ("pr", "list"):
+            return next(list_results)
+        assert args[:3] == ("pr", "view", "23")
+        return {
+            "number": 23,
+            "state": "OPEN",
+            "baseRefName": "main",
+            "baseRefOid": "a" * 40,
+            "headRefName": "feature/task",
+            "headRefOid": "d" * 40,
+            "headRepository": {"name": "project"},
+            "headRepositoryOwner": {"login": "contributor"},
+        }
+
+    monkeypatch.setattr(awf_role, "_gh_json", fake_json)
+    monkeypatch.setattr(
+        awf_role,
+        "_gh_call",
+        lambda _repo, *args: create_calls.append(args),
+    )
+
+    result = awf_role.ensure_pull_request(str(tmp_path), provenance)
+
+    assert result["pull_request"] == 23
+    assert create_calls[0][:4] == ("pr", "create", "--repo", "upstream/project")
+    assert "--head" in create_calls[0]
+    assert "contributor:feature/task" in create_calls[0]
+
+
+def test_existing_pr_update_path_reuses_and_verifies_without_create(monkeypatch, tmp_path):
+    provenance = _pr_provenance(head_sha="d" * 40, pull_request=0)
+    monkeypatch.setattr(
+        awf_role,
+        "_gh_json",
+        lambda _repo, *args: (
+            [{"number": 23}]
+            if args[:2] == ("pr", "list")
+            else {
+                "number": 23,
+                "state": "OPEN",
+                "baseRefName": "main",
+                "baseRefOid": "a" * 40,
+                "headRefName": "feature/task",
+                "headRefOid": "d" * 40,
+                "headRepository": {"name": "project"},
+                "headRepositoryOwner": {"login": "contributor"},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "_gh_call",
+        lambda *args: pytest.fail("existing matching PR must not be recreated"),
+    )
+
+    assert awf_role.ensure_pull_request(str(tmp_path), provenance)["pull_request"] == 23
+
+
+def test_github_cli_failure_is_fail_closed_without_exposing_stderr(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        awf_role.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            1,
+            stdout="",
+            stderr="credential-bearing diagnostic",
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role._gh_json(str(tmp_path), "pr", "list")
+
+    assert "credential-bearing diagnostic" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("baseRefOid", "c" * 40),
+        ("headRefOid", "c" * 40),
+        ("headRefName", "other/ref"),
+        ("baseRefName", "release"),
+        ("state", "CLOSED"),
+    ],
+)
+def test_pr_tuple_mismatch_fails_closed(monkeypatch, tmp_path, field, bad_value):
+    provenance = _pr_provenance()
+    live = {
+        "number": 17,
+        "state": "OPEN",
+        "baseRefName": "main",
+        "baseRefOid": "a" * 40,
+        "headRefName": "feature/task",
+        "headRefOid": "b" * 40,
+        "headRepository": {"name": "project"},
+        "headRepositoryOwner": {"login": "contributor"},
+    }
+    live[field] = bad_value
+    monkeypatch.setattr(awf_role, "_gh_json", lambda *args: live)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.verify_pr_head(str(tmp_path), provenance)
+
+
+def test_v3_outbox_persists_complete_provenance_tuple(tmp_path):
+    evidence = awf_role.RunEvidence(90, "coder", state_root=tmp_path / "state")
+    provenance = _pr_provenance()
+    payload = awf_role.build_delivery_payload(
+        "coder",
+        "task:awf-review-v3",
+        {
+            "task_id": "task",
+            "branch": "feature/task",
+            "card": "task.md",
+            "commit": "b" * 40,
+            "report": "report.md",
+            "review_report": "review.md",
+            "tool": "opencode",
+            "model": "",
+            **awf_role.provenance_payload(provenance),
+        },
+        evidence,
+    )
+
+    _, record = awf_role.prepare_outbox(
+        evidence,
+        {
+            "key": "input",
+            "delivery_id": "input",
+            "payload_sha256": "sha256:input",
+            "source_event_id": 1,
+        },
+        action="coder.review_handoff",
+        branch="feature/task",
+        source_commit="a" * 40,
+        evidence_commit="b" * 40,
+        to_role="reviewer",
+        event_type="task:awf-review-v3",
+        payload=payload,
+        provenance=provenance,
+    )
+
+    assert record["format"] == "awf.outbox.v2"
+    assert record["provenance"] == awf_role.provenance_payload(provenance)
+    assert record["payload"]["head_sha"] == "b" * 40
+
+
+def test_v3_rework_reconstructs_structured_feedback_for_delivery_hash():
+    provenance = _pr_provenance()
+    feedback = {
+        "format": "awf.review-report.v1",
+        "verdict": "REQUEST_CHANGES",
+        "summary": "Fix the bounded issue.",
+        "findings": [],
+    }
+    args = argparse.Namespace(
+        input_type="task:awf-rework-v3",
+        source_event_id=93,
+        branch="feature/task",
+        card="task.md",
+        commit="b" * 40,
+        tool="opencode",
+        model="",
+        report="report.md",
+        review_report="review.md",
+        review_feedback=json.dumps(feedback),
+        **awf_role.provenance_payload(provenance),
+    )
+    expected_payload = {
+        "task_id": "task",
+        "branch": "feature/task",
+        "card": "task.md",
+        "commit": "b" * 40,
+        "tool": "opencode",
+        "model": "",
+        "report": "report.md",
+        "review_report_path": "review.md",
+        "review_report": feedback,
+        **awf_role.provenance_payload(provenance),
+    }
+    args.payload_sha256 = awf_role.canonical_payload_sha256(expected_payload)
+    args.delivery_id = awf_role.make_delivery_id(
+        "reviewer",
+        args.input_type,
+        args.payload_sha256,
+        args.source_event_id,
+    )
+
+    context = awf_role.validate_input_delivery(args, "coder", None)
+
+    assert context["payload_sha256"] == awf_role.canonical_payload_sha256(expected_payload)
+
+
+@pytest.mark.parametrize("status", ["prepared", "ambiguous", "sent"])
+def test_v3_outbox_replay_revalidates_same_provenance_without_model(monkeypatch, tmp_path, status):
+    evidence = awf_role.RunEvidence(92, "coder", state_root=tmp_path / "state")
+    provenance = _pr_provenance()
+    input_context = {
+        "key": "input",
+        "delivery_id": "input",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 1,
+    }
+    payload = awf_role.build_delivery_payload(
+        "coder",
+        "task:awf-review-v3",
+        {
+            "task_id": "task",
+            "branch": "feature/task",
+            "card": "task.md",
+            "commit": "b" * 40,
+            "report": "report.md",
+            "review_report": "review.md",
+            "tool": "opencode",
+            "model": "",
+            **awf_role.provenance_payload(provenance),
+        },
+        evidence,
+    )
+    path, record = awf_role.prepare_outbox(
+        evidence,
+        input_context,
+        action="coder.review_handoff",
+        branch="feature/task",
+        source_commit="a" * 40,
+        evidence_commit="b" * 40,
+        to_role="reviewer",
+        event_type="task:awf-review-v3",
+        payload=payload,
+        provenance=provenance,
+    )
+    awf_role._atomic_write_json(path, {**record, "status": status})
+    if status == "sent":
+        awf_role.complete_inbox(
+            evidence,
+            str(input_context["delivery_id"]),
+            str(input_context["payload_sha256"]),
+        )
+    args = argparse.Namespace(branch="feature/task", commit="a" * 40)
+    verified = []
+    sends = []
+    monkeypatch.setattr(
+        awf_role,
+        "provenance_from_args",
+        lambda *call_args, **kwargs: provenance,
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "verify_pr_remote_tuple",
+        lambda *call_args, **kwargs: verified.append((call_args, kwargs)),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "git_out",
+        lambda _repo, *git_args: "report.md" if git_args[0] == "ls-tree" else "",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *call_args, **kwargs: sends.append(call_args) or True,
+    )
+
+    assert awf_role.resume_outbox(
+        args,
+        "coder",
+        str(tmp_path),
+        evidence,
+        input_context,
+    )
+    assert len(verified) == 1
+    assert len(sends) == (0 if status == "sent" else 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1583,6 +2063,46 @@ def _prepare_reviewer_routing(monkeypatch, tmp_path, content, *, send_result=Tru
     return ns, send_calls, tool_calls
 
 
+def test_reviewer_v3_provenance_drift_denies_before_model_and_persists_reason(
+    monkeypatch, tmp_path
+):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        _review_markdown("PASS"),
+    )
+    provenance = _pr_provenance()
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-review-v3"
+    ns.source_event_id = 90
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    payload = awf_role.input_payload(ns, "reviewer")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "coder",
+        ns.input_type,
+        ns.payload_sha256,
+        ns.source_event_id,
+    )
+    ns.evidence = awf_role.RunEvidence(91, "reviewer", state_root=tmp_path / "state")
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(
+        awf_role,
+        "fetch_and_checkout_pr_head",
+        lambda *args, **kwargs: (_ for _ in ()).throw(SystemExit(1)),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_reviewer(ns)
+
+    assert not tool_calls
+    assert not send_calls
+    result = json.loads(ns.evidence.result_path.read_text(encoding="utf-8"))
+    assert result["last_phase"] == "fork_pr_rejected"
+    assert result["reason"] == "reviewer_provenance_drift"
+
+
 @pytest.mark.parametrize(
     ("content", "recipient", "event_type"),
     [
@@ -1812,6 +2332,8 @@ def test_dispatch_dry_run_carries_distinct_default_report_paths(tmp_path):
             "task.md",
             "--branch",
             "feature/task",
+            "--type",
+            "task:awf-impl-v2",
             "--no-push",
             "--dry-run",
         ],
@@ -1869,6 +2391,8 @@ def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
             "task.md",
             "--branch",
             "feature/task",
+            "--type",
+            "task:awf-impl-v2",
         ],
         env=environment,
         capture_output=True,
@@ -1878,6 +2402,65 @@ def test_dispatch_push_failure_stops_before_agent_bus_send(tmp_path):
     assert completed.returncode == 2
     assert "push failed; refusing to send an event" in stderr
     assert not marker.exists()
+
+
+def test_v3_dispatch_rejects_unsafe_fork_pushurl_under_python_optimization(tmp_path):
+    repo = tmp_path / "repo"
+    run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    run(
+        "git",
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/upstream/project.git",
+        cwd=repo,
+    )
+    run(
+        "git",
+        "remote",
+        "add",
+        "fork",
+        "https://github.com/contributor/project.git",
+        cwd=repo,
+    )
+    run(
+        "git",
+        "remote",
+        "set-url",
+        "--add",
+        "--push",
+        "fork",
+        "https://github.com/attacker/project.git",
+        cwd=repo,
+    )
+    (repo / "task.md").write_text("task\n", encoding="utf-8")
+
+    environment = {**os.environ, "PYTHONOPTIMIZE": "1"}
+    completed = subprocess.run(
+        [
+            dispatch_bash(),
+            dispatch_shell_path(DISPATCH_PATH),
+            "--repo",
+            dispatch_shell_path(repo),
+            "--card",
+            "task.md",
+            "--branch",
+            "feature/task",
+            "--upstream-repo",
+            "upstream/project",
+            "--head-repo",
+            "contributor/project",
+            "--dry-run",
+        ],
+        env=environment,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 2
+    assert b"invalid or untrusted GitHub remote/repository/ref configuration" in completed.stderr
+    assert run("git", "status", "--porcelain", cwd=repo) == "?? task.md"
 
 
 def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path):
@@ -1923,6 +2506,8 @@ def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path):
             "task.md",
             "--branch",
             "feature/task",
+            "--type",
+            "task:awf-impl-v2",
             "--no-push",
         ],
         env=environment,

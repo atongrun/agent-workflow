@@ -399,12 +399,32 @@ def test_default_coder_listener_covers_impl_and_rework_with_distinct_handlers(
         lambda argv: seen.extend(argv) or Completed(),
     )
 
-    assert awf_listen.main(["--role", "coder", "--repo", str(repo)]) == 0
+    assert (
+        awf_listen.main(
+            [
+                "--role",
+                "coder",
+                "--repo",
+                str(repo),
+                "--upstream-repo",
+                "upstream/project",
+                "--head-repo",
+                "contributor/project",
+            ]
+        )
+        == 0
+    )
     on_indexes = [index for index, value in enumerate(seen) if value == "--on"]
     assert len(on_indexes) == 2
     first_type, first_handler = seen[on_indexes[0] + 1 : on_indexes[0] + 3]
     second_type, second_handler = seen[on_indexes[1] + 1 : on_indexes[1] + 3]
-    assert first_type == "task:awf-impl-v2"
+    assert first_type == "task:awf-impl-v3"
     assert "--review-feedback" not in first_handler
-    assert second_type == "task:awf-rework-v2"
+    assert second_type == "task:awf-rework-v3"
     assert "--review-feedback {payload.review_report}" in second_handler
+
+
+def test_default_control_plane_routes_include_all_v3_stage_types():
+    assert awf_control_plane.DEFAULT_ROUTES["task:awf-impl-v3"] == ["coder"]
+    assert awf_control_plane.DEFAULT_ROUTES["task:awf-review-v3"] == ["reviewer"]
+    assert awf_control_plane.DEFAULT_ROUTES["task:awf-rework-v3"] == ["coder"]

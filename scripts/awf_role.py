@@ -218,11 +218,146 @@ def make_delivery_id(
 _INPUT_TYPES = {
     "task:awf-impl": ("architect", "coder"),
     "task:awf-impl-v2": ("architect", "coder"),
+    "task:awf-impl-v3": ("architect", "coder"),
     "task:awf-review": ("coder", "reviewer"),
     "task:awf-review-v2": ("coder", "reviewer"),
+    "task:awf-review-v3": ("coder", "reviewer"),
     "task:awf-rework": ("reviewer", "coder"),
     "task:awf-rework-v2": ("reviewer", "coder"),
+    "task:awf-rework-v3": ("reviewer", "coder"),
 }
+
+_REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9_.-]{1,100}$")
+_REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_PROVENANCE_FIELDS = (
+    "provenance_version",
+    "upstream_repo",
+    "base_ref",
+    "base_sha",
+    "head_repo",
+    "head_ref",
+    "head_sha",
+    "pull_request",
+)
+
+
+def _is_v3(a: argparse.Namespace) -> bool:
+    return str(getattr(a, "input_type", "")).endswith("-v3")
+
+
+def validate_repo_slug(value: str, label: str) -> str:
+    if not _REPO_SLUG_RE.fullmatch(value) or value.endswith((".git", ".", "/")):
+        die(f"{label} must be an owner/repository GitHub slug")
+    return value
+
+
+def validate_remote_name(value: str, label: str) -> str:
+    if not _REMOTE_NAME_RE.fullmatch(value):
+        die(f"{label} is invalid")
+    return value
+
+
+def validate_git_ref(repo: str, value: str, label: str) -> str:
+    if (
+        not value
+        or value.startswith("-")
+        or value.startswith("refs/")
+        or any(char.isspace() for char in value)
+        or git(repo, "check-ref-format", "--branch", value) != 0
+    ):
+        die(f"{label} is invalid")
+    return value
+
+
+def validate_remote_url(url: str, expected_repo: str, label: str) -> None:
+    if not url:
+        die(f"{label} is missing")
+    parsed = urlsplit(url)
+    expected_path = f"/{expected_repo}.git"
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {expected_path, expected_path.removesuffix(".git")}
+    ):
+        die(f"{label} is not a canonical credential-free GitHub HTTPS URL")
+
+
+def validate_remote_binding(repo: str, remote: str, expected_repo: str) -> None:
+    validate_remote_name(remote, "configured remote name")
+    validate_repo_slug(expected_repo, "configured repository")
+    fetch_url = git_out(repo, "remote", "get-url", remote)
+    validate_remote_url(fetch_url, expected_repo, f"configured remote {remote!r} fetch URL")
+    push_urls = git_out(repo, "remote", "get-url", "--push", "--all", remote).splitlines()
+    if push_urls != [fetch_url]:
+        die(f"configured remote {remote!r} push URL must equal its validated fetch URL")
+    validate_remote_url(push_urls[0], expected_repo, f"configured remote {remote!r} push URL")
+
+
+def trusted_remote_config(repo: str) -> dict[str, str]:
+    config = {
+        "upstream_repo": env("AWF_UPSTREAM_REPO", required=True),
+        "upstream_remote": env("AWF_UPSTREAM_REMOTE", "upstream"),
+        "head_repo": env("AWF_HEAD_REPO", required=True),
+        "head_remote": env("AWF_HEAD_REMOTE", "fork"),
+        "base_ref": env("AWF_BASE_REF", "main"),
+    }
+    validate_repo_slug(config["upstream_repo"], "configured upstream repository")
+    validate_repo_slug(config["head_repo"], "configured contribution repository")
+    if config["upstream_repo"].casefold() == config["head_repo"].casefold():
+        die("upstream and contribution repositories must be distinct")
+    if config["upstream_remote"] == config["head_remote"]:
+        die("upstream and contribution remote names must be distinct")
+    validate_remote_binding(repo, config["upstream_remote"], config["upstream_repo"])
+    validate_remote_binding(repo, config["head_remote"], config["head_repo"])
+    validate_git_ref(repo, config["base_ref"], "configured base ref")
+    return config
+
+
+def provenance_from_args(
+    a: argparse.Namespace,
+    repo: str,
+    *,
+    require_pr: bool,
+) -> dict[str, object]:
+    if not _is_v3(a):
+        die("PR provenance is only defined for v3 Workflow routes")
+    values: dict[str, object] = {field: getattr(a, field, "") for field in _PROVENANCE_FIELDS}
+    if values["provenance_version"] != "awf.pr-provenance.v1":
+        die("PR provenance version is missing or unsupported")
+    validate_repo_slug(str(values["upstream_repo"]), "provenance upstream repository")
+    validate_repo_slug(str(values["head_repo"]), "provenance head repository")
+    validate_git_ref(repo, str(values["base_ref"]), "provenance base ref")
+    validate_git_ref(repo, str(values["head_ref"]), "provenance head ref")
+    for field in ("base_sha", "head_sha"):
+        value = str(values[field])
+        if not _FULL_COMMIT_RE.fullmatch(value):
+            die(f"provenance {field} must be a full lowercase Git commit ID")
+    try:
+        pull_request = int(values["pull_request"] or 0)
+    except (TypeError, ValueError):
+        die("provenance pull request must be an integer")
+    if pull_request < (1 if require_pr else 0):
+        die("review provenance requires a positive pull request number")
+    values["pull_request"] = pull_request
+    config = trusted_remote_config(repo)
+    for field in ("upstream_repo", "head_repo", "base_ref"):
+        if values[field] != config[field]:
+            die(f"provenance {field} does not match trusted local configuration")
+    if str(values["head_ref"]) != a.branch:
+        die("provenance head ref must match the Workflow branch")
+    if str(values["head_sha"]) != a.commit:
+        die("provenance head SHA must match the Workflow commit")
+    return {**values, **config}
+
+
+def provenance_payload(provenance: dict[str, object]) -> dict[str, object]:
+    return {field: provenance[field] for field in _PROVENANCE_FIELDS}
 
 
 def input_payload(a: argparse.Namespace, role: str) -> dict[str, object]:
@@ -240,7 +375,7 @@ def input_payload(a: argparse.Namespace, role: str) -> dict[str, object]:
         "model": a.model,
         "report": a.report,
     }
-    if input_type in {"task:awf-rework", "task:awf-rework-v2"}:
+    if input_type in {"task:awf-rework", "task:awf-rework-v2", "task:awf-rework-v3"}:
         try:
             feedback = json.loads(getattr(a, "review_feedback", ""))
         except json.JSONDecodeError:
@@ -251,6 +386,8 @@ def input_payload(a: argparse.Namespace, role: str) -> dict[str, object]:
         payload["review_report"] = feedback
     else:
         payload["review_report"] = a.review_report
+    if _is_v3(a):
+        payload.update({field: getattr(a, field, "") for field in _PROVENANCE_FIELDS})
     return payload
 
 
@@ -1034,6 +1171,249 @@ def push_and_verify_remote_head(repo: str, branch: str) -> str:
     return local_head
 
 
+def _gh_json(repo: str, *args: str) -> object:
+    gh = env("AWF_GH_BIN", "gh")
+    try:
+        completed = subprocess.run(
+            [gh, *args],
+            cwd=repo,
+            env=child_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        die("trusted GitHub CLI operation failed")
+    if completed.returncode != 0:
+        die("trusted GitHub CLI operation failed")
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        die("trusted GitHub CLI returned invalid JSON")
+
+
+def _gh_call(repo: str, *args: str) -> None:
+    gh = env("AWF_GH_BIN", "gh")
+    try:
+        completed = subprocess.run(
+            [gh, *args],
+            cwd=repo,
+            env=child_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        die("trusted GitHub CLI operation failed")
+    if completed.returncode != 0:
+        die("trusted GitHub CLI operation failed")
+
+
+def verify_pr_head(
+    repo: str,
+    provenance: dict[str, object],
+) -> dict[str, object]:
+    pull_request = int(provenance["pull_request"])
+    data = _gh_json(
+        repo,
+        "pr",
+        "view",
+        str(pull_request),
+        "--repo",
+        str(provenance["upstream_repo"]),
+        "--json",
+        "number,state,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,headRepositoryOwner",
+    )
+    if not isinstance(data, dict):
+        die("trusted GitHub CLI returned an invalid pull request")
+    head_repository = data.get("headRepository")
+    head_owner = data.get("headRepositoryOwner")
+    live_head_repo = ""
+    if isinstance(head_repository, dict) and isinstance(head_owner, dict):
+        name = head_repository.get("name")
+        owner = head_owner.get("login")
+        if isinstance(name, str) and isinstance(owner, str):
+            live_head_repo = f"{owner}/{name}"
+    expected = {
+        "number": pull_request,
+        "state": "OPEN",
+        "baseRefName": provenance["base_ref"],
+        "baseRefOid": provenance["base_sha"],
+        "headRefName": provenance["head_ref"],
+        "headRefOid": provenance["head_sha"],
+    }
+    for field, value in expected.items():
+        if data.get(field) != value:
+            die(f"pull request {field} does not match persisted provenance")
+    if live_head_repo != provenance["head_repo"]:
+        die("pull request head repository does not match persisted provenance")
+    return provenance
+
+
+def ensure_pull_request(
+    repo: str,
+    provenance: dict[str, object],
+) -> dict[str, object]:
+    head_owner = str(provenance["head_repo"]).split("/", 1)[0]
+    matches = _gh_json(
+        repo,
+        "pr",
+        "list",
+        "--repo",
+        str(provenance["upstream_repo"]),
+        "--state",
+        "open",
+        "--base",
+        str(provenance["base_ref"]),
+        "--head",
+        f"{head_owner}:{provenance['head_ref']}",
+        "--json",
+        "number",
+        "--limit",
+        "2",
+    )
+    if not isinstance(matches, list) or len(matches) > 1:
+        die("cannot select one matching pull request")
+    if not matches:
+        _gh_call(
+            repo,
+            "pr",
+            "create",
+            "--repo",
+            str(provenance["upstream_repo"]),
+            "--base",
+            str(provenance["base_ref"]),
+            "--head",
+            f"{head_owner}:{provenance['head_ref']}",
+            "--title",
+            f"Agent Workflow contribution: {provenance['head_ref']}",
+            "--body",
+            "Published by the trusted Agent Workflow runner for independent review.",
+        )
+        matches = _gh_json(
+            repo,
+            "pr",
+            "list",
+            "--repo",
+            str(provenance["upstream_repo"]),
+            "--state",
+            "open",
+            "--base",
+            str(provenance["base_ref"]),
+            "--head",
+            f"{head_owner}:{provenance['head_ref']}",
+            "--json",
+            "number",
+            "--limit",
+            "2",
+        )
+    if (
+        not isinstance(matches, list)
+        or len(matches) != 1
+        or not isinstance(matches[0], dict)
+        or not isinstance(matches[0].get("number"), int)
+    ):
+        die("pull request creation or lookup did not yield exactly one pull request")
+    result = {**provenance, "pull_request": matches[0]["number"]}
+    return verify_pr_head(repo, result)
+
+
+def push_and_verify_pr_head(
+    repo: str,
+    provenance: dict[str, object],
+) -> dict[str, object]:
+    head_remote = str(provenance["head_remote"])
+    head_ref = str(provenance["head_ref"])
+    local_head = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    if not _FULL_COMMIT_RE.fullmatch(local_head):
+        die("failed to resolve local HEAD before fork push")
+    if git(repo, "push", "-u", head_remote, f"HEAD:refs/heads/{head_ref}") != 0:
+        die("fork push failed; upstream write access is neither required nor tested")
+    remote_ref = f"refs/remotes/{head_remote}/{head_ref}"
+    refspec = f"+refs/heads/{head_ref}:{remote_ref}"
+    if git(repo, "fetch", "--no-tags", head_remote, refspec) != 0:
+        die("failed to freshly verify the contribution fork ref")
+    remote_head = git_out(repo, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
+    if remote_head != local_head:
+        die("fresh contribution fork SHA does not match trusted local HEAD")
+    result = {**provenance, "head_sha": local_head}
+    return ensure_pull_request(repo, result)
+
+
+def verify_pr_remote_tuple(
+    repo: str,
+    provenance: dict[str, object],
+    *,
+    verify_pr: bool,
+) -> None:
+    upstream_remote = str(provenance["upstream_remote"])
+    head_remote = str(provenance["head_remote"])
+    base_ref = str(provenance["base_ref"])
+    head_ref = str(provenance["head_ref"])
+    base_tracking = f"refs/remotes/{upstream_remote}/{base_ref}"
+    head_tracking = f"refs/remotes/{head_remote}/{head_ref}"
+    if (
+        git(
+            repo,
+            "fetch",
+            "--no-tags",
+            upstream_remote,
+            f"+refs/heads/{base_ref}:{base_tracking}",
+        )
+        != 0
+    ):
+        die("cannot fetch the trusted upstream base")
+    if (
+        git(
+            repo,
+            "fetch",
+            "--no-tags",
+            head_remote,
+            f"+refs/heads/{head_ref}:{head_tracking}",
+        )
+        != 0
+    ):
+        die("cannot fetch the trusted contribution head")
+    live_base = git_out(repo, "rev-parse", "--verify", f"{base_tracking}^{{commit}}")
+    live_head = git_out(repo, "rev-parse", "--verify", f"{head_tracking}^{{commit}}")
+    if live_base != provenance["base_sha"]:
+        die("trusted upstream base SHA does not match persisted provenance")
+    if live_head != provenance["head_sha"]:
+        die("trusted contribution head SHA does not match persisted provenance")
+    if verify_pr:
+        verify_pr_head(repo, provenance)
+
+
+def fetch_and_checkout_pr_head(
+    repo: str,
+    provenance: dict[str, object],
+    *,
+    verify_pr: bool,
+) -> None:
+    verify_pr_remote_tuple(repo, provenance, verify_pr=verify_pr)
+    head_remote = str(provenance["head_remote"])
+    head_ref = str(provenance["head_ref"])
+    head_tracking = f"refs/remotes/{head_remote}/{head_ref}"
+    dirty = git_out(repo, "status", "--porcelain")
+    if dirty:
+        die("working tree is dirty; commit, stash, or clean it before retrying")
+    local_ref = f"refs/heads/{head_ref}"
+    if git(repo, "show-ref", "--verify", "--quiet", local_ref) == 0:
+        ahead = git_out(repo, "rev-list", "--count", f"{head_tracking}..{head_ref}")
+        if not ahead.isdigit() or int(ahead) > 0:
+            die("local contribution branch has unpushed commits; refusing to overwrite it")
+    if git(repo, "checkout", "-q", "-B", head_ref, head_tracking) != 0:
+        die("cannot checkout the exact trusted contribution head")
+    if git_out(repo, "rev-parse", "--verify", "HEAD^{commit}") != provenance["head_sha"]:
+        die("checked out contribution head does not match persisted provenance")
+
+
 def assert_model_git_state(repo: str, branch: str, expected_commit: str) -> None:
     """Fail if an untrusted model changed local HEAD or the dispatched remote ref."""
     expected = git_out(repo, "rev-parse", "--verify", f"{expected_commit}^{{commit}}")
@@ -1048,6 +1428,15 @@ def assert_model_git_state(repo: str, branch: str, expected_commit: str) -> None
     remote_head = git_out(repo, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
     if remote_head != expected:
         die("model process changed the remote task ref; trusted runner owns pushes")
+
+
+def assert_model_pr_git_state(repo: str, provenance: dict[str, object]) -> None:
+    """Fail if a model changed local HEAD or either trusted provenance ref."""
+    expected = str(provenance["head_sha"])
+    local_head = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    if local_head != expected:
+        die("model process changed local HEAD; trusted runner owns commits")
+    fetch_and_checkout_pr_head(repo, provenance, verify_pr=bool(provenance["pull_request"]))
 
 
 def executor_commit_message(branch: str, tool: str) -> str:
@@ -1877,28 +2266,29 @@ _OUTBOX_ROUTES = {
     "coder.review_handoff": (
         "coder",
         "reviewer",
-        {"task:awf-review", "task:awf-review-v2"},
+        {"task:awf-review", "task:awf-review-v2", "task:awf-review-v3"},
     ),
     "reviewer.pass": (
         "reviewer",
         "architect",
-        {"decision:awf-ready", "decision:awf-ready-v2"},
+        {"decision:awf-ready", "decision:awf-ready-v2", "decision:awf-ready-v3"},
     ),
     "reviewer.request_changes": (
         "reviewer",
         "coder",
-        {"task:awf-rework", "task:awf-rework-v2"},
+        {"task:awf-rework", "task:awf-rework-v2", "task:awf-rework-v3"},
     ),
     "reviewer.blocked": (
         "reviewer",
         "architect",
-        {"decision:awf-blocked", "decision:awf-blocked-v2"},
+        {"decision:awf-blocked", "decision:awf-blocked-v2", "decision:awf-blocked-v3"},
     ),
 }
 
 
 def validate_outbox_record(record_value: dict[str, object]) -> None:
-    if record_value.get("format") != "awf.outbox.v1":
+    outbox_format = record_value.get("format")
+    if outbox_format not in {"awf.outbox.v1", "awf.outbox.v2"}:
         die("outbox format is invalid")
     action = record_value.get("action")
     route = _OUTBOX_ROUTES.get(action)
@@ -1938,6 +2328,19 @@ def validate_outbox_record(record_value: dict[str, object]) -> None:
     )
     if delivery_id != expected_delivery or record_value.get("delivery_id") != expected_delivery:
         die("outbox delivery ID is inconsistent")
+    provenance = record_value.get("provenance")
+    if outbox_format == "awf.outbox.v2":
+        if not isinstance(provenance, dict):
+            die("v2 outbox is missing PR provenance")
+        if provenance.get("provenance_version") != "awf.pr-provenance.v1":
+            die("v2 outbox PR provenance version is invalid")
+        if payload.get("provenance_version") != provenance.get("provenance_version"):
+            die("outbox payload PR provenance is inconsistent")
+        for field in _PROVENANCE_FIELDS:
+            if payload.get(field) != provenance.get(field):
+                die(f"outbox payload {field} is inconsistent")
+    elif provenance is not None:
+        die("legacy outbox must not contain PR provenance")
 
 
 def prepare_outbox(
@@ -1951,6 +2354,7 @@ def prepare_outbox(
     to_role: str,
     event_type: str,
     payload: dict[str, object],
+    provenance: dict[str, object] | None = None,
 ) -> tuple[Path, dict[str, object]] | None:
     if evidence is None:
         return None
@@ -1968,7 +2372,7 @@ def prepare_outbox(
     if delivery_id != expected_delivery:
         die("outbox payload delivery ID is invalid")
     record_value: dict[str, object] = {
-        "format": "awf.outbox.v1",
+        "format": "awf.outbox.v2" if provenance is not None else "awf.outbox.v1",
         "source_role": evidence.role,
         "input_key": input_context["key"],
         "input_delivery_id": input_context["delivery_id"],
@@ -1987,6 +2391,8 @@ def prepare_outbox(
         "status": "prepared",
         "updated_at": _utc_now(),
     }
+    if provenance is not None:
+        record_value["provenance"] = provenance_payload(provenance)
     validate_outbox_record(record_value)
     path = delivery_state_path(evidence, "outbox", str(input_context["key"]))
     existing = _load_delivery_record(path, "outbox")
@@ -2037,6 +2443,37 @@ def deliver_outbox(
 
 
 def verify_outbox_evidence(repo: str, record_value: dict[str, object]) -> None:
+    provenance_value = record_value.get("provenance")
+    if isinstance(provenance_value, dict):
+        payload = record_value.get("payload")
+        if not isinstance(payload, dict):
+            die("v2 outbox payload is invalid")
+        args = argparse.Namespace(
+            input_type="task:awf-review-v3",
+            branch=str(record_value["branch"]),
+            commit=str(payload.get("commit", "")),
+            **{field: payload.get(field, "") for field in _PROVENANCE_FIELDS},
+        )
+        provenance = provenance_from_args(args, repo, require_pr=True)
+        verify_pr_remote_tuple(repo, provenance, verify_pr=True)
+        if str(record_value.get("evidence_commit", "")) != provenance["head_sha"]:
+            die("outbox evidence commit does not match PR provenance")
+        if record_value.get("action") == "coder.review_handoff":
+            report_path = payload.get("report")
+            if not isinstance(report_path, str):
+                die("coder outbox is missing its ImplementationReport path")
+            tracked = git_out(
+                repo,
+                "ls-tree",
+                "-r",
+                "--name-only",
+                str(provenance["head_sha"]),
+                "--",
+                report_path,
+            ).splitlines()
+            if report_path not in tracked:
+                die("coder outbox ImplementationReport is not tracked at the PR head")
+        return
     branch = str(record_value.get("branch", ""))
     evidence_commit = str(record_value.get("evidence_commit", ""))
     if git(repo, "check-ref-format", "--branch", branch) != 0:
@@ -2078,16 +2515,18 @@ def resume_outbox(
 ) -> bool:
     delivery_id = str(input_context["delivery_id"])
     payload_sha256 = str(input_context["payload_sha256"])
-    if inbox_completed(evidence, delivery_id, payload_sha256):
-        return True
     if evidence is None:
         return False
     path = delivery_state_path(evidence, "outbox", str(input_context["key"]))
     existing = _load_delivery_record(path, "outbox")
+    if inbox_completed(evidence, delivery_id, payload_sha256):
+        if existing is not None and existing.get("format") == "awf.outbox.v2":
+            validate_outbox_record(existing)
+            verify_outbox_evidence(repo, existing)
+        return True
     if existing is None:
         return False
     expected_bindings = {
-        "format": "awf.outbox.v1",
         "source_role": role,
         "input_key": input_context["key"],
         "input_delivery_id": input_context["delivery_id"],
@@ -2102,6 +2541,8 @@ def resume_outbox(
     validate_outbox_record(existing)
     status = existing.get("status")
     if status == "sent":
+        if existing.get("format") == "awf.outbox.v2":
+            verify_outbox_evidence(repo, existing)
         complete_inbox(evidence, delivery_id, payload_sha256)
         return True
     if status not in {"prepared", "attempting", "ambiguous"}:
@@ -2129,15 +2570,41 @@ def role_coder(a: argparse.Namespace) -> int:
     no_push = env("AWF_NO_PUSH", "0") == "1"
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "coder", evidence)
+    provenance = None
+    if _is_v3(a):
+        try:
+            provenance = provenance_from_args(
+                a,
+                repo,
+                require_pr=getattr(a, "input_type", "") == "task:awf-rework-v3",
+            )
+        except SystemExit:
+            record(evidence, "fork_pr_rejected", reason="invalid_or_untrusted_provenance")
+            raise
     gate = pre_invocation_gate(a, "coder", evidence)
 
-    if resume_outbox(a, "coder", repo, evidence, input_context):
-        record(evidence, "outbox_replay_complete")
-        return 0
+    try:
+        if resume_outbox(a, "coder", repo, evidence, input_context):
+            record(evidence, "outbox_replay_complete")
+            return 0
+    except SystemExit:
+        record(evidence, "fork_pr_rejected", reason="outbox_provenance_drift")
+        raise
     if gate is not None and getattr(gate, "reason", "") == "duplicate_event":
         die("duplicate Workflow event has no durable downstream outbox")
 
-    fetch_and_checkout(repo, a.branch, a.commit)
+    if provenance is not None:
+        try:
+            fetch_and_checkout_pr_head(
+                repo,
+                provenance,
+                verify_pr=bool(provenance["pull_request"]),
+            )
+        except SystemExit:
+            record(evidence, "fork_pr_rejected", reason="input_provenance_drift")
+            raise
+    else:
+        fetch_and_checkout(repo, a.branch, a.commit)
     card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
     if not Path(card_file).is_file():
         die(f"card not found after checkout: {card_file}")
@@ -2161,7 +2628,14 @@ def role_coder(a: argparse.Namespace) -> int:
     else:
         die(f"coder: unsupported tool '{tool}'")
     assert_model_workspace_state(model_repo, a.commit)
-    assert_model_git_state(repo, a.branch, a.commit)
+    if provenance is not None:
+        try:
+            assert_model_pr_git_state(repo, provenance)
+        except SystemExit:
+            record(evidence, "fork_pr_rejected", reason="model_boundary_provenance_drift")
+            raise
+    else:
+        assert_model_git_state(repo, a.branch, a.commit)
     record(evidence, "model_git_state_verified", model_git_state="pass")
     if rc != 0:
         die(f"tool '{tool}' failed (rc={rc}); not announcing review")
@@ -2216,24 +2690,40 @@ def role_coder(a: argparse.Namespace) -> int:
             "remote review handoff requires a verified push"
         )
     record(evidence, "push", push_started=True)
-    new_commit = push_and_verify_remote_head(repo, a.branch)
+    if provenance is not None:
+        try:
+            provenance = push_and_verify_pr_head(repo, provenance)
+        except SystemExit:
+            record(evidence, "fork_pr_rejected", reason="fork_push_or_pr_verification_failed")
+            raise
+        new_commit = str(provenance["head_sha"])
+    else:
+        new_commit = push_and_verify_remote_head(repo, a.branch)
     record(evidence, "remote_sha_verified", remote_sha=new_commit)
+    input_type = getattr(a, "input_type", "")
     review_type = (
-        "task:awf-review-v2" if getattr(a, "input_type", "").endswith("-v2") else "task:awf-review"
+        "task:awf-review-v3"
+        if input_type.endswith("-v3")
+        else "task:awf-review-v2"
+        if input_type.endswith("-v2")
+        else "task:awf-review"
     )
+    review_base = {
+        "task_id": a.branch.rsplit("/", 1)[-1],
+        "branch": a.branch,
+        "card": a.card,
+        "commit": new_commit,
+        "report": a.report,
+        "review_report": a.review_report,
+        "tool": tool,
+        "model": model,
+    }
+    if provenance is not None:
+        review_base.update(provenance_payload(provenance))
     review_payload = build_delivery_payload(
         "coder",
         review_type,
-        {
-            "task_id": a.branch.rsplit("/", 1)[-1],
-            "branch": a.branch,
-            "card": a.card,
-            "commit": new_commit,
-            "report": a.report,
-            "review_report": a.review_report,
-            "tool": tool,
-            "model": model,
-        },
+        review_base,
         evidence,
     )
     outbox = prepare_outbox(
@@ -2246,6 +2736,7 @@ def role_coder(a: argparse.Namespace) -> int:
         to_role="reviewer",
         event_type=review_type,
         payload=review_payload,
+        provenance=provenance,
     )
     sent = (
         deliver_outbox(evidence, *outbox)
@@ -2272,15 +2763,33 @@ def role_reviewer(a: argparse.Namespace) -> int:
     base = env("AWF_BASE", a.base or "master")
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "reviewer", evidence)
+    provenance = None
+    if _is_v3(a):
+        try:
+            provenance = provenance_from_args(a, repo, require_pr=True)
+        except SystemExit:
+            record(evidence, "fork_pr_rejected", reason="invalid_or_untrusted_provenance")
+            raise
     gate = pre_invocation_gate(a, "reviewer", evidence)
 
-    if resume_outbox(a, "reviewer", repo, evidence, input_context):
-        record(evidence, "outbox_replay_complete")
-        return 0
+    try:
+        if resume_outbox(a, "reviewer", repo, evidence, input_context):
+            record(evidence, "outbox_replay_complete")
+            return 0
+    except SystemExit:
+        record(evidence, "fork_pr_rejected", reason="outbox_provenance_drift")
+        raise
     if gate is not None and getattr(gate, "reason", "") == "duplicate_event":
         die("duplicate Workflow event has no durable downstream outbox")
 
-    fetch_and_checkout(repo, a.branch, a.commit)
+    if provenance is not None:
+        try:
+            fetch_and_checkout_pr_head(repo, provenance, verify_pr=True)
+        except SystemExit:
+            record(evidence, "fork_pr_rejected", reason="reviewer_provenance_drift")
+            raise
+    else:
+        fetch_and_checkout(repo, a.branch, a.commit)
     card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
     if not Path(card_file).is_file():
         die(f"card not found after checkout: {card_file}")
@@ -2301,7 +2810,9 @@ def role_reviewer(a: argparse.Namespace) -> int:
         review_report_path.unlink()
 
     log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
-    base_commit = resolve_review_base(repo, base)
+    base_commit = (
+        str(provenance["base_sha"]) if provenance is not None else resolve_review_base(repo, base)
+    )
     if tool == "codex":
         rc = tool_codex_review(repo, base_commit, prompt_file, card_file, model, a.review_report)
     elif tool == "opencode":
@@ -2335,7 +2846,10 @@ def role_reviewer(a: argparse.Namespace) -> int:
         assert_model_workspace_state(model_repo, a.commit)
         if git_out(model_repo, "rev-parse", "--verify", f"{model_base}^{{commit}}") != base_commit:
             die("model process changed the isolated reviewer base ref")
-        assert_model_git_state(repo, a.branch, a.commit)
+        if provenance is not None:
+            assert_model_pr_git_state(repo, provenance)
+        else:
+            assert_model_git_state(repo, a.branch, a.commit)
         review_report_path = import_model_report(model_repo, repo, a.review_report)
 
     review_report = parse_review_report(review_report_path)
@@ -2345,22 +2859,27 @@ def role_reviewer(a: argparse.Namespace) -> int:
         "REQUEST_CHANGES": ("coder", "task:awf-rework"),
         "BLOCKED": ("architect", "decision:awf-blocked"),
     }[verdict]
-    if getattr(a, "input_type", "").endswith("-v2"):
+    if getattr(a, "input_type", "").endswith("-v3"):
+        route = (route[0], f"{route[1]}-v3")
+    elif getattr(a, "input_type", "").endswith("-v2"):
         route = (route[0], f"{route[1]}-v2")
+    verdict_base = {
+        "task_id": a.branch.rsplit("/", 1)[-1],
+        "branch": a.branch,
+        "card": a.card,
+        "commit": a.commit,
+        "report": a.report,
+        "review_report_path": a.review_report,
+        "review_report": review_report,
+        "tool": a.tool,
+        "model": a.model,
+    }
+    if provenance is not None:
+        verdict_base.update(provenance_payload(provenance))
     payload = build_delivery_payload(
         "reviewer",
         route[1],
-        {
-            "task_id": a.branch.rsplit("/", 1)[-1],
-            "branch": a.branch,
-            "card": a.card,
-            "commit": a.commit,
-            "report": a.report,
-            "review_report_path": a.review_report,
-            "review_report": review_report,
-            "tool": a.tool,
-            "model": a.model,
-        },
+        verdict_base,
         evidence,
     )
     outbox = prepare_outbox(
@@ -2373,6 +2892,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         to_role=route[0],
         event_type=route[1],
         payload=payload,
+        provenance=provenance,
     )
     sent = (
         deliver_outbox(evidence, *outbox)
@@ -2416,6 +2936,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rework-budget", type=int, default=1)
     p.add_argument("--terminal-state", default="")
     p.add_argument("--route-override", default="")
+    p.add_argument("--provenance-version", default="")
+    p.add_argument("--upstream-repo", default="")
+    p.add_argument("--base-ref", default="")
+    p.add_argument("--base-sha", default="")
+    p.add_argument("--head-repo", default="")
+    p.add_argument("--head-ref", default="")
+    p.add_argument("--head-sha", default="")
+    p.add_argument("--pull-request", type=int, default=0)
     a = p.parse_args(argv)
     if a.event_id < 1:
         p.error("--event-id must be a positive integer")

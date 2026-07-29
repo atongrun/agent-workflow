@@ -18,6 +18,9 @@ packet as the atomic recovery source and mirrors it to `context-packet.json`.
 The listener enables the gate and the default coder route covers both
 implementation and deterministic rework.
 
+The later fork/PR-aware runner registers the same three stages under explicit v3 route names.
+Those names change provenance transport, not the ledger's stage or budget semantics.
+
 Coder and reviewer share one run ledger. The legal `implement -> review`
 transition preserves the original TaskCard/planning commit as immutable
 `frozen_base` while recording the executor commit separately as
