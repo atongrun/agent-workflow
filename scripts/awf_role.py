@@ -543,7 +543,7 @@ def delivery_state_path(
     category: str,
     delivery_key: str,
 ) -> Path:
-    if category not in {"outbox", "inbox"}:
+    if category not in {"checkpoint", "outbox", "inbox"}:
         die(f"invalid delivery state category {category!r}")
     digest = hashlib.sha256(delivery_key.encode("utf-8")).hexdigest()
     return evidence.state_dir / category / evidence.role / f"{digest}.json"
@@ -580,6 +580,321 @@ def _load_delivery_record(path: Path, label: str) -> dict[str, object] | None:
     if not isinstance(value, dict):
         die(f"{label} state must be a JSON object")
     return value
+
+
+_RECOVERY_PHASES = (
+    "model_not_started",
+    "model_started",
+    "model_completed",
+    "model_imported",
+    "commit_created",
+    "fork_sha_verified",
+    "pr_tuple_verified",
+    "outbox_prepared",
+    "outbox_sent",
+)
+
+
+def _checkpoint_immutable(record_value: dict[str, object]) -> dict[str, object]:
+    return {
+        key: record_value.get(key)
+        for key in (
+            "format",
+            "role",
+            "input_key",
+            "input_delivery_id",
+            "input_payload_sha256",
+            "input_source_event_id",
+            "branch",
+            "source_commit",
+            "provenance",
+        )
+    }
+
+
+def validate_recovery_checkpoint(record_value: dict[str, object]) -> None:
+    if record_value.get("format") != "awf.recovery-checkpoint.v1":
+        die("recovery checkpoint format is invalid")
+    if record_value.get("role") != "coder":
+        die("recovery checkpoint role is invalid")
+    phase = record_value.get("phase")
+    if phase not in _RECOVERY_PHASES:
+        die("recovery checkpoint phase is invalid")
+    if record_value.get("phase_index") != _RECOVERY_PHASES.index(str(phase)):
+        die("recovery checkpoint phase index is inconsistent")
+    for field in (
+        "input_key",
+        "input_delivery_id",
+        "input_payload_sha256",
+        "branch",
+        "source_commit",
+    ):
+        if not isinstance(record_value.get(field), str) or not record_value[field]:
+            die(f"recovery checkpoint {field} is invalid")
+    if not isinstance(record_value.get("input_source_event_id"), int):
+        die("recovery checkpoint source event ID is invalid")
+    provenance = record_value.get("provenance")
+    if not isinstance(provenance, dict):
+        die("recovery checkpoint is missing PR provenance")
+    if provenance.get("provenance_version") != "awf.pr-provenance.v1":
+        die("recovery checkpoint PR provenance is invalid")
+    facts = record_value.get("facts")
+    if not isinstance(facts, dict):
+        die("recovery checkpoint facts are invalid")
+
+
+def begin_recovery_checkpoint(
+    evidence: RunEvidence,
+    input_context: dict[str, object],
+    *,
+    role: str,
+    branch: str,
+    source_commit: str,
+    provenance: dict[str, object],
+) -> tuple[Path, dict[str, object]]:
+    path = delivery_state_path(evidence, "checkpoint", str(input_context["key"]))
+    record_value: dict[str, object] = {
+        "format": "awf.recovery-checkpoint.v1",
+        "role": role,
+        "input_key": input_context["key"],
+        "input_delivery_id": input_context["delivery_id"],
+        "input_payload_sha256": input_context["payload_sha256"],
+        "input_source_event_id": input_context["source_event_id"],
+        "branch": branch,
+        "source_commit": source_commit,
+        "provenance": provenance_payload(provenance),
+        "phase": "model_not_started",
+        "phase_index": 0,
+        "facts": {},
+        "updated_at": _utc_now(),
+    }
+    validate_recovery_checkpoint(record_value)
+    existing = _load_delivery_record(path, "recovery checkpoint")
+    if existing is not None:
+        validate_recovery_checkpoint(existing)
+        if _checkpoint_immutable(existing) != _checkpoint_immutable(record_value):
+            die("existing recovery checkpoint does not match the current Workflow input")
+        return path, existing
+    _atomic_write_json(path, record_value)
+    record(evidence, "recovery_checkpoint", recovery_phase="model_not_started")
+    return path, record_value
+
+
+def advance_recovery_checkpoint(
+    evidence: RunEvidence,
+    path: Path,
+    record_value: dict[str, object],
+    phase: str,
+    **facts: object,
+) -> dict[str, object]:
+    validate_recovery_checkpoint(record_value)
+    if phase not in _RECOVERY_PHASES:
+        die("recovery checkpoint phase is invalid")
+    current_index = int(record_value["phase_index"])
+    next_index = _RECOVERY_PHASES.index(phase)
+    if next_index < current_index or next_index > current_index + 1:
+        die("recovery checkpoint transition is not monotonic")
+    existing_facts = dict(record_value["facts"])
+    if any(key in existing_facts and existing_facts[key] != value for key, value in facts.items()):
+        die("recovery checkpoint replay tried to alter completed phase facts")
+    if next_index == current_index:
+        return record_value
+    merged_facts = {**existing_facts, **facts}
+    updated = {
+        **record_value,
+        "phase": phase,
+        "phase_index": next_index,
+        "facts": merged_facts,
+        "updated_at": _utc_now(),
+    }
+    validate_recovery_checkpoint(updated)
+    _atomic_write_json(path, updated)
+    record(evidence, "recovery_checkpoint", recovery_phase=phase)
+    return updated
+
+
+def recover_legacy_publication_checkpoint(
+    evidence: RunEvidence,
+    input_context: dict[str, object],
+    *,
+    branch: str,
+    source_commit: str,
+    provenance: dict[str, object],
+) -> tuple[Path, dict[str, object]] | None:
+    """Import pre-checkpoint v3 publication evidence without repeating its model."""
+    if not evidence.log_path.is_file():
+        return None
+    try:
+        entries = [
+            json.loads(line)
+            for line in evidence.log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError):
+        die("legacy recovery evidence is unreadable or invalid JSON")
+    candidates = [
+        item
+        for item in entries
+        if isinstance(item, dict)
+        and item.get("event_id") == evidence.event_id
+        and item.get("role") == "coder"
+    ]
+    postflight = next(
+        (item for item in candidates if item.get("phase") == "postflight_pass"),
+        None,
+    )
+    commits = [
+        item
+        for item in candidates
+        if item.get("phase") == "commit" and item.get("commit_status") == "pass"
+    ]
+    remote = next(
+        (item for item in candidates if item.get("phase") == "remote_sha_verified"),
+        None,
+    )
+    imported_tree = postflight.get("imported_tree") if isinstance(postflight, dict) else None
+    commit_sha = commits[-1].get("commit_sha") if commits else None
+    remote_sha = remote.get("remote_sha") if isinstance(remote, dict) else None
+    if (
+        not isinstance(imported_tree, str)
+        or not _FULL_COMMIT_RE.fullmatch(imported_tree)
+        or not isinstance(commit_sha, str)
+        or not _FULL_COMMIT_RE.fullmatch(commit_sha)
+        or remote_sha != commit_sha
+    ):
+        return None
+    required = (
+        ("postflight_pass", "imported_tree", imported_tree),
+        ("commit", "commit_sha", commit_sha),
+        ("remote_sha_verified", "remote_sha", commit_sha),
+        ("fork_pr_rejected", "reason", "fork_push_or_pr_verification_failed"),
+    )
+    position = -1
+    for phase, field, expected in required:
+        position = next(
+            (
+                index
+                for index in range(position + 1, len(entries))
+                if isinstance(entries[index], dict)
+                and entries[index].get("event_id") == evidence.event_id
+                and entries[index].get("role") == "coder"
+                and entries[index].get("phase") == phase
+                and entries[index].get(field) == expected
+            ),
+            -1,
+        )
+        if position < 0:
+            return None
+    path, checkpoint = begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="coder",
+        branch=branch,
+        source_commit=source_commit,
+        provenance=provenance,
+    )
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_started",
+        model_workspace="legacy-durable-evidence",
+    )
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_completed",
+        model_workspace="legacy-durable-evidence",
+    )
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_imported",
+        imported_tree=imported_tree,
+        legacy_recovered=True,
+    )
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "commit_created",
+        commit_sha=commit_sha,
+    )
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "fork_sha_verified",
+        head_sha=commit_sha,
+    )
+    record(
+        evidence,
+        "legacy_recovery_checkpoint_imported",
+        recovery_phase="fork_sha_verified",
+    )
+    return path, checkpoint
+
+
+def reconcile_recovery_checkpoint_with_outbox(
+    evidence: RunEvidence,
+    input_context: dict[str, object],
+    outbox: dict[str, object],
+) -> None:
+    checkpoint_path = delivery_state_path(
+        evidence,
+        "checkpoint",
+        str(input_context["key"]),
+    )
+    checkpoint = _load_delivery_record(checkpoint_path, "recovery checkpoint")
+    if checkpoint is None:
+        return
+    validate_recovery_checkpoint(checkpoint)
+    expected_bindings = {
+        "input_key": input_context["key"],
+        "input_delivery_id": input_context["delivery_id"],
+        "input_payload_sha256": input_context["payload_sha256"],
+        "input_source_event_id": input_context["source_event_id"],
+        "branch": outbox.get("branch"),
+        "source_commit": outbox.get("source_commit"),
+    }
+    if any(checkpoint.get(key) != value for key, value in expected_bindings.items()):
+        die("outbox does not match its recovery checkpoint input")
+    facts = dict(checkpoint["facts"])
+    verified_provenance = facts.get("verified_provenance")
+    if (
+        outbox.get("format") != "awf.outbox.v2"
+        or outbox.get("action") != "coder.review_handoff"
+        or not isinstance(verified_provenance, dict)
+        or outbox.get("provenance") != verified_provenance
+        or outbox.get("evidence_commit") != facts.get("head_sha")
+    ):
+        die("outbox does not match its verified recovery provenance")
+    delivery_id = outbox.get("delivery_id")
+    if checkpoint.get("phase") == "pr_tuple_verified":
+        checkpoint = advance_recovery_checkpoint(
+            evidence,
+            checkpoint_path,
+            checkpoint,
+            "outbox_prepared",
+            outbox_delivery_id=delivery_id,
+        )
+    elif checkpoint.get("phase") not in {"outbox_prepared", "outbox_sent"}:
+        die("outbox does not match its recovery checkpoint phase")
+    facts = dict(checkpoint["facts"])
+    if facts.get("outbox_delivery_id") != delivery_id:
+        die("outbox delivery does not match its recovery checkpoint")
+    if outbox.get("status") == "sent":
+        advance_recovery_checkpoint(
+            evidence,
+            checkpoint_path,
+            checkpoint,
+            "outbox_sent",
+            outbox_delivery_id=delivery_id,
+        )
+    elif checkpoint.get("phase") == "outbox_sent":
+        die("sent recovery checkpoint has no durable sent outbox")
 
 
 def complete_inbox(
@@ -979,6 +1294,101 @@ def assert_model_git_metadata(workspace: str) -> None:
         die("model process changed isolated workspace Git control metadata")
 
 
+def durable_model_manifest_sha256(workspace: str) -> str:
+    manifest = _model_git_manifest(str(Path(workspace).resolve()))
+    serializable = {key: list(value) for key, value in manifest.items()}
+    return canonical_payload_sha256(serializable)
+
+
+def restore_durable_model_manifest(
+    evidence: RunEvidence,
+    workspace: str,
+    expected_sha256: str,
+) -> str:
+    resolved = Path(workspace).resolve()
+    state_root = evidence.state_dir.resolve()
+    if (
+        resolved == state_root
+        or state_root not in resolved.parents
+        or not resolved.name.startswith("model-workspace-")
+        or not resolved.is_dir()
+        or resolved.is_symlink()
+    ):
+        die("durable model workspace is outside the Workflow state root")
+    manifest = _model_git_manifest(str(resolved))
+    serializable = {key: list(value) for key, value in manifest.items()}
+    if canonical_payload_sha256(serializable) != expected_sha256:
+        die("durable model workspace Git metadata does not match its checkpoint")
+    _MODEL_GIT_MANIFESTS[str(resolved)] = manifest
+    return str(resolved)
+
+
+def recover_completed_model_checkpoint(
+    evidence: RunEvidence,
+    checkpoint_path: Path,
+    checkpoint: dict[str, object],
+) -> dict[str, object] | None:
+    if checkpoint.get("phase") != "model_started":
+        return checkpoint
+    facts = dict(checkpoint.get("facts", {}))
+    workspace = facts.get("model_workspace")
+    manifest_sha256 = facts.get("model_manifest_sha256")
+    model_event_id = facts.get("model_event_id")
+    if (
+        not isinstance(workspace, str)
+        or not isinstance(manifest_sha256, str)
+        or not isinstance(model_event_id, int)
+        or not evidence.log_path.is_file()
+    ):
+        return None
+    try:
+        entries = [
+            json.loads(line)
+            for line in evidence.log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError):
+        die("model recovery evidence is unreadable or invalid JSON")
+    started = -1
+    completed = -1
+    for index, item in enumerate(entries):
+        if (
+            isinstance(item, dict)
+            and item.get("event_id") == model_event_id
+            and item.get("role") == "coder"
+            and item.get("phase") == "opencode_start"
+        ):
+            started = index
+        if (
+            started >= 0
+            and index > started
+            and isinstance(item, dict)
+            and item.get("event_id") == model_event_id
+            and item.get("role") == "coder"
+            and item.get("phase") == "opencode_exit"
+            and item.get("opencode_rc") == 0
+        ):
+            completed = index
+            break
+    if completed < 0:
+        return None
+    restored = restore_durable_model_manifest(
+        evidence,
+        workspace,
+        manifest_sha256,
+    )
+    return advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_completed",
+        model_workspace=restored,
+        model_manifest_sha256=manifest_sha256,
+        model_event_id=model_event_id,
+        recovered_from_process_log=True,
+    )
+
+
 def postflight_git_env() -> dict[str, str]:
     """Credential-free environment for Git reads of model-controlled worktrees."""
     e = _model_base_env()
@@ -1330,7 +1740,7 @@ def ensure_pull_request(
     return verify_pr_head(repo, result)
 
 
-def push_and_verify_pr_head(
+def push_and_verify_fork_head(
     repo: str,
     provenance: dict[str, object],
 ) -> dict[str, object]:
@@ -1348,22 +1758,23 @@ def push_and_verify_pr_head(
     remote_head = git_out(repo, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
     if remote_head != local_head:
         die("fresh contribution fork SHA does not match trusted local HEAD")
-    result = {**provenance, "head_sha": local_head}
-    return ensure_pull_request(repo, result)
+    return {**provenance, "head_sha": local_head}
 
 
-def verify_pr_remote_tuple(
+def push_and_verify_pr_head(
     repo: str,
     provenance: dict[str, object],
-    *,
-    verify_pr: bool,
+) -> dict[str, object]:
+    return ensure_pull_request(repo, push_and_verify_fork_head(repo, provenance))
+
+
+def verify_upstream_base(
+    repo: str,
+    provenance: dict[str, object],
 ) -> None:
     upstream_remote = str(provenance["upstream_remote"])
-    head_remote = str(provenance["head_remote"])
     base_ref = str(provenance["base_ref"])
-    head_ref = str(provenance["head_ref"])
     base_tracking = f"refs/remotes/{upstream_remote}/{base_ref}"
-    head_tracking = f"refs/remotes/{head_remote}/{head_ref}"
     if (
         git(
             repo,
@@ -1375,6 +1786,21 @@ def verify_pr_remote_tuple(
         != 0
     ):
         die("cannot fetch the trusted upstream base")
+    live_base = git_out(repo, "rev-parse", "--verify", f"{base_tracking}^{{commit}}")
+    if live_base != provenance["base_sha"]:
+        die("trusted upstream base SHA does not match persisted provenance")
+
+
+def verify_pr_remote_tuple(
+    repo: str,
+    provenance: dict[str, object],
+    *,
+    verify_pr: bool,
+) -> None:
+    verify_upstream_base(repo, provenance)
+    head_remote = str(provenance["head_remote"])
+    head_ref = str(provenance["head_ref"])
+    head_tracking = f"refs/remotes/{head_remote}/{head_ref}"
     if (
         git(
             repo,
@@ -1386,10 +1812,7 @@ def verify_pr_remote_tuple(
         != 0
     ):
         die("cannot fetch the trusted contribution head")
-    live_base = git_out(repo, "rev-parse", "--verify", f"{base_tracking}^{{commit}}")
     live_head = git_out(repo, "rev-parse", "--verify", f"{head_tracking}^{{commit}}")
-    if live_base != provenance["base_sha"]:
-        die("trusted upstream base SHA does not match persisted provenance")
     if live_head != provenance["head_sha"]:
         die("trusted contribution head SHA does not match persisted provenance")
     if verify_pr:
@@ -2545,6 +2968,7 @@ def resume_outbox(
         if existing.get(key) != expected:
             die(f"outbox {key} does not match the current Workflow input")
     validate_outbox_record(existing)
+    reconcile_recovery_checkpoint_with_outbox(evidence, input_context, existing)
     status = existing.get("status")
     if status == "sent":
         if existing.get("format") == "awf.outbox.v2":
@@ -2556,6 +2980,10 @@ def resume_outbox(
     verify_outbox_evidence(repo, existing)
     if not deliver_outbox(evidence, path, existing):
         die("failed to replay downstream outbox; source event remains unacknowledged")
+    sent = _load_delivery_record(path, "outbox")
+    if sent is None:
+        die("sent outbox evidence disappeared during replay")
+    reconcile_recovery_checkpoint_with_outbox(evidence, input_context, sent)
     complete_inbox(evidence, delivery_id, payload_sha256)
     return True
 
@@ -2596,116 +3024,299 @@ def role_coder(a: argparse.Namespace) -> int:
     except SystemExit:
         record(evidence, "fork_pr_rejected", reason="outbox_provenance_drift")
         raise
-    if gate is not None and getattr(gate, "reason", "") == "duplicate_event":
+    duplicate = gate is not None and getattr(gate, "reason", "") == "duplicate_event"
+    checkpoint_path: Path | None = None
+    checkpoint: dict[str, object] | None = None
+    if provenance is not None and evidence is not None:
+        checkpoint_path = delivery_state_path(
+            evidence,
+            "checkpoint",
+            str(input_context["key"]),
+        )
+        existing_checkpoint = _load_delivery_record(
+            checkpoint_path,
+            "recovery checkpoint",
+        )
+        if duplicate and existing_checkpoint is None:
+            recovered = recover_legacy_publication_checkpoint(
+                evidence,
+                input_context,
+                branch=a.branch,
+                source_commit=a.commit,
+                provenance=provenance,
+            )
+            if recovered is None:
+                die("duplicate Workflow event has no durable recovery checkpoint or outbox")
+            checkpoint_path, existing_checkpoint = recovered
+        checkpoint_path, checkpoint = begin_recovery_checkpoint(
+            evidence,
+            input_context,
+            role="coder",
+            branch=a.branch,
+            source_commit=a.commit,
+            provenance=provenance,
+        )
+    elif duplicate:
         die("duplicate Workflow event has no durable downstream outbox")
 
-    if provenance is not None:
-        try:
-            fetch_and_checkout_pr_head(
-                repo,
-                provenance,
-                verify_pr=bool(provenance["pull_request"]),
+    contract: PostflightContract | None = None
+    recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_not_started"
+    if recovery_phase == "model_started":
+        if checkpoint is not None and checkpoint_path is not None and evidence is not None:
+            checkpoint = recover_completed_model_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
             )
-        except SystemExit:
-            record(evidence, "fork_pr_rejected", reason="input_provenance_drift")
-            raise
-    else:
-        fetch_and_checkout(repo, a.branch, a.commit)
-    card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
-    if not Path(card_file).is_file():
-        die(f"card not found after checkout: {card_file}")
+            recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_started"
+        if recovery_phase == "model_started":
+            die("model invocation outcome is ambiguous; refusing to invoke it again")
 
-    # 2. Parse and freeze the TaskCard postflight contract before model starts
-    contract = parse_postflight_contract(card_file)
+    if recovery_phase == "model_not_started":
+        if provenance is not None:
+            try:
+                fetch_and_checkout_pr_head(
+                    repo,
+                    provenance,
+                    verify_pr=bool(provenance["pull_request"]),
+                )
+            except SystemExit:
+                record(evidence, "fork_pr_rejected", reason="input_provenance_drift")
+                raise
+        else:
+            fetch_and_checkout(repo, a.branch, a.commit)
+        card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
+        if not Path(card_file).is_file():
+            die(f"card not found after checkout: {card_file}")
 
-    model_state_dir = evidence.run_dir if evidence is not None else None
-    model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
-    model_card_file = str(resolve_repo_file(model_repo, a.card, "TaskCard"))
-    log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
-    if tool == "opencode":
-        rc = tool_opencode_exec(
-            model_repo,
-            model_card_file,
-            prompt_file,
-            model,
-            getattr(a, "review_feedback", ""),
+        # 2. Parse and freeze the TaskCard postflight contract before model starts
+        contract = parse_postflight_contract(card_file)
+        model_state_dir = evidence.run_dir if evidence is not None else None
+        model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
+        if checkpoint is not None and checkpoint_path is not None:
+            model_manifest_sha256 = durable_model_manifest_sha256(model_repo)
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "model_started",
+                model_workspace=str(Path(model_repo).resolve()),
+                model_manifest_sha256=model_manifest_sha256,
+                model_event_id=evidence.event_id,
+            )
+        model_card_file = str(resolve_repo_file(model_repo, a.card, "TaskCard"))
+        log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
+        if tool == "opencode":
+            rc = tool_opencode_exec(
+                model_repo,
+                model_card_file,
+                prompt_file,
+                model,
+                getattr(a, "review_feedback", ""),
+                evidence,
+            )
+        else:
+            die(f"coder: unsupported tool '{tool}'")
+        if rc != 0:
+            die(f"tool '{tool}' failed (rc={rc}); not announcing review")
+        if checkpoint is not None and checkpoint_path is not None:
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "model_completed",
+                model_workspace=str(Path(model_repo).resolve()),
+                model_manifest_sha256=model_manifest_sha256,
+                model_event_id=evidence.event_id,
+            )
+        recovery_phase = "model_completed"
+    elif recovery_phase == "model_completed":
+        facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
+        model_workspace = facts.get("model_workspace")
+        if not isinstance(model_workspace, str) or not model_workspace:
+            die("completed model checkpoint is missing its workspace")
+        manifest_sha256 = facts.get("model_manifest_sha256")
+        if not isinstance(manifest_sha256, str):
+            die("completed model checkpoint is missing its Git manifest")
+        model_repo = restore_durable_model_manifest(
             evidence,
+            model_workspace,
+            manifest_sha256,
         )
-    else:
-        die(f"coder: unsupported tool '{tool}'")
-    assert_model_workspace_state(model_repo, a.commit)
-    if provenance is not None:
+
+    if recovery_phase == "model_completed":
+        assert_model_workspace_state(model_repo, a.commit)
+        if provenance is not None:
+            try:
+                assert_model_pr_git_state(repo, provenance)
+            except SystemExit:
+                record(evidence, "fork_pr_rejected", reason="model_boundary_provenance_drift")
+                raise
+        else:
+            assert_model_git_state(repo, a.branch, a.commit)
+        record(evidence, "model_git_state_verified", model_git_state="pass")
+        if contract is None:
+            card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
+            if not Path(card_file).is_file():
+                die(f"card not found after trusted checkout restore: {card_file}")
+            contract = parse_postflight_contract(card_file)
+
+        record(
+            evidence,
+            "postflight_start",
+            postflight_started=True,
+            postflight_status="running",
+        )
         try:
-            assert_model_pr_git_state(repo, provenance)
-        except SystemExit:
-            record(evidence, "fork_pr_rejected", reason="model_boundary_provenance_drift")
+            # 4. ImplementationReport gate — fail before any write or downstream event
+            model_report = resolve_repo_file(model_repo, a.report, "ImplementationReport")
+            check_report(str(model_report))
+
+            # 5. Rerun every verification command from the frozen contract
+            run_verifications(model_repo, contract)
+            assert_model_git_metadata(model_repo)
+            stage_model_artifact(model_repo, a.report, "ImplementationReport")
+
+            # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
+            run_postflight_delta_gates(model_repo, contract)
+            assert_model_git_metadata(model_repo)
+            imported_tree = import_model_delta(model_repo, repo)
+            check_report(str(resolve_repo_file(repo, a.report, "ImplementationReport")))
+        except BaseException:
+            record(evidence, "postflight_fail", postflight_status="fail")
             raise
-    else:
-        assert_model_git_state(repo, a.branch, a.commit)
-    record(evidence, "model_git_state_verified", model_git_state="pass")
-    if rc != 0:
-        die(f"tool '{tool}' failed (rc={rc}); not announcing review")
-
-    record(
-        evidence,
-        "postflight_start",
-        postflight_started=True,
-        postflight_status="running",
-    )
-    try:
-        # 4. ImplementationReport gate — fail before any write or downstream event
-        model_report = resolve_repo_file(model_repo, a.report, "ImplementationReport")
-        check_report(str(model_report))
-
-        # 5. Rerun every verification command from the frozen contract
-        run_verifications(model_repo, contract)
-        assert_model_git_metadata(model_repo)
-        stage_model_artifact(model_repo, a.report, "ImplementationReport")
-
-        # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
-        run_postflight_delta_gates(model_repo, contract)
-        assert_model_git_metadata(model_repo)
-        imported_tree = import_model_delta(model_repo, repo)
-        check_report(str(resolve_repo_file(repo, a.report, "ImplementationReport")))
-    except BaseException:
-        record(evidence, "postflight_fail", postflight_status="fail")
-        raise
-    record(
-        evidence,
-        "postflight_pass",
-        postflight_status="pass",
-        imported_tree=imported_tree,
-    )
+        record(
+            evidence,
+            "postflight_pass",
+            postflight_status="pass",
+            imported_tree=imported_tree,
+        )
+        if checkpoint is not None and checkpoint_path is not None:
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "model_imported",
+                imported_tree=imported_tree,
+            )
+        recovery_phase = "model_imported"
+    elif checkpoint is not None:
+        facts = dict(checkpoint["facts"])
+        imported_tree = str(facts.get("imported_tree", ""))
+        if not _FULL_COMMIT_RE.fullmatch(imported_tree):
+            die("recovery checkpoint imported tree is invalid")
 
     # 7. commit + push the executor's output back to the same branch
-    record(evidence, "commit", commit_status="running")
-    if git(repo, "diff", "--cached", "--quiet") != 0:
-        if git_out(repo, "write-tree") != imported_tree:
-            die("trusted index changed after verified model import")
-        msg = executor_commit_message(a.branch, tool)
-        if git(repo, "commit", "-q", "-m", msg) != 0:
-            die("git commit failed (is git user.name/user.email configured on this machine?)")
-        log(f"committed executor output on {a.branch}")
+    if checkpoint is None:
+        record(evidence, "commit", commit_status="running")
+        if git(repo, "diff", "--cached", "--quiet") != 0:
+            if git_out(repo, "write-tree") != imported_tree:
+                die("trusted index changed after verified model import")
+            msg = executor_commit_message(a.branch, tool)
+            if git(repo, "commit", "-q", "-m", msg) != 0:
+                die("git commit failed (is git user.name/user.email configured on this machine?)")
+            log(f"committed executor output on {a.branch}")
+        else:
+            log("no changes produced by the tool")
+        commit_sha = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+        record(evidence, "commit", commit_status="pass", commit_sha=commit_sha)
+    elif recovery_phase == "model_imported":
+        record(evidence, "commit", commit_status="running")
+        current_head = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+        if current_head == a.commit:
+            if git(repo, "read-tree", imported_tree) != 0:
+                die("failed to restore the verified imported tree")
+            if git_out(repo, "write-tree") != imported_tree:
+                die("trusted index changed after verified model import")
+            msg = executor_commit_message(a.branch, tool)
+            if git(repo, "commit", "-q", "-m", msg) != 0:
+                die("git commit failed (is git user.name/user.email configured on this machine?)")
+            log(f"committed executor output on {a.branch}")
+            commit_sha = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+        else:
+            parent = git_out(repo, "rev-parse", "--verify", "HEAD^1")
+            current_tree = git_out(repo, "rev-parse", "--verify", "HEAD^{tree}")
+            if parent != a.commit or current_tree != imported_tree:
+                die("trusted repository drifted after the imported-tree checkpoint")
+            commit_sha = current_head
+        if not _FULL_COMMIT_RE.fullmatch(commit_sha):
+            die("trusted commit checkpoint is invalid")
+        record(evidence, "commit", commit_status="pass", commit_sha=commit_sha)
+        if checkpoint is not None and checkpoint_path is not None:
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "commit_created",
+                commit_sha=commit_sha,
+            )
+        recovery_phase = "commit_created"
     else:
-        log("no changes produced by the tool")
-    commit_sha = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
-    record(evidence, "commit", commit_status="pass", commit_sha=commit_sha)
+        facts = dict(checkpoint["facts"])
+        commit_sha = str(facts.get("commit_sha", ""))
+        current_head = git_out(repo, "rev-parse", "--verify", "HEAD^{commit}")
+        current_tree = git_out(repo, "rev-parse", "--verify", "HEAD^{tree}")
+        if (
+            not _FULL_COMMIT_RE.fullmatch(commit_sha)
+            or current_head != commit_sha
+            or current_tree != imported_tree
+        ):
+            die("trusted repository does not match the durable commit checkpoint")
     if no_push:
         die(
             "AWF_NO_PUSH=1 cannot complete the trusted coder handler; "
             "remote review handoff requires a verified push"
         )
-    record(evidence, "push", push_started=True)
     if provenance is not None:
         try:
-            provenance = push_and_verify_pr_head(repo, provenance)
+            if recovery_phase == "commit_created":
+                verify_upstream_base(repo, provenance)
+                record(evidence, "push", push_started=True)
+                provenance = push_and_verify_fork_head(repo, provenance)
+                new_commit = str(provenance["head_sha"])
+                record(evidence, "remote_sha_verified", remote_sha=new_commit)
+                if checkpoint is not None and checkpoint_path is not None:
+                    checkpoint = advance_recovery_checkpoint(
+                        evidence,
+                        checkpoint_path,
+                        checkpoint,
+                        "fork_sha_verified",
+                        head_sha=new_commit,
+                    )
+                recovery_phase = "fork_sha_verified"
+            else:
+                facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
+                new_commit = str(facts.get("head_sha", ""))
+                if new_commit != commit_sha:
+                    die("fork checkpoint does not match the durable commit")
+                provenance = {**provenance, "head_sha": new_commit}
+                verify_pr_remote_tuple(repo, provenance, verify_pr=False)
+
+            if recovery_phase == "fork_sha_verified":
+                provenance = ensure_pull_request(repo, provenance)
+                if checkpoint is not None and checkpoint_path is not None:
+                    checkpoint = advance_recovery_checkpoint(
+                        evidence,
+                        checkpoint_path,
+                        checkpoint,
+                        "pr_tuple_verified",
+                        verified_provenance=provenance_payload(provenance),
+                    )
+                recovery_phase = "pr_tuple_verified"
+            else:
+                facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
+                verified = facts.get("verified_provenance")
+                if not isinstance(verified, dict):
+                    die("PR checkpoint is missing verified provenance")
+                provenance = {**provenance, **verified}
+                verify_pr_remote_tuple(repo, provenance, verify_pr=True)
         except SystemExit:
             record(evidence, "fork_pr_rejected", reason="fork_push_or_pr_verification_failed")
             raise
-        new_commit = str(provenance["head_sha"])
     else:
+        record(evidence, "push", push_started=True)
         new_commit = push_and_verify_remote_head(repo, a.branch)
-    record(evidence, "remote_sha_verified", remote_sha=new_commit)
+        record(evidence, "remote_sha_verified", remote_sha=new_commit)
     input_type = getattr(a, "input_type", "")
     review_type = (
         "task:awf-review-v3"
@@ -2744,6 +3355,17 @@ def role_coder(a: argparse.Namespace) -> int:
         payload=review_payload,
         provenance=provenance,
     )
+    if checkpoint is not None and checkpoint_path is not None:
+        if str(checkpoint["phase"]) == "pr_tuple_verified":
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "outbox_prepared",
+                outbox_delivery_id=review_payload["awf_delivery_id"],
+            )
+        elif str(checkpoint["phase"]) != "outbox_prepared":
+            die("recovery checkpoint is inconsistent with the durable outbox")
     sent = (
         deliver_outbox(evidence, *outbox)
         if evidence is not None and outbox is not None
@@ -2751,6 +3373,14 @@ def role_coder(a: argparse.Namespace) -> int:
     )
     if not sent:
         die("failed to send reviewer event; implementation will not be ACKed")
+    if checkpoint is not None and checkpoint_path is not None:
+        checkpoint = advance_recovery_checkpoint(
+            evidence,
+            checkpoint_path,
+            checkpoint,
+            "outbox_sent",
+            outbox_delivery_id=review_payload["awf_delivery_id"],
+        )
     complete_inbox(
         evidence,
         str(input_context["delivery_id"]),

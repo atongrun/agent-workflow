@@ -2908,6 +2908,455 @@ def test_outbox_remote_drift_blocks_replay_before_send(monkeypatch, tmp_path):
         awf_role.verify_outbox_evidence(str(tmp_path), record)
 
 
+def test_recovery_checkpoint_is_monotonic_and_binds_complete_provenance(tmp_path):
+    evidence = awf_role.RunEvidence(75, "coder", state_root=tmp_path / "state")
+    provenance = _pr_provenance(pull_request=0)
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 75,
+    }
+
+    path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="coder",
+        branch="feature/task",
+        source_commit="a" * 40,
+        provenance=provenance,
+    )
+    assert checkpoint["phase"] == "model_not_started"
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_started",
+        model_workspace="runs/event-75/model-workspace-proof",
+    )
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.advance_recovery_checkpoint(
+            evidence,
+            path,
+            checkpoint,
+            "model_completed",
+            model_workspace="runs/event-75/model-workspace-drifted",
+        )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_completed",
+        model_workspace="runs/event-75/model-workspace-proof",
+    )
+    assert checkpoint["provenance"] == awf_role.provenance_payload(provenance)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.advance_recovery_checkpoint(
+            evidence,
+            path,
+            checkpoint,
+            "model_started",
+        )
+
+    changed = {**provenance, "head_ref": "feature/other"}
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.begin_recovery_checkpoint(
+            evidence,
+            input_context,
+            role="coder",
+            branch="feature/task",
+            source_commit="a" * 40,
+            provenance=changed,
+        )
+
+
+def test_legacy_postflight_commit_and_fork_evidence_imports_without_model(tmp_path):
+    evidence = awf_role.RunEvidence(102, "coder", state_root=tmp_path / "state")
+    imported_tree = "c" * 40
+    commit_sha = "d" * 40
+    evidence.record(
+        "postflight_pass",
+        postflight_status="pass",
+        imported_tree=imported_tree,
+    )
+    evidence.record("commit", commit_status="pass", commit_sha=commit_sha)
+    evidence.record("remote_sha_verified", remote_sha=commit_sha)
+    evidence.record(
+        "fork_pr_rejected",
+        reason="fork_push_or_pr_verification_failed",
+    )
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 102,
+    }
+
+    recovered = awf_role.recover_legacy_publication_checkpoint(
+        evidence,
+        input_context,
+        branch="feature/task",
+        source_commit="b" * 40,
+        provenance=_pr_provenance(pull_request=0),
+    )
+
+    assert recovered is not None
+    _, checkpoint = recovered
+    assert checkpoint["phase"] == "fork_sha_verified"
+    assert checkpoint["facts"]["imported_tree"] == imported_tree
+    assert checkpoint["facts"]["commit_sha"] == commit_sha
+    assert checkpoint["facts"]["head_sha"] == commit_sha
+
+
+def test_prepared_outbox_replay_reconciles_checkpoint_before_send(monkeypatch, tmp_path):
+    evidence = awf_role.RunEvidence(103, "coder", state_root=tmp_path / "state")
+    provenance = _pr_provenance()
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 103,
+    }
+    checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="coder",
+        branch="feature/task",
+        source_commit="a" * 40,
+        provenance={**provenance, "pull_request": 0},
+    )
+    transitions = [
+        ("model_started", {"model_workspace": "workspace"}),
+        ("model_completed", {"model_workspace": "workspace"}),
+        ("model_imported", {"imported_tree": "c" * 40}),
+        ("commit_created", {"commit_sha": "b" * 40}),
+        ("fork_sha_verified", {"head_sha": "b" * 40}),
+        (
+            "pr_tuple_verified",
+            {"verified_provenance": awf_role.provenance_payload(provenance)},
+        ),
+    ]
+    for phase, facts in transitions:
+        checkpoint = awf_role.advance_recovery_checkpoint(
+            evidence,
+            checkpoint_path,
+            checkpoint,
+            phase,
+            **facts,
+        )
+    payload = awf_role.build_delivery_payload(
+        "coder",
+        "task:awf-review-v3",
+        {
+            "task_id": "task",
+            "branch": "feature/task",
+            "card": "task.md",
+            "commit": "b" * 40,
+            "report": "report.md",
+            "review_report": "review.md",
+            "tool": "opencode",
+            "model": "",
+            **awf_role.provenance_payload(provenance),
+        },
+        evidence,
+    )
+    outbox_path, outbox = awf_role.prepare_outbox(
+        evidence,
+        input_context,
+        action="coder.review_handoff",
+        branch="feature/task",
+        source_commit="a" * 40,
+        evidence_commit="b" * 40,
+        to_role="reviewer",
+        event_type="task:awf-review-v3",
+        payload=payload,
+        provenance=provenance,
+    )
+    phases_at_send = []
+    monkeypatch.setattr(awf_role, "verify_outbox_evidence", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: (
+            phases_at_send.append(json.loads(checkpoint_path.read_text(encoding="utf-8"))["phase"])
+            or True
+        ),
+    )
+    args = argparse.Namespace(branch="feature/task", commit="a" * 40)
+
+    assert awf_role.resume_outbox(
+        args,
+        "coder",
+        str(tmp_path),
+        evidence,
+        input_context,
+    )
+
+    saved = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert saved["phase"] == "outbox_sent"
+    assert saved["facts"]["outbox_delivery_id"] == payload["awf_delivery_id"]
+    assert phases_at_send == ["outbox_prepared"]
+    assert json.loads(outbox_path.read_text(encoding="utf-8"))["status"] == "sent"
+
+
+def test_process_crash_after_zero_model_exit_recovers_durable_workspace(tmp_path):
+    evidence = awf_role.RunEvidence(104, "coder", state_root=tmp_path / "state")
+    workspace = evidence.run_dir / "model-workspace-proof"
+    git_dir = workspace / ".git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/proof\n", encoding="utf-8")
+    manifest_sha256 = awf_role.durable_model_manifest_sha256(str(workspace))
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 104,
+    }
+    checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="coder",
+        branch="feature/task",
+        source_commit="a" * 40,
+        provenance=_pr_provenance(pull_request=0),
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_started",
+        model_workspace=str(workspace),
+        model_manifest_sha256=manifest_sha256,
+        model_event_id=104,
+    )
+    evidence.record("opencode_start", opencode_pid=123, opencode_cwd=str(workspace))
+    evidence.record("opencode_exit", opencode_rc=0)
+
+    recovered = awf_role.recover_completed_model_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+    )
+
+    assert recovered is not None
+    assert recovered["phase"] == "model_completed"
+    assert recovered["facts"]["recovered_from_process_log"] is True
+
+
+def test_model_completed_replay_verifies_checkout_before_parsing_taskcard(monkeypatch, tmp_path):
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    provenance = _pr_provenance(pull_request=0)
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-impl-v3"
+    ns.source_event_id = 105
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    _bind_delivery(ns, event_type=ns.input_type, source_event_id=ns.source_event_id)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(105, "coder", state_root=state_root)
+    input_context = awf_role.validate_input_delivery(ns, "coder", ns.evidence)
+    checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
+        ns.evidence,
+        input_context,
+        role="coder",
+        branch=ns.branch,
+        source_commit=ns.commit,
+        provenance=provenance,
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        ns.evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_started",
+        model_workspace=str(tmp_path / "state" / "model-workspace-proof"),
+        model_manifest_sha256="sha256:model",
+        model_event_id=105,
+    )
+    awf_role.advance_recovery_checkpoint(
+        ns.evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_completed",
+        model_workspace=str(tmp_path / "state" / "model-workspace-proof"),
+        model_manifest_sha256="sha256:model",
+        model_event_id=105,
+    )
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="duplicate_event"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "restore_durable_model_manifest",
+        lambda *args, **kwargs: str(tmp_path / "model"),
+    )
+    monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *args: None)
+    calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "assert_model_pr_git_state",
+        lambda *args: calls.append("verify"),
+    )
+
+    def stop_after_parse(*args):
+        calls.append("parse")
+        raise SystemExit(1)
+
+    monkeypatch.setattr(awf_role, "parse_postflight_contract", stop_after_parse)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+    assert calls == ["verify", "parse"]
+
+
+def test_tool_failure_replay_never_reinvokes_model(monkeypatch, tmp_path):
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    provenance = _pr_provenance(pull_request=0)
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-impl-v3"
+    ns.source_event_id = 75
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    _bind_delivery(ns, event_type=ns.input_type, source_event_id=ns.source_event_id)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(75, "coder", state_root=state_root)
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "assert_model_pr_git_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_manifest_sha256",
+        lambda *args, **kwargs: "sha256:model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="authorized"),
+    )
+    model_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: model_calls.append(args) or 9,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+    assert len(model_calls) == 1
+
+    ns.evidence = awf_role.RunEvidence(76, "coder", state_root=state_root)
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="duplicate_event"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: pytest.fail("ambiguous model invocation must not be repeated"),
+    )
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+    assert len(model_calls) == 1
+
+
+def test_pr_failure_replay_resumes_after_verified_fork_without_model(monkeypatch, tmp_path):
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    provenance = _pr_provenance(pull_request=0)
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-impl-v3"
+    ns.source_event_id = 76
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    _bind_delivery(ns, event_type=ns.input_type, source_event_id=ns.source_event_id)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(77, "coder", state_root=state_root)
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "assert_model_pr_git_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_manifest_sha256",
+        lambda *args, **kwargs: "sha256:model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="authorized"),
+    )
+    repository_state = {"head": provenance["head_sha"]}
+
+    def fake_git(_repo, *args):
+        if args and args[0] == "commit":
+            repository_state["head"] = "d" * 40
+        return 0
+
+    def fake_git_out(_repo, *args):
+        if args == ("write-tree",) or args[-1] == "HEAD^{tree}":
+            return "c" * 40
+        if args[-1] == "HEAD^1":
+            return provenance["head_sha"]
+        if args[-1] == "HEAD^{commit}":
+            return repository_state["head"]
+        return "d" * 40
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+    monkeypatch.setattr(awf_role, "import_model_delta", lambda *args, **kwargs: "c" * 40)
+    model_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: model_calls.append(args) or 0,
+    )
+    publication_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "push_and_verify_fork_head",
+        lambda _repo, value: publication_calls.append("push") or {**value, "head_sha": "d" * 40},
+    )
+    pr_calls = []
+
+    def fail_first_pr(_repo, value):
+        pr_calls.append(value)
+        if len(pr_calls) == 1:
+            raise SystemExit(1)
+        return {**value, "pull_request": 31}
+
+    monkeypatch.setattr(awf_role, "ensure_pull_request", fail_first_pr)
+    monkeypatch.setattr(
+        awf_role,
+        "verify_upstream_base",
+        lambda *args, **kwargs: publication_calls.append("base"),
+    )
+    monkeypatch.setattr(awf_role, "verify_pr_remote_tuple", lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+    assert len(model_calls) == 1
+    assert publication_calls[:2] == ["base", "push"]
+
+    ns.evidence = awf_role.RunEvidence(78, "coder", state_root=state_root)
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="duplicate_event"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: pytest.fail("PR recovery must not rerun the model"),
+    )
+    monkeypatch.setattr(awf_role, "send_event", lambda *args, **kwargs: True)
+
+    assert awf_role.role_coder(ns) == 0
+    assert len(model_calls) == 1
+    assert len(pr_calls) == 2
+
+
 def test_completed_reviewer_delivery_skips_model_and_send(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

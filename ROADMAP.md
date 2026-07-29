@@ -83,6 +83,9 @@ Completed engineering gates:
 
 Remaining Phase 2 work:
 
+- [ ] Replace shell/Git-Bash `dispatch.env` sourcing with one strict cross-platform Python
+  configuration loader shared by listener, dispatch, bootstrap, and service entry points. No
+  PowerShell dependency, credential output, interpolation, or permissive parsing is allowed.
 - [ ] Record the capacity-isolation metrics defined in
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.

@@ -187,17 +187,22 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Finish the fork/PR proof follow-up PR.** Complete independent review, push the reviewed head,
-   create the PR, and require green GitHub CI. Do not merge it in this task.
+1. **Finish durable phase/checkpoint recovery.** Complete independent review, Windows deterministic
+   verification, retained event #102 recovery, full local validation, and green GitHub CI for
+   [`docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md`](docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md).
+   Do not restart the coder model if any recovery gate fails.
 2. **Keep PR #28 separate.** It remains a narrow disposable-proof record; do not rewrite or expand
    it to carry the fork/PR change.
 3. **Recover retained event #102 after Bus connectivity returns.** Deliver only its already-fixed
    PR #31 provenance to reviewer, then ACK coder only after send success. Do not restart the coder
    model or create another proof event.
-4. **Write the proof evidence and metrics update.** Record role/reason counters, ledger ID,
+4. **Implement the mandatory Python configuration loader.** Remove production reliance on
+   PowerShell and Git Bash sourcing POSIX `dispatch.env`; share one strict, credential-safe loader
+   across listener, dispatch, bootstrap, and service entry points.
+5. **Write the proof evidence and metrics update.** Record role/reason counters, ledger ID,
    context-packet checksum, gate decisions, and denial reasons without raw prompts, credentials,
    retained payloads, ACK/requeue actions, or token counts.
-5. **Create the terminal-recovery decision artifact.** Decide the disposition of the preserved
+6. **Create the terminal-recovery decision artifact.** Decide the disposition of the preserved
    interrupted run only after the disposable proof. No new product TaskCard may begin before that
    explicit decision.
 

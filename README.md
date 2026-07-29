@@ -140,6 +140,11 @@ A post-merge Mac/Windows proof confirmed contributor-fork publication and exact-
 the [live-proof closeout](docs/tasks/fork-pr-live-proof-closeout-20260729.md) records the evidence
 and the exact PR-number recovery fix found during that run.
 
+The v3 coder additionally persists a monotonic
+[phase checkpoint](docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md) before
+model invocation and after verified model, tree, commit, fork, PR, and outbox boundaries. Duplicate
+deliveries resume from the last trusted boundary; an ambiguous model invocation is never repeated.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream
