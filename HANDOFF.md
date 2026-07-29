@@ -1,7 +1,7 @@
 # Repository Handoff
 
-> Current through the 2026-07-29 post-merge fork/PR live proof. The current `main`
-> baseline is `88c7001`; repository files and live Git refs are authoritative. This document contains no private
+> Current through the 2026-07-29 durable checkpoint recovery proof. The current `main`
+> baseline is `62b3d62`; repository files and live Git refs are authoritative. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
 
 ## Current Handoff State: 2026-07-29
@@ -24,13 +24,19 @@ PR URL returned by trusted `gh pr create`, binds its exact number, and verifies 
 without branch-list rediscovery. It also normalizes v3's initial `pull_request: 0` before
 control-plane persistence.
 
+That follow-up merged as PR #32 at `62b3d628a93aefcee371ce8ef6170a8042b32232`
+after a fresh head/check audit and green CI. Draft PR #28 remains untouched.
+
 Agent Bus event handling was separately authorized. Historical coder events #97 and #100 were
 classified as superseded/terminal and ACKed without executing their old product TaskCards. Proof
 event #101 exposed a fixture-path failure plus an existing duplicate-without-outbox recovery gap;
 it was terminally closed via the Bus-required requeue-then-ACK transition. Fresh event #102 passed
-the Windows coder model isolation, postflight, fork push, fresh SHA, and PR #31 creation. Its
-reviewer handoff remains unACKed and recoverable because Windows-to-Bus sends currently fail through
-both the proxy and direct private route. The Mac reviewer queue remained empty.
+the Windows coder model isolation, postflight, fork push, fresh SHA, and PR #31 creation. Durable
+checkpoint recovery later resumed that same event, freshly verified fork/PR provenance, sent
+reviewer event #103, and ACKed #102 with the coder invocation count unchanged at one. Reviewer #103
+recovered its same completed subprocess, emitted structured `PASS` decision #104 without a second
+invocation, and was ACKed. Architect validated its canonical delivery hash and exact PR tuple before
+ACKing #104.
 
 ### Fork/PR boundary
 
@@ -64,8 +70,8 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Commit `88c7001` is the fresh baseline and includes
-  merged PR #29's fork/PR-aware v3 trusted runner.
+- The authoritative product branch is `main`. Commit `62b3d62` is the fresh baseline and includes
+  merged PR #32's exact PR-number and control-plane compatibility fixes.
 - All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
   prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
   evidence, not product direction.
@@ -146,12 +152,11 @@ event-scoped no-remote OpenCode workspaces with trusted delta import, and one fr
 cross-machine `PASS` route
 through architect consumption and ACK.
 
-PR #27's control plane is merged and its deterministic CI passed. The fork/PR-aware v3 route is
-implemented and locally testable on its current feature branch, but is not a merged or live
-operational capability until current-head CI and independent security/code review pass.
+PR #32's exact PR-number and control-plane compatibility fixes are merged with green CI. Durable
+coder/reviewer checkpoint recovery is proven live and independently reviewed on its feature branch,
+but remains unmerged until its final current-head PR and CI closeout.
 
-Still missing: completion of the Agent Bus reviewer handoff for retained event #102, recorded
-capacity-isolation metrics for the live run
+Still missing: recorded capacity-isolation metrics for the live run
 (`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
 downstream TaskCard, and a terminal recovery decision for the preserved interrupted run.
 
@@ -187,14 +192,17 @@ Agent Host, workflow engine, or Agent Bus coupling to the stable core.
 
 ## Next Gates (in order)
 
-1. **Finish the fork/PR proof follow-up PR.** Complete independent review, push the reviewed head,
-   create the PR, and require green GitHub CI. Do not merge it in this task.
+1. **Finish durable phase/checkpoint recovery PR closeout.** Implementation, independent review,
+   Windows verification, and the #102–#104 lifecycle are complete. Open the final PR and require
+   green current-head CI for
+   [`docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md`](docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md).
+   Do not merge that final PR without fresh user authority.
 2. **Keep PR #28 separate.** It remains a narrow disposable-proof record; do not rewrite or expand
    it to carry the fork/PR change.
-3. **Recover retained event #102 after Bus connectivity returns.** Deliver only its already-fixed
-   PR #31 provenance to reviewer, then ACK coder only after send success. Do not restart the coder
-   model or create another proof event.
-4. **Write the proof evidence and metrics update.** Record role/reason counters, ledger ID,
+3. **Implement the mandatory Python configuration loader.** Remove production reliance on
+   PowerShell and Git Bash sourcing POSIX `dispatch.env`; share one strict, credential-safe loader
+   across listener, dispatch, bootstrap, and service entry points.
+4. **Write the metrics update.** Record role/reason counters, ledger ID,
    context-packet checksum, gate decisions, and denial reasons without raw prompts, credentials,
    retained payloads, ACK/requeue actions, or token counts.
 5. **Create the terminal-recovery decision artifact.** Decide the disposition of the preserved

@@ -80,14 +80,19 @@ Completed engineering gates:
   replay to one exact verified PR provenance tuple.
 - [x] Prove the post-merge fork publication path on a contributor Windows machine and exact
   persisted PR-head review on Mac; retain fail-closed behavior when GitHub PR visibility lags.
+- [x] Recover retained same-delivery coder and reviewer events from durable checkpoints without
+  repeating either completed model subprocess; complete PASS routing and architect ACK.
 
 Remaining Phase 2 work:
 
+- [ ] Replace shell/Git-Bash `dispatch.env` sourcing with one strict cross-platform Python
+  configuration loader shared by listener, dispatch, bootstrap, and service entry points. No
+  PowerShell dependency, credential output, interpolation, or permissive parsing is allowed.
 - [ ] Record the capacity-isolation metrics defined in
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
-- [ ] Complete the Agent Bus portion of the fresh disposable proof after service availability is
-  restored. The Git/PR portion is complete; never reuse preserved dogfood events.
+- [x] Complete the Agent Bus portion of the fresh disposable proof through coder, reviewer, PASS
+  decision, and architect ACK without creating a replacement proof event.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
 the stable core or modify Agent Bus protocol.

@@ -140,6 +140,13 @@ A post-merge Mac/Windows proof confirmed contributor-fork publication and exact-
 the [live-proof closeout](docs/tasks/fork-pr-live-proof-closeout-20260729.md) records the evidence
 and the exact PR-number recovery fix found during that run.
 
+The v3 coder and reviewer additionally persist role-specific monotonic
+[phase checkpoint](docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md) before
+model invocation and after their verified model, artifact, publication/provenance, and outbox
+boundaries. Duplicate deliveries resume from the last trusted boundary; an ambiguous model
+invocation is never repeated. A retained Windows-to-Mac proof recovered the same coder and reviewer
+deliveries, routed a structured PASS, and completed architect ACK without repeating either model.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream
