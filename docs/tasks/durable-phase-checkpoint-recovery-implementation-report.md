@@ -2,15 +2,18 @@
 
 ## Outcome
 
-The v3 trusted coder now persists a delivery-scoped recovery checkpoint outside the Git checkout.
+The v3 trusted coder and reviewer now persist delivery-scoped recovery checkpoints outside the Git checkout.
 The checkpoint is written immediately before model invocation and advances only after durable,
 independently verifiable boundaries. A duplicate control-plane delivery first replays a prepared
 outbox; when no outbox exists it resumes from the last trusted checkpoint instead of restarting the
 model or rejecting every replay.
 
-This closes the failure class exposed by proof event #101 and provides a bounded migration path for
-retained proof event #102. It does not weaken the control plane's duplicate, attempt, route, or
-terminal-state gates.
+This closes the failure class exposed by proof events #102 and #103. The retained coder delivery
+recovered from its trusted commit, reused PR #31, sent the reviewer handoff, and was ACKed without a
+second coder invocation. The reviewer delivery then recovered the same completed reviewer process,
+sent a validated `PASS` decision, and was ACKed without a second reviewer invocation. Architect
+validated and ACKed the decision event. The duplicate, attempt, route, and terminal-state gates
+remain intact.
 
 ## Durable phases
 
@@ -18,7 +21,7 @@ The checkpoint format is `awf.recovery-checkpoint.v1`. It binds the role, input 
 canonical input payload hash, source event ID, branch, source commit, and complete original
 `awf.pr-provenance.v1` tuple.
 
-Phases advance monotonically:
+Coder phases advance monotonically:
 
 1. `model_not_started`
 2. `model_started`
@@ -33,6 +36,9 @@ Phases advance monotonically:
 An existing checkpoint with different input or provenance fails closed. A backward or skipped
 transition fails closed. Repeating an already-recorded phase is allowed only when the supplied facts
 are identical.
+
+The reviewer uses the same model phases, then `pr_tuple_verified`, `outbox_prepared`, and
+`outbox_sent`; coder-only commit and fork-publication phases are not part of its state graph.
 
 ## Recovery behavior
 
@@ -50,23 +56,35 @@ are identical.
   then verifies the complete upstream/base and fork/head tuple before recording it.
 - A prepared or ambiguous outbox replays its exact payload. A successful replay advances the
   checkpoint to `outbox_sent` before the source handler can complete and be ACKed.
+- Reviewer recovery binds the completed process to the same event and role, restores the durable
+  no-remote workspace, hashes the exact ReviewReport, revalidates the complete PR tuple, and
+  persists its verdict outbox before ACK.
 
 All mismatch paths remain fail closed. Recovery never changes the original TaskCard input, source
 commit, branch, repository identities, base tuple, delivery hash, or model choice.
 
 ## Legacy proof-event migration
 
-The retained event #102 predates this checkpoint format. Its same-event recovery may import a
-checkpoint only when its append-only handler log contains, in order:
+Retained event #102 predates this checkpoint format. Its same-event recovery imported only the
+strongest phases present in its append-only handler log, in order:
 
 - successful postflight with a full verified tree ID;
 - successful trusted commit with a full commit ID;
-- freshly verified remote SHA equal to that commit;
 - the bounded `fork_push_or_pr_verification_failed` terminal reason.
 
-The imported checkpoint starts at `fork_sha_verified`. Live checkout tree/commit, fork SHA, and PR
-tuple checks still run before any downstream send. Missing, malformed, reordered, mismatched, or
-different-event evidence is not importable and never permits a model restart.
+Because the older combined push/PR boundary did not record a separate remote-verification phase,
+the imported checkpoint stopped at `commit_created`. The live runner verified that the persisted
+base was an ancestor of current upstream, repushed without force, freshly matched the fork SHA,
+reused the one exact open PR, and verified its complete tuple before sending.
+
+Reviewer event #103 also predates reviewer checkpoints. Recovery required an ordered reviewer
+`opencode_start` followed by `opencode_exit` with rc=0 in the same event state directory. The
+already-generated valid PASS report was atomically moved from the obsolete fixture filename to the
+delivery's requested path without changing its bytes. Recovery imported and hashed that same
+artifact; a guard proved the reviewer subprocess was not invoked again.
+
+Missing, malformed, reordered, mismatched, cross-role, outside-state, or different-event evidence
+is not importable and never permits a model restart.
 
 ## Regression coverage
 
@@ -76,21 +94,29 @@ Focused tests cover:
 - tool failure followed by same-delivery replay with model invocation count fixed at one;
 - exact PR create/verify failure followed by recovery from verified fork SHA without a second model;
 - legacy postflight/commit/fork evidence import for the retained-event shape;
+- reviewer process-crash, PR-verification failure, send failure, ambiguous invocation, report hash,
+  and same-delivery replay paths;
 - sent-outbox recovery advancing the checkpoint to `outbox_sent`;
 - existing prepared/attempting/ambiguous/sent outbox replay and provenance-drift denial;
 - unchanged legacy v1/v2 role behavior.
 
-Current Mac evidence:
+Current Mac evidence at `a737aed9d5830fd0f600d9a8fdfe5debc1e2e3eb`:
 
-- focused recovery/outbox suite: `15 passed`;
-- role suite: `226 passed, 1 skipped`;
-- complete suite: `277 passed, 1 skipped`;
+- focused reviewer/coder crash-recovery suites: passed;
+- complete suite: `286 passed, 1 skipped`;
 - Ruff check and format: passed;
 - role/workflow/example validation: 6/6, 4/4, and 3/3 passed.
 
-Full suite, Ruff, resource validation, Windows deterministic verification, independent review,
-live event #102 recovery, GitHub CI, and PR evidence are recorded during closeout rather than
-predeclared here.
+Fresh Windows Python 3.12 evidence at the exact same commit:
+
+- focused recovery suite: `16 passed`;
+- complete suite: `286 passed, 1 skipped`;
+- Ruff check and format: passed (`80 files already formatted`).
+
+Independent native review found four initial high-severity checkpoint defects, one later
+role-binding defect, and one ambiguous-error-path defect. All were fixed and regression-tested;
+the final review reported zero remaining findings. GitHub CI and the final PR are recorded after
+publication rather than predeclared here.
 
 ## Mandatory next fix: one Python configuration loader
 
@@ -108,4 +134,4 @@ listener, dispatch, bootstrap, and service entry points. It must:
 - expose only variable names and categorical diagnostics, never credential values;
 - have Mac, Linux, and Windows deterministic tests.
 
-This item is mandatory and must not be dropped merely because event #102 closes.
+This item is mandatory and must not be dropped merely because the #102–#104 lifecycle closes.
