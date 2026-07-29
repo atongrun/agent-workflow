@@ -3009,6 +3009,78 @@ def test_legacy_postflight_commit_and_fork_evidence_imports_without_model(tmp_pa
     assert checkpoint["facts"]["head_sha"] == commit_sha
 
 
+def test_legacy_bounded_pr_failure_without_remote_log_resumes_before_fork_verify(
+    tmp_path,
+):
+    evidence = awf_role.RunEvidence(102, "coder", state_root=tmp_path / "state")
+    imported_tree = "c" * 40
+    commit_sha = "d" * 40
+    evidence.record(
+        "postflight_pass",
+        postflight_status="pass",
+        imported_tree=imported_tree,
+    )
+    evidence.record("commit", commit_status="pass", commit_sha=commit_sha)
+    evidence.record(
+        "fork_pr_rejected",
+        reason="fork_push_or_pr_verification_failed",
+    )
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 102,
+    }
+
+    recovered = awf_role.recover_legacy_publication_checkpoint(
+        evidence,
+        input_context,
+        branch="feature/task",
+        source_commit="b" * 40,
+        provenance=_pr_provenance(pull_request=0),
+    )
+
+    assert recovered is not None
+    _, checkpoint = recovered
+    assert checkpoint["phase"] == "commit_created"
+    assert checkpoint["facts"]["imported_tree"] == imported_tree
+    assert checkpoint["facts"]["commit_sha"] == commit_sha
+    assert "head_sha" not in checkpoint["facts"]
+
+
+def test_upstream_base_allows_only_fast_forward_advance(monkeypatch):
+    provenance = _pr_provenance()
+    live_base = "f" * 40
+    calls = []
+
+    def fake_git(_repo, *args):
+        calls.append(args)
+        return 0
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+    monkeypatch.setattr(awf_role, "git_out", lambda *_args: live_base)
+
+    awf_role.verify_upstream_base("/repo", provenance)
+
+    assert ("merge-base", "--is-ancestor", provenance["base_sha"], live_base) in calls
+
+
+def test_upstream_base_rejects_divergence(monkeypatch):
+    provenance = _pr_provenance()
+    live_base = "f" * 40
+
+    def fake_git(_repo, *args):
+        if args[:2] == ("merge-base", "--is-ancestor"):
+            return 1
+        return 0
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+    monkeypatch.setattr(awf_role, "git_out", lambda *_args: live_base)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.verify_upstream_base("/repo", provenance)
+
+
 def test_prepared_outbox_replay_reconciles_checkpoint_before_send(monkeypatch, tmp_path):
     evidence = awf_role.RunEvidence(103, "coder", state_root=tmp_path / "state")
     provenance = _pr_provenance()

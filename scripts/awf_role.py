@@ -760,15 +760,16 @@ def recover_legacy_publication_checkpoint(
         or not _FULL_COMMIT_RE.fullmatch(imported_tree)
         or not isinstance(commit_sha, str)
         or not _FULL_COMMIT_RE.fullmatch(commit_sha)
-        or remote_sha != commit_sha
+        or (remote is not None and remote_sha != commit_sha)
     ):
         return None
-    required = (
+    required = [
         ("postflight_pass", "imported_tree", imported_tree),
         ("commit", "commit_sha", commit_sha),
-        ("remote_sha_verified", "remote_sha", commit_sha),
-        ("fork_pr_rejected", "reason", "fork_push_or_pr_verification_failed"),
-    )
+    ]
+    if remote is not None:
+        required.append(("remote_sha_verified", "remote_sha", commit_sha))
+    required.append(("fork_pr_rejected", "reason", "fork_push_or_pr_verification_failed"))
     position = -1
     for phase, field, expected in required:
         position = next(
@@ -822,17 +823,18 @@ def recover_legacy_publication_checkpoint(
         "commit_created",
         commit_sha=commit_sha,
     )
-    checkpoint = advance_recovery_checkpoint(
-        evidence,
-        path,
-        checkpoint,
-        "fork_sha_verified",
-        head_sha=commit_sha,
-    )
+    if remote is not None:
+        checkpoint = advance_recovery_checkpoint(
+            evidence,
+            path,
+            checkpoint,
+            "fork_sha_verified",
+            head_sha=commit_sha,
+        )
     record(
         evidence,
         "legacy_recovery_checkpoint_imported",
-        recovery_phase="fork_sha_verified",
+        recovery_phase=str(checkpoint["phase"]),
     )
     return path, checkpoint
 
@@ -1787,8 +1789,11 @@ def verify_upstream_base(
     ):
         die("cannot fetch the trusted upstream base")
     live_base = git_out(repo, "rev-parse", "--verify", f"{base_tracking}^{{commit}}")
-    if live_base != provenance["base_sha"]:
-        die("trusted upstream base SHA does not match persisted provenance")
+    persisted_base = str(provenance["base_sha"])
+    if live_base != persisted_base and (
+        git(repo, "merge-base", "--is-ancestor", persisted_base, live_base) != 0
+    ):
+        die("trusted upstream base diverged from persisted provenance")
 
 
 def verify_pr_remote_tuple(
