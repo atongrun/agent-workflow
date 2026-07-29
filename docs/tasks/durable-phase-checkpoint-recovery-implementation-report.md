@@ -115,8 +115,9 @@ Fresh Windows Python 3.12 evidence at the exact same commit:
 
 Independent native review found four initial high-severity checkpoint defects, one later
 role-binding defect, and one ambiguous-error-path defect. All were fixed and regression-tested;
-the final review reported zero remaining findings. GitHub CI and the final PR are recorded after
-publication rather than predeclared here.
+the final review reported zero remaining findings. Final Draft PR #33 is the publication surface;
+its exact current head must retain green GitHub CI and must not be merged without fresh user
+authority.
 
 ## Mandatory next fix: one Python configuration loader
 
