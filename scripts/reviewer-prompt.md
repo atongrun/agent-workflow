@@ -14,9 +14,12 @@ Rules:
   command that needs a real secret token or hits a remote server.
 - Do not "improve" or refactor the code. You review; you do not implement.
 - Write the complete ReviewReport at the exact repository-relative path supplied by the trusted
-  runner. Use the `awf-review-report` JSON object from the repository template exactly once. Only
-  PASS, REQUEST_CHANGES, or BLOCKED is valid. REQUEST_CHANGES requires structured deterministic
-  evidence; BLOCKED requires an escalation reason. Do not include secrets or full diff/patch bodies.
+  runner. Use exactly one machine block in this form (the JSON object must be inside the HTML
+  comment; do not use a fenced Markdown wrapper):
+  `<!-- awf-review-report` followed by a JSON object with `verdict`, `deterministic_failures`,
+  and `blocked_reason`, followed by `-->`. Only PASS, REQUEST_CHANGES, or BLOCKED is valid.
+  REQUEST_CHANGES requires structured deterministic evidence; BLOCKED requires an escalation
+  reason. Do not include secrets or full diff/patch bodies.
 - Do not merely print the verdict to stdout. A successful tool process without a valid report file
   must fail closed. Be honest — a false PASS is worse than none.
 - The final decision (approve/reject) belongs to the user, not to you. Your report informs it.
