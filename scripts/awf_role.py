@@ -300,12 +300,17 @@ def validate_remote_binding(repo: str, remote: str, expected_repo: str) -> None:
     validate_remote_url(push_urls[0], expected_repo, f"configured remote {remote!r} push URL")
 
 
-def trusted_remote_config(repo: str) -> dict[str, str]:
+def trusted_remote_config(
+    repo: str,
+    *,
+    upstream_remote: str = "",
+    head_remote: str = "",
+) -> dict[str, str]:
     config = {
         "upstream_repo": env("AWF_UPSTREAM_REPO", required=True),
-        "upstream_remote": env("AWF_UPSTREAM_REMOTE", "upstream"),
+        "upstream_remote": upstream_remote or env("AWF_UPSTREAM_REMOTE", "upstream"),
         "head_repo": env("AWF_HEAD_REPO", required=True),
-        "head_remote": env("AWF_HEAD_REMOTE", "fork"),
+        "head_remote": head_remote or env("AWF_HEAD_REMOTE", "fork"),
         "base_ref": env("AWF_BASE_REF", "main"),
     }
     validate_repo_slug(config["upstream_repo"], "configured upstream repository")
@@ -346,7 +351,11 @@ def provenance_from_args(
     if pull_request < (1 if require_pr else 0):
         die("review provenance requires a positive pull request number")
     values["pull_request"] = pull_request
-    config = trusted_remote_config(repo)
+    config = trusted_remote_config(
+        repo,
+        upstream_remote=str(getattr(a, "upstream_remote", "")),
+        head_remote=str(getattr(a, "head_remote", "")),
+    )
     for field in ("upstream_repo", "head_repo", "base_ref"):
         if values[field] != config[field]:
             die(f"provenance {field} does not match trusted local configuration")
@@ -4091,9 +4100,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--route-override", default="")
     p.add_argument("--provenance-version", default="")
     p.add_argument("--upstream-repo", default="")
+    p.add_argument("--upstream-remote", default="")
     p.add_argument("--base-ref", default="")
     p.add_argument("--base-sha", default="")
     p.add_argument("--head-repo", default="")
+    p.add_argument("--head-remote", default="")
     p.add_argument("--head-ref", default="")
     p.add_argument("--head-sha", default="")
     p.add_argument("--pull-request", type=int, default=0)

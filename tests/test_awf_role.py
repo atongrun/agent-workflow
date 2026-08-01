@@ -654,6 +654,26 @@ def test_trusted_config_rejects_collapsed_upstream_and_fork(monkeypatch, tmp_pat
         awf_role.trusted_remote_config(str(tmp_path))
 
 
+def test_trusted_config_accepts_handler_remote_overrides(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWF_UPSTREAM_REPO", "owner/project")
+    monkeypatch.setenv("AWF_HEAD_REPO", "contributor/project")
+    monkeypatch.setattr(
+        awf_role,
+        "validate_remote_binding",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(awf_role, "validate_git_ref", lambda *args, **kwargs: None)
+
+    config = awf_role.trusted_remote_config(
+        str(tmp_path),
+        upstream_remote="origin",
+        head_remote="fork",
+    )
+
+    assert config["upstream_remote"] == "origin"
+    assert config["head_remote"] == "fork"
+
+
 def test_v3_incomplete_provenance_is_rejected_before_trusted_config_lookup(tmp_path):
     args = argparse.Namespace(
         input_type="task:awf-review-v3",
