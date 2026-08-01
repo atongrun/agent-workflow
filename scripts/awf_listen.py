@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--head-remote", default="fork")
     p.add_argument("--base-ref", default="main")
     p.add_argument("--gh-bin", default="gh")
-    p.add_argument("--state-root", type=Path, default=default_state_root())
+    p.add_argument("--state-root", type=Path, default=None)
     p.add_argument(
         "--enable-preflight",
         action="store_true",
@@ -305,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         listen_argv += ["--on", active_types[1], rework_handler]
     if a.enable_preflight and config_path is not None:
-        preflight_root = a.state_root.resolve()
+        preflight_root = (a.state_root or default_state_root()).resolve()
         listen_argv += [
             "--on",
             PREFLIGHT_REQUEST_TYPE,

@@ -58,22 +58,25 @@ record fails closed.
 | `awf validate workflows` | PASS: 4/4 |
 | `awf validate examples` | PASS: 3/3 |
 
-A real local Fast run from macOS zsh emitted valid `awf.preflight-report.v1`, detected the unified
-executor/config/Git/control-plane layers as authoring-ready, and correctly denied remote dispatch
-for the current live environment. It did not create an event or read an event payload. The live
-environment's remote-only failures were reported as stable codes without endpoints, tokens,
-private paths, or raw output.
+A real macOS zsh Fast run with an explicit Pi executable and a real Windows PowerShell Fast run
+with an explicit OpenCode executable passed every layer. Both reported zero architect/coder pending
+baselines and `required_next_action=run_deep_preflight`. Neither Fast run created an event, read an
+event payload, or invoked a model.
 
-## Deliberate verification boundary
+## Authorized live Deep proof
 
-No live Deep event was sent. The frozen TaskCard prohibits live proof events during implementation,
-and the user explicitly reserved merge/remote lifecycle authority for the parent session. Deep was
-verified with fake Bus boundaries, direct handler/result tests, opt-in listener argv tests, pending
-baseline/identity/TTL failure tests, and the repository-wide executor AST gate.
+After explicit remote and scoped-credential-transfer authorization, Windows used a fresh disposable
+checkout at exact PR head `ae91d5a7d6d095fac4c82bc40717e2ccd1415873`. Its legacy configuration
+was replaced atomically with strict role-scoped configuration after validation; the owner-only
+original remains as `dispatch.env.bak`, and both transfer-temporary files were removed.
 
-The next real remote TaskCard should restart the participating listeners with
-`--enable-preflight`, run Fast for remote-dispatch intent, then perform one separately authorized
-Deep proof. A non-default source `--state-root` must match its listener.
+One Mac architect listener and one Windows coder listener opted into only the disposable Preflight
+control routes and were stopped immediately afterward. Deep produced request event `105` and result
+event `106`. Both handlers and both executor-owned child subprocesses exited successfully; both
+events were automatically ACKed after handler success; architect/coder pending moved from exact
+`0/0` baselines back to `0/0`. The final signed `awf.preflight-report.v1` set
+`allow_remote_dispatch=true` and `required_next_action=remote_dispatch_allowed`. No historical
+event was read, ACKed, requeued, or redispatched, and no model was invoked.
 
 ## Remaining risks
 
@@ -82,5 +85,5 @@ Deep proof. A non-default source `--state-root` must match its listener.
   not.
 - Automatic ACK evidence is explicitly labelled inferred from matching handler evidence plus zero pending before/after because
   v1 has no read-only per-event ACK-status endpoint. No manual ACK is used to manufacture proof.
-- Real PowerShell/Git Bash/macOS listener behavior remains CI/runtime-matrix work after the branch is
-  published; local verification covered macOS zsh and the cross-platform executor regression suite.
+- Real macOS zsh and Windows PowerShell listener behavior is proven. Windows Git Bash remains
+  covered by the executor regression/CI matrix rather than a second live Bus event.

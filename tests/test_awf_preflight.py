@@ -235,7 +235,11 @@ def test_fast_config_failure_is_fail_closed_and_secret_safe(tmp_path, monkeypatc
         "load_config",
         lambda _path: (_ for _ in ()).throw(awf_preflight.ConfigError("invalid key")),
     )
-    monkeypatch.setattr(awf_preflight.shutil, "which", lambda value: f"/tools/{value}")
+    monkeypatch.setattr(
+        awf_preflight.shutil,
+        "which",
+        lambda value, **_kwargs: f"/tools/{value}",
+    )
 
     report = awf_preflight.run_fast(value).report
 
