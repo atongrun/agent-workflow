@@ -1,8 +1,8 @@
 # Repository Handoff
 
-> Current through the 2026-08-01 downstream-readiness closeout and v1-v3 selection-integrity
-> repair. The starting `main` baseline for this repair is `6911f3b`; repository files and live Git
-> refs are authoritative. This document contains no private
+> Current through the 2026-08-01 v1-v3 selection-integrity merge and Dousansi-bound Deep
+> Preflight. The minimum dispatch floor is `e118463`; repository files and live Git refs are
+> authoritative for any later documentation-only advance. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
 
 ## Current Handoff State: 2026-08-01
@@ -13,6 +13,16 @@ configuration loading, native Python dispatch, one subprocess boundary, determin
 terminal consumption, and Fast/Deep Preflight. PR #37 proved a fresh disposable no-model Deep
 route and PR #38 extracted the existing Codex/OpenCode argv renderers without changing provider
 selection, payloads, recovery, stage transitions, or ACK-sensitive lifecycle.
+
+PR #40 merged the v1-v3 executor-selection integrity gate as `e1184637f7bf8fa2010bd7f7e429b65d77bd62c8`.
+On 2026-08-01, current Mac and Windows Fast checks passed against Dousansi
+`main@6fd529307292eb25cd019a808287e4c0c2a83888`. A fresh Mac architect to Windows coder Deep
+Preflight then completed through one disposable no-model request/result pair: both handlers
+returned success, both events were success-gated ACKed, pending moved from exact zero back to
+exact zero, and the bound report returned `allow_remote_dispatch=true`. The proof is cached for
+the persistent clean Dousansi dogfood checkout and expires at `2026-08-01T21:27:25Z`; any path,
+configuration, role, runtime, or transport change requires a fresh Fast check and, when indicated,
+a new Deep proof.
 
 The next product gate is a fresh bounded downstream dogfood on the existing OpenCode coder and
 Codex/OpenCode reviewer execution paths. A generic invocation/result contract, registry, resolver,
@@ -101,11 +111,11 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Commit `6911f3b` is the starting baseline for this
-  repair and includes
-  merged PR #32's exact PR-number fix, PR #34's recovery/configuration matrix, PR #35's native
-  dispatcher, PR #36's unified subprocess boundary, PR #37's loop Preflight, and PR #38's
-  behavior-preserving provider-renderer extraction.
+- The authoritative product branch is `main`. Dispatch floor `e118463` includes PR #32's exact PR-number
+  fix, PR #34's recovery/configuration matrix, PR #35's native dispatcher, PR #36's unified
+  subprocess boundary, PR #37's loop Preflight, PR #38's behavior-preserving provider-renderer
+  extraction, PR #39's downstream-readiness truth gate, and PR #40's v1-v3 executor-selection
+  integrity gate.
 - All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
   prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
   evidence, not product direction.
@@ -192,9 +202,9 @@ cross-platform CI. Same-delivery coder/reviewer recovery is proven without repea
 completed model subprocess. Fast Preflight is read-only; Deep Preflight is a disposable no-model
 transport proof and cannot authorize a historical delivery.
 
-Still missing: the downstream repository's explicit terminal decision for its preserved interrupted
-run, current v3 TaskCard/PhasePlan/metrics readiness artifacts, and the first completed
-non-infrastructure multi-TaskCard dogfood with capacity-isolation metrics.
+The downstream terminal decision, current v3 PhasePlan, first frozen TaskCard, and metrics template
+are merged on Dousansi `main@6fd5293`. The remaining product gate is the first completed
+non-infrastructure three-TaskCard dogfood with capacity-isolation metrics.
 
 ## Dousansi Dogfood Restart Boundary
 
@@ -202,29 +212,29 @@ The first real downstream run was intentionally stopped before product completio
 safe event metadata are preserved in the downstream project's `docs/HANDOFF.md`; do not inspect,
 ACK, requeue, or redispatch preserved historical events to recreate the run.
 
-The run's Workflow-owned infrastructure gaps are now implemented and verified. Restart remains
-blocked until the downstream repository itself:
+The Workflow-owned infrastructure gaps and downstream repository-truth gates are now implemented
+and verified. Dousansi `main@6fd5293` records the preserved run as terminal, replaces stale v2
+authority with a fresh v3 PhasePlan/TaskCard contract, assigns lower-cost normal-path coder and
+reviewer roles, and carries the required metrics fields. The contribution fork exists and the
+upstream-read-only/fork-write dry run passes. Current Mac and Windows Fast checks pass, and the
+persistent Mac dogfood checkout has a current bound Deep proof.
 
-1. records the preserved interrupted run as terminal/superseded without mutating its historical
-   event or evidence branch;
-2. replaces stale v2 route and runner references with a fresh v3 PhasePlan, TaskCard, and run-ledger
-   contract;
-3. assigns lower-cost execution and review to the normal path so ordinary `PASS` and deterministic
-   `REQUEST_CHANGES` can actually test capacity isolation;
-4. extends the metrics template with run-ledger ID, context-packet checksum, gate decision/denial,
-   role, path class, reason code, rework, and human-intervention fields; and
-5. runs fresh Fast checks on every participating host plus Deep when required by first-dispatch,
-   environment-change, transport-change, failure, or proof-expiry rules.
+Restart is therefore authorized only as a wholly fresh v3 run from refreshed downstream `main`:
+new v4 task branch, frozen TaskCard commit, run ledger, context packet, delivery, and event. The
+selected listener `tool` and `model` must match the hashed delivery identity exactly. Switching
+agent tools requires a new version-only Fast check; rerun Deep if the report requests it or if the
+runtime/transport facts materially changed.
 
 These are downstream readiness and operations gates. They do not justify an Agent Host, generic
 engine, Agent Bus protocol change, or provider-contract migration before dogfood.
 
 ## Next Gates (in order)
 
-1. **Close downstream repository truth.** Merge the terminal decision and fresh v3
-   PhasePlan/TaskCard/metrics readiness artifacts before creating a product task branch.
-2. **Run current Preflight.** Fast must pass on each participating host. Deep must produce a fresh,
-   bound, disposable no-model proof when required; pending must return from exact zero to zero.
+1. **Refresh the two exact baselines.** Require Agent Workflow to contain dispatch floor `e118463`
+   and Dousansi to contain readiness floor `6fd5293`; when live refs advance, review the diff and
+   record the actual exact dispatch SHAs.
+2. **Recheck the selected agent tool.** Run Fast on every participating host with the actual CLI
+   selected for that host; a tool change is version-only during Fast and must not invoke a model.
 3. **Dispatch only a fresh v3 run.** Create a new branch, run ledger, delivery, and event from the
    refreshed downstream `origin/main`. Never resume or mutate preserved historical events.
 4. **Complete three bounded downstream TaskCards.** Keep at least two normal paths free of
@@ -238,7 +248,8 @@ Begin with `git status --short --branch`, a fresh fetch, and a live check of bot
 default branches and CI. Read this handoff, `ROADMAP.md`, `docs/runtime-preflight-architecture.md`,
 the downstream terminal decision, and the current downstream PhasePlan/TaskCard. Run no historical
 event command. Keep changes on feature branches with Lore-formatted commits. The next authorized
-live action is fresh Fast/Deep readiness followed by a fresh v3 downstream run.
+live action is a version-only Fast recheck for the agent tool actually selected tonight, followed
+by the fresh v3 `DOUSANSI-DOGFOOD-001` run if the bound Deep proof remains current.
 
 ## Standing Rules
 
