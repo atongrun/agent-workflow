@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Reject metadata-complete v1-v3 coder/reviewer deliveries when listener-local `AWF_TOOL` or
+  `AWF_MODEL` differs from the integrity-hashed payload selection, before control-plane,
+  recovery/outbox, model, or inbox lifecycle work; emit reviewer verdict identity from the
+  validated effective selection while preserving legacy direct-entry overrides.
 - Stop dispatch before Agent Bus delivery when the TaskCard branch push fails, preventing remote
   executors from receiving a pointer to an unavailable commit.
 - Parse Windows credential ACL principals separately from the echoed target path so a secure file

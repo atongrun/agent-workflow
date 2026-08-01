@@ -11,6 +11,13 @@ start and track execution, and enforce checkpoint, postflight, outbox, and ACK
 ordering. It passes each rendered invocation to `scripts/awf_executor.py`, the
 only operating-system process boundary.
 
+For metadata-complete v1-v3 coder/reviewer deliveries, the lifecycle first reconstructs and hashes
+the payload, validates its delivery identity, and then requires the effective listener-local
+`tool`/`model` selection to match that hashed selection. This compatibility gate runs before the
+control-plane pre-invocation decision, recovery/outbox replay, model launch, outbox preparation, or
+inbox completion. Direct local entry points without delivery metadata keep their existing
+environment-override behavior.
+
 Workflow business modules and provider renderers do not import `subprocess`,
 select a shell, join argv into a command string, or use `shell=True`.
 

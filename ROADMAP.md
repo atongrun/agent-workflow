@@ -82,6 +82,9 @@ Completed engineering gates:
   persisted PR-head review on Mac; retain fail-closed behavior when GitHub PR visibility lags.
 - [x] Recover retained same-delivery coder and reviewer events from durable checkpoints without
   repeating either completed model subprocess; complete PASS routing and architect ACK.
+- [x] Bind effective listener `tool`/`model` selection to the integrity-hashed identity of existing
+  v1-v3 deliveries before control-plane authorization or any ACK-sensitive recovery/execution step,
+  while preserving legacy direct-entry overrides.
 
 Remaining Phase 2 work:
 
