@@ -1607,17 +1607,29 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
     def fake_spawn(argv, **kwargs):
         captured["argv"] = argv
         captured["env"] = kwargs.get("env")
+        captured["evidence"] = kwargs.get("evidence")
+        captured["tracked_phase"] = kwargs.get("tracked_phase")
         return 0
 
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
     monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
     monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    evidence = object()
 
-    awf_role.tool_opencode_exec(str(tmp_path), str(card_file), str(prompt_file), "provider/model")
+    rc = awf_role.tool_opencode_exec(
+        str(tmp_path),
+        str(card_file),
+        str(prompt_file),
+        "provider/model",
+        evidence=evidence,
+    )
 
+    assert rc == 0
     assert "AGENT_BUS_TOKEN" not in captured["env"]
     assert captured["env"]["GIT_CONFIG_COUNT"] == "10"
+    assert captured["evidence"] is evidence
+    assert captured["tracked_phase"] == "opencode"
     assert captured["argv"] == [
         "opencode-test",
         "run",
@@ -1724,22 +1736,29 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
     def fake_spawn(argv, **kwargs):
         captured["argv"] = argv
         captured["env"] = kwargs.get("env")
+        captured["evidence"] = kwargs.get("evidence")
+        captured["tracked_phase"] = kwargs.get("tracked_phase")
         return 0
 
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
     monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
+    evidence = object()
 
-    awf_role.tool_opencode_review(
+    rc = awf_role.tool_opencode_review(
         str(tmp_path),
         "main",
         str(prompt_file),
         str(card_file),
         "provider/model",
         ".awf/review.md",
+        evidence=evidence,
     )
 
+    assert rc == 0
     assert "AGENT_BUS_TOKEN" not in captured["env"]
+    assert captured["evidence"] is evidence
+    assert captured["tracked_phase"] == "opencode"
     assert captured["argv"] == [
         "opencode-test",
         "run",
@@ -1752,6 +1771,55 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
         "--",
         "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n",
     ]
+
+
+def test_tool_codex_review_preserves_model_card_and_tracked_phase(monkeypatch, tmp_path):
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("review instructions")
+    card_file = tmp_path / "task.md"
+    card_file.write_text("# TaskCard\n")
+    captured: dict = {}
+
+    def fake_spawn(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return 7
+
+    monkeypatch.setattr(awf_role, "spawn", fake_spawn)
+    monkeypatch.setenv("AWF_CODEX_BIN", "codex-test")
+    evidence = object()
+    report_path = str(tmp_path / "review.md")
+
+    rc = awf_role.tool_codex_review(
+        str(tmp_path),
+        "main",
+        str(prompt_file),
+        str(card_file),
+        "provider/model",
+        report_path,
+        evidence=evidence,
+    )
+
+    assert rc == 7
+    assert captured["argv"] == [
+        "codex-test",
+        "exec",
+        "-C",
+        str(tmp_path),
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+        report_path,
+        "--model",
+        "provider/model",
+        "-",
+    ]
+    assert (
+        "--- TaskCard (acceptance criteria to verify) ---\n\n# TaskCard\n"
+        in captured["kwargs"]["stdin"]
+    )
+    assert captured["kwargs"]["evidence"] is evidence
+    assert captured["kwargs"]["tracked_phase"] == "codex"
 
 
 @pytest.mark.parametrize("adapter", ["executor", "reviewer"])
