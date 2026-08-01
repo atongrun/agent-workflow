@@ -151,6 +151,20 @@ def test_v3_listener_handler_passes_complete_pr_provenance():
         assert f"{option} {{payload.{field}}}" in handler
 
 
+def test_v3_listener_handler_passes_configured_remote_names():
+    handler = awf_listen.build_handler(
+        "python",
+        "awf_role.py",
+        "reviewer",
+        on_type="task:awf-review-v3",
+        upstream_remote="origin",
+        head_remote="fork",
+    )
+
+    assert "--upstream-remote origin" in handler
+    assert "--head-remote fork" in handler
+
+
 def test_rework_handler_maps_report_path_and_structured_feedback():
     handler = awf_listen.build_handler(
         "python",
