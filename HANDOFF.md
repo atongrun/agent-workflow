@@ -1,10 +1,36 @@
 # Repository Handoff
 
-> Current through the 2026-07-29 durable checkpoint recovery proof. The current `main`
-> baseline is `62b3d62`; repository files and live Git refs are authoritative. This document contains no private
+> Current through the 2026-08-01 provider-renderer extraction. The current `main`
+> baseline is `ab1f393`; repository files and live Git refs are authoritative. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-07-29
+## Current Handoff State: 2026-08-01
+
+The operations P0 prerequisites exposed by the stopped downstream run are merged: durable
+run-ledger and context-packet gates, same-delivery checkpoint/outbox recovery, strict Python
+configuration loading, native Python dispatch, one subprocess boundary, deterministic architect
+terminal consumption, and Fast/Deep Preflight. PR #37 proved a fresh disposable no-model Deep
+route and PR #38 extracted the existing Codex/OpenCode argv renderers without changing provider
+selection, payloads, recovery, stage transitions, or ACK-sensitive lifecycle.
+
+The next product gate is a fresh bounded downstream dogfood on the existing OpenCode coder and
+Codex/OpenCode reviewer execution paths. A generic invocation/result contract, registry, resolver,
+Claude adapter, or Pi adapter is not a prerequisite and remains deferred until dogfood proves a
+real need.
+
+### Highest residual Agent Workflow P0
+
+Existing v1-v3 deliveries still have split executor-selection authority. `role_coder()` and
+`role_reviewer()` prefer listener-local `AWF_TOOL`/`AWF_MODEL` over the integrity-hashed payload
+arguments, while reviewer verdict payloads still report the original payload `tool`/`model`. A
+misconfigured listener can therefore execute one provider/model and persist another identity in
+downstream audit evidence.
+
+Before the next real model invocation, add a narrow fail-closed compatibility gate requiring the
+effective listener selection to equal the current delivery's hashed selection for v1-v3. This fix
+must run before the pre-invocation authorization can start a model and must preserve all existing
+matching configurations, payload formats, defaults, checkpoints, outboxes, and stage semantics. It
+does not require Phase 2's generic invocation/result contract or a new selection authority.
 
 PR #27 merged successfully as `f24b5fb1a4097a24b37210643dc15277f7b5dbe6`; its CI was green.
 Draft PR #28 remains a separate terminal-replay/disposable-proof record and is not part of the
@@ -25,7 +51,8 @@ without branch-list rediscovery. It also normalizes v3's initial `pull_request: 
 control-plane persistence.
 
 That follow-up merged as PR #32 at `62b3d628a93aefcee371ce8ef6170a8042b32232`
-after a fresh head/check audit and green CI. Draft PR #28 remains untouched.
+after a fresh head/check audit and green CI. PR #28 was later closed unmerged and remains a
+terminal disposable-proof record.
 
 Agent Bus event handling was separately authorized. Historical coder events #97 and #100 were
 classified as superseded/terminal and ACKed without executing their old product TaskCards. Proof
@@ -70,8 +97,10 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Commit `62b3d62` is the fresh baseline and includes
-  merged PR #32's exact PR-number and control-plane compatibility fixes.
+- The authoritative product branch is `main`. Commit `ab1f393` is the fresh baseline and includes
+  merged PR #32's exact PR-number fix, PR #34's recovery/configuration matrix, PR #35's native
+  dispatcher, PR #36's unified subprocess boundary, PR #37's loop Preflight, and PR #38's
+  behavior-preserving provider-renderer extraction.
 - All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
   prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
   evidence, not product direction.
@@ -152,71 +181,62 @@ event-scoped no-remote OpenCode workspaces with trusted delta import, and one fr
 cross-machine `PASS` route
 through architect consumption and ACK.
 
-PR #32's exact PR-number and control-plane compatibility fixes are merged with green CI. Durable
-coder/reviewer checkpoint recovery is proven live and independently reviewed on its feature branch,
-but remains unmerged until its final current-head PR and CI closeout.
+PR #32's exact PR-number and control-plane compatibility fixes and the subsequent recovery,
+configuration, native-dispatch, executor, Preflight, and renderer changes are merged with green
+cross-platform CI. Same-delivery coder/reviewer recovery is proven without repeating either
+completed model subprocess. Fast Preflight is read-only; Deep Preflight is a disposable no-model
+transport proof and cannot authorize a historical delivery.
 
-Still missing: recorded capacity-isolation metrics for the live run
-(`docs/product-metrics.md` counters have not yet been filled), a completed non-infrastructure
-downstream TaskCard, and a terminal recovery decision for the preserved interrupted run.
+Still missing: the downstream repository's explicit terminal decision for its preserved interrupted
+run, current v3 TaskCard/PhasePlan/metrics readiness artifacts, and the first completed
+non-infrastructure multi-TaskCard dogfood with capacity-isolation metrics.
 
-## Dousansi Dogfood Stop: Proven Gaps
+## Dousansi Dogfood Restart Boundary
 
 The first real downstream run was intentionally stopped before product completion. Its artifacts and
 safe event metadata are preserved in the downstream project's `docs/HANDOFF.md`; do not inspect,
 ACK, requeue, or redispatch preserved historical events to recreate the run.
 
-The run exposed these Workflow-owned gaps:
+The run's Workflow-owned infrastructure gaps are now implemented and verified. Restart remains
+blocked until the downstream repository itself:
 
-1. **No durable run control plane.** The method defines self-contained TaskCards and artifacts, but
-   does not yet require one versioned run ledger or compact context packet that records the current
-   TaskCard, frozen base, branch/PR, evidence, state transition, prohibited actions, and next action.
-   Conversation context is therefore an unsafe source of truth after compaction or a new session.
-2. **No pre-invocation workflow budget gate.** A transport redelivery can reach a model before the
-   Workflow's one-rework policy is checked. Rework allowance, route, and terminal state must be
-   atomically checked and recorded by the trusted runtime before it starts a model process.
-3. **Route coverage is configuration-dependent.** The default coder listener did not automatically
-   cover the rework event type. A dispatch preflight must prove that the selected event type has
-   exactly one compatible active handler and that its TaskCard state permits the transition.
-4. **Operational authority is not encoded.** The user had authorized reversible recovery actions,
-   yet endpoint discovery and listener restart were treated as conversational escalation. A
-   machine-readable authority manifest must distinguish pre-authorized diagnostics/restarts from
-   destructive, credential, historical-event, and policy-bypass actions.
-5. **Verification lacks proportional tiers.** The same cross-machine gates were repeatedly applied
-   to infrastructure and product work. The runtime needs a small normal-path gate for ordinary
-   TaskCards and a full cross-machine/security gate only for transport, trust-boundary, or first-rollout
-   changes.
+1. records the preserved interrupted run as terminal/superseded without mutating its historical
+   event or evidence branch;
+2. replaces stale v2 route and runner references with a fresh v3 PhasePlan, TaskCard, and run-ledger
+   contract;
+3. assigns lower-cost execution and review to the normal path so ordinary `PASS` and deterministic
+   `REQUEST_CHANGES` can actually test capacity isolation;
+4. extends the metrics template with run-ledger ID, context-packet checksum, gate decision/denial,
+   role, path class, reason code, rework, and human-intervention fields; and
+5. runs fresh Fast checks on every participating host plus Deep when required by first-dispatch,
+   environment-change, transport-change, failure, or proof-expiry rules.
 
-These are operations-surface requirements proven by dogfood. They do not justify adding a generic
-Agent Host, workflow engine, or Agent Bus coupling to the stable core.
+These are downstream readiness and operations gates. They do not justify an Agent Host, generic
+engine, Agent Bus protocol change, or provider-contract migration before dogfood.
 
 ## Next Gates (in order)
 
-1. **Finish durable phase/checkpoint recovery PR closeout.** Implementation, independent review,
-   Windows verification, and the #102–#104 lifecycle are complete. Open the final PR and require
-   green current-head CI for
-   [`docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md`](docs/tasks/durable-phase-checkpoint-recovery-implementation-report.md).
-   Do not merge that final PR without fresh user authority.
-2. **Keep PR #28 separate.** It remains a narrow disposable-proof record; do not rewrite or expand
-   it to carry the fork/PR change.
-3. **Implement the mandatory Python configuration loader.** Remove production reliance on
-   PowerShell and Git Bash sourcing POSIX `dispatch.env`; share one strict, credential-safe loader
-   across listener, dispatch, bootstrap, and service entry points.
-4. **Write the metrics update.** Record role/reason counters, ledger ID,
-   context-packet checksum, gate decisions, and denial reasons without raw prompts, credentials,
-   retained payloads, ACK/requeue actions, or token counts.
-5. **Create the terminal-recovery decision artifact.** Decide the disposition of the preserved
-   interrupted run only after the disposable proof. No new product TaskCard may begin before that
-   explicit decision.
+1. **Close downstream repository truth.** Merge the terminal decision and fresh v3
+   PhasePlan/TaskCard/metrics readiness artifacts before creating a product task branch.
+2. **Close the v1-v3 selection-integrity P0.** Fail before model authorization when effective
+   `AWF_TOOL`/`AWF_MODEL` differs from the integrity-hashed delivery selection; retain exact behavior
+   for matching and legacy-default cases.
+3. **Run current Preflight.** Fast must pass on each participating host. Deep must produce a fresh,
+   bound, disposable no-model proof when required; pending must return from exact zero to zero.
+4. **Dispatch only a fresh v3 run.** Create a new branch, run ledger, delivery, and event from the
+   refreshed downstream `origin/main`. Never resume or mutate preserved historical events.
+5. **Complete three bounded downstream TaskCards.** Keep at least two normal paths free of
+   high-value-model calls and record every escalation with a stable reason code.
+6. **Reassess provider abstraction from evidence.** Start the next adapter phase only if the run
+   exposes repeated provider-bound lifecycle friction or requires a currently unsupported provider.
 
 ## Next-Agent Start Sequence
 
-Begin with `git status --short --branch`, a fresh fetch, and a live check of the fork/PR feature PR
-and CI; do not assume this snapshot's remote state. Read this handoff,
-`docs/tasks/fork-pr-trusted-runner.md`, and its implementation report. Confirm the exact
-provenance tests, full verification, current-head CI, and independent review. Keep all changes on
-the feature branch and use Lore-formatted commits. A live proof is a later separately authorized
-gate, not part of this repair.
+Begin with `git status --short --branch`, a fresh fetch, and a live check of both repositories'
+default branches and CI. Read this handoff, `ROADMAP.md`, `docs/runtime-preflight-architecture.md`,
+the downstream terminal decision, and the current downstream PhasePlan/TaskCard. Run no historical
+event command. Keep changes on feature branches with Lore-formatted commits. The next authorized
+live action is fresh Fast/Deep readiness followed by a fresh v3 downstream run.
 
 ## Standing Rules
 
