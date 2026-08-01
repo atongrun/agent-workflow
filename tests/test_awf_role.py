@@ -2301,6 +2301,195 @@ def _prepare_reviewer_routing(
     return ns, send_calls, tool_calls
 
 
+@pytest.mark.parametrize("role", ["coder", "reviewer"])
+@pytest.mark.parametrize("selection", ["tool", "model"])
+@pytest.mark.parametrize("version", ["v1", "v2", "v3"])
+def test_delivery_selection_mismatch_fails_before_ack_sensitive_lifecycle(
+    monkeypatch,
+    tmp_path,
+    capsys,
+    role,
+    selection,
+    version,
+):
+    suffix = "" if version == "v1" else f"-{version}"
+    event_type = f"task:awf-{'impl' if role == 'coder' else 'review'}{suffix}"
+    if role == "coder":
+        ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    else:
+        ns, _, tool_calls = _prepare_reviewer_routing(
+            monkeypatch,
+            tmp_path,
+            _review_markdown("PASS"),
+        )
+        ns.input_type = event_type
+        ns.source_event_id = 301
+        assert not tool_calls
+
+    ns.evidence = awf_role.RunEvidence(302, role, state_root=tmp_path / "state")
+    payload_tool = ns.tool
+    payload_model = "payload/model"
+    ns.model = payload_model
+    # Rebind after setting the payload model so the integrity hash represents it.
+    if role == "coder":
+        _bind_delivery(ns, event_type=event_type, source_event_id=301)
+    else:
+        payload = awf_role.input_payload(ns, "reviewer")
+        ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+        ns.delivery_id = awf_role.make_delivery_id(
+            "coder",
+            ns.input_type,
+            ns.payload_sha256,
+            ns.source_event_id,
+        )
+
+    monkeypatch.setenv("AWF_TOOL", "codex" if selection == "tool" else payload_tool)
+    monkeypatch.setenv(
+        "AWF_MODEL",
+        "listener/model" if selection == "model" else payload_model,
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede pre-invocation"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "resume_outbox",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede outbox replay"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede coder model launch"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_review",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede reviewer model launch"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_codex_review",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede reviewer model launch"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "prepare_outbox",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede outbox preparation"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "send_event",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede downstream send"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "complete_inbox",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede inbox completion"),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        (awf_role.role_coder if role == "coder" else awf_role.role_reviewer)(ns)
+
+    error = capsys.readouterr().err
+    assert f"Workflow delivery {selection} selection mismatch" in error
+    assert not (tmp_path / "state" / "outbox").exists()
+    assert not (tmp_path / "state" / "inbox").exists()
+
+
+@pytest.mark.parametrize("role", ["coder", "reviewer"])
+def test_matching_delivery_selection_preserves_completed_replay(monkeypatch, tmp_path, role):
+    if role == "coder":
+        ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+        source_role = "architect"
+        event_type = "task:awf-impl-v2"
+    else:
+        ns, _, _ = _prepare_reviewer_routing(
+            monkeypatch,
+            tmp_path,
+            _review_markdown("PASS"),
+        )
+        source_role = "coder"
+        event_type = "task:awf-review-v2"
+    ns.model = "provider/model"
+    ns.input_type = event_type
+    ns.source_event_id = 303
+    payload = awf_role.input_payload(ns, role)
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        source_role,
+        event_type,
+        ns.payload_sha256,
+        ns.source_event_id,
+    )
+    ns.evidence = awf_role.RunEvidence(304, role, state_root=tmp_path / "state")
+    awf_role.complete_inbox(ns.evidence, ns.delivery_id, ns.payload_sha256)
+    monkeypatch.setenv("AWF_TOOL", ns.tool)
+    monkeypatch.setenv("AWF_MODEL", ns.model)
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="duplicate_event"),
+    )
+
+    assert (awf_role.role_coder if role == "coder" else awf_role.role_reviewer)(ns) == 0
+
+
+def test_legacy_reviewer_env_override_executes_and_emits_effective_identity(
+    monkeypatch,
+    tmp_path,
+):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        _review_markdown("PASS"),
+        tool="opencode",
+    )
+    ns.tool = "codex"
+    ns.model = "payload/model"
+    monkeypatch.setenv("AWF_TOOL", "opencode")
+    monkeypatch.setenv("AWF_MODEL", "listener/model")
+
+    assert awf_role.role_reviewer(ns) == 0
+
+    assert len(tool_calls) == 1
+    assert tool_calls[0][0][4] == "listener/model"
+    emitted = send_calls[0][0][3]
+    assert emitted["tool"] == "opencode"
+    assert emitted["model"] == "listener/model"
+
+
+def test_matching_delivery_reviewer_emits_validated_effective_identity(monkeypatch, tmp_path):
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        _review_markdown("PASS"),
+        tool="opencode",
+    )
+    ns.model = "provider/model"
+    ns.input_type = "task:awf-review-v2"
+    ns.source_event_id = 305
+    payload = awf_role.input_payload(ns, "reviewer")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "coder",
+        ns.input_type,
+        ns.payload_sha256,
+        ns.source_event_id,
+    )
+    ns.evidence = awf_role.RunEvidence(306, "reviewer", state_root=tmp_path / "state")
+    monkeypatch.setenv("AWF_TOOL", "opencode")
+    monkeypatch.setenv("AWF_MODEL", "provider/model")
+
+    assert awf_role.role_reviewer(ns) == 0
+
+    assert len(tool_calls) == 1
+    emitted = send_calls[0][0][3]
+    assert emitted["tool"] == "opencode"
+    assert emitted["model"] == "provider/model"
+
+
 def test_reviewer_v3_provenance_drift_denies_before_model_and_persists_reason(
     monkeypatch, tmp_path
 ):

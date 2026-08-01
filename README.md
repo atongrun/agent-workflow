@@ -146,6 +146,10 @@ model invocation and after their verified model, artifact, publication/provenanc
 boundaries. Duplicate deliveries resume from the last trusted boundary; an ambiguous model
 invocation is never repeated. A retained Windows-to-Mac proof recovered the same coder and reviewer
 deliveries, routed a structured PASS, and completed architect ACK without repeating either model.
+For every metadata-complete v1-v3 coder or reviewer delivery, the effective listener `tool` and
+`model` must also match the selection already bound into the canonical payload hash. Mismatches fail
+before control-plane authorization, recovery/outbox work, model invocation, or inbox completion;
+legacy direct handlers without delivery metadata retain their environment overrides.
 
 The operations surface also has one strict, cross-platform Python
 [configuration loader](docs/tasks/config-recovery-maturity-implementation-report.md). Bootstrap,

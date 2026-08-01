@@ -443,6 +443,21 @@ def validate_input_delivery(
     }
 
 
+def validate_delivery_selection(
+    a: argparse.Namespace,
+    input_context: dict[str, object],
+    *,
+    tool: str,
+    model: str,
+) -> None:
+    """Keep effective execution identity bound to an integrity-checked delivery."""
+    if not input_context["delivery_id"]:
+        return
+    for field, effective in (("tool", tool), ("model", model)):
+        if effective != getattr(a, field, ""):
+            die(f"Workflow delivery {field} selection mismatch")
+
+
 def _control_plane_enabled() -> bool:
     """The listener enables this gate; legacy direct handlers remain testable."""
     return os.environ.get("AWF_CONTROL_PLANE", "0") == "1"
@@ -3202,6 +3217,7 @@ def role_coder(a: argparse.Namespace) -> int:
     no_push = env("AWF_NO_PUSH", "0") == "1"
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "coder", evidence)
+    validate_delivery_selection(a, input_context, tool=tool, model=model)
     provenance = None
     if _is_v3(a):
         try:
@@ -3600,6 +3616,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     base = env("AWF_BASE", a.base or "master")
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "reviewer", evidence)
+    validate_delivery_selection(a, input_context, tool=tool, model=model)
     provenance = None
     if _is_v3(a):
         try:
@@ -3876,8 +3893,8 @@ def role_reviewer(a: argparse.Namespace) -> int:
         "report": a.report,
         "review_report_path": a.review_report,
         "review_report": review_report,
-        "tool": a.tool,
-        "model": a.model,
+        "tool": tool,
+        "model": model,
     }
     if provenance is not None:
         verdict_base.update(provenance_payload(provenance))

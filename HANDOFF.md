@@ -1,7 +1,8 @@
 # Repository Handoff
 
-> Current through the 2026-08-01 provider-renderer extraction. The current `main`
-> baseline is `ab1f393`; repository files and live Git refs are authoritative. This document contains no private
+> Current through the 2026-08-01 downstream-readiness closeout and v1-v3 selection-integrity
+> repair. The starting `main` baseline for this repair is `6911f3b`; repository files and live Git
+> refs are authoritative. This document contains no private
 > endpoint, credential, host, personal-path, or event-payload data.
 
 ## Current Handoff State: 2026-08-01
@@ -18,19 +19,22 @@ Codex/OpenCode reviewer execution paths. A generic invocation/result contract, r
 Claude adapter, or Pi adapter is not a prerequisite and remains deferred until dogfood proves a
 real need.
 
-### Highest residual Agent Workflow P0
+### v1-v3 executor-selection integrity
 
-Existing v1-v3 deliveries still have split executor-selection authority. `role_coder()` and
+Existing v1-v3 deliveries had split executor-selection authority. `role_coder()` and
 `role_reviewer()` prefer listener-local `AWF_TOOL`/`AWF_MODEL` over the integrity-hashed payload
 arguments, while reviewer verdict payloads still report the original payload `tool`/`model`. A
 misconfigured listener can therefore execute one provider/model and persist another identity in
 downstream audit evidence.
 
-Before the next real model invocation, add a narrow fail-closed compatibility gate requiring the
-effective listener selection to equal the current delivery's hashed selection for v1-v3. This fix
-must run before the pre-invocation authorization can start a model and must preserve all existing
-matching configurations, payload formats, defaults, checkpoints, outboxes, and stage semantics. It
-does not require Phase 2's generic invocation/result contract or a new selection authority.
+The compatibility path now validates the effective listener selection immediately after delivery
+hash/identity validation. A tool or model mismatch fails before control-plane authorization,
+outbox replay, model launch, outbox preparation, or inbox completion. Matching v1-v3 deliveries
+retain their prior behavior; legacy direct/no-delivery entry points retain listener-local
+environment overrides. Reviewer verdict evidence now uses the validated effective identity. The
+payload schema, delivery hash, defaults, checkpoints, outboxes, stages, and Agent Bus protocol are
+unchanged. This does not introduce Phase 2's generic invocation/result contract or a new selection
+authority.
 
 PR #27 merged successfully as `f24b5fb1a4097a24b37210643dc15277f7b5dbe6`; its CI was green.
 Draft PR #28 remains a separate terminal-replay/disposable-proof record and is not part of the
@@ -97,7 +101,8 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Commit `ab1f393` is the fresh baseline and includes
+- The authoritative product branch is `main`. Commit `6911f3b` is the starting baseline for this
+  repair and includes
   merged PR #32's exact PR-number fix, PR #34's recovery/configuration matrix, PR #35's native
   dispatcher, PR #36's unified subprocess boundary, PR #37's loop Preflight, and PR #38's
   behavior-preserving provider-renderer extraction.
@@ -218,16 +223,13 @@ engine, Agent Bus protocol change, or provider-contract migration before dogfood
 
 1. **Close downstream repository truth.** Merge the terminal decision and fresh v3
    PhasePlan/TaskCard/metrics readiness artifacts before creating a product task branch.
-2. **Close the v1-v3 selection-integrity P0.** Fail before model authorization when effective
-   `AWF_TOOL`/`AWF_MODEL` differs from the integrity-hashed delivery selection; retain exact behavior
-   for matching and legacy-default cases.
-3. **Run current Preflight.** Fast must pass on each participating host. Deep must produce a fresh,
+2. **Run current Preflight.** Fast must pass on each participating host. Deep must produce a fresh,
    bound, disposable no-model proof when required; pending must return from exact zero to zero.
-4. **Dispatch only a fresh v3 run.** Create a new branch, run ledger, delivery, and event from the
+3. **Dispatch only a fresh v3 run.** Create a new branch, run ledger, delivery, and event from the
    refreshed downstream `origin/main`. Never resume or mutate preserved historical events.
-5. **Complete three bounded downstream TaskCards.** Keep at least two normal paths free of
+4. **Complete three bounded downstream TaskCards.** Keep at least two normal paths free of
    high-value-model calls and record every escalation with a stable reason code.
-6. **Reassess provider abstraction from evidence.** Start the next adapter phase only if the run
+5. **Reassess provider abstraction from evidence.** Start the next adapter phase only if the run
    exposes repeated provider-bound lifecycle friction or requires a currently unsupported provider.
 
 ## Next-Agent Start Sequence
