@@ -39,6 +39,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from agent_adapters.codex import (
+    render_reviewer_invocation as render_codex_reviewer_invocation,
+)
+from agent_adapters.opencode import (
+    render_executor_argv as render_opencode_executor_argv,
+)
+from agent_adapters.opencode import (
+    render_reviewer_argv as render_opencode_reviewer_argv,
+)
 from awf_control_plane import (
     DEFAULT_ROUTES,
     ControlPlaneDenied,
@@ -2674,7 +2683,7 @@ def read_text(path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# tool adapters (inlined — no bash adapter files needed)
+# provider adapter compatibility wrappers
 # ---------------------------------------------------------------------------
 
 
@@ -2688,23 +2697,25 @@ def tool_opencode_exec(
 ) -> int:
     """Run OpenCode as an executor: edit code in `repo` per the card + prompt."""
     binp = env("AWF_OPENCODE_BIN", "opencode")
-    argv = [binp, "run", "--dir", repo, "-f", card_file]
-    if model:
-        argv += ["-m", model]
-    instructions = read_text(prompt_file)
-    if review_feedback:
-        instructions += "\n\n--- Structured reviewer feedback to correct ---\n\n"
-        instructions += normalize_rework_feedback(review_feedback)
-    argv += ["--", instructions]
+    prompt = read_text(prompt_file)
+    normalized_feedback = normalize_rework_feedback(review_feedback) if review_feedback else ""
+    invocation_argv = render_opencode_executor_argv(
+        binary=binp,
+        workspace=repo,
+        card_file=card_file,
+        model=model,
+        prompt=prompt,
+        normalized_review_feedback=normalized_feedback,
+    )
     if evidence is not None:
         return spawn(
-            argv,
+            invocation_argv,
             cwd=repo,
             env=model_env(repo),
             evidence=evidence,
             tracked_phase="opencode",
         )
-    return spawn(argv, cwd=repo, env=model_env(repo))
+    return spawn(invocation_argv, cwd=repo, env=model_env(repo))
 
 
 def normalize_rework_feedback(raw: str) -> str:
@@ -2750,38 +2761,24 @@ def tool_codex_review(
 ) -> int:
     """Run Codex review and persist its final response at the exact report path."""
     binp = env("AWF_CODEX_BIN", "codex")
-    argv = [
-        binp,
-        "exec",
-        "-C",
-        repo,
-        "--sandbox",
-        "read-only",
-        "--output-last-message",
-        review_report_path,
-    ]
-    if model:
-        argv += ["--model", model]
-    argv += ["-"]
-    stdin = read_text(prompt_file)
-    stdin += (
-        f"\n\nReview the committed branch diff against the base ref `{base}`. "
-        "Use Git read-only commands to inspect that exact comparison."
-    )
+    prompt = read_text(prompt_file)
     template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
-    stdin += (
-        "\n\nYour final response is persisted verbatim as the ReviewReport. "
-        "Return the complete filled-in Markdown report itself; do not merely summarize "
-        "the verdict or say that you wrote a file."
-        f"\n\nReviewReport output path: {review_report_path}\n"
-        "\n--- Required ReviewReport template ---\n\n" + read_text(str(template_path))
+    review_report_template = read_text(str(template_path))
+    card_text = read_text(card_file) if card_file and Path(card_file).is_file() else ""
+    invocation_argv, invocation_stdin = render_codex_reviewer_invocation(
+        binary=binp,
+        workspace=repo,
+        base=base,
+        model=model,
+        review_report_path=review_report_path,
+        prompt=prompt,
+        review_report_template=review_report_template,
+        card_text=card_text,
     )
-    if card_file and Path(card_file).is_file():
-        stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + read_text(card_file)
     return spawn(
-        argv,
+        invocation_argv,
         cwd=repo,
-        stdin=stdin,
+        stdin=invocation_stdin,
         env=model_env(repo),
         evidence=evidence,
         tracked_phase="codex" if evidence is not None else None,
@@ -2799,23 +2796,24 @@ def tool_opencode_review(
 ) -> int:
     """Fallback reviewer using OpenCode (when Codex is unavailable)."""
     binp = env("AWF_OPENCODE_BIN", "opencode")
-    argv = [binp, "run", "--dir", repo]
-    if card_file and Path(card_file).is_file():
-        argv += ["-f", card_file]
-    if model:
-        argv += ["-m", model]
-    instructions = read_text(prompt_file)
-    instructions += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
-    argv += ["--", instructions]
+    attached_card = card_file if card_file and Path(card_file).is_file() else ""
+    invocation_argv = render_opencode_reviewer_argv(
+        binary=binp,
+        workspace=repo,
+        card_file=attached_card,
+        model=model,
+        prompt=read_text(prompt_file),
+        review_report_path=review_report_path,
+    )
     if evidence is not None:
         return spawn(
-            argv,
+            invocation_argv,
             cwd=repo,
             env=model_env(repo),
             evidence=evidence,
             tracked_phase="opencode",
         )
-    return spawn(argv, cwd=repo, env=model_env(repo))
+    return spawn(invocation_argv, cwd=repo, env=model_env(repo))
 
 
 # ---------------------------------------------------------------------------

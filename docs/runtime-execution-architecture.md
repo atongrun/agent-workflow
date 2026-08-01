@@ -3,9 +3,16 @@
 ## Decision
 
 All local production command execution crosses `scripts/awf_executor.py`.
-Workflow business modules provide a structured argv, cwd, environment, I/O
-policy, timeout, and redaction values. They do not import `subprocess`, select a
-shell, join argv into a command string, or use `shell=True`.
+Pure renderers under `scripts/agent_adapters/` own provider-specific argv,
+prompt, stdin, file-attachment, model-flag, read-only, and output-path syntax.
+The trusted Workflow lifecycle in `scripts/awf_role.py` continues to select the
+provider, read and validate Workflow inputs, prepare the model environment,
+start and track execution, and enforce checkpoint, postflight, outbox, and ACK
+ordering. It passes each rendered invocation to `scripts/awf_executor.py`, the
+only operating-system process boundary.
+
+Workflow business modules and provider renderers do not import `subprocess`,
+select a shell, join argv into a command string, or use `shell=True`.
 
 PowerShell, Git Bash, and zsh are supported launch environments, not business
 command interpreters. Runtime detection affects executable-path normalization
@@ -59,8 +66,10 @@ policy.
 
 Long-running model execution retains its existing PID, cwd, duration,
 interruption, kill, reap, and exit evidence in `awf_role.spawn()`. That function
-is now a workflow adapter over the shared executor rather than a second process
-boundary.
+remains trusted Workflow execution glue over the shared executor rather than a
+second process boundary. The provider renderers are pure: they do not read
+files, select providers, start processes, write evidence, validate artifacts,
+or decide Workflow stages and transitions.
 
 ## Windows wrapper policy
 

@@ -5,6 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXECUTOR = ROOT / "scripts" / "awf_executor.py"
+ROLE_HANDLER = ROOT / "scripts" / "awf_role.py"
+ADAPTERS = ROOT / "scripts" / "agent_adapters"
 
 
 def production_python_files() -> list[Path]:
@@ -73,3 +75,84 @@ def test_shell_launchers_remain_thin_python_compatibility_shims():
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert len(source.splitlines()) <= maximum_lines
         assert "awf_dispatch.py" in source or "awf_service.py" in source
+
+
+def test_agent_adapter_renderers_are_pure_operations_modules():
+    forbidden_imports = {
+        "awf_control_plane",
+        "awf_delivery",
+        "awf_executor",
+        "awf_role",
+        "os",
+        "subprocess",
+    }
+    forbidden_calls = {"spawn", "start_command", "run_command", "send_event"}
+    expected_functions = {
+        "codex.py": {"render_reviewer_invocation"},
+        "opencode.py": {"render_executor_argv", "render_reviewer_argv"},
+    }
+    violations = []
+
+    for path in sorted(ADAPTERS.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        functions = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if functions != expected_functions[path.name]:
+            violations.append(f"{path.name}:unexpected-functions:{sorted(functions)}")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] in forbidden_imports:
+                        violations.append(f"{path.name}:{node.lineno}:import:{alias.name}")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and node.module.split(".")[0] in forbidden_imports:
+                    violations.append(f"{path.name}:{node.lineno}:import:{node.module}")
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in forbidden_calls:
+                    violations.append(f"{path.name}:{node.lineno}:call:{node.func.id}")
+
+    assert sorted(path.name for path in ADAPTERS.glob("*.py")) == [
+        "__init__.py",
+        "codex.py",
+        "opencode.py",
+    ]
+    assert violations == []
+
+
+def test_awf_role_tool_wrappers_delegate_rendering():
+    tree = ast.parse(ROLE_HANDLER.read_text(encoding="utf-8"), filename=str(ROLE_HANDLER))
+    expected_calls = {
+        "tool_opencode_exec": "render_opencode_executor_argv",
+        "tool_opencode_review": "render_opencode_reviewer_argv",
+        "tool_codex_review": "render_codex_reviewer_invocation",
+    }
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for wrapper_name, renderer_name in expected_calls.items():
+        wrapper = functions[wrapper_name]
+        calls = {
+            node.func.id
+            for node in ast.walk(wrapper)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        reconstructed_argv = [
+            node.lineno
+            for node in ast.walk(wrapper)
+            if isinstance(node, (ast.Assign, ast.AugAssign))
+            and any(
+                isinstance(target, ast.Name) and target.id == "argv"
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+            )
+        ]
+
+        assert renderer_name in calls
+        assert reconstructed_argv == []
