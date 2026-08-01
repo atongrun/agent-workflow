@@ -112,4 +112,3 @@ Agent Bus protocol change are allowed.
 - Do not invoke a model.
 - Do not push, open a PR, merge, delete branches, or change remote infrastructure.
 - Do not add an Agent Host, generic workflow engine, dependency, or Agent Bus protocol feature.
-

@@ -170,6 +170,16 @@ invokes a shell directly. Runtime detection, Git Bash executable-path normalizat
 Windows wrapper policy, redacted failure diagnostics, and timeout handling are enforced centrally
 and protected by an AST boundary test.
 
+Every new loop can now begin with the versioned, fail-closed
+[runtime Preflight](docs/runtime-preflight-architecture.md):
+`python scripts/awf_preflight.py fast --repo <repo>`. Fast mode is read-only and separates
+TaskCard-authoring readiness from remote-dispatch authority. Explicit Deep mode is required only
+for a first remote dispatch, a material runtime/transport change or failure, or an expired proof;
+it uses disposable no-model control events and automatic handler-success ACK evidence without
+reading or mutating historical events. `scripts/awf_handoff_check.py` remains the legacy human
+checklist entry and now renders the Fast report. Role listeners opt into the disposable control
+route with `--enable-preflight`.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream

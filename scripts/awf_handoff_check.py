@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 from awf_config import ConfigError, load_config, native_executable
+from awf_control_plane import default_state_root
 
 try:
     from awf_executor import ExecutionFailure
@@ -35,6 +36,7 @@ except ModuleNotFoundError:  # package import in tests
     from .awf_executor import ExecutionFailure
     from .awf_executor import run as run_command
 from awf_network import add_url_host_to_no_proxy
+from awf_preflight import run_fast
 
 ROLE_TO_TOKEN_VAR = {
     "architect": "AWF_ARCH_TOKEN",
@@ -283,28 +285,37 @@ def main(argv=None) -> int:
         pass  # older Python / non-reconfigurable stream
 
     dest = Path(a.dest) if a.dest else Path.home() / ".config/awf/dispatch.env"
+    repo = Path(a.repo).resolve() if a.repo else Path.cwd().resolve()
+    preflight_args = argparse.Namespace(
+        repo=repo,
+        repo_required=bool(a.repo),
+        profile="handoff",
+        config=dest.resolve(),
+        state_root=default_state_root(),
+        authority_manifest=Path(__file__).resolve().parent / "authority-manifest.example.json",
+        source_role=a.role,
+        target_role=a.role,
+        upstream_remote="upstream",
+        head_remote="fork",
+        gh_bin="gh",
+        run_id="",
+        intent="taskcard",
+    )
+    report = run_fast(preflight_args).report
     print(f"awf handoff-check - role={a.role}")
     print("=" * 56)
-
-    env = check_dispatch_env(dest, a.role)
-    if env:
-        check_bus_reachable(env, a.role)
-        # coder needs the executor tool; reviewer/architect don't strictly.
-        if a.role == "coder":
-            check_tool(env, "AWF_OPENCODE_BIN", "opencode", "opencode (executor)", required=True)
-    check_git_push(a.repo)
-
-    print()
-    n_fail = 0
-    for status, label, detail in results:
-        n_fail += status == FAIL
-        line = f"  [{MARK[status]}] {status:4} {label}"
-        if detail:
-            line += f" - {detail}"
+    failures = 0
+    for layer in report["layers"]:
+        status = str(layer["status"])
+        failures += status == FAIL
+        mark = MARK[PASS if status == PASS else FAIL]
+        line = f"  [{mark}] {status:4} {layer['id']}"
+        if layer.get("error_code"):
+            line += f" - {layer['error_code']}"
         print(line)
     print("=" * 56)
-    if n_fail:
-        print(f"RESULT: FAIL ({n_fail} required check(s) failed). Not ready to take over.")
+    if failures:
+        print(f"RESULT: FAIL ({failures} required check(s) failed). Not ready to take over.")
         return 1
     print("RESULT: PASS. This machine is ready.")
     return 0
