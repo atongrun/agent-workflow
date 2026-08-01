@@ -21,12 +21,18 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_control_plane import ControlPlaneDenied, authorize_operation, load_authority_manifest
+
+try:
+    from awf_executor import ExecutionFailure
+    from awf_executor import run as run_command
+except ModuleNotFoundError:  # package import in tests
+    from .awf_executor import ExecutionFailure
+    from .awf_executor import run as run_command
 from awf_network import add_url_host_to_no_proxy
 
 DEFAULT_ON_TYPE = {
@@ -50,9 +56,10 @@ def build_handler(
 ) -> str:
     """Build the agent-bus --on handler command.
 
-    Path parts are wrapped in DOUBLE quotes: cmd.exe (Windows) and sh (POSIX)
-    both honor double quotes, whereas cmd does not understand single quotes.
-    The {payload.*} placeholders are substituted + shell-quoted by agent-bus.
+    This string exists only because Agent Bus currently accepts a handler
+    template rather than structured handler argv. Path parts use the common
+    double-quote subset; payload placeholders are substituted and shell-quoted
+    by Agent Bus. Agent Workflow launches Agent Bus itself through awf_executor.
     """
     fields = [
         "--event-id",
@@ -244,10 +251,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         listen_argv += ["--on", active_types[1], rework_handler]
 
-    if os.name == "nt" and configured_bus.lower().endswith((".cmd", ".bat")):
-        listen_argv = ["cmd.exe", "/d", "/s", "/c", *listen_argv]
-
-    return subprocess.run(listen_argv).returncode
+    try:
+        return run_command(
+            listen_argv,
+            allow_shell_wrapper=True,
+            secrets=(token,),
+        ).returncode
+    except ExecutionFailure as exc:
+        die(str(exc))
 
 
 if __name__ == "__main__":

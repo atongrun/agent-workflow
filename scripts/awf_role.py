@@ -8,11 +8,10 @@ Agent Bus `--on` handler when a stage event arrives:
     python awf_role.py coder    --event-id ID --branch B --card C --commit H --tool T --report R
     python awf_role.py reviewer --event-id ID --branch B --card C ... --report R --base BASE
 
-Why Python instead of bash: on Windows, agent-bus runs handlers through
-`cmd.exe` (subprocess shell=True), where bash scripts collide with cmd quoting,
-WSL's bash shadowing git-bash, and spaces in the git-bash path. Python runs
-identically on macOS and Windows with no shell dialect, so one file works on
-every executor machine.
+Why Python instead of bash: the Agent Bus handler-template compatibility
+contract historically exposed Windows cmd and POSIX shell differences. Python
+runs identically on macOS and Windows, so business execution no longer depends
+on the launch shell dialect.
 
 Design:
   - Named arguments (not positional) so stage-to-stage field order can never drift.
@@ -20,8 +19,8 @@ Design:
       AWF_SCRIPT_DIR, AWF_REPO_DIR, AWF_TOOL, AWF_MODEL, AWF_BASE, AWF_NO_PUSH,
       AGENT_BUS_URL, AWF_BUS_BIN, AWF_<ROLE>_TOKEN, AWF_OPENCODE_BIN
   - The card/prompt travel as FILES (never inlined into a shell string).
-  - External commands run via a list argv (no shell) so nothing is re-parsed;
-    Windows .cmd/.bat shims are handled explicitly.
+  - External commands cross awf_executor as argv with shell=False.
+    Windows npm .cmd shims require a safe PowerShell companion; .bat is rejected.
   - Exit 0 == success -> the agent-bus listener ACKs the event.
 """
 
@@ -33,7 +32,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -50,6 +48,18 @@ from awf_control_plane import (
     load_authority_manifest,
 )
 from awf_delivery import canonical_payload_sha256, make_delivery_id
+from awf_executor import (
+    DEVNULL,
+    PIPE,
+    CompletedProcess,
+    ExecutionFailure,
+)
+from awf_executor import (
+    run as run_command,
+)
+from awf_executor import (
+    start as start_command,
+)
 
 
 def log(msg: str) -> None:
@@ -1180,6 +1190,7 @@ def _prepare_model_git_guard(repo: str) -> tuple[Path, Path]:
     hooks.mkdir()
     for relative in ("git", "git.cmd", "model_git_guard.py"):
         shutil.copy2(source / "model-bin" / relative, model_bin / relative)
+    shutil.copy2(source / "awf_executor.py", model_bin / "awf_executor.py")
     for relative in ("pre-commit", "pre-push"):
         shutil.copy2(source / "model-git-hooks" / relative, hooks / relative)
     return model_bin, hooks
@@ -1207,6 +1218,7 @@ def model_env(repo: str | None = None) -> dict[str, str]:
             or not (model_bin / "git").is_file()
             or not (model_bin / "git.cmd").is_file()
             or not (model_bin / "model_git_guard.py").is_file()
+            or not (model_bin / "awf_executor.py").is_file()
         ):
             die("model Git write guard is unavailable")
         _append_process_git_config(e, "core.hooksPath", str(hooks))
@@ -1282,25 +1294,22 @@ def spawn(
     ``env`` defaults to ``child_env()`` (full parent environment). Pass
     ``model_env()`` for model subprocesses to strip credentials.
     """
-    # On Windows, .cmd/.bat are not directly executable by CreateProcess; they
-    # must go through the command interpreter. Wrap only those.
-    run_argv = argv
-    if os.name == "nt" and argv and argv[0].lower().endswith((".cmd", ".bat")):
-        run_argv = ["cmd.exe", "/d", "/s", "/c", *argv]
-    log("exec: " + " ".join(run_argv))
+    executable = Path(argv[0]).name if argv else "<empty>"
+    log(f"exec: {executable} argc={len(argv)}")
     if evidence is not None and tracked_phase is not None:
         started = time.monotonic()
         try:
-            proc = subprocess.Popen(
-                run_argv,
+            proc = start_command(
+                argv,
                 cwd=cwd,
-                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                stdin=PIPE if stdin is not None else DEVNULL,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 env=env or child_env(),
+                allow_shell_wrapper=True,
             )
-        except OSError as exc:
+        except ExecutionFailure as exc:
             record(
                 evidence,
                 f"{tracked_phase}_exit",
@@ -1344,15 +1353,16 @@ def spawn(
             },
         )
         return proc.returncode
-    proc = subprocess.run(
-        run_argv,
+    proc = run_command(
+        argv,
         cwd=cwd,
         input=stdin,
-        stdin=subprocess.DEVNULL if stdin is None else None,
+        stdin=DEVNULL if stdin is None else None,
         text=True,
         encoding="utf-8",
         errors="replace",
         env=env or child_env(),
+        allow_shell_wrapper=True,
     )
     return proc.returncode
 
@@ -1362,11 +1372,11 @@ def git(repo: str, *args: str) -> int:
 
 
 def git_out(repo: str, *args: str) -> str:
-    proc = subprocess.run(
+    proc = run_command(
         ["git", "-C", repo, *args],
         text=True,
         capture_output=True,
-        stdin=subprocess.DEVNULL,
+        stdin=DEVNULL,
         encoding="utf-8",
         errors="replace",
         env=child_env(),
@@ -1533,15 +1543,13 @@ def postflight_git_env() -> dict[str, str]:
     return e
 
 
-def postflight_git(
-    workspace: str, *args: str, capture: bool = False
-) -> subprocess.CompletedProcess:
+def postflight_git(workspace: str, *args: str, capture: bool = False) -> CompletedProcess:
     """Run trusted Git plumbing on a frozen model workspace without credentials."""
-    return subprocess.run(
+    return run_command(
         ["git", "-C", workspace, *args],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-        stderr=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stdin=DEVNULL,
+        stdout=PIPE if capture else DEVNULL,
+        stderr=PIPE if capture else DEVNULL,
         env=postflight_git_env(),
     )
 
@@ -1565,9 +1573,9 @@ def prepare_model_workspace(
     if state_dir is not None:
         state_dir.mkdir(parents=True, exist_ok=True)
     workspace = Path(tempfile.mkdtemp(prefix="model-workspace-", dir=parent)).resolve()
-    clone = subprocess.run(
+    clone = run_command(
         ["git", "clone", "--no-hardlinks", "--no-checkout", source_repo, str(workspace)],
-        stdin=subprocess.DEVNULL,
+        stdin=DEVNULL,
         capture_output=True,
         env=child_env(),
     )
@@ -1635,11 +1643,11 @@ def import_model_delta(workspace: str, trusted_repo: str) -> str:
     )
     if diff.returncode != 0 or not diff.stdout:
         die("failed to serialize the isolated model delta")
-    applied = subprocess.run(
+    applied = run_command(
         ["git", "-C", trusted_repo, "apply", "--index", "--binary", "-"],
         input=diff.stdout,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=DEVNULL,
+        stderr=DEVNULL,
         env=child_env(),
     )
     if applied.returncode != 0:
@@ -1713,19 +1721,19 @@ def push_and_verify_remote_head(repo: str, branch: str) -> str:
 def _gh_json(repo: str, *args: str) -> object:
     gh = env("AWF_GH_BIN", "gh")
     try:
-        completed = subprocess.run(
+        completed = run_command(
             [gh, *args],
             cwd=repo,
             env=child_env(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=DEVNULL,
             text=True,
             encoding="utf-8",
             timeout=60,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except ExecutionFailure:
         die("trusted GitHub CLI operation failed")
     if completed.returncode != 0:
         die("trusted GitHub CLI operation failed")
@@ -1740,7 +1748,7 @@ def _gh_create_pull_request(repo: str, provenance: dict[str, object]) -> int:
     upstream_repo = str(provenance["upstream_repo"])
     head_owner = str(provenance["head_repo"]).split("/", 1)[0]
     try:
-        completed = subprocess.run(
+        completed = run_command(
             [
                 gh,
                 "pr",
@@ -1758,15 +1766,15 @@ def _gh_create_pull_request(repo: str, provenance: dict[str, object]) -> int:
             ],
             cwd=repo,
             env=child_env(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=DEVNULL,
             text=True,
             encoding="utf-8",
             timeout=60,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except ExecutionFailure:
         die("trusted GitHub CLI operation failed")
     if completed.returncode != 0:
         die("trusted GitHub CLI operation failed")
@@ -2838,10 +2846,18 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
         "--payload",
         json.dumps(payload),
     ]
-    if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
-        argv = ["cmd.exe", "/d", "/s", "/c", *argv]
     log(f"send {etype}: {from_role} -> {to_role}")
-    rc = subprocess.run(argv, env=cenv, stdin=subprocess.DEVNULL).returncode
+    try:
+        rc = run_command(
+            argv,
+            env=cenv,
+            stdin=DEVNULL,
+            allow_shell_wrapper=True,
+            secrets=(token,),
+        ).returncode
+    except ExecutionFailure as exc:
+        log(f"WARN: failed to send {etype}: {exc}")
+        return False
     if rc != 0:
         log(f"WARN: failed to send {etype} (rc={rc})")
     return rc == 0

@@ -44,7 +44,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -56,6 +55,13 @@ from awf_config import (
     serialize_config,
     validate_config_path,
 )
+
+try:
+    from awf_executor import ExecutionFailure
+    from awf_executor import run as run_command
+except ModuleNotFoundError:  # package import in tests
+    from .awf_executor import ExecutionFailure
+    from .awf_executor import run as run_command
 
 # Map the VPS role name -> the env var awf_dispatch/awf_listen/awf_role expect.
 # NOTE the architect -> ARCH abbreviation, matching the existing dispatch.env.
@@ -110,16 +116,18 @@ def fetch_tokens_line(host: str, path: str) -> str:
     # sed extracts the value after the first '='; single VPS-side command.
     remote = f"grep -m1 '^AGENT_BUS_AGENT_TOKENS=' {path} | sed 's/^AGENT_BUS_AGENT_TOKENS=//'"
     try:
-        proc = subprocess.run(
+        proc = run_command(
             ["ssh", host, remote],
             text=True,
             capture_output=True,
             timeout=30,
         )
-    except FileNotFoundError:
-        die("ssh not found on PATH")
-    except subprocess.TimeoutExpired:
-        die("ssh token source timed out")
+    except ExecutionFailure as exc:
+        if exc.diagnostic.kind == "timeout":
+            die("ssh token source timed out")
+        if exc.diagnostic.kind == "not-found":
+            die("ssh not found on PATH")
+        die("could not read the SSH token source")
     if proc.returncode != 0:
         die(f"could not read the SSH token source (ssh exit {proc.returncode})")
     value = proc.stdout.strip()
@@ -163,7 +171,7 @@ def fetch_tokens_curl(url: str, secret: str, roles: list) -> dict:
             )
             _lock_and_write_open_fd(fd, Path(cfg_path), curl_config.encode("utf-8"))
             try:
-                proc = subprocess.run(
+                proc = run_command(
                     ["curl", "-K", cfg_path, "-w", "\n%{http_code}"],
                     text=True,
                     capture_output=True,
@@ -171,10 +179,12 @@ def fetch_tokens_curl(url: str, secret: str, roles: list) -> dict:
                     errors="replace",
                     timeout=30,
                 )
-            except FileNotFoundError:
-                die("curl not found on PATH")
-            except subprocess.TimeoutExpired:
-                die("curl to the bootstrap endpoint timed out")
+            except ExecutionFailure as exc:
+                if exc.diagnostic.kind == "timeout":
+                    die("curl to the bootstrap endpoint timed out")
+                if exc.diagnostic.kind == "not-found":
+                    die("curl not found on PATH")
+                die("curl to the bootstrap endpoint could not be started")
         finally:
             try:
                 os.unlink(cfg_path)
@@ -350,18 +360,18 @@ def lock_permissions(path: Path) -> str:
         except OSError as e:
             die(f"could not restrict configuration permissions: {e}")
     # Windows: lock via ACL.
-    identity = subprocess.run(["whoami"], capture_output=True, text=True)
+    identity = run_command(["whoami"], capture_output=True, text=True)
     principal = identity.stdout.strip() if identity.returncode == 0 else ""
     if not principal:
         die("could not determine the current Windows principal for ACL lockdown")
-    proc = subprocess.run(
+    proc = run_command(
         ["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"],
         capture_output=True,
         text=True,
     )
     if proc.returncode != 0:
         die("could not restrict the Windows configuration ACL")
-    acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+    acl = run_command(["icacls", str(path)], capture_output=True, text=True)
     if acl.returncode != 0:
         die("could not verify the Windows configuration ACL")
     aces = _parse_icacls_aces(path, acl.stdout)
@@ -371,7 +381,7 @@ def lock_permissions(path: Path) -> str:
         if other.casefold() == principal.casefold():
             continue
         for removal in ("/remove:g", "/remove:d"):
-            removed = subprocess.run(
+            removed = run_command(
                 ["icacls", str(path), removal, other],
                 capture_output=True,
                 text=True,
@@ -383,7 +393,7 @@ def lock_permissions(path: Path) -> str:
             path,
             platform="windows",
             expected_uid=None,
-            runner=subprocess.run,
+            runner=run_command,
         )
     except ConfigError:
         die("could not establish an owner-only Windows configuration ACL")
@@ -431,7 +441,7 @@ def write_env_file(dest: Path, lines: list, force: bool) -> None:
                 dest,
                 platform="windows" if os.name == "nt" else "posix",
                 expected_uid=None,
-                runner=subprocess.run,
+                runner=run_command,
             )
         except ConfigError as exc:
             die(f"existing configuration path is unsafe: {exc}")

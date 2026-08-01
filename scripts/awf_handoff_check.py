@@ -23,11 +23,17 @@ import argparse
 import os
 import re
 import stat
-import subprocess
 import sys
 from pathlib import Path
 
 from awf_config import ConfigError, load_config, native_executable
+
+try:
+    from awf_executor import ExecutionFailure
+    from awf_executor import run as run_command
+except ModuleNotFoundError:  # package import in tests
+    from .awf_executor import ExecutionFailure
+    from .awf_executor import run as run_command
 from awf_network import add_url_host_to_no_proxy
 
 ROLE_TO_TOKEN_VAR = {
@@ -86,7 +92,7 @@ def check_windows_acl(dest: Path) -> None:
     like `  DOMAIN\\user:(F)`. We must inspect only the ACE lines — the path
     itself often contains 'Users' (C:\\Users\\...) and would false-positive a
     naive substring scan of the whole blob."""
-    proc = subprocess.run(["icacls", str(dest)], capture_output=True, text=True)
+    proc = run_command(["icacls", str(dest)], capture_output=True, text=True)
     if proc.returncode != 0:
         record(FAIL, "dispatch.env is owner-only", "icacls could not read the ACL")
         return
@@ -95,7 +101,7 @@ def check_windows_acl(dest: Path) -> None:
         record(FAIL, "dispatch.env is owner-only", "could not parse icacls ACEs")
         return
 
-    whoami = subprocess.run(["whoami"], capture_output=True, text=True)
+    whoami = run_command(["whoami"], capture_output=True, text=True)
     principal = whoami.stdout.strip() if whoami.returncode == 0 else ""
     if not principal:
         record(FAIL, "dispatch.env is owner-only", "could not determine the current principal")
@@ -159,7 +165,7 @@ def check_tool(env: dict, bin_key: str, default_name: str, label: str, required:
     ok = is_file(path) or (
         # bare name on PATH
         (os.sep not in path and "/" not in path)
-        and subprocess.run(
+        and run_command(
             ["where" if os.name == "nt" else "which", path],
             capture_output=True,
             text=True,
@@ -182,7 +188,7 @@ def check_bus_reachable(env: dict, role: str) -> None:
         return
     if not (
         is_file(bus)
-        or subprocess.run(
+        or run_command(
             ["where" if os.name == "nt" else "which", bus],
             capture_output=True,
             text=True,
@@ -199,15 +205,19 @@ def check_bus_reachable(env: dict, role: str) -> None:
     # Legacy files may still contain Git-Bash drive paths during migration;
     # native Windows CreateProcess needs the translated drive form.
     argv = [posix_to_native(bus), "pending", "--count"]
-    if os.name == "nt" and bus.lower().endswith((".cmd", ".bat")):
-        argv = ["cmd.exe", "/d", "/s", "/c", *argv]
     try:
-        proc = subprocess.run(argv, env=child, capture_output=True, text=True, timeout=20)
-    except FileNotFoundError:
-        record(WARN, "agent-bus reachable + token scope", "cannot exec configured binary")
-        return
-    except subprocess.TimeoutExpired:
-        record(FAIL, "agent-bus reachable + token scope", "timed out; endpoint withheld")
+        proc = run_command(
+            argv,
+            env=child,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            allow_shell_wrapper=True,
+            secrets=(token,),
+        )
+    except ExecutionFailure as exc:
+        status = FAIL if exc.diagnostic.kind == "timeout" else WARN
+        record(status, "agent-bus reachable + token scope", exc.diagnostic.render())
         return
     count = proc.stdout.strip()
     if proc.returncode == 0 and count.isdigit():
@@ -235,7 +245,7 @@ def check_git_push(repo: str) -> None:
         record(WARN, "git can push", "repo path withheld; not a git work tree")
         return
     # --dry-run tests auth + connectivity WITHOUT pushing anything.
-    proc = subprocess.run(
+    proc = run_command(
         ["git", "-C", repo, "push", "--dry-run"],
         capture_output=True,
         text=True,

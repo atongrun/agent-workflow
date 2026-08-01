@@ -13,11 +13,19 @@ import argparse
 import os
 import re
 import stat
-import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
+
+try:
+    from awf_executor import ExecutionFailure
+    from awf_executor import native_executable as normalize_executable_path
+    from awf_executor import run as run_command
+except ModuleNotFoundError:  # package import in tests
+    from .awf_executor import ExecutionFailure
+    from .awf_executor import native_executable as normalize_executable_path
+    from .awf_executor import run as run_command
 
 MAX_CONFIG_BYTES = 64 * 1024
 TOKEN_KEYS = frozenset({"AWF_ARCH_TOKEN", "AWF_CODER_TOKEN", "AWF_REVIEWER_TOKEN"})
@@ -46,16 +54,7 @@ def default_config_path() -> Path:
 
 def native_executable(path: str, *, platform: str | None = None) -> str:
     """Translate a legacy Git-Bash drive path for native Windows subprocesses."""
-    resolved_platform = platform or ("windows" if os.name == "nt" else "posix")
-    if (
-        resolved_platform == "windows"
-        and len(path) >= 3
-        and path[0] == "/"
-        and path[2] == "/"
-        and path[1].isalpha()
-    ):
-        return f"{path[1].upper()}:\\" + path[3:].replace("/", "\\")
-    return path
+    return normalize_executable_path(path, platform=platform)
 
 
 def validate_config_path(
@@ -63,7 +62,7 @@ def validate_config_path(
     *,
     platform: str,
     expected_uid: int | None,
-    runner: Callable[..., subprocess.CompletedProcess],
+    runner: Callable[..., Any],
 ) -> None:
     if not path.is_absolute():
         raise ConfigError("configuration path must be absolute")
@@ -107,7 +106,7 @@ def _parse_icacls_aces(path: Path, output: str) -> list[tuple[str, str]]:
 
 def _validate_windows_acl(
     path: Path,
-    runner: Callable[..., subprocess.CompletedProcess],
+    runner: Callable[..., Any],
 ) -> None:
     acl = runner(["icacls", str(path)], capture_output=True, text=True)
     if acl.returncode != 0:
@@ -172,7 +171,7 @@ def load_config(
     *,
     platform: str | None = None,
     expected_uid: int | None = None,
-    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    runner: Callable[..., Any] = run_command,
 ) -> dict[str, str]:
     resolved_platform = platform or ("windows" if os.name == "nt" else "posix")
     config_path = Path(path)
@@ -234,9 +233,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     os.environ["AWF_CONFIG_LOADED"] = "1"
     try:
-        return subprocess.run(args.command, env=dict(os.environ)).returncode
-    except FileNotFoundError:
-        print("awf_config: configured command is unavailable", file=sys.stderr)
+        return run_command(args.command, env=dict(os.environ)).returncode
+    except ExecutionFailure as exc:
+        print(f"awf_config: {exc}", file=sys.stderr)
         return 2
 
 
