@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -2067,10 +2068,58 @@ def test_import_model_report_includes_ignored_configured_artifact(repositories, 
     report = workspace / report_path
     report.parent.mkdir(parents=True)
     report.write_text(_review_markdown("PASS"), encoding="utf-8")
+    pre_import_manifest = awf_role.durable_model_manifest_sha256(str(workspace))
 
     imported = awf_role.import_model_report(str(workspace), str(executor), report_path)
+    post_import_manifest = awf_role.durable_model_manifest_sha256(str(workspace))
 
     assert imported.read_text(encoding="utf-8") == _review_markdown("PASS")
+    assert post_import_manifest != pre_import_manifest
+
+    evidence = awf_role.RunEvidence(118, "reviewer", state_root=tmp_path / "state")
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 117,
+    }
+    checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="reviewer",
+        branch="feature/task",
+        source_commit=dispatched,
+        provenance=_pr_provenance(),
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_started",
+        model_workspace=str(workspace),
+        model_manifest_sha256=pre_import_manifest,
+        model_event_id=118,
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_completed",
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_imported",
+        review_report_sha256=hashlib.sha256(imported.read_bytes()).hexdigest(),
+        postflight_model_manifest_sha256=post_import_manifest,
+    )
+
+    assert awf_role.restore_durable_model_manifest(
+        evidence,
+        str(workspace),
+        checkpoint["facts"]["postflight_model_manifest_sha256"],
+    ) == str(workspace.resolve())
 
 
 @pytest.mark.parametrize("field", ["card", "report"])

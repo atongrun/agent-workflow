@@ -3394,7 +3394,10 @@ def role_coder(a: argparse.Namespace) -> int:
         model_workspace = facts.get("model_workspace")
         if not isinstance(model_workspace, str) or not model_workspace:
             die("completed model checkpoint is missing its workspace")
-        manifest_sha256 = facts.get("model_manifest_sha256")
+        manifest_sha256 = facts.get(
+            "postflight_model_manifest_sha256",
+            facts.get("model_manifest_sha256"),
+        )
         if not isinstance(manifest_sha256, str):
             die("completed model checkpoint is missing its Git manifest")
         model_repo = restore_durable_model_manifest(
@@ -3457,6 +3460,10 @@ def role_coder(a: argparse.Namespace) -> int:
                 checkpoint,
                 "model_imported",
                 imported_tree=imported_tree,
+                # Trusted postflight stages the configured artifact in the
+                # isolated workspace, so persist the postflight Git baseline
+                # used by a later listener recovery.
+                postflight_model_manifest_sha256=durable_model_manifest_sha256(model_repo),
             )
         recovery_phase = "model_imported"
     elif checkpoint is not None:
@@ -3839,7 +3846,10 @@ def role_reviewer(a: argparse.Namespace) -> int:
     elif tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
         facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
         model_workspace = facts.get("model_workspace")
-        manifest_sha256 = facts.get("model_manifest_sha256")
+        manifest_sha256 = facts.get(
+            "postflight_model_manifest_sha256",
+            facts.get("model_manifest_sha256"),
+        )
         model_process = facts.get("model_process", "opencode")
         if (
             not isinstance(model_workspace, str)
@@ -3889,6 +3899,10 @@ def role_reviewer(a: argparse.Namespace) -> int:
                 checkpoint,
                 "model_imported",
                 review_report_sha256=report_sha256,
+                # import_model_report stages the ReviewReport after the
+                # model boundary; recovery must validate that trusted state,
+                # not the pre-stage model manifest.
+                postflight_model_manifest_sha256=durable_model_manifest_sha256(model_repo),
             )
             recovery_phase = "model_imported"
     elif checkpoint is not None:
