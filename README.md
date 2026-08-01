@@ -163,6 +163,13 @@ compatibility shim only; Windows dispatch, listeners, bootstrap, and services re
 Bash nor WSL. Windows dispatch also requires a native Agent Bus executable rather than a `.cmd` or
 `.bat` wrapper, keeping task-controlled payload bytes outside `cmd.exe`.
 
+All local production commands now cross one
+[runtime executor](docs/runtime-execution-architecture.md). PowerShell, Git Bash, and macOS zsh are
+supported launch environments, while business code always supplies structured argv and never
+invokes a shell directly. Runtime detection, Git Bash executable-path normalization, closed stdin,
+Windows wrapper policy, redacted failure diagnostics, and timeout handling are enforced centrally
+and protected by an AST boundary test.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream

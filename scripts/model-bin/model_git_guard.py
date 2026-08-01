@@ -5,9 +5,16 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
+
+script_directory = Path(__file__).resolve().parent
+scripts_root = script_directory.parent
+if (scripts_root / "awf_executor.py").is_file():
+    sys.path.insert(0, str(scripts_root))
+
+from awf_executor import DEVNULL, ExecutionFailure  # noqa: E402
+from awf_executor import run as run_command  # noqa: E402
 
 ALLOWED = {
     "describe",
@@ -66,7 +73,11 @@ def main() -> int:
     if not git_bin:
         print("awf model Git guard: real Git executable not found", file=sys.stderr)
         return 127
-    return subprocess.run([git_bin, *sys.argv[1:]], stdin=subprocess.DEVNULL).returncode
+    try:
+        return run_command([git_bin, *sys.argv[1:]], stdin=DEVNULL).returncode
+    except ExecutionFailure:
+        print("awf model Git guard: real Git execution failed", file=sys.stderr)
+        return 127
 
 
 if __name__ == "__main__":

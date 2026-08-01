@@ -421,9 +421,9 @@ def test_default_coder_listener_covers_impl_and_rework_with_distinct_handlers(
         returncode = 0
 
     monkeypatch.setattr(
-        awf_listen.subprocess,
-        "run",
-        lambda argv: seen.extend(argv) or Completed(),
+        awf_listen,
+        "run_command",
+        lambda argv, **_kwargs: seen.extend(argv) or Completed(),
     )
 
     assert (
@@ -467,9 +467,9 @@ def test_default_architect_listener_covers_ready_and_blocked_terminal_decisions(
         returncode = 0
 
     monkeypatch.setattr(
-        awf_listen.subprocess,
-        "run",
-        lambda argv: seen.extend(argv) or Completed(),
+        awf_listen,
+        "run_command",
+        lambda argv, **_kwargs: seen.extend(argv) or Completed(),
     )
 
     assert (

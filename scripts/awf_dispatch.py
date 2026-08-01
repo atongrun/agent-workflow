@@ -7,13 +7,19 @@ import argparse
 import os
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_delivery import canonical_json, canonical_payload_sha256, make_delivery_id
+
+try:
+    from awf_executor import CompletedProcess, ExecutionFailure
+    from awf_executor import run as run_command
+except ModuleNotFoundError:  # package import in tests
+    from .awf_executor import CompletedProcess, ExecutionFailure
+    from .awf_executor import run as run_command
 from awf_network import add_url_host_to_no_proxy
 
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9_.-]{1,100}$")
@@ -28,8 +34,8 @@ def fail(message: str) -> None:
     raise DispatchError(message)
 
 
-def git(repo: Path, *args: str, quiet: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def git(repo: Path, *args: str, quiet: bool = True) -> CompletedProcess:
+    return run_command(
         ["git", "-C", str(repo), *args],
         capture_output=quiet,
         text=True,
@@ -356,9 +362,9 @@ def dispatch(args: argparse.Namespace) -> None:
         encoded_payload,
     ]
     try:
-        sent = subprocess.run(bus_argv, env=environment, stdin=subprocess.DEVNULL)
-    except OSError:
-        fail("configured agent-bus executable is unavailable")
+        sent = run_command(bus_argv, env=environment, secrets=(token,))
+    except ExecutionFailure as exc:
+        fail(str(exc))
     require(sent.returncode == 0, "agent-bus send failed")
     print(
         f"[dispatch] event sent (type={args.event_type} to={args.to}). "

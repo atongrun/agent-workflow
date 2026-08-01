@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts import awf_executor
+
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -300,7 +302,7 @@ def test_controlled_subprocess_interruption_kills_and_reaps_before_exit_evidence
             return self.returncode
 
     process = InterruptedProcess()
-    monkeypatch.setattr(awf_role.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(awf_role, "start_command", lambda *args, **kwargs: process)
     evidence = awf_role.RunEvidence(59, "coder", state_root=tmp_path)
 
     with pytest.raises(OSError, match="controlled interruption"):
@@ -784,7 +786,7 @@ def test_pr_create_returns_exact_number_without_branch_list_rediscovery(monkeypa
             stderr="",
         )
 
-    monkeypatch.setattr(awf_role.subprocess, "run", fake_run)
+    monkeypatch.setattr(awf_role, "run_command", fake_run)
 
     assert awf_role._gh_create_pull_request(str(tmp_path), provenance) == 23
     assert calls[0][0][:4] == ["gh", "pr", "create", "--repo"]
@@ -808,8 +810,8 @@ def test_pr_create_rejects_noncanonical_result_without_logging_it(
 ):
     provenance = _pr_provenance(head_sha="d" * 40, pull_request=0)
     monkeypatch.setattr(
-        awf_role.subprocess,
-        "run",
+        awf_role,
+        "run_command",
         lambda argv, **_kwargs: subprocess.CompletedProcess(
             argv,
             0,
@@ -863,8 +865,8 @@ def test_existing_pr_update_path_reuses_and_verifies_without_create(monkeypatch,
 
 def test_github_cli_failure_is_fail_closed_without_exposing_stderr(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
-        awf_role.subprocess,
-        "run",
+        awf_role,
+        "run_command",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args[0],
             1,
@@ -1329,31 +1331,26 @@ def test_model_env_blocks_workspace_git_cmd_shadow(tmp_path):
     assert not marker.exists()
 
 
-def test_windows_cmd_wrappers_disable_autorun(monkeypatch):
+def test_windows_cmd_wrappers_are_delegated_to_executor(monkeypatch):
     calls = []
-    wrapper_sources = [
-        Path(script).read_text(encoding="utf-8")
-        for script in (awf_listen.__file__, awf_handoff_check.__file__)
-    ]
 
     def fake_run(argv, **kwargs):
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(awf_role.os, "name", "nt")
-    monkeypatch.setattr(awf_role.subprocess, "run", fake_run)
+    monkeypatch.setattr(awf_role, "run_command", fake_run)
 
     assert awf_role.spawn(["tool.cmd", "argument"], env={"PATH": "ignored"}) == 0
-    assert calls[0][0] == ["cmd.exe", "/d", "/s", "/c", "tool.cmd", "argument"]
+    assert calls[0][0] == ["tool.cmd", "argument"]
+    assert calls[0][1]["allow_shell_wrapper"] is True
 
     monkeypatch.setenv("AGENT_BUS_URL", "http://bus.invalid")
     monkeypatch.setenv("AWF_CODER_TOKEN", "token")
     monkeypatch.setenv("AWF_BUS_BIN", "agent-bus.cmd")
     assert awf_role.send_event("coder", "reviewer", "task:test", {})
-    assert calls[1][0][:5] == ["cmd.exe", "/d", "/s", "/c", "agent-bus.cmd"]
-
-    for source in wrapper_sources:
-        assert '["cmd.exe", "/d", "/s", "/c", *' in source
+    assert calls[1][0][0] == "agent-bus.cmd"
+    assert calls[1][1]["allow_shell_wrapper"] is True
 
 
 def test_prepare_model_workspace_has_exact_head_and_no_remote(repositories, tmp_path):
@@ -2962,7 +2959,7 @@ def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path, monkeypatch):
             monkeypatch.delenv(key, raising=False)
         for key, value in environment.items():
             monkeypatch.setenv(key, value)
-        monkeypatch.setattr(awf_dispatch.subprocess, "run", intercept_bus)
+        monkeypatch.setattr(awf_dispatch, "run_command", intercept_bus)
         completed_returncode = awf_dispatch.main(dispatch_args)
     else:
         completed = subprocess.run(
@@ -3012,7 +3009,7 @@ def test_handoff_bus_probe_adds_bus_host_to_no_proxy(monkeypatch):
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0, "0\n", "")
 
-    monkeypatch.setattr(awf_handoff_check.subprocess, "run", fake_run)
+    monkeypatch.setattr(awf_handoff_check, "run_command", fake_run)
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
@@ -3043,8 +3040,8 @@ def test_windows_acl_check_does_not_treat_users_in_target_path_as_a_principal(mo
         return subprocess.CompletedProcess(args, 0, stdout, "")
 
     monkeypatch.setattr(
-        awf_handoff_check.subprocess,
-        "run",
+        awf_handoff_check,
+        "run_command",
         fake_run,
     )
     records = []
@@ -3077,8 +3074,8 @@ def test_windows_acl_check_rejects_another_principal(monkeypatch):
         return subprocess.CompletedProcess(args, 0, stdout, "")
 
     monkeypatch.setattr(
-        awf_handoff_check.subprocess,
-        "run",
+        awf_handoff_check,
+        "run_command",
         fake_run,
     )
     records = []
@@ -3096,8 +3093,8 @@ def test_windows_acl_check_rejects_another_principal(monkeypatch):
 def test_windows_acl_check_rejects_unverifiable_acl(monkeypatch):
     dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
     monkeypatch.setattr(
-        awf_handoff_check.subprocess,
-        "run",
+        awf_handoff_check,
+        "run_command",
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 5, "", "access denied"),
     )
     records = []
@@ -3115,8 +3112,8 @@ def test_windows_acl_check_rejects_unverifiable_acl(monkeypatch):
 def test_windows_acl_check_rejects_unparseable_acl(monkeypatch):
     dest = Path(r"C:\Users\atong\.config\awf\dispatch.env")
     monkeypatch.setattr(
-        awf_handoff_check.subprocess,
-        "run",
+        awf_handoff_check,
+        "run_command",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args[0], 0, "Successfully processed 1 files\n", ""
         ),
@@ -3142,7 +3139,7 @@ def test_windows_acl_check_rejects_unknown_current_principal(monkeypatch):
             return subprocess.CompletedProcess(args, 1, "", "unable to resolve principal")
         return subprocess.CompletedProcess(args, 0, stdout, "")
 
-    monkeypatch.setattr(awf_handoff_check.subprocess, "run", fake_run)
+    monkeypatch.setattr(awf_handoff_check, "run_command", fake_run)
     records = []
     monkeypatch.setattr(
         awf_handoff_check,
@@ -3164,7 +3161,7 @@ def test_windows_acl_check_rejects_inherited_owner_ace(monkeypatch):
             return subprocess.CompletedProcess(args, 0, "ATONG-COMPUTER\\atong\n", "")
         return subprocess.CompletedProcess(args, 0, stdout, "")
 
-    monkeypatch.setattr(awf_handoff_check.subprocess, "run", fake_run)
+    monkeypatch.setattr(awf_handoff_check, "run_command", fake_run)
     records = []
     monkeypatch.setattr(
         awf_handoff_check,
@@ -3249,7 +3246,7 @@ def test_windows_permission_lock_removes_every_non_owner_ace(monkeypatch, tmp_pa
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(awf_bootstrap.os, "name", "nt")
-    monkeypatch.setattr(awf_bootstrap.subprocess, "run", fake_run)
+    monkeypatch.setattr(awf_bootstrap, "run_command", fake_run)
 
     assert awf_bootstrap.lock_permissions(path) == "icacls: owner-only"
     assert any("/remove:g" in argv and "SYSTEM" in argv for argv in calls)
@@ -3275,8 +3272,8 @@ def test_curl_bootstrap_locks_secret_temp_file_before_write(monkeypatch):
 
     monkeypatch.setattr(awf_bootstrap.os, "fdopen", guarded_fdopen)
     monkeypatch.setattr(
-        awf_bootstrap.subprocess,
-        "run",
+        awf_bootstrap,
+        "run_command",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args[0],
             0,
@@ -3295,6 +3292,38 @@ def test_curl_bootstrap_locks_secret_temp_file_before_write(monkeypatch):
     assert len(locked) == 1
     assert events == ["lock", "fdopen"]
     assert not locked[0].exists()
+
+
+@pytest.mark.parametrize("transport", ["ssh", "curl"])
+def test_bootstrap_token_fetch_failure_never_prints_partial_token(monkeypatch, capsys, transport):
+    partial_token = "partial-token-material"
+    diagnostic = awf_executor.FailureDiagnostic(
+        kind="timeout",
+        runtime=awf_executor.RuntimeKind.POSIX,
+        executable=transport,
+        cwd="/safe",
+        timeout_seconds=30,
+        stdout=partial_token,
+    )
+
+    def fail_without_returning(*_args, **_kwargs):
+        raise awf_bootstrap.ExecutionFailure(diagnostic)
+
+    monkeypatch.setattr(awf_bootstrap, "run_command", fail_without_returning)
+
+    with pytest.raises(SystemExit):
+        if transport == "ssh":
+            awf_bootstrap.fetch_tokens_line("source.invalid", "/safe/source")
+        else:
+            awf_bootstrap.fetch_tokens_curl(
+                "https://bus.invalid",
+                "bootstrap-secret",
+                ["coder"],
+            )
+
+    output = capsys.readouterr()
+    assert partial_token not in output.out
+    assert partial_token not in output.err
 
 
 # ---------------------------------------------------------------------------

@@ -83,8 +83,39 @@ jobs:
       - name: Run Windows recovery and configuration suite
         run: python -m pytest -v
 
+      - name: Verify executor from PowerShell
+        run: |
+          $env:AWF_EXPECTED_RUNTIME = "windows-powershell"
+          python -m pytest -v tests/test_awf_executor.py tests/test_runtime_command_boundary.py
+
+      - name: Verify executor from Git Bash
+        shell: bash
+        run: |
+          AWF_EXPECTED_RUNTIME=windows-git-bash \
+            python -m pytest -v tests/test_awf_executor.py tests/test_runtime_command_boundary.py
+
       - name: Validate resources
         run: |
           awf validate roles
           awf validate workflows
           awf validate examples
+
+  macos-runtime:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime test dependencies
+        shell: zsh {0}
+        run: python -m pip install -e ".[dev]"
+
+      - name: Verify executor from zsh
+        shell: zsh {0}
+        run: |
+          AWF_EXPECTED_RUNTIME=macos-zsh \
+            python -m pytest -v tests/test_awf_executor.py tests/test_runtime_command_boundary.py
