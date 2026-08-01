@@ -2293,10 +2293,29 @@ def validate_embedded_review_report(data: object) -> dict[str, object]:
     if secret_label:
         die(f"embedded ReviewReport contains prohibited {secret_label} material")
     blocks = _REVIEW_REPORT_RE.findall(markdown)
-    if len(blocks) != 1:
+    if len(blocks) == 1:
+        machine_source = blocks[0]
+    elif len(blocks) == 0:
+        fenced = _REVIEW_REPORT_FENCED_RE.findall(markdown)
+        if len(fenced) != 1:
+            die("embedded ReviewReport must contain exactly one awf-review-report object")
+        try:
+            wrapped = json.loads(fenced[0], object_pairs_hook=_unique_json_object)
+        except (json.JSONDecodeError, DuplicateReviewReportKey):
+            die("embedded ReviewReport machine object is malformed or contains duplicate fields")
+        if not isinstance(wrapped, dict) or set(wrapped) != {"awf-review-report"}:
+            die("embedded ReviewReport machine object has missing or unknown fields")
+        machine = wrapped["awf-review-report"]
+        if not isinstance(machine, dict) or set(machine) != _REVIEW_REPORT_KEYS:
+            die("embedded ReviewReport machine object has missing or unknown fields")
+        normalized = _normalize_review_report(machine, markdown)
+        if normalized != data:
+            die("embedded ReviewReport does not match its normalized machine object")
+        return normalized
+    else:
         die("embedded ReviewReport must contain exactly one awf-review-report object")
     try:
-        machine = json.loads(blocks[0], object_pairs_hook=_unique_json_object)
+        machine = json.loads(machine_source, object_pairs_hook=_unique_json_object)
     except (json.JSONDecodeError, DuplicateReviewReportKey):
         die("embedded ReviewReport machine object is malformed or contains duplicate fields")
     if not isinstance(machine, dict) or set(machine) != _REVIEW_REPORT_KEYS:

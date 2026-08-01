@@ -2158,6 +2158,21 @@ def test_parse_review_report_rejects_multiple_fenced_wrappers(tmp_path):
         awf_role.parse_review_report(report)
 
 
+def test_validate_embedded_review_report_accepts_fenced_wrapper():
+    markdown = _fenced_review_markdown("PASS")
+    embedded = {
+        "format": "awf.review-report.v1",
+        "verdict": "PASS",
+        "deterministic_failures": [],
+        "blocked_reason": "",
+        "markdown": markdown,
+    }
+
+    normalized = awf_role.validate_embedded_review_report(embedded)
+
+    assert normalized == embedded
+
+
 _COMMAND_FAILURE = {
     "evidence": {
         "kind": "command",
