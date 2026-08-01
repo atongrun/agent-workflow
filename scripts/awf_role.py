@@ -740,7 +740,17 @@ def advance_recovery_checkpoint(
     if any(key in existing_facts and existing_facts[key] != value for key, value in facts.items()):
         die("recovery checkpoint replay tried to alter completed phase facts")
     if next_index == current_index:
-        return record_value
+        if not facts:
+            return record_value
+        updated = {
+            **record_value,
+            "facts": {**existing_facts, **facts},
+            "updated_at": _utc_now(),
+        }
+        validate_recovery_checkpoint(updated)
+        _atomic_write_json(path, updated)
+        record(evidence, "recovery_checkpoint", recovery_phase=phase)
+        return updated
     merged_facts = {**existing_facts, **facts}
     updated = {
         **record_value,
@@ -1455,6 +1465,56 @@ def durable_model_manifest_sha256(workspace: str) -> str:
     manifest = _model_git_manifest(str(Path(workspace).resolve()))
     serializable = {key: list(value) for key, value in manifest.items()}
     return canonical_payload_sha256(serializable)
+
+
+def _postflight_was_completed(evidence: RunEvidence) -> bool:
+    """Recognize a completed trusted postflight boundary from durable evidence."""
+    try:
+        entries = [
+            json.loads(line)
+            for line in evidence.log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError):
+        die("model recovery evidence is unreadable or invalid JSON")
+    return any(
+        isinstance(item, dict)
+        and item.get("event_id") == evidence.event_id
+        and item.get("role") == evidence.role
+        and item.get("phase") == "postflight_pass"
+        for item in entries
+    )
+
+
+def recover_postflight_manifest(
+    evidence: RunEvidence,
+    checkpoint_path: Path,
+    checkpoint: dict[str, object],
+    workspace: str,
+) -> tuple[dict[str, object], str]:
+    """Persist a legacy postflight manifest only after durable success evidence."""
+    facts = dict(checkpoint.get("facts", {}))
+    existing = facts.get("postflight_model_manifest_sha256")
+    if isinstance(existing, str):
+        return checkpoint, existing
+    phases = _RECOVERY_PHASES_BY_ROLE[str(checkpoint["role"])]
+    if str(checkpoint["phase"]) == "model_completed":
+        original = facts.get("model_manifest_sha256")
+        if isinstance(original, str):
+            return checkpoint, original
+    if phases.index(str(checkpoint["phase"])) < phases.index("model_imported"):
+        die("completed model checkpoint is missing its postflight Git manifest")
+    if not _postflight_was_completed(evidence):
+        die("completed model checkpoint lacks durable postflight success evidence")
+    manifest = durable_model_manifest_sha256(workspace)
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        str(checkpoint["phase"]),
+        postflight_model_manifest_sha256=manifest,
+    )
+    return checkpoint, manifest
 
 
 def restore_durable_model_manifest(
@@ -3394,9 +3454,11 @@ def role_coder(a: argparse.Namespace) -> int:
         model_workspace = facts.get("model_workspace")
         if not isinstance(model_workspace, str) or not model_workspace:
             die("completed model checkpoint is missing its workspace")
-        manifest_sha256 = facts.get(
-            "postflight_model_manifest_sha256",
-            facts.get("model_manifest_sha256"),
+        checkpoint, manifest_sha256 = recover_postflight_manifest(
+            evidence,
+            checkpoint_path,
+            checkpoint,
+            model_workspace,
         )
         if not isinstance(manifest_sha256, str):
             die("completed model checkpoint is missing its Git manifest")
@@ -3846,9 +3908,13 @@ def role_reviewer(a: argparse.Namespace) -> int:
     elif tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
         facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
         model_workspace = facts.get("model_workspace")
-        manifest_sha256 = facts.get(
-            "postflight_model_manifest_sha256",
-            facts.get("model_manifest_sha256"),
+        if not isinstance(model_workspace, str) or not model_workspace:
+            die("completed reviewer checkpoint is missing its workspace")
+        checkpoint, manifest_sha256 = recover_postflight_manifest(
+            evidence,
+            checkpoint_path,
+            checkpoint,
+            model_workspace,
         )
         model_process = facts.get("model_process", "opencode")
         if (
