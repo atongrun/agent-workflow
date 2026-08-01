@@ -172,7 +172,7 @@ and protected by an AST boundary test.
 
 Every new loop can now begin with the versioned, fail-closed
 [runtime Preflight](docs/runtime-preflight-architecture.md):
-`python scripts/awf_preflight.py fast --repo <repo>`. Fast mode is read-only and separates
+`python scripts/awf_preflight.py fast --repo <repo> --model-tool <cli>`. Fast mode is read-only and separates
 TaskCard-authoring readiness from remote-dispatch authority. Explicit Deep mode is required only
 for a first remote dispatch, a material runtime/transport change or failure, or an expired proof;
 it uses disposable no-model control events and automatic handler-success ACK evidence without

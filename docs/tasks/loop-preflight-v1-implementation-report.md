@@ -7,6 +7,8 @@ stable core or Agent Bus protocol.
 
 - Fast is read-only and separates `allow_taskcard_authoring` from
   `allow_remote_dispatch`.
+- Fast requires an explicit host-local `--model-tool` selection and has no role-to-product mapping;
+  every participating host verifies its chosen executable only.
 - Deep is explicit, TTL/fingerprint-bound, and uses one disposable request plus one disposable
   result event through opt-in real role listeners and dedicated no-model handlers.
 - Both handlers start a real child subprocess through the unified executor and publish bounded
@@ -47,8 +49,8 @@ record fails closed.
 
 | Command | Result |
 | --- | --- |
-| `python -m pytest -q tests/test_awf_preflight.py tests/test_runtime_command_boundary.py tests/test_awf_role.py` | PASS: 285 passed, 2 skipped |
-| `python -m pytest -q` | PASS: 367 passed, 3 skipped |
+| `python -m pytest -q tests/test_awf_preflight.py tests/test_runtime_command_boundary.py tests/test_awf_role.py` | PASS: 289 passed, 2 skipped |
+| `python -m pytest -q` | PASS: 371 passed, 3 skipped |
 | `ruff check .` | PASS |
 | `ruff format --check .` | PASS: 96 files formatted |
 | `python -m compileall -q scripts src tests` | PASS |

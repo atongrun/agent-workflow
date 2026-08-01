@@ -274,6 +274,11 @@ def main(argv=None) -> int:
     p.add_argument(
         "--dest", default="", help="dispatch.env path (default: ~/.config/awf/dispatch.env)"
     )
+    p.add_argument(
+        "--model-tool",
+        default="",
+        help="optional model CLI executable to probe with --version",
+    )
     a = p.parse_args(argv)
 
     # Windows consoles default to a non-UTF-8 codec (gbk/cp936); tool/git error
@@ -298,6 +303,7 @@ def main(argv=None) -> int:
         upstream_remote="upstream",
         head_remote="fork",
         gh_bin="gh",
+        model_tool=a.model_tool,
         run_id="",
         intent="taskcard",
     )

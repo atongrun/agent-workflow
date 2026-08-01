@@ -21,6 +21,21 @@ import awf_listen  # noqa: E402
 import awf_preflight  # noqa: E402
 
 
+def test_preflight_has_no_role_to_agent_product_binding():
+    source = (SCRIPTS_DIR / "awf_preflight.py").read_text(encoding="utf-8").casefold()
+
+    for forbidden in (
+        "role_model_tool",
+        "awf_opencode_bin",
+        "awf_codex_bin",
+        '"opencode"',
+        '"codex"',
+        '"claude"',
+        '"pi"',
+    ):
+        assert forbidden not in source
+
+
 def args(tmp_path: Path, *, intent: str = "taskcard") -> argparse.Namespace:
     config = tmp_path / "dispatch.env"
     config.write_text("placeholder\n", encoding="utf-8")
@@ -35,6 +50,7 @@ def args(tmp_path: Path, *, intent: str = "taskcard") -> argparse.Namespace:
         upstream_remote="upstream",
         head_remote="fork",
         gh_bin="gh",
+        model_tool="pi",
         run_id="",
         intent=intent,
         ttl_seconds=3600,
@@ -51,6 +67,7 @@ def valid_config() -> dict[str, str]:
         "AWF_REVIEWER_TOKEN": "reviewer-test-token",
         "AWF_BUS_BIN": "agent-bus",
         "AWF_OPENCODE_BIN": "opencode",
+        "AWF_CODEX_BIN": "codex",
     }
 
 
@@ -106,6 +123,39 @@ def test_fast_is_read_only_and_allows_taskcard_without_deep(tmp_path, monkeypatc
     assert not any(forbidden.intersection(call) for call in calls)
     assert any("--dry-run" in call and "fork" in call for call in calls)
     assert any(call[-1] == "--version" for call in calls)
+    assert ["/tools/pi", "--version"] in calls
+
+
+def test_fast_checks_the_explicit_model_tool_without_role_binding(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    install_fast_fakes(monkeypatch, calls)
+    value = args(tmp_path)
+    value.source_role = "coder"
+    value.target_role = "architect"
+    value.model_tool = "claude"
+
+    report = awf_preflight.run_fast(value).report
+    layer = next(item for item in report["layers"] if item["id"] == "model-tool")
+
+    assert layer["status"] == "PASS"
+    assert layer["evidence"]["selection"] == "explicit"
+    assert ["/tools/claude", "--version"] in calls
+    assert ["/tools/pi", "--version"] not in calls
+
+
+def test_fast_denies_remote_readiness_without_explicit_model_tool(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    install_fast_fakes(monkeypatch, calls)
+    value = args(tmp_path, intent="remote-dispatch")
+    value.model_tool = ""
+
+    report = awf_preflight.run_fast(value).report
+    layer = next(item for item in report["layers"] if item["id"] == "model-tool")
+
+    assert layer["status"] == "FAIL"
+    assert layer["error_code"] == "MODEL_TOOL_NOT_CONFIGURED"
+    assert report["allow_remote_dispatch"] is False
+    assert not any("--version" in call for call in calls)
 
 
 def test_fast_remote_dispatch_requires_current_deep_proof(tmp_path, monkeypatch):
@@ -470,6 +520,7 @@ def test_handoff_profile_preserves_role_only_no_repo_contract(tmp_path, monkeypa
     value.repo_required = False
     value.source_role = "architect"
     value.target_role = "architect"
+    value.model_tool = ""
 
     report = awf_preflight.run_fast(value).report
 
@@ -496,6 +547,7 @@ def test_handoff_profile_preserves_coder_repo_push_dry_run(tmp_path, monkeypatch
     value.repo_required = True
     value.source_role = "coder"
     value.target_role = "coder"
+    value.model_tool = ""
 
     report = awf_preflight.run_fast(value).report
 
@@ -503,7 +555,23 @@ def test_handoff_profile_preserves_coder_repo_push_dry_run(tmp_path, monkeypatch
     dry_runs = [call for call in calls if "--dry-run" in call]
     assert len(dry_runs) == 1
     assert "fork" not in dry_runs[0]
-    assert any("--version" in call for call in calls)
+    assert not any("--version" in call for call in calls)
+
+
+def test_handoff_profile_probes_only_an_explicit_model_tool(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    install_fast_fakes(monkeypatch, calls)
+    value = args(tmp_path)
+    value.profile = "handoff"
+    value.repo_required = False
+    value.source_role = "architect"
+    value.target_role = "architect"
+    value.model_tool = "custom-agent"
+
+    report = awf_preflight.run_fast(value).report
+
+    assert all(layer["status"] == "PASS" for layer in report["layers"])
+    assert ["/tools/custom-agent", "--version"] in calls
 
 
 def test_preflight_template_obeys_agent_bus_single_argv_placeholder_contract():

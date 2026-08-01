@@ -19,6 +19,11 @@ ledger, changes Git state, creates a PR, or writes a cache/report file. Its laye
 - model-tool `--version` execution without a prompt or model call;
 - authority manifest and optional run-ledger/context-packet readability.
 
+Fast is host-local. Operators run it on each participating machine and explicitly pass that
+runtime's selected CLI with `--model-tool`. Preflight does not map roles to products: Pi, Codex,
+Claude Code, OpenCode, or another compatible executable can be selected without changing source
+code. The probe runs only `<selected-tool> --version` and never starts a model.
+
 TaskCard authoring and remote dispatch are separate decisions. Local authoring can proceed when its
 runtime/configuration/Git/control-plane prerequisites pass even if a remote-only probe is down.
 Remote dispatch additionally requires every remote layer plus a current Deep proof.

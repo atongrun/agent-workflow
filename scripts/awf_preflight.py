@@ -551,15 +551,25 @@ def run_fast(args: argparse.Namespace) -> FastResult:
     github_layer = checked("github", "GH_READINESS_FAILED", github)
 
     def model_tool() -> dict[str, object]:
-        if profile == "handoff" and args.source_role != "coder":
-            return {"executable": "not-required-for-role", "model_invoked": False}
         if not config:
             raise PreflightError("CONFIG_INVALID", "tool configuration is unavailable")
-        configured = config.get("AWF_OPENCODE_BIN", "opencode")
+        configured = getattr(args, "model_tool", "")
+        if not configured and profile == "handoff":
+            return {"executable": "not-requested", "model_invoked": False}
+        if not configured:
+            raise PreflightError(
+                "MODEL_TOOL_NOT_CONFIGURED",
+                "pass the model-tool executable selected for this runtime",
+            )
         tool = executable(configured)
         version = execute([tool, "--version"], timeout=15, allow_shell_wrapper=True)
         require_success(version, "MODEL_TOOL_UNEXECUTABLE")
-        return {"executable": True, "probe": "version-only", "model_invoked": False}
+        return {
+            "executable": True,
+            "selection": "explicit",
+            "probe": "version-only",
+            "model_invoked": False,
+        }
 
     model_layer = checked("model-tool", "MODEL_TOOL_UNAVAILABLE", model_tool)
 
@@ -965,6 +975,11 @@ def common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--upstream-remote", default="upstream")
     parser.add_argument("--head-remote", default="fork")
     parser.add_argument("--gh-bin", default="gh")
+    parser.add_argument(
+        "--model-tool",
+        default="",
+        help="explicit model CLI executable to probe with --version",
+    )
     parser.add_argument("--run-id", default="")
 
 
