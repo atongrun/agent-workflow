@@ -124,6 +124,7 @@ def test_fast_is_read_only_and_allows_taskcard_without_deep(tmp_path, monkeypatc
     assert any("--dry-run" in call and "fork" in call for call in calls)
     assert any(call[-1] == "--version" for call in calls)
     assert ["/tools/pi", "--version"] in calls
+    assert ["/tools/gh", "auth", "status", "--active", "--hostname", "github.com"] in calls
 
 
 def test_fast_checks_the_explicit_model_tool_without_role_binding(tmp_path, monkeypatch):

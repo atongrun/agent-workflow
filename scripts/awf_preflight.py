@@ -537,7 +537,7 @@ def run_fast(args: argparse.Namespace) -> FastResult:
         if profile == "handoff":
             return {"readiness": "not-part-of-legacy-contract"}
         gh = executable(args.gh_bin)
-        auth = execute([gh, "auth", "status"], timeout=20)
+        auth = execute([gh, "auth", "status", "--active", "--hostname", "github.com"], timeout=20)
         require_success(auth, "GH_AUTH_FAILED")
         if not remote_facts.get("upstream"):
             raise PreflightError("GH_REPO_UNKNOWN", "upstream repository identity is unavailable")
