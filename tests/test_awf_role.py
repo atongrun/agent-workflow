@@ -2128,6 +2128,51 @@ def _review_markdown(verdict, *, failures=None, blocked_reason="", extra=""):
     return "# Review Report\n\n<!-- awf-review-report\n" + json.dumps(machine) + "\n-->\n\n" + extra
 
 
+def _fenced_review_markdown(verdict, *, failures=None, blocked_reason=""):
+    machine = {
+        "verdict": verdict,
+        "deterministic_failures": failures or [],
+        "blocked_reason": blocked_reason,
+    }
+    return "# Review Report\n\n```json\n" + json.dumps({"awf-review-report": machine}) + "\n```\n"
+
+
+def test_parse_review_report_accepts_legacy_fenced_wrapper(tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(_fenced_review_markdown("PASS"), encoding="utf-8")
+
+    normalized = awf_role.parse_review_report(report)
+
+    assert normalized["format"] == "awf.review-report.v1"
+    assert normalized["verdict"] == "PASS"
+
+
+def test_parse_review_report_rejects_multiple_fenced_wrappers(tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(
+        _fenced_review_markdown("PASS") + _fenced_review_markdown("PASS"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit):
+        awf_role.parse_review_report(report)
+
+
+def test_validate_embedded_review_report_accepts_fenced_wrapper():
+    markdown = _fenced_review_markdown("PASS")
+    embedded = {
+        "format": "awf.review-report.v1",
+        "verdict": "PASS",
+        "deterministic_failures": [],
+        "blocked_reason": "",
+        "markdown": markdown,
+    }
+
+    normalized = awf_role.validate_embedded_review_report(embedded)
+
+    assert normalized == embedded
+
+
 _COMMAND_FAILURE = {
     "evidence": {
         "kind": "command",
