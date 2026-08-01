@@ -61,6 +61,8 @@ def build_handler(
     role: str,
     *,
     on_type: str = "",
+    upstream_remote: str = "upstream",
+    head_remote: str = "fork",
 ) -> str:
     """Build the agent-bus --on handler command.
 
@@ -99,12 +101,16 @@ def build_handler(
             "{payload.provenance_version}",
             "--upstream-repo",
             "{payload.upstream_repo}",
+            "--upstream-remote",
+            upstream_remote,
             "--base-ref",
             "{payload.base_ref}",
             "--base-sha",
             "{payload.base_sha}",
             "--head-repo",
             "{payload.head_repo}",
+            "--head-remote",
+            head_remote,
             "--head-ref",
             "{payload.head_ref}",
             "--head-sha",
@@ -277,7 +283,14 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
 
-    handler = build_handler(sys.executable, role_script, a.role, on_type=on_type)
+    handler = build_handler(
+        sys.executable,
+        role_script,
+        a.role,
+        on_type=on_type,
+        upstream_remote=a.upstream_remote,
+        head_remote=a.head_remote,
+    )
 
     print(f"[listen] role={a.role} repo={a.repo} tool={a.tool} model={a.model or '<default>'}")
     print(f"[listen] on '{on_type}' -> {role_script}")
@@ -302,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
             role_script,
             a.role,
             on_type=active_types[1],
+            upstream_remote=a.upstream_remote,
+            head_remote=a.head_remote,
         )
         listen_argv += ["--on", active_types[1], rework_handler]
     if a.enable_preflight and config_path is not None:
