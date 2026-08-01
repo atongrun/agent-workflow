@@ -261,6 +261,14 @@ def failure_diagnostic(
     )
 
 
+def _child_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
+    values = dict(os.environ if environment is None else environment)
+    if environment is None:
+        values.setdefault("PYTHONUTF8", "1")
+        values.setdefault("PYTHONIOENCODING", "utf-8")
+    return values
+
+
 def run(
     argv: Sequence[str | os.PathLike[str]],
     *,
@@ -281,11 +289,12 @@ def run(
     runtime: RuntimeInfo | None = None,
 ) -> CompletedProcess:
     active = runtime or detect_runtime()
+    child_environment = _child_environment(env)
     normalized = normalize_command(
         argv,
         runtime=active,
         allow_shell_wrapper=allow_shell_wrapper,
-        environment=env,
+        environment=child_environment,
     )
     if input is None and stdin is None:
         stdin = DEVNULL
@@ -299,7 +308,7 @@ def run(
         completed = _subprocess.run(
             normalized,
             cwd=cwd,
-            env=None if env is None else dict(env),
+            env=child_environment,
             input=input,
             stdin=stdin,
             stdout=stdout,
@@ -360,11 +369,12 @@ def start(
     runtime: RuntimeInfo | None = None,
 ) -> _subprocess.Popen:
     active = runtime or detect_runtime()
+    child_environment = _child_environment(env)
     normalized = normalize_command(
         argv,
         runtime=active,
         allow_shell_wrapper=allow_shell_wrapper,
-        environment=env,
+        environment=child_environment,
     )
     if stdin is None:
         stdin = DEVNULL
@@ -372,7 +382,7 @@ def start(
         return _subprocess.Popen(
             normalized,
             cwd=cwd,
-            env=None if env is None else dict(env),
+            env=child_environment,
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,

@@ -117,5 +117,5 @@ jobs:
       - name: Verify executor from zsh
         shell: zsh {0}
         run: |
-          AWF_EXPECTED_RUNTIME=macos-zsh \
+          SHELL=/bin/zsh AWF_EXPECTED_RUNTIME=macos-zsh \
             python -m pytest -v tests/test_awf_executor.py tests/test_runtime_command_boundary.py

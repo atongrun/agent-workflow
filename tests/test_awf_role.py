@@ -398,6 +398,12 @@ def test_minimal_listener_handler_opencode_return_chain(repositories, tmp_path):
     if os.name == "nt":
         fake_tool = tmp_path / "controlled-tool.cmd"
         fake_tool.write_text(f'@"{sys.executable}" "{fake_script}" %*\r\n', encoding="utf-8")
+        fake_tool.with_suffix(".ps1").write_text(
+            f"& '{str(sys.executable).replace(chr(39), chr(39) * 2)}' "
+            f"'{str(fake_script).replace(chr(39), chr(39) * 2)}' @args\n"
+            "exit $LASTEXITCODE\n",
+            encoding="utf-8",
+        )
     else:
         fake_tool = tmp_path / "controlled-tool"
         fake_tool.write_text(
@@ -1338,7 +1344,6 @@ def test_windows_cmd_wrappers_are_delegated_to_executor(monkeypatch):
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr(awf_role.os, "name", "nt")
     monkeypatch.setattr(awf_role, "run_command", fake_run)
 
     assert awf_role.spawn(["tool.cmd", "argument"], env={"PATH": "ignored"}) == 0
@@ -3310,6 +3315,12 @@ def test_bootstrap_token_fetch_failure_never_prints_partial_token(monkeypatch, c
         raise awf_bootstrap.ExecutionFailure(diagnostic)
 
     monkeypatch.setattr(awf_bootstrap, "run_command", fail_without_returning)
+    if transport == "curl":
+        monkeypatch.setattr(
+            awf_bootstrap,
+            "lock_permissions",
+            lambda _path: "owner-only",
+        )
 
     with pytest.raises(SystemExit):
         if transport == "ssh":
