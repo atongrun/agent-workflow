@@ -1588,6 +1588,34 @@ def recover_postflight_manifest(
     facts = dict(checkpoint.get("facts", {}))
     existing = facts.get("postflight_model_manifest_sha256")
     if isinstance(existing, str):
+        current = durable_model_manifest_sha256(workspace)
+        if current == existing:
+            return checkpoint, existing
+        # Checkpoints written before semantic index manifests used the raw
+        # binary index.  Migrate only a completed reviewer workspace whose
+        # dispatched HEAD and preserved ReviewReport still match the durable
+        # facts; no model or artifact rewrite is involved.
+        report_sha = facts.get("review_report_sha256")
+        report_files = sorted(Path(workspace).glob(".awf/artifacts/review-report-*.md"))
+        matching_report = any(
+            isinstance(report_sha, str)
+            and hashlib.sha256(path.read_bytes()).hexdigest() == report_sha
+            for path in report_files
+        )
+        if (
+            str(checkpoint.get("phase")) in {"model_imported", "pr_tuple_verified"}
+            and git_out(workspace, "rev-parse", "--verify", "HEAD^{commit}")
+            == checkpoint.get("source_commit")
+            and matching_report
+        ):
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                str(checkpoint["phase"]),
+                postflight_model_manifest_sha256=current,
+            )
+            return checkpoint, current
         return checkpoint, existing
     phases = _RECOVERY_PHASES_BY_ROLE[str(checkpoint["role"])]
     if str(checkpoint["phase"]) == "model_completed":
