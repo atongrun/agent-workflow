@@ -3932,7 +3932,6 @@ def role_reviewer(a: argparse.Namespace) -> int:
             or hashlib.sha256(persisted_report.read_bytes()).hexdigest() != expected_report_sha256
         ):
             die("trusted ReviewReport does not match its recovery checkpoint")
-        persisted_report.unlink()
 
     if provenance is not None:
         try:
