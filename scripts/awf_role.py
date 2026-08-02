@@ -1493,7 +1493,11 @@ def git_out(repo: str, *args: str) -> str:
 _MODEL_GIT_MANIFESTS: dict[str, dict[str, tuple[str, str]]] = {}
 
 
-def _model_git_manifest(workspace: str) -> dict[str, tuple[str, str]]:
+def _model_git_manifest(
+    workspace: str,
+    *,
+    include_semantic_index: bool = True,
+) -> dict[str, tuple[str, str]]:
     """Hash mutable Git control metadata without invoking model-controlled Git."""
     git_dir = Path(workspace).resolve() / ".git"
     if not git_dir.is_dir():
@@ -1503,6 +1507,13 @@ def _model_git_manifest(workspace: str) -> dict[str, tuple[str, str]]:
         relative = path.relative_to(git_dir)
         parts = relative.parts
         if parts and parts[0] == "objects" and parts[:2] != ("objects", "info"):
+            continue
+        # The binary index contains platform-specific stat-cache data.  That
+        # cache can change after a read-only checkout/status operation without
+        # changing the staged tree, which made durable recovery reject an
+        # otherwise identical reviewer workspace on Windows.  Bind the
+        # semantic index state below instead of the volatile binary file.
+        if relative.as_posix() == "index":
             continue
         name = relative.as_posix()
         if path.is_symlink():
@@ -1514,6 +1525,13 @@ def _model_git_manifest(workspace: str) -> dict[str, tuple[str, str]]:
             manifest[name] = ("dir", "")
         else:
             manifest[name] = ("other", "")
+    if include_semantic_index:
+        staged = git_out(workspace, "ls-files", "--stage", "-z")
+        tree = git_out(workspace, "write-tree")
+        manifest["index-semantic"] = (
+            "git-index",
+            hashlib.sha256(staged.encode("utf-8") + b"\0" + tree.encode("ascii")).hexdigest(),
+        )
     return manifest
 
 
@@ -1527,7 +1545,11 @@ def assert_model_git_metadata(workspace: str) -> None:
     """Reject any model mutation to Git config, refs, index, hooks, or info files."""
     resolved = str(Path(workspace).resolve())
     expected = _MODEL_GIT_MANIFESTS.get(resolved)
-    if expected is None or _model_git_manifest(resolved) != expected:
+    if expected is None:
+        die("model process changed isolated workspace Git control metadata")
+    expected_control = {key: value for key, value in expected.items() if key != "index-semantic"}
+    current_control = _model_git_manifest(resolved, include_semantic_index=False)
+    if current_control != expected_control or _model_git_manifest(resolved) != expected:
         die("model process changed isolated workspace Git control metadata")
 
 

@@ -2166,6 +2166,15 @@ def test_import_model_report_includes_ignored_configured_artifact(repositories, 
     ) == str(workspace.resolve())
 
 
+def test_model_manifest_binds_semantic_index_not_binary_stat_cache(repositories):
+    _, _, executor = repositories
+    manifest = awf_role._model_git_manifest(str(executor))
+
+    assert "index" not in manifest
+    assert manifest["index-semantic"][0] == "git-index"
+    assert manifest["index-semantic"][1]
+
+
 @pytest.mark.parametrize("field", ["card", "report"])
 @pytest.mark.parametrize("escaped_path", ["absolute", "../outside.md"])
 def test_reviewer_rejects_repo_path_escape_before_model(monkeypatch, tmp_path, field, escaped_path):
