@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from awf_artifact_contract import ArtifactContractError, compile_stage_artifact_contract
 from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_delivery import canonical_json, canonical_payload_sha256, make_delivery_id
 
@@ -196,6 +197,8 @@ def dispatch(args: argparse.Namespace) -> None:
     require(repo.is_dir(), f"repo not found: {repo}")
     require(card_path.is_file(), f"card not found: {card_path}")
     is_v3 = args.event_type.endswith("-v3")
+    task_id = args.branch.rsplit("/", 1)[-1]
+    report = args.report or f".awf/artifacts/impl-report-{task_id}.md"
     if is_v3:
         require(bool(args.upstream_repo), "need --upstream-repo owner/repository")
         require(bool(args.head_repo), "need --head-repo owner/contribution-fork")
@@ -223,6 +226,15 @@ def dispatch(args: argparse.Namespace) -> None:
             base_ref=args.base_ref,
             head_ref=args.branch,
         )
+        try:
+            artifact_contract = compile_stage_artifact_contract(
+                card_path=card_path,
+                task_id=task_id,
+                requested_report_path=args.report,
+            )
+        except ArtifactContractError as exc:
+            fail(f"artifact contract rejected before dispatch: {exc}")
+        report = artifact_contract.implementation_report_path
 
     if git_out(repo, "branch", "--show-current") != args.branch:
         require(
@@ -311,8 +323,6 @@ def dispatch(args: argparse.Namespace) -> None:
         }
     print(f"[dispatch] card committed at {commit} on {args.branch}")
 
-    task_id = args.branch.rsplit("/", 1)[-1]
-    report = args.report or f".awf/artifacts/impl-report-{task_id}.md"
     review_report = args.review_report or f".awf/artifacts/review-report-{task_id}.md"
     payload = build_payload(
         event_type=args.event_type,

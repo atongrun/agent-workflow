@@ -13,12 +13,14 @@ from scripts.agent_adapters.opencode import render_executor_argv, render_reviewe
     list(itertools.product(("", "provider/model"), ("", '{"verdict": "REQUEST_CHANGES"}'))),
 )
 def test_render_opencode_executor_argv_is_exact(model, normalized_feedback):
+    report_path = ".awf/artifacts/impl-report-task.md"
     argv = render_executor_argv(
         binary="opencode-test",
         workspace="/workspace",
         card_file="/workspace/task.md",
         model=model,
         prompt="executor instructions",
+        implementation_report_path=report_path,
         normalized_review_feedback=normalized_feedback,
     )
 
@@ -32,7 +34,10 @@ def test_render_opencode_executor_argv_is_exact(model, normalized_feedback):
     ]
     if model:
         expected += ["-m", model]
-    instructions = "executor instructions"
+    instructions = (
+        "executor instructions"
+        f"\n\nWrite the complete ImplementationReport to exactly: {report_path}\n"
+    )
     if normalized_feedback:
         instructions += (
             "\n\n--- Structured reviewer feedback to correct ---\n\n" + normalized_feedback
@@ -40,6 +45,27 @@ def test_render_opencode_executor_argv_is_exact(model, normalized_feedback):
     expected += ["--", instructions]
 
     assert argv == expected
+
+
+def test_render_opencode_executor_preserves_windows_workspace_and_report_path():
+    workspace = r"C:\Agent Workspaces\task one"
+    report_path = ".awf/artifacts/impl-report-task-one.md"
+
+    argv = render_executor_argv(
+        binary=r"C:\Program Files\OpenCode\opencode.exe",
+        workspace=workspace,
+        card_file=workspace + r"\docs\task.md",
+        model="provider/model",
+        prompt="executor instructions",
+        implementation_report_path=report_path,
+    )
+
+    assert argv[0] == r"C:\Program Files\OpenCode\opencode.exe"
+    assert argv[argv.index("--dir") + 1] == workspace
+    assert len(argv) == 10
+    assert argv[-2] == "--"
+    assert argv[-1].endswith(f"Write the complete ImplementationReport to exactly: {report_path}\n")
+    assert " " in argv[0] and " " in argv[argv.index("--dir") + 1]
 
 
 @pytest.mark.parametrize(

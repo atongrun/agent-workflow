@@ -59,6 +59,99 @@ def test_packet_is_bounded_and_recoverable_from_a_fresh_session(tmp_path: Path):
     assert len(json.dumps(packet).encode()) < 32 * 1024
 
 
+@pytest.mark.parametrize(
+    ("verdict", "terminal_state"),
+    [("PASS", "completed"), ("BLOCKED", "blocked")],
+)
+def test_terminal_ledger_and_summary_are_durable_and_idempotent(
+    tmp_path: Path, verdict: str, terminal_state: str
+):
+    ledger = make_ledger(tmp_path)
+    terminal = {
+        "verdict": verdict,
+        "reason": "review_passed" if verdict == "PASS" else "review_blocked",
+        "event_id": 41,
+        "delivery_id": "review-delivery",
+        "payload_sha256": "sha256:review",
+        "source_event_id": 40,
+        "branch": "awf/task-1",
+        "commit": "b" * 40,
+        "artifacts": {
+            "implementation": {
+                "path": ".awf/artifacts/impl-report-task-1.md",
+                "sha256": "sha256:" + "c" * 64,
+            },
+            "review": {
+                "path": ".awf/artifacts/review-report-task-1.md",
+                "sha256": "sha256:" + "d" * 64,
+            },
+        },
+        "pull_request": {
+            "number": 17,
+            "base_sha": "a" * 40,
+            "head_sha": "b" * 40,
+        },
+        "ci": {"status": "not_recorded", "conclusion": ""},
+        "merge": {"status": "not_merged", "commit": ""},
+    }
+
+    first = ledger.mark_terminal(terminal_state=terminal_state, terminal=terminal)
+    sequence = first["sequence"]
+    second = ledger.mark_terminal(terminal_state=terminal_state, terminal=terminal)
+
+    assert second["sequence"] == sequence
+    recovered, packet = RunLedger(tmp_path, "run-1").recover()
+    summary = json.loads(ledger.summary_path.read_text(encoding="utf-8"))
+    assert recovered["terminal_state"] == terminal_state
+    assert recovered["terminal"] == terminal
+    assert packet["next_action"] == "stop"
+    assert summary["terminal_state"] == terminal_state
+    assert summary["terminal"] == terminal
+    assert summary["sequence"] == sequence
+
+
+def test_completed_terminal_can_be_idempotently_finalized_with_merge_evidence(tmp_path: Path):
+    ledger = make_ledger(tmp_path)
+    terminal = {
+        "verdict": "PASS",
+        "reason": "review_passed",
+        "event_id": 41,
+        "delivery_id": "review-delivery",
+        "payload_sha256": "sha256:review",
+        "source_event_id": 40,
+        "branch": "awf/task-1",
+        "commit": "b" * 40,
+        "artifacts": {},
+        "pull_request": {"number": 17, "base_sha": "a" * 40, "head_sha": "b" * 40},
+        "ci": {"status": "not_recorded", "conclusion": ""},
+        "merge": {"status": "not_merged", "commit": ""},
+    }
+    first = ledger.mark_terminal(terminal_state="completed", terminal=terminal)
+
+    finalized = ledger.finalize_merge(
+        pull_request=17,
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        ci_conclusion="success",
+        merge_commit="e" * 40,
+    )
+    replay = ledger.finalize_merge(
+        pull_request=17,
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        ci_conclusion="success",
+        merge_commit="e" * 40,
+    )
+
+    assert finalized == replay
+    assert finalized["sequence"] == first["sequence"]
+    assert finalized["terminal"]["ci"] == {"status": "completed", "conclusion": "success"}
+    assert finalized["terminal"]["merge"] == {
+        "status": "merged",
+        "commit": "e" * 40,
+    }
+
+
 def test_coder_commit_can_advance_same_run_to_reviewer_before_model(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
     state_root = tmp_path / "state"

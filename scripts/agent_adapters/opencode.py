@@ -10,6 +10,7 @@ def render_executor_argv(
     card_file: str,
     model: str,
     prompt: str,
+    implementation_report_path: str,
     normalized_review_feedback: str = "",
 ) -> list[str]:
     """Render the OpenCode executor argv without reading files or starting a process."""
@@ -17,6 +18,9 @@ def render_executor_argv(
     if model:
         argv += ["-m", model]
     instructions = prompt
+    instructions += (
+        f"\n\nWrite the complete ImplementationReport to exactly: {implementation_report_path}\n"
+    )
     if normalized_review_feedback:
         instructions += "\n\n--- Structured reviewer feedback to correct ---\n\n"
         instructions += normalized_review_feedback

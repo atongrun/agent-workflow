@@ -235,6 +235,7 @@ class RunLedger:
         self.run_dir = self.state_root / "control-plane" / "runs" / self.run_id
         self.ledger_path = self.run_dir / "ledger.json"
         self.packet_path = self.run_dir / "context-packet.json"
+        self.summary_path = self.run_dir / "summary.json"
         self.lock_path = self.run_dir / ".lock"
 
     def _load(self) -> dict[str, object] | None:
@@ -308,6 +309,122 @@ class RunLedger:
             }
             self._save(ledger)
             _atomic_write(self.packet_path, packet)
+
+    def _terminal_summary(self, ledger: dict[str, object]) -> dict[str, object]:
+        return {
+            "format": "awf.run-summary.v1",
+            "run_id": self.run_id,
+            "sequence": ledger["sequence"],
+            "terminal_state": ledger["terminal_state"],
+            "terminal": ledger["terminal"],
+            "context_packet_sha256": ledger["packet_sha256"],
+            "updated_at": ledger["updated_at"],
+        }
+
+    def mark_terminal(
+        self,
+        *,
+        terminal_state: str,
+        terminal: dict[str, object],
+    ) -> dict[str, object]:
+        """Persist one idempotent terminal decision and its operator summary."""
+        if terminal_state not in TERMINAL_STATES:
+            raise ControlPlaneDenied("terminal state is invalid")
+        if not isinstance(terminal, dict) or len(_canonical(terminal).encode("utf-8")) > 64 * 1024:
+            raise ControlPlaneDenied("terminal evidence is invalid or oversized")
+        with _lock(self.lock_path):
+            ledger = self._load()
+            if ledger is None:
+                raise ControlPlaneDenied("run ledger/context packet is missing")
+            current_state = str(ledger.get("terminal_state", ""))
+            if current_state:
+                if current_state != terminal_state or ledger.get("terminal") != terminal:
+                    raise ControlPlaneDenied("run already has a different terminal decision")
+                _atomic_write(self.summary_path, self._terminal_summary(ledger))
+                return ledger
+
+            sequence = int(ledger.get("sequence", 0)) + 1
+            packet = ledger.get("context_packet")
+            if not isinstance(packet, dict):
+                raise ControlPlaneDenied("run ledger has no embedded context packet")
+            packet = {
+                **packet,
+                "ledger_sequence": sequence,
+                "next_action": "stop",
+                "transition": f"terminal:{terminal_state}",
+                "updated_at": _now(),
+            }
+            packet["packet_sha256"] = _sha(
+                {key: value for key, value in packet.items() if key != "packet_sha256"}
+            )
+            ledger = {
+                **ledger,
+                "sequence": sequence,
+                "terminal_state": terminal_state,
+                "terminal": terminal,
+                "packet_sha256": packet["packet_sha256"],
+                "context_packet": packet,
+                "updated_at": _now(),
+            }
+            _atomic_write(self.packet_path, packet)
+            self._save(ledger)
+            _atomic_write(self.summary_path, self._terminal_summary(ledger))
+            self.recover()
+            return ledger
+
+    def finalize_merge(
+        self,
+        *,
+        pull_request: int,
+        base_sha: str,
+        head_sha: str,
+        ci_conclusion: str,
+        merge_commit: str,
+    ) -> dict[str, object]:
+        """Attach CI and merge evidence to a completed PASS without a new sequence."""
+        if (
+            pull_request < 1
+            or not re.fullmatch(r"[0-9a-f]{40,64}", base_sha)
+            or not re.fullmatch(r"[0-9a-f]{40,64}", head_sha)
+            or not re.fullmatch(r"[0-9a-f]{40,64}", merge_commit)
+            or not ci_conclusion
+        ):
+            raise ControlPlaneDenied("merge evidence is invalid")
+        with _lock(self.lock_path):
+            ledger = self._load()
+            if ledger is None:
+                raise ControlPlaneDenied("run ledger/context packet is missing")
+            terminal = ledger.get("terminal")
+            if (
+                ledger.get("terminal_state") != "completed"
+                or not isinstance(terminal, dict)
+                or terminal.get("verdict") != "PASS"
+            ):
+                raise ControlPlaneDenied("only a completed PASS can record merge evidence")
+            expected_pr = {
+                "number": pull_request,
+                "base_sha": base_sha,
+                "head_sha": head_sha,
+            }
+            if terminal.get("pull_request") != expected_pr:
+                raise ControlPlaneDenied("merge evidence does not match terminal PR provenance")
+            expected_ci = {"status": "completed", "conclusion": ci_conclusion}
+            expected_merge = {"status": "merged", "commit": merge_commit}
+            current_ci = terminal.get("ci")
+            current_merge = terminal.get("merge")
+            if current_ci == expected_ci and current_merge == expected_merge:
+                _atomic_write(self.summary_path, self._terminal_summary(ledger))
+                return ledger
+            if current_ci != {"status": "not_recorded", "conclusion": ""} or current_merge != {
+                "status": "not_merged",
+                "commit": "",
+            }:
+                raise ControlPlaneDenied("run already has different CI or merge evidence")
+            terminal = {**terminal, "ci": expected_ci, "merge": expected_merge}
+            ledger = {**ledger, "terminal": terminal, "updated_at": _now()}
+            self._save(ledger)
+            _atomic_write(self.summary_path, self._terminal_summary(ledger))
+            return ledger
 
     def pre_invocation_gate(
         self,
@@ -665,6 +782,14 @@ def main(argv: list[str] | None = None) -> int:
     inspect = sub.add_parser("recover")
     inspect.add_argument("--state-root", type=Path, default=default_state_root())
     inspect.add_argument("--run-id", required=True)
+    merge = sub.add_parser("finalize-merge")
+    merge.add_argument("--state-root", type=Path, default=default_state_root())
+    merge.add_argument("--run-id", required=True)
+    merge.add_argument("--pull-request", required=True, type=int)
+    merge.add_argument("--base-sha", required=True)
+    merge.add_argument("--head-sha", required=True)
+    merge.add_argument("--ci-conclusion", required=True)
+    merge.add_argument("--merge-commit", required=True)
     auth = sub.add_parser("authorize")
     auth.add_argument("--manifest", type=Path, required=True)
     auth.add_argument("operation")
@@ -680,6 +805,15 @@ def main(argv: list[str] | None = None) -> int:
                     sort_keys=True,
                 )
             )
+        elif args.command == "finalize-merge":
+            ledger = RunLedger(args.state_root, args.run_id).finalize_merge(
+                pull_request=args.pull_request,
+                base_sha=args.base_sha,
+                head_sha=args.head_sha,
+                ci_conclusion=args.ci_conclusion,
+                merge_commit=args.merge_commit,
+            )
+            print(json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True))
         else:
             manifest = load_authority_manifest(args.manifest)
             authorize_operation(manifest, args.operation)

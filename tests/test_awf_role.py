@@ -1657,6 +1657,7 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
         str(card_file),
         str(prompt_file),
         "provider/model",
+        ".awf/artifacts/impl-report-task.md",
         evidence=evidence,
     )
 
@@ -1675,7 +1676,8 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
         "-m",
         "provider/model",
         "--",
-        "instructions",
+        "instructions\n\nWrite the complete ImplementationReport to exactly: "
+        ".awf/artifacts/impl-report-task.md\n",
     ]
 
 
@@ -1706,6 +1708,7 @@ def test_tool_opencode_exec_injects_bounded_rework_feedback(monkeypatch, tmp_pat
         str(card_file),
         str(prompt_file),
         "",
+        ".awf/artifacts/impl-report-task.md",
         review_feedback=feedback,
     )
 
@@ -1874,14 +1877,21 @@ def test_tool_opencode_card_prompt_boundary_without_model(monkeypatch, tmp_path,
     monkeypatch.setenv("AWF_OPENCODE_BIN", "opencode-test")
 
     if adapter == "executor":
-        awf_role.tool_opencode_exec(str(tmp_path), str(card_file), str(prompt_file), "")
+        awf_role.tool_opencode_exec(
+            str(tmp_path),
+            str(card_file),
+            str(prompt_file),
+            "",
+            ".awf/artifacts/impl-report-task.md",
+        )
     else:
         awf_role.tool_opencode_review(
             str(tmp_path), "main", str(prompt_file), str(card_file), "", ".awf/review.md"
         )
 
     expected_instructions = (
-        "instructions"
+        "instructions\n\nWrite the complete ImplementationReport to exactly: "
+        ".awf/artifacts/impl-report-task.md\n"
         if adapter == "executor"
         else "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n"
     )
@@ -2333,6 +2343,70 @@ def test_architect_terminal_consumer_completes_and_replays_without_model(
         lambda *args, **kwargs: pytest.fail("completed terminal delivery must replay directly"),
     )
     assert awf_role.role_architect(ns) == 0
+
+
+@pytest.mark.parametrize(
+    ("verdict", "terminal_state"),
+    [("PASS", "completed"), ("BLOCKED", "blocked")],
+)
+def test_architect_persists_terminal_ledger_and_summary_before_inbox(
+    monkeypatch, tmp_path, verdict, terminal_state
+):
+    repo, provenance, ns = _architect_decision_args(tmp_path, verdict)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(211, "architect", state_root=state_root)
+    monkeypatch.setenv("AWF_REPO_DIR", str(repo))
+    monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "check_report_tracked_at_head", lambda *args: None)
+    monkeypatch.setattr(awf_role, "check_repo_file_tracked_at_head", lambda *args: None)
+
+    task_id = ns.branch.rsplit("/", 1)[-1]
+    run_id = f"task-{task_id}"
+    ledger = awf_role.RunLedger(state_root, run_id)
+    authority = {
+        "sha256": "sha256:" + "a" * 64,
+        "allowed_operations": ["diagnose", "endpoint_discovery", "listener_restart"],
+    }
+    packet = awf_role.build_context_packet(
+        run_id=run_id,
+        taskcard=ns.card,
+        frozen_base=provenance["base_sha"],
+        branch=ns.branch,
+        pull_request=str(provenance["pull_request"]),
+        authority_manifest=authority,
+        next_action="consume terminal review decision",
+        stage="review",
+        current_stage_evidence_commit=ns.commit,
+    )
+    ledger.initialize(packet, stage="review", max_attempts=1, rework_budget=1)
+
+    real_complete_inbox = awf_role.complete_inbox
+    observed = []
+
+    def complete_after_terminal(evidence, delivery_id, payload_sha256):
+        durable, _ = ledger.recover()
+        summary = json.loads(ledger.summary_path.read_text(encoding="utf-8"))
+        observed.append((durable["terminal_state"], summary["terminal_state"]))
+        return real_complete_inbox(evidence, delivery_id, payload_sha256)
+
+    monkeypatch.setattr(awf_role, "complete_inbox", complete_after_terminal)
+
+    assert awf_role.role_architect(ns) == 0
+    recovered, _ = ledger.recover()
+    assert observed == [(terminal_state, terminal_state)]
+    assert recovered["terminal"]["verdict"] == verdict
+    assert recovered["terminal"]["delivery_id"] == ns.delivery_id
+    assert recovered["terminal"]["commit"] == ns.commit
+    assert recovered["terminal"]["artifacts"]["implementation"]["path"] == ns.report
+    assert recovered["terminal"]["artifacts"]["review"]["path"] == ns.review_report
+
+    sequence = recovered["sequence"]
+    ns.evidence = awf_role.RunEvidence(211, "architect", state_root=state_root)
+    assert awf_role.role_architect(ns) == 0
+    replayed, _ = ledger.recover()
+    assert replayed["sequence"] == sequence
 
 
 def test_architect_terminal_consumer_rejects_report_drift_without_completing_inbox(
@@ -3783,6 +3857,279 @@ def _bind_delivery(ns, event_type="task:awf-impl-v2", source_role="architect", s
     return ns
 
 
+def test_dispatch_listener_role_executor_and_postflight_share_one_report_path(
+    monkeypatch, tmp_path
+):
+    real_tool_opencode_exec = awf_role.tool_opencode_exec
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    required_report = ".awf/artifacts/impl-report-task.md"
+    ns.report = required_report
+    (repo / "report.md").unlink()
+    (repo / "task.md").write_text(
+        _VALID_POSTFLIGHT_CARD.replace('"task.md"', f'"task.md", "{required_report}"'),
+        encoding="utf-8",
+    )
+    payload = awf_dispatch.build_payload(
+        event_type="task:awf-impl-v2",
+        task_id="task",
+        branch=ns.branch,
+        card=ns.card,
+        commit=ns.commit,
+        tool=ns.tool,
+        model=ns.model,
+        report=required_report,
+        review_report=ns.review_report,
+        provenance=None,
+    )
+    handler = awf_listen.build_handler("python", "awf_role.py", "coder")
+    assert payload["report"] == required_report
+    assert "--report {payload.report}" in handler
+
+    invocation = {}
+
+    def fake_spawn(argv, **_kwargs):
+        invocation["argv"] = argv
+        instruction = argv[-1]
+        marker = "Write the complete ImplementationReport to exactly: "
+        report_line = next(line for line in instruction.splitlines() if line.startswith(marker))
+        received_path = report_line.removeprefix(marker)
+        target = repo / received_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("controlled implementation report\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(awf_role, "spawn", fake_spawn)
+    monkeypatch.setattr(awf_role, "tool_opencode_exec", real_tool_opencode_exec)
+    monkeypatch.setattr(awf_role, "git", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(awf_role, "git_out", lambda *args, **kwargs: "verified-sha")
+    monkeypatch.setattr(awf_role, "push_and_verify_remote_head", lambda *args: "verified-sha")
+
+    assert awf_role.role_coder(ns) == 0
+    assert required_report in invocation["argv"][-1]
+    awf_role.check_report(str(repo / required_report))
+
+
+def test_v3_artifact_contract_drift_does_not_consume_model_attempt(monkeypatch, tmp_path):
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    v4_report = ".awf/artifacts/impl-report-task-v4.md"
+    v5_report = ".awf/artifacts/impl-report-task-v5.md"
+    ns.branch = "agent/task-v5"
+    ns.report = v5_report
+    (repo / "task.md").write_text(
+        _VALID_POSTFLIGHT_CARD.replace('"task.md"', f'"task.md", "{v4_report}"'),
+        encoding="utf-8",
+    )
+    provenance = _pr_provenance(pull_request=0)
+    provenance["head_ref"] = ns.branch
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-impl-v3"
+    ns.source_event_id = 301
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    _bind_delivery(ns, event_type=ns.input_type, source_event_id=ns.source_event_id)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(301, "coder", state_root=state_root)
+    ns.run_id = "phase0-contract-budget"
+    ns.max_attempts = 1
+    ns.rework_budget = 1
+    ns.attempt = 1
+    monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    authority = awf_role.authority_manifest_binding(
+        awf_role.load_authority_manifest(
+            Path(awf_role.__file__).resolve().parent / "authority-manifest.example.json"
+        )
+    )
+    ledger = awf_role.RunLedger(state_root, ns.run_id)
+    packet = awf_role.build_context_packet(
+        run_id=ns.run_id,
+        taskcard=ns.card,
+        frozen_base=ns.commit,
+        branch=ns.branch,
+        transition=ns.input_type,
+        evidence=[ns.report],
+        authority_manifest=authority,
+        next_action="run trusted coder preflight",
+        stage="implement",
+        current_stage_evidence_commit=ns.commit,
+    )
+    ledger.initialize(packet, stage="implement", max_attempts=1, rework_budget=1)
+    model_calls = []
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: model_calls.append(args) or 0,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    phases = [json.loads(line)["phase"] for line in ns.evidence.log_path.read_text().splitlines()]
+    assert "contract_preflight_failed" in phases
+    assert model_calls == []
+    rejected, _ = ledger.recover()
+    assert rejected["attempts"] == 0
+    assert rejected.get("stage_attempts", {}) == {}
+    assert rejected["sequence"] == 0
+    assert rejected["events"] == []
+    assert not any(item["status"] == "authorized" for item in rejected["decisions"])
+
+    required_report = ".awf/artifacts/impl-report-task-v5.md"
+    (repo / "task.md").write_text(
+        _VALID_POSTFLIGHT_CARD.replace('"task.md"', f'"task.md", "{required_report}"'),
+        encoding="utf-8",
+    )
+    ns.source_event_id = 302
+    _bind_delivery(ns, event_type=ns.input_type, source_event_id=ns.source_event_id)
+    ns.evidence = awf_role.RunEvidence(302, "coder", state_root=state_root)
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_manifest_sha256",
+        lambda *args, **kwargs: "sha256:model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: model_calls.append(args) or 9,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+
+    authorized, _ = ledger.recover()
+    assert len(model_calls) == 1
+    assert authorized["attempts"] == 1
+    assert authorized["stage_attempts"] == {"implement": 1}
+    assert authorized["sequence"] == 1
+    assert [item["status"] for item in authorized["events"]] == ["authorized"]
+
+
+def test_model_completed_postflight_failure_replays_without_model_or_rework(monkeypatch, tmp_path):
+    ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    report_path = ".awf/artifacts/impl-report-task.md"
+    ns.branch = "agent/task"
+    ns.report = report_path
+    (repo / "report.md").unlink()
+    (repo / "task.md").write_text(
+        _VALID_POSTFLIGHT_CARD.replace('"task.md"', f'"task.md", "{report_path}"'),
+        encoding="utf-8",
+    )
+    provenance = _pr_provenance(pull_request=0)
+    provenance["head_ref"] = ns.branch
+    ns.commit = provenance["head_sha"]
+    ns.input_type = "task:awf-impl-v3"
+    ns.source_event_id = 302
+    for field in awf_role._PROVENANCE_FIELDS:
+        setattr(ns, field, provenance[field])
+    _bind_delivery(ns, event_type=ns.input_type, source_event_id=ns.source_event_id)
+    state_root = tmp_path / "state"
+    ns.evidence = awf_role.RunEvidence(302, "coder", state_root=state_root)
+
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
+    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "assert_model_pr_git_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "assert_model_workspace_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "assert_model_git_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_manifest_sha256",
+        lambda *args, **kwargs: "sha256:model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "restore_durable_model_manifest",
+        lambda *args, **kwargs: str(repo),
+    )
+    gate_reason = {"value": "authorized"}
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason=gate_reason["value"]),
+    )
+    model_calls = []
+
+    def fake_model(*_args, **_kwargs):
+        model_calls.append("model")
+        target = repo / report_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("controlled implementation report\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(awf_role, "tool_opencode_exec", fake_model)
+    verification_calls = []
+
+    def fail_first_postflight(*_args, **_kwargs):
+        verification_calls.append("postflight")
+        if len(verification_calls) == 1:
+            raise SystemExit(1)
+
+    monkeypatch.setattr(awf_role, "run_verifications", fail_first_postflight)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.role_coder(ns)
+    assert model_calls == ["model"]
+    checkpoint_path = awf_role.delivery_state_path(ns.evidence, "checkpoint", ns.delivery_id)
+    first_checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert first_checkpoint["phase"] == "model_completed"
+
+    repository_state = {"head": provenance["head_sha"]}
+
+    def fake_git(_repo, *args):
+        if args and args[0] == "commit":
+            repository_state["head"] = "d" * 40
+        return 0
+
+    def fake_git_out(_repo, *args):
+        if args == ("write-tree",) or args[-1] == "HEAD^{tree}":
+            return "c" * 40
+        if args[-1] == "HEAD^1":
+            return provenance["head_sha"]
+        if args[-1] == "HEAD^{commit}":
+            return repository_state["head"]
+        return "d" * 40
+
+    monkeypatch.setattr(awf_role, "git", fake_git)
+    monkeypatch.setattr(awf_role, "git_out", fake_git_out)
+    monkeypatch.setattr(awf_role, "import_model_delta", lambda *args, **kwargs: "c" * 40)
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_exec",
+        lambda *args, **kwargs: pytest.fail("postflight replay must not invoke the model"),
+    )
+    monkeypatch.setattr(awf_role, "verify_upstream_base", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "push_and_verify_fork_head",
+        lambda _repo, value: {**value, "head_sha": "d" * 40},
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "ensure_pull_request",
+        lambda _repo, value: {**value, "pull_request": 31},
+    )
+    monkeypatch.setattr(awf_role, "verify_pr_remote_tuple", lambda *args, **kwargs: None)
+    monkeypatch.setattr(awf_role, "deliver_outbox", lambda *args, **kwargs: True)
+    gate_reason["value"] = "duplicate_event"
+    ns.evidence = awf_role.RunEvidence(302, "coder", state_root=state_root)
+
+    assert awf_role.role_coder(ns) == 0
+    assert model_calls == ["model"]
+    assert verification_calls == ["postflight", "postflight"]
+    final_checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    phases = [
+        json.loads(line).get("recovery_phase")
+        for line in ns.evidence.log_path.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("phase") == "recovery_checkpoint"
+    ]
+    assert "postflight_completed" in phases
+    assert final_checkpoint["phase"] == "outbox_sent"
+    assert final_checkpoint["facts"]["postflight_attempts"] == 2
+
+
 def test_coder_ambiguous_outbox_replays_before_checkout(monkeypatch, tmp_path):
     ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
     _bind_delivery(ns)
@@ -4118,6 +4465,7 @@ _RECOVERY_MATRIX_TRANSITIONS = {
     "coder": [
         ("model_started", {"model_workspace": "workspace", "model_process": "opencode"}),
         ("model_completed", {"model_workspace": "workspace", "model_process": "opencode"}),
+        ("postflight_completed", {"postflight_attempts": 1}),
         ("model_imported", {"imported_tree": "c" * 40}),
         ("commit_created", {"commit_sha": "d" * 40}),
         ("fork_sha_verified", {"head_sha": "d" * 40}),
@@ -4269,6 +4617,7 @@ def test_prepared_outbox_replay_reconciles_checkpoint_before_send(monkeypatch, t
     transitions = [
         ("model_started", {"model_workspace": "workspace"}),
         ("model_completed", {"model_workspace": "workspace"}),
+        ("postflight_completed", {"postflight_attempts": 1}),
         ("model_imported", {"imported_tree": "c" * 40}),
         ("commit_created", {"commit_sha": "b" * 40}),
         ("fork_sha_verified", {"head_sha": "b" * 40}),
@@ -4455,6 +4804,14 @@ def test_model_completed_replay_verifies_checkout_before_parsing_taskcard(monkey
 
 def test_tool_failure_replay_never_reinvokes_model(monkeypatch, tmp_path):
     ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    ns.report = ".awf/artifacts/impl-report-task.md"
+    (repo / ns.report).parent.mkdir(parents=True, exist_ok=True)
+    (repo / ns.report).write_text("implementation report\n", encoding="utf-8")
+    (repo / "task.md").write_text(
+        _VALID_POSTFLIGHT_CARD.replace('"task.md"', f'"task.md", "{ns.report}"'),
+        encoding="utf-8",
+    )
     provenance = _pr_provenance(pull_request=0)
     ns.commit = provenance["head_sha"]
     ns.input_type = "task:awf-impl-v3"
@@ -4506,6 +4863,14 @@ def test_tool_failure_replay_never_reinvokes_model(monkeypatch, tmp_path):
 
 def test_pr_failure_replay_resumes_after_verified_fork_without_model(monkeypatch, tmp_path):
     ns, _ = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    ns.report = ".awf/artifacts/impl-report-task.md"
+    (repo / ns.report).parent.mkdir(parents=True, exist_ok=True)
+    (repo / ns.report).write_text("implementation report\n", encoding="utf-8")
+    (repo / "task.md").write_text(
+        _VALID_POSTFLIGHT_CARD.replace('"task.md"', f'"task.md", "{ns.report}"'),
+        encoding="utf-8",
+    )
     provenance = _pr_provenance(pull_request=0)
     ns.commit = provenance["head_sha"]
     ns.input_type = "task:awf-impl-v3"
