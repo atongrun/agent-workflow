@@ -3926,12 +3926,14 @@ def role_reviewer(a: argparse.Namespace) -> int:
             a.review_report,
             a.report,
         )
-        if (
-            not isinstance(expected_report_sha256, str)
-            or not persisted_report.is_file()
-            or hashlib.sha256(persisted_report.read_bytes()).hexdigest() != expected_report_sha256
-        ):
+        if not isinstance(expected_report_sha256, str):
             die("trusted ReviewReport does not match its recovery checkpoint")
+        if persisted_report.is_file():
+            if hashlib.sha256(persisted_report.read_bytes()).hexdigest() != expected_report_sha256:
+                die("trusted ReviewReport does not match its recovery checkpoint")
+            # The report is re-imported from the durable model workspace after
+            # the trusted PR checkout has restored a clean tree.
+            persisted_report.unlink()
 
     if provenance is not None:
         try:

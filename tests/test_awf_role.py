@@ -3095,6 +3095,8 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
         awf_role.role_reviewer(ns)
     assert len(tool_calls) == 1
     assert not send_calls
+    trusted_report = Path(os.environ["AWF_REPO_DIR"]).joinpath(ns.review_report)
+    trusted_report.unlink()
 
     ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
 
@@ -3103,6 +3105,7 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     assert len(send_calls) == 1
     assert len(pr_checks) == 2
     assert send_calls[0][0][3]["review_report"]["blocked_reason"] == ""
+    assert trusted_report.is_file()
 
     monkeypatch.setattr(
         awf_role,
@@ -3113,7 +3116,6 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     assert awf_role.role_reviewer(ns) == 0
     assert len(tool_calls) == 1
     assert len(send_calls) == 1
-    assert Path(os.environ["AWF_REPO_DIR"]).joinpath(ns.review_report).is_file()
 
 
 def test_v3_reviewer_ambiguous_model_started_checkpoint_fails_cleanly(
