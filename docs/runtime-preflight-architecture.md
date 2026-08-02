@@ -16,13 +16,18 @@ ledger, changes Git state, creates a PR, or writes a cache/report file. Its laye
 - Agent Bus doctor and role-scoped pending counts;
 - local Git readability, canonical upstream/fork remotes, and fork-only push dry-run;
 - read-only GitHub authentication/repository access;
-- model-tool `--version` execution without a prompt or model call;
+- role-scoped model-tool readiness: model-executing runtimes run `--version` without a prompt or
+  model call, while a non-model architect runtime must explicitly declare `not-applicable`;
 - authority manifest and optional run-ledger/context-packet readability.
 
 Fast is host-local. Operators run it on each participating machine and explicitly pass that
-runtime's selected CLI with `--model-tool`. Preflight does not map roles to products: Pi, Codex,
-Claude Code, OpenCode, or another compatible executable can be selected without changing source
-code. The probe runs only `<selected-tool> --version` and never starts a model.
+runtime's selected CLI with `--model-tool`. Preflight does not map model-executing roles to
+products: Pi, Codex, Claude Code, OpenCode, or another compatible executable can be selected
+without changing source code. The probe runs only `<selected-tool> --version` and never starts a
+model. A host whose `source-role` is `architect` may instead pass
+`--model-tool-policy not-applicable`; that exception is rejected for coder and reviewer and its
+role/policy are bound into the Fast/Deep fingerprint. A selected tool's resolved executable and
+version-output hash are likewise fingerprint inputs.
 
 TaskCard authoring and remote dispatch are separate decisions. Local authoring can proceed when its
 runtime/configuration/Git/control-plane prerequisites pass even if a remote-only probe is down.
