@@ -14,6 +14,12 @@ terminal consumption, and Fast/Deep Preflight. PR #37 proved a fresh disposable 
 route and PR #38 extracted the existing Codex/OpenCode argv renderers without changing provider
 selection, payloads, recovery, stage transitions, or ACK-sensitive lifecycle.
 
+The current follow-up makes the Fast model-tool gate role-scoped without weakening model-executing
+runtimes: only `source-role=architect` may explicitly declare the tool `not-applicable`; coder and
+reviewer still require a real version-only probe. The declared policy, resolved executable, and
+version-output hash are fingerprint inputs, so changing the role policy or selected CLI invalidates
+the bound Deep proof.
+
 PR #40 merged the v1-v3 executor-selection integrity gate as `e1184637f7bf8fa2010bd7f7e429b65d77bd62c8`.
 On 2026-08-01, current Mac and Windows Fast checks passed against Dousansi
 `main@6fd529307292eb25cd019a808287e4c0c2a83888`. A fresh Mac architect to Windows coder Deep

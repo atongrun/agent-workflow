@@ -51,6 +51,7 @@ def args(tmp_path: Path, *, intent: str = "taskcard") -> argparse.Namespace:
         head_remote="fork",
         gh_bin="gh",
         model_tool="pi",
+        model_tool_policy="required",
         run_id="",
         intent=intent,
         ttl_seconds=3600,
@@ -71,7 +72,13 @@ def valid_config() -> dict[str, str]:
     }
 
 
-def install_fast_fakes(monkeypatch, calls: list[list[str]], *, pending: str = "0") -> None:
+def install_fast_fakes(
+    monkeypatch,
+    calls: list[list[str]],
+    *,
+    pending: str = "0",
+    model_version: str = "test-tool 1.0",
+) -> None:
     monkeypatch.setattr(awf_preflight, "load_config", lambda _path: valid_config())
     monkeypatch.setattr(
         awf_preflight,
@@ -98,7 +105,7 @@ def install_fast_fakes(monkeypatch, calls: list[list[str]], *, pending: str = "0
         elif "repo" in values and "view" in values:
             stdout = '{"nameWithOwner":"upstream-owner/agent-workflow"}\n'
         elif "--version" in values:
-            stdout = "test-tool 1.0\n"
+            stdout = model_version + "\n"
         return subprocess.CompletedProcess(values, 0, stdout, "")
 
     monkeypatch.setattr(awf_preflight, "run_command", fake_run)
@@ -159,6 +166,81 @@ def test_fast_denies_remote_readiness_without_explicit_model_tool(tmp_path, monk
     assert not any("--version" in call for call in calls)
 
 
+def test_fast_allows_explicit_not_applicable_policy_for_architect(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    install_fast_fakes(monkeypatch, calls)
+    value = args(tmp_path, intent="remote-dispatch")
+    value.model_tool = ""
+    value.model_tool_policy = "not-applicable"
+
+    result = awf_preflight.run_fast(value)
+    layer = next(item for item in result.report["layers"] if item["id"] == "model-tool")
+
+    assert layer["status"] == "PASS"
+    assert layer["evidence"] == {
+        "applicability": "NOT_APPLICABLE",
+        "role": "architect",
+        "reason": "role-does-not-invoke-model",
+        "model_invoked": False,
+    }
+    assert not any("--version" in call for call in calls)
+
+
+@pytest.mark.parametrize("role", ["coder", "reviewer"])
+def test_fast_denies_not_applicable_policy_for_model_roles(tmp_path, monkeypatch, role):
+    calls: list[list[str]] = []
+    install_fast_fakes(monkeypatch, calls)
+    value = args(tmp_path, intent="remote-dispatch")
+    value.source_role = role
+    value.target_role = "architect"
+    value.model_tool = ""
+    value.model_tool_policy = "not-applicable"
+
+    report = awf_preflight.run_fast(value).report
+    layer = next(item for item in report["layers"] if item["id"] == "model-tool")
+
+    assert layer["status"] == "FAIL"
+    assert layer["error_code"] == "MODEL_TOOL_POLICY_INVALID"
+    assert not any("--version" in call for call in calls)
+
+
+def test_fast_denies_not_applicable_policy_with_a_configured_tool(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    install_fast_fakes(monkeypatch, calls)
+    value = args(tmp_path, intent="remote-dispatch")
+    value.model_tool_policy = "not-applicable"
+
+    report = awf_preflight.run_fast(value).report
+    layer = next(item for item in report["layers"] if item["id"] == "model-tool")
+
+    assert layer["status"] == "FAIL"
+    assert layer["error_code"] == "MODEL_TOOL_POLICY_INVALID"
+    assert not any("--version" in call for call in calls)
+
+
+def test_model_tool_policy_and_version_are_bound_into_fingerprint(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    install_fast_fakes(monkeypatch, calls)
+    value = args(tmp_path, intent="remote-dispatch")
+
+    version_one = awf_preflight.run_fast(value).fingerprint
+    install_fast_fakes(monkeypatch, calls, model_version="test-tool 2.0")
+    version_two = awf_preflight.run_fast(value).fingerprint
+    monkeypatch.setattr(
+        awf_preflight.shutil,
+        "which",
+        lambda executable: f"/alternate-tools/{Path(executable).name}",
+    )
+    alternate_path = awf_preflight.run_fast(value).fingerprint
+    value.model_tool = ""
+    value.model_tool_policy = "not-applicable"
+    not_applicable = awf_preflight.run_fast(value).fingerprint
+
+    assert version_one != version_two
+    assert version_two != alternate_path
+    assert alternate_path != not_applicable
+
+
 def test_fast_remote_dispatch_requires_current_deep_proof(tmp_path, monkeypatch):
     calls: list[list[str]] = []
     install_fast_fakes(monkeypatch, calls)
@@ -207,6 +289,15 @@ def test_fast_remote_dispatch_requires_current_deep_proof(tmp_path, monkeypatch)
     second = awf_preflight.run_fast(value).report
     assert second["allow_remote_dispatch"] is True
     assert second["required_next_action"] == "remote_dispatch_allowed"
+
+    monkeypatch.setattr(
+        awf_preflight.shutil,
+        "which",
+        lambda executable: f"/alternate-tools/{Path(executable).name}",
+    )
+    changed = awf_preflight.run_fast(value).report
+    assert changed["allow_remote_dispatch"] is False
+    assert changed["required_next_action"] == "run_deep_preflight"
 
 
 def test_minimal_or_tampered_deep_cache_never_authorizes_dispatch(tmp_path, monkeypatch):

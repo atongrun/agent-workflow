@@ -85,6 +85,9 @@ Completed engineering gates:
 - [x] Bind effective listener `tool`/`model` selection to the integrity-hashed identity of existing
   v1-v3 deliveries before control-plane authorization or any ACK-sensitive recovery/execution step,
   while preserving legacy direct-entry overrides.
+- [x] Make Fast model-tool readiness role-scoped: only a non-model architect runtime may declare
+  `not-applicable`; coder/reviewer still require a real version-only probe, and the resulting
+  role/policy or tool/version facts are bound into the Deep fingerprint.
 
 Remaining Phase 2 work:
 

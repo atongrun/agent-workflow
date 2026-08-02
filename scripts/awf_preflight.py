@@ -258,6 +258,7 @@ def fingerprint_for(
     target_role: str,
     upstream_remote: str,
     head_remote: str,
+    model_tool: dict[str, str],
 ) -> str:
     selected = {
         "runtime": runtime,
@@ -266,6 +267,7 @@ def fingerprint_for(
         "target_role": target_role,
         "upstream_remote": upstream_remote,
         "head_remote": head_remote,
+        "model_tool": model_tool,
         "config": {key: config.get(key, "") for key in sorted(config)},
         "proxy": {
             key: os.environ.get(key, "")
@@ -550,10 +552,32 @@ def run_fast(args: argparse.Namespace) -> FastResult:
 
     github_layer = checked("github", "GH_READINESS_FAILED", github)
 
+    model_facts: dict[str, str] = {}
+
     def model_tool() -> dict[str, object]:
+        nonlocal model_facts
         if not config:
             raise PreflightError("CONFIG_INVALID", "tool configuration is unavailable")
         configured = getattr(args, "model_tool", "")
+        policy = getattr(args, "model_tool_policy", "required")
+        if policy == "not-applicable":
+            if args.source_role != "architect":
+                raise PreflightError(
+                    "MODEL_TOOL_POLICY_INVALID",
+                    "model-tool is not applicable only for the non-model architect runtime",
+                )
+            if configured:
+                raise PreflightError(
+                    "MODEL_TOOL_POLICY_INVALID",
+                    "do not configure a model tool when its role-scoped policy is not-applicable",
+                )
+            model_facts = {"role": args.source_role, "policy": policy}
+            return {
+                "applicability": "NOT_APPLICABLE",
+                "role": args.source_role,
+                "reason": "role-does-not-invoke-model",
+                "model_invoked": False,
+            }
         if not configured and profile == "handoff":
             return {"executable": "not-requested", "model_invoked": False}
         if not configured:
@@ -564,6 +588,14 @@ def run_fast(args: argparse.Namespace) -> FastResult:
         tool = executable(configured)
         version = execute([tool, "--version"], timeout=15, allow_shell_wrapper=True)
         require_success(version, "MODEL_TOOL_UNEXECUTABLE")
+        model_facts = {
+            "role": args.source_role,
+            "policy": policy,
+            "executable": str(Path(tool).resolve()),
+            "version_sha256": hashlib.sha256(
+                (version.stdout + "\0" + version.stderr).encode("utf-8")
+            ).hexdigest(),
+        }
         return {
             "executable": True,
             "selection": "explicit",
@@ -609,6 +641,7 @@ def run_fast(args: argparse.Namespace) -> FastResult:
         target_role=args.target_role,
         upstream_remote=args.upstream_remote,
         head_remote=args.head_remote,
+        model_tool=model_facts,
     )
     current_cache = load_current_cache(
         cache_path(args.state_root),
@@ -979,6 +1012,12 @@ def common(parser: argparse.ArgumentParser) -> None:
         "--model-tool",
         default="",
         help="explicit model CLI executable to probe with --version",
+    )
+    parser.add_argument(
+        "--model-tool-policy",
+        choices=("required", "not-applicable"),
+        default="required",
+        help="role-scoped model CLI requirement for this host runtime",
     )
     parser.add_argument("--run-id", default="")
 
