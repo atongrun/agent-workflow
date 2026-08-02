@@ -163,14 +163,22 @@ the project-level decision. Reviewer verdicts and Decider decisions are distinct
 
 ## 10. Required Artifacts
 
-| Stage | Product role | Current schema role | Required Artifact |
-|---|---|---|---|
-| architecture / plan | Architect / Planner | `planner` | `ArchitectureRecord`, `PhasePlan`, then `TaskCard` |
-| execute | Executor | `implementer` | `ImplementationReport` |
-| test (optional) | Tester | `tester` | `TestReport` |
-| first-line review | Reviewer | `reviewer` | `ReviewReport` |
-| compress | Summarizer | `summarizer` | `DecisionPacket` |
-| decide | Decider | `arbiter` | `Decision` |
+### Current Role and Dogfood Operations Mapping
+
+| Stage | Product role | Shipped contract role name | Current dogfood Agent Bus identity / status | Required Artifact |
+|---|---|---|---|---|
+| architecture / plan | Architect / Planner | `planner` | `architect`: TaskCard dispatcher/source; receives `PASS` and `BLOCKED`; no automatic handler in this repository | `ArchitectureRecord`, `PhasePlan`, then `TaskCard` |
+| execute | Executor | `implementer` | `coder`: default listener and handler | `ImplementationReport` |
+| test (optional) | Tester | `tester` | No current operations identity | `TestReport` |
+| first-line review | Reviewer | `reviewer` | `reviewer`: default listener and handler | `ReviewReport` |
+| compress | Summarizer | `summarizer` | No current operations identity | `DecisionPacket` |
+| decide | Decider | `arbiter` | No `arbiter` handler; a project may assign Architect as Decider, also without an automatic handler | `Decision` |
+
+This is a documentation mapping for the current external dogfood operations surface, not a schema
+alias or a core runtime guarantee. The repository's current Role and Workflow resources use the
+listed contract role names; the schemas themselves accept role names as strings and define no alias.
+The core does not assign Agent Bus identities, install listeners, dispatch TaskCards, or interpret
+events.
 
 The v1alpha1 Artifact schema recognizes `ArchitectureRecord` and `PhasePlan` while keeping their
 content open during initial dogfood; their templates define the current minimum handoff shape. Each
