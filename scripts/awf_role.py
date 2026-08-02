@@ -2373,7 +2373,12 @@ def _normalize_review_report(data: dict[str, object], markdown: str) -> dict[str
         _validate_deterministic_failure(item, index) for index, item in enumerate(failures)
     ]
     blocked_reason = data["blocked_reason"]
-    if not isinstance(blocked_reason, str):
+    # PASS has no blocking condition, so a model may express that absence as
+    # JSON null. Normalize it before the verdict-specific invariants below;
+    # BLOCKED and REQUEST_CHANGES retain strict string typing.
+    if verdict == "PASS" and blocked_reason is None:
+        blocked_reason = ""
+    elif not isinstance(blocked_reason, str):
         die("ReviewReport blocked_reason must be a string")
     blocked_reason = blocked_reason.strip()
 

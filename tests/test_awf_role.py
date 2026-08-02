@@ -2266,6 +2266,48 @@ def test_validate_embedded_review_report_accepts_fenced_wrapper():
     assert normalized == embedded
 
 
+@pytest.mark.parametrize("blocked_reason", [None, ""])
+def test_pass_review_report_normalizes_absent_blocked_reason(blocked_reason, tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(_review_markdown("PASS", blocked_reason=blocked_reason), encoding="utf-8")
+
+    normalized = awf_role.parse_review_report(report)
+
+    assert normalized["verdict"] == "PASS"
+    assert normalized["deterministic_failures"] == []
+    assert normalized["blocked_reason"] == ""
+    assert json.loads(json.dumps(normalized))["blocked_reason"] == ""
+
+
+def test_pass_review_report_rejects_nonempty_blocked_reason(tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(_review_markdown("PASS", blocked_reason="not blocked"), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.parse_review_report(report)
+
+
+@pytest.mark.parametrize("blocked_reason", [None, ""])
+def test_blocked_review_report_requires_nonempty_reason(blocked_reason, tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(_review_markdown("BLOCKED", blocked_reason=blocked_reason), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.parse_review_report(report)
+
+
+def test_blocked_review_report_accepts_nonempty_reason(tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(
+        _review_markdown("BLOCKED", blocked_reason="needs user decision"),
+        encoding="utf-8",
+    )
+
+    normalized = awf_role.parse_review_report(report)
+
+    assert normalized["blocked_reason"] == "needs user decision"
+
+
 _COMMAND_FAILURE = {
     "evidence": {
         "kind": "command",
@@ -2979,7 +3021,7 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     monkeypatch,
     tmp_path,
 ):
-    content = _review_markdown("PASS")
+    content = _review_markdown("PASS", blocked_reason=None)
     ns, send_calls, tool_calls = _prepare_reviewer_routing(
         monkeypatch,
         tmp_path,
@@ -3060,6 +3102,7 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     assert len(tool_calls) == 1
     assert len(send_calls) == 1
     assert len(pr_checks) == 2
+    assert send_calls[0][0][3]["review_report"]["blocked_reason"] == ""
 
 
 def test_v3_reviewer_ambiguous_model_started_checkpoint_fails_cleanly(
