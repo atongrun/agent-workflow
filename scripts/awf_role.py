@@ -1608,14 +1608,25 @@ def recover_postflight_manifest(
             == checkpoint.get("source_commit")
             and matching_report
         ):
-            checkpoint = advance_recovery_checkpoint(
+            migrated_facts = {
+                **facts,
+                "legacy_postflight_model_manifest_sha256": existing,
+                "postflight_model_manifest_sha256": current,
+            }
+            migrated = {
+                **checkpoint,
+                "facts": migrated_facts,
+                "updated_at": _utc_now(),
+            }
+            validate_recovery_checkpoint(migrated)
+            _atomic_write_json(checkpoint_path, migrated)
+            record(
                 evidence,
-                checkpoint_path,
-                checkpoint,
-                str(checkpoint["phase"]),
-                postflight_model_manifest_sha256=current,
+                "recovery_checkpoint",
+                recovery_phase=str(checkpoint["phase"]),
+                manifest_migration="semantic-index-v1",
             )
-            return checkpoint, current
+            return migrated, current
         return checkpoint, existing
     phases = _RECOVERY_PHASES_BY_ROLE[str(checkpoint["role"])]
     if str(checkpoint["phase"]) == "model_completed":
