@@ -951,6 +951,25 @@ def test_pr_tuple_mismatch_fails_closed(monkeypatch, tmp_path, field, bad_value)
         awf_role.verify_pr_head(str(tmp_path), provenance)
 
 
+def test_merged_pr_is_allowed_only_for_explicit_terminal_recovery(monkeypatch, tmp_path):
+    provenance = _pr_provenance()
+    live = {
+        "number": 17,
+        "state": "MERGED",
+        "baseRefName": "main",
+        "baseRefOid": "a" * 40,
+        "headRefName": "feature/task",
+        "headRefOid": "b" * 40,
+        "headRepository": {"name": "project"},
+        "headRepositoryOwner": {"login": "contributor"},
+    }
+    monkeypatch.setattr(awf_role, "_gh_json", lambda *args: live)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.verify_pr_head(str(tmp_path), provenance)
+    assert awf_role.verify_pr_head(str(tmp_path), provenance, allow_merged=True) == provenance
+
+
 def test_v3_outbox_persists_complete_provenance_tuple(tmp_path):
     evidence = awf_role.RunEvidence(90, "coder", state_root=tmp_path / "state")
     provenance = _pr_provenance()

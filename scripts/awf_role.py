@@ -2017,6 +2017,8 @@ def _gh_create_pull_request(repo: str, provenance: dict[str, object]) -> int:
 def verify_pr_head(
     repo: str,
     provenance: dict[str, object],
+    *,
+    allow_merged: bool = False,
 ) -> dict[str, object]:
     pull_request = int(provenance["pull_request"])
     data = _gh_json(
@@ -2041,7 +2043,6 @@ def verify_pr_head(
             live_head_repo = f"{owner}/{name}"
     expected = {
         "number": pull_request,
-        "state": "OPEN",
         "baseRefName": provenance["base_ref"],
         "baseRefOid": provenance["base_sha"],
         "headRefName": provenance["head_ref"],
@@ -2050,6 +2051,9 @@ def verify_pr_head(
     for field, value in expected.items():
         if data.get(field) != value:
             die(f"pull request {field} does not match persisted provenance")
+    allowed_states = {"OPEN", "MERGED"} if allow_merged else {"OPEN"}
+    if data.get("state") not in allowed_states:
+        die("pull request state does not match persisted provenance")
     if live_head_repo != provenance["head_repo"]:
         die("pull request head repository does not match persisted provenance")
     return provenance
@@ -2150,6 +2154,7 @@ def verify_pr_remote_tuple(
     provenance: dict[str, object],
     *,
     verify_pr: bool,
+    allow_merged: bool = False,
 ) -> None:
     verify_upstream_base(repo, provenance)
     head_remote = str(provenance["head_remote"])
@@ -2170,7 +2175,7 @@ def verify_pr_remote_tuple(
     if live_head != provenance["head_sha"]:
         die("trusted contribution head SHA does not match persisted provenance")
     if verify_pr:
-        verify_pr_head(repo, provenance)
+        verify_pr_head(repo, provenance, allow_merged=allow_merged)
 
 
 def fetch_and_checkout_pr_head(
@@ -2178,8 +2183,14 @@ def fetch_and_checkout_pr_head(
     provenance: dict[str, object],
     *,
     verify_pr: bool,
+    allow_merged: bool = False,
 ) -> None:
-    verify_pr_remote_tuple(repo, provenance, verify_pr=verify_pr)
+    verify_pr_remote_tuple(
+        repo,
+        provenance,
+        verify_pr=verify_pr,
+        allow_merged=allow_merged,
+    )
     head_remote = str(provenance["head_remote"])
     head_ref = str(provenance["head_ref"])
     head_tracking = f"refs/remotes/{head_remote}/{head_ref}"
@@ -4293,7 +4304,7 @@ def role_architect(a: argparse.Namespace) -> int:
     provenance = None
     if _is_v3(a):
         provenance = provenance_from_args(a, repo, require_pr=True)
-        fetch_and_checkout_pr_head(repo, provenance, verify_pr=True)
+        fetch_and_checkout_pr_head(repo, provenance, verify_pr=True, allow_merged=True)
     else:
         fetch_and_checkout(repo, a.branch, a.commit)
 
