@@ -3104,6 +3104,17 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     assert len(pr_checks) == 2
     assert send_calls[0][0][3]["review_report"]["blocked_reason"] == ""
 
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="duplicate_event"),
+    )
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+    assert awf_role.role_reviewer(ns) == 0
+    assert len(tool_calls) == 1
+    assert len(send_calls) == 1
+    assert Path(os.environ["AWF_REPO_DIR"]).joinpath(ns.review_report).is_file()
+
 
 def test_v3_reviewer_ambiguous_model_started_checkpoint_fails_cleanly(
     monkeypatch,
