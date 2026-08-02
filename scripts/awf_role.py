@@ -48,6 +48,7 @@ from agent_adapters.opencode import (
 from agent_adapters.opencode import (
     render_reviewer_argv as render_opencode_reviewer_argv,
 )
+from awf_artifact_contract import ArtifactContractError, validate_stage_artifact_contract
 from awf_control_plane import (
     DEFAULT_ROUTES,
     ControlPlaneDenied,
@@ -584,6 +585,25 @@ def delivery_state_path(
     return evidence.state_dir / category / evidence.role / f"{digest}.json"
 
 
+def delivery_has_durable_state(
+    evidence: RunEvidence | None,
+    input_context: dict[str, object],
+) -> bool:
+    """Return whether this delivery must use the durable replay path."""
+    if evidence is None:
+        return False
+    delivery_key = str(input_context["key"])
+    delivery_id = str(input_context["delivery_id"])
+    return any(
+        path.exists()
+        for path in (
+            delivery_state_path(evidence, "checkpoint", delivery_key),
+            delivery_state_path(evidence, "outbox", delivery_key),
+            delivery_state_path(evidence, "inbox", delivery_id),
+        )
+    )
+
+
 def _atomic_write_json(path: Path, value: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
@@ -621,6 +641,7 @@ _CODER_RECOVERY_PHASES = (
     "model_not_started",
     "model_started",
     "model_completed",
+    "postflight_completed",
     "model_imported",
     "commit_created",
     "fork_sha_verified",
@@ -774,6 +795,39 @@ def advance_recovery_checkpoint(
     return updated
 
 
+def increment_postflight_attempt(
+    evidence: RunEvidence,
+    path: Path,
+    record_value: dict[str, object],
+) -> dict[str, object]:
+    """Record a recoverable postflight retry without advancing stage or rework budgets."""
+    validate_recovery_checkpoint(record_value)
+    current = _load_delivery_record(path, "recovery checkpoint")
+    if current is None:
+        die("recovery checkpoint disappeared before postflight")
+    validate_recovery_checkpoint(current)
+    if _checkpoint_immutable(current) != _checkpoint_immutable(record_value):
+        die("recovery checkpoint changed before postflight")
+    if current.get("phase") != "model_completed":
+        die("postflight attempts can only be recorded after model completion")
+    facts = dict(current["facts"])
+    attempts = int(facts.get("postflight_attempts", 0)) + 1
+    updated = {
+        **current,
+        "facts": {**facts, "postflight_attempts": attempts},
+        "updated_at": _utc_now(),
+    }
+    validate_recovery_checkpoint(updated)
+    _atomic_write_json(path, updated)
+    record(
+        evidence,
+        "recovery_checkpoint",
+        recovery_phase="model_completed",
+        postflight_attempts=attempts,
+    )
+    return updated
+
+
 def recovery_model_policy(checkpoint: dict[str, object]) -> str:
     """Return the only permitted model action for a validated checkpoint."""
     validate_recovery_checkpoint(checkpoint)
@@ -879,6 +933,13 @@ def recover_legacy_publication_checkpoint(
         checkpoint,
         "model_completed",
         model_workspace="legacy-durable-evidence",
+    )
+    checkpoint = advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "postflight_completed",
+        postflight_attempts=1,
     )
     checkpoint = advance_recovery_checkpoint(
         evidence,
@@ -2571,6 +2632,25 @@ def parse_postflight_contract(card_path: str) -> PostflightContract:
     return PostflightContract(allowed_paths=normalized, verification_commands=commands)
 
 
+def validate_implementation_report_contract(
+    card_path: str,
+    a: argparse.Namespace,
+    evidence: RunEvidence | None,
+) -> None:
+    """Fail a production delivery before model invocation when artifact identity drifts."""
+    if not _is_v3(a):
+        return
+    try:
+        validate_stage_artifact_contract(
+            card_path=Path(card_path),
+            task_id=a.branch.rsplit("/", 1)[-1],
+            required_report_path=a.report,
+        )
+    except ArtifactContractError as exc:
+        record(evidence, "contract_preflight_failed", reason=str(exc))
+        die(f"implementation artifact contract rejected before model invocation: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Postflight gates (run after model succeeds, before git write / send_event)
 # ---------------------------------------------------------------------------
@@ -2818,6 +2898,7 @@ def tool_opencode_exec(
     card_file: str,
     prompt_file: str,
     model: str,
+    implementation_report_path: str,
     review_feedback: str = "",
     evidence: RunEvidence | None = None,
 ) -> int:
@@ -2831,6 +2912,7 @@ def tool_opencode_exec(
         card_file=card_file,
         model=model,
         prompt=prompt,
+        implementation_report_path=implementation_report_path,
         normalized_review_feedback=normalized_feedback,
     )
     if evidence is not None:
@@ -3330,6 +3412,8 @@ def role_coder(a: argparse.Namespace) -> int:
     input_context = validate_input_delivery(a, "coder", evidence)
     validate_delivery_selection(a, input_context, tool=tool, model=model)
     provenance = None
+    contract: PostflightContract | None = None
+    fresh_contract_prevalidated = False
     if _is_v3(a):
         try:
             provenance = provenance_from_args(
@@ -3340,6 +3424,26 @@ def role_coder(a: argparse.Namespace) -> int:
         except SystemExit:
             record(evidence, "fork_pr_rejected", reason="invalid_or_untrusted_provenance")
             raise
+
+        # A malformed fresh delivery must not consume its one model-attempt budget.
+        # Durable deliveries keep the existing replay order because their trusted
+        # checkout may already have advanced beyond the original input commit.
+        if not delivery_has_durable_state(evidence, input_context):
+            try:
+                fetch_and_checkout_pr_head(
+                    repo,
+                    provenance,
+                    verify_pr=bool(provenance["pull_request"]),
+                )
+            except SystemExit:
+                record(evidence, "fork_pr_rejected", reason="input_provenance_drift")
+                raise
+            card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
+            if not Path(card_file).is_file():
+                die(f"card not found after checkout: {card_file}")
+            contract = parse_postflight_contract(card_file)
+            validate_implementation_report_contract(card_file, a, evidence)
+            fresh_contract_prevalidated = True
     gate = pre_invocation_gate(a, "coder", evidence)
 
     try:
@@ -3384,7 +3488,6 @@ def role_coder(a: argparse.Namespace) -> int:
     elif duplicate:
         die("duplicate Workflow event has no durable downstream outbox")
 
-    contract: PostflightContract | None = None
     recovery_phase = str(checkpoint["phase"]) if checkpoint is not None else "model_not_started"
     model_policy = recovery_model_policy(checkpoint) if checkpoint is not None else "invoke_once"
     if model_policy == "recover_or_fail":
@@ -3399,7 +3502,7 @@ def role_coder(a: argparse.Namespace) -> int:
             die("model invocation outcome is ambiguous; refusing to invoke it again")
 
     if recovery_phase == "model_not_started":
-        if provenance is not None:
+        if provenance is not None and not fresh_contract_prevalidated:
             try:
                 fetch_and_checkout_pr_head(
                     repo,
@@ -3409,14 +3512,16 @@ def role_coder(a: argparse.Namespace) -> int:
             except SystemExit:
                 record(evidence, "fork_pr_rejected", reason="input_provenance_drift")
                 raise
-        else:
+        elif provenance is None:
             fetch_and_checkout(repo, a.branch, a.commit)
         card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
         if not Path(card_file).is_file():
             die(f"card not found after checkout: {card_file}")
 
         # 2. Parse and freeze the TaskCard postflight contract before model starts
-        contract = parse_postflight_contract(card_file)
+        if contract is None:
+            contract = parse_postflight_contract(card_file)
+            validate_implementation_report_contract(card_file, a, evidence)
         model_state_dir = evidence.run_dir if evidence is not None else None
         model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
         if checkpoint is not None and checkpoint_path is not None:
@@ -3439,6 +3544,7 @@ def role_coder(a: argparse.Namespace) -> int:
                 model_card_file,
                 prompt_file,
                 model,
+                a.report,
                 getattr(a, "review_feedback", ""),
                 evidence,
             )
@@ -3458,7 +3564,7 @@ def role_coder(a: argparse.Namespace) -> int:
                 model_process=tool,
             )
         recovery_phase = "model_completed"
-    elif recovery_phase == "model_completed":
+    elif recovery_phase in {"model_completed", "postflight_completed"}:
         facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
         model_workspace = facts.get("model_workspace")
         if not isinstance(model_workspace, str) or not model_workspace:
@@ -3493,7 +3599,10 @@ def role_coder(a: argparse.Namespace) -> int:
             if not Path(card_file).is_file():
                 die(f"card not found after trusted checkout restore: {card_file}")
             contract = parse_postflight_contract(card_file)
+            validate_implementation_report_contract(card_file, a, evidence)
 
+        if checkpoint is not None and checkpoint_path is not None:
+            checkpoint = increment_postflight_attempt(evidence, checkpoint_path, checkpoint)
         record(
             evidence,
             "postflight_start",
@@ -3513,17 +3622,31 @@ def role_coder(a: argparse.Namespace) -> int:
             # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
             run_postflight_delta_gates(model_repo, contract)
             assert_model_git_metadata(model_repo)
-            imported_tree = import_model_delta(model_repo, repo)
-            check_report(str(resolve_repo_file(repo, a.report, "ImplementationReport")))
         except BaseException:
             record(evidence, "postflight_fail", postflight_status="fail")
             raise
+        postflight_manifest_sha256 = (
+            durable_model_manifest_sha256(model_repo) if checkpoint is not None else ""
+        )
         record(
             evidence,
             "postflight_pass",
             postflight_status="pass",
-            imported_tree=imported_tree,
+            postflight_model_manifest_sha256=postflight_manifest_sha256,
         )
+        if checkpoint is not None and checkpoint_path is not None:
+            checkpoint = advance_recovery_checkpoint(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "postflight_completed",
+                postflight_model_manifest_sha256=postflight_manifest_sha256,
+            )
+        recovery_phase = "postflight_completed"
+
+    if recovery_phase == "postflight_completed":
+        imported_tree = import_model_delta(model_repo, repo)
+        check_report(str(resolve_repo_file(repo, a.report, "ImplementationReport")))
         if checkpoint is not None and checkpoint_path is not None:
             checkpoint = advance_recovery_checkpoint(
                 evidence,
@@ -3531,10 +3654,6 @@ def role_coder(a: argparse.Namespace) -> int:
                 checkpoint,
                 "model_imported",
                 imported_tree=imported_tree,
-                # Trusted postflight stages the configured artifact in the
-                # isolated workspace, so persist the postflight Git baseline
-                # used by a later listener recovery.
-                postflight_model_manifest_sha256=durable_model_manifest_sha256(model_repo),
             )
         recovery_phase = "model_imported"
     elif checkpoint is not None:
@@ -4119,6 +4238,56 @@ def role_architect(a: argparse.Namespace) -> int:
     check_report(str(report_path))
     check_report_tracked_at_head(repo, a.report)
     resolve_review_report_path(repo, a.review_report, a.report)
+
+    if _control_plane_enabled():
+        task_id = a.branch.rsplit("/", 1)[-1]
+        run_id = getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
+        state_root = (
+            evidence.state_dir
+            if evidence is not None
+            else Path(
+                os.environ.get(
+                    "AWF_STATE_ROOT",
+                    str(Path.home() / ".local/state/agent-workflow"),
+                )
+            )
+        )
+        pull_request = {
+            "number": int(provenance["pull_request"]) if provenance is not None else 0,
+            "base_sha": str(provenance["base_sha"]) if provenance is not None else "",
+            "head_sha": str(provenance["head_sha"]) if provenance is not None else a.commit,
+        }
+        terminal = {
+            "verdict": expected_verdict,
+            "reason": "review_passed" if expected_verdict == "PASS" else "review_blocked",
+            "event_id": evidence.event_id if evidence is not None else int(a.event_id),
+            "delivery_id": str(input_context["delivery_id"]),
+            "payload_sha256": str(input_context["payload_sha256"]),
+            "source_event_id": int(input_context["source_event_id"]),
+            "branch": a.branch,
+            "commit": a.commit,
+            "artifacts": {
+                "implementation": {
+                    "path": a.report,
+                    "sha256": "sha256:" + hashlib.sha256(report_path.read_bytes()).hexdigest(),
+                },
+                "review": {
+                    "path": a.review_report,
+                    "sha256": canonical_payload_sha256(review_report),
+                },
+            },
+            "pull_request": pull_request,
+            "ci": {"status": "not_recorded", "conclusion": ""},
+            "merge": {"status": "not_merged", "commit": ""},
+        }
+        try:
+            RunLedger(state_root, run_id).mark_terminal(
+                terminal_state="completed" if expected_verdict == "PASS" else "blocked",
+                terminal=terminal,
+            )
+        except ControlPlaneDenied as exc:
+            record(evidence, "terminal_ledger_failed", reason=str(exc))
+            die(f"terminal decision could not be persisted: {exc}")
 
     if evidence is not None:
         evidence.record(
