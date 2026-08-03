@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add a single-use, event-scoped operator recovery command for an original terminally failed event
+  with a trusted completed-model checkpoint, without allowing normal listeners to requeue events.
+
 ### Fixed
 
 - Reject metadata-complete v1-v3 coder/reviewer deliveries when listener-local `AWF_TOOL` or

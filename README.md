@@ -161,6 +161,13 @@ The architect listener also consumes validated `PASS` and `BLOCKED` terminal dec
 deterministically, so a successful route can reach automatic ACK and pending-empty without a manual
 terminal handler.
 
+An original terminally failed event whose model work already crossed a trusted durable checkpoint
+may be recovered only through the separate
+[event-scoped terminal recovery](docs/tasks/event-scoped-terminal-recovery.md) command. It creates
+a single-use authorization bound to the exact run, event, delivery, payload, source commit, and
+checkpoint bytes before requeueing that same event. Normal listeners remain unable to requeue or
+redispatch anything.
+
 TaskCard dispatch is native Python on every supported host:
 `python scripts/awf_dispatch.py ...`. The retained `scripts/awf-dispatch.sh` file is a small POSIX
 compatibility shim only; Windows dispatch, listeners, bootstrap, and services require neither Git

@@ -103,6 +103,8 @@ Remaining Phase 2 work:
   ACK and pending-empty do not depend on a manual handler.
 - [x] Replace the production Bash TaskCard dispatcher with a native Python entry point; retain the
   shell file only as a POSIX compatibility shim and remove Git Bash/WSL from Windows dispatch.
+- [x] Add an operator-only, event-scoped terminal recovery gate that preserves the default
+  listener prohibition on ACK/requeue/redispatch and cannot repeat an ambiguous requeue.
 - [ ] Record the capacity-isolation metrics defined in
   [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
 - [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.

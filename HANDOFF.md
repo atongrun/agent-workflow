@@ -206,6 +206,11 @@ cross-platform CI. Same-delivery coder/reviewer recovery is proven without repea
 completed model subprocess. Fast Preflight is read-only; Deep Preflight is a disposable no-model
 transport proof and cannot authorize a historical delivery.
 
+The operator-only terminal recovery command can requeue one original terminally failed event only
+after binding the exact non-terminal run ledger, authorized event/delivery identity, payload hash,
+source commit, completed-model checkpoint bytes, durable workspace, and trusted report hash. This
+does not widen the normal listener authority manifest or permit replacement-event redispatch.
+
 The downstream terminal decision, current v3 PhasePlan, first frozen TaskCard, and metrics template
 are merged on Dousansi `main@6fd5293`. The remaining product gate is the first completed
 non-infrastructure three-TaskCard dogfood with capacity-isolation metrics.
