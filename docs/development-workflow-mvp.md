@@ -10,7 +10,8 @@ The stable contract is:
 
 - progressive planning and bounded architecture convergence;
 - self-contained TaskCards and auditable handoffs;
-- lower-cost execution, verification, first-line review, and deterministic rework by default;
+- lower-cost execution, verification, first-line review, and deterministic rework by default at the
+  method level;
 - named escalation to a high-value model for difficult decisions and milestone acceptance;
 - forced convergence and explicit completion evidence.
 
@@ -20,7 +21,7 @@ or memory service.
 
 ## What “Usable” Means
 
-A usable run can progress through:
+A usable run, whether manual or backed by a project-supplied runner, can progress through:
 
 ```text
 User goal → Architecture / Planning → PhasePlan → TaskCard → Dispatch → Execute → Test
@@ -29,13 +30,15 @@ User goal → Architecture / Planning → PhasePlan → TaskCard → Dispatch �
 ```
 
 The current CLI only provides `validate`, `inspect`, and `version`; the run commands shown in older
-examples are target ideas, not implemented behavior. MVP usability may first be proven through
-manual, file-based handoff. A generic controller is not a prerequisite.
+examples are target ideas, not implemented behavior. The diagram specifies a handoff protocol, not
+a claim that the current operations surface automatically advances each arrow. MVP usability may
+first be proven through manual, file-based handoff. A generic controller is not a prerequisite.
 
 ## Roles and Model Assignment
 
 Initial product roles are Architect/Planner, Executor, Reviewer, optional Tester, and Decider. The
-current resource names `implementer` and `arbiter` map to product-facing Executor and Decider.
+canonical product-to-contract-to-current-dogfood mapping is in the
+[constitution](../constitution.md#current-role-and-dogfood-operations-mapping).
 
 - Infrastructure development may assign high-value models to any role when quality or safety
   warrants it.
@@ -44,7 +47,7 @@ current resource names `implementer` and `arbiter` map to product-facing Executo
 
 ## Normal and Escalation Paths
 
-Normal path:
+Normal path at the method level:
 
 ```text
 Planner / task generator → Executor → deterministic verification → first-line Reviewer
@@ -53,7 +56,8 @@ Planner / task generator → Executor → deterministic verification → first-l
 
 The first-line Reviewer has no architecture veto. `REQUEST_CHANGES` requires deterministic evidence
 such as a failing command, unmet acceptance criterion, missing Artifact, or exact TaskCard
-violation. Optional advice remains non-blocking.
+violation. Optional advice remains non-blocking. This does not assert that the current operations
+surface automatically creates or dispatches the next TaskCard.
 
 Escalation to a high-value model requires a recorded role and reason code. Allowed categories are
 fundamental ambiguity, architecture reopen, genuine `BLOCKED`, exhausted bounded rework,
@@ -99,12 +103,12 @@ The repository's `scripts/` surface has already proven important engineering bou
 real Agent Bus dogfood: exact checkout, trusted process/postflight gates, commit/push and remote-SHA
 proof, durable handler evidence, and a Windows handler-return/ACK gate. It remains outside the core.
 
-The Reviewer now validates a structured ReviewReport and routes `PASS`, `REQUEST_CHANGES`, and
-`BLOCKED` through fail-closed deterministic logic. That boundary is covered by tests, but it has
-not yet been accepted as one fresh, uninterrupted cross-machine semantic loop. A live run must
-still prove dispatch through verdict routing and record the merge or deterministic-rework and
-next-TaskCard continuation evidence before the operations surface can claim a complete
-cross-machine chain. See
+The Reviewer handler validates a structured ReviewReport and emits fail-closed routes for `PASS`,
+`REQUEST_CHANGES`, and `BLOCKED`. One dogfood run has proved the `PASS` transport/ACK route. That
+proves delivery and acknowledgement, not Workflow completion. Merge/Decision handling, default
+automatic rework, generation and dispatch of the next TaskCard, and unattended automatic
+continuation are not implemented or verified. The operations surface must not be described as a
+complete closed loop. See
 [`tasks/reviewer-verdict-routing-implementation-report.md`](tasks/reviewer-verdict-routing-implementation-report.md).
 
 ## Acceptance Criteria

@@ -47,6 +47,10 @@ Roles enforce:
 - **Separation of concerns**: Planner doesn't implement. Implementer doesn't approve.
 - **Auditability**: What a role was allowed to do is explicit and versioned.
 
+The canonical product-role, shipped-contract-role, and current dogfood-operations mapping is in the
+[constitution](../constitution.md#current-role-and-dogfood-operations-mapping). It is documentation,
+not a schema alias or a core runtime guarantee.
+
 ---
 
 ## Workflow
@@ -101,6 +105,5 @@ Artifacts are the formal handoff mechanism between stages. Every artifact carrie
 | `DecisionPacket` | summarizer | Compressed multi-stage summary for arbiter |
 | `Decision` | arbiter | Final verdict and mandatory actions |
 
-Product-facing role names map `implementer` to **Executor** and `arbiter` to **Decider**. The
-first-line ReviewReport uses `PASS`, `REQUEST_CHANGES`, or `BLOCKED`; the final Decision uses
+The first-line ReviewReport uses `PASS`, `REQUEST_CHANGES`, or `BLOCKED`; the final Decision uses
 `approve`, `request_changes`, `reject`, or `escalate`.

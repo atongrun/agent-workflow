@@ -34,8 +34,10 @@ jobs:
       - name: Validate resources
         run: |
           awf validate roles
-          awf validate workflows
           awf validate examples
+
+      - name: Validate workflow semantics against project roles
+        run: awf validate workflows
 
       - name: Build wheel and source distribution
         run: python -m build
