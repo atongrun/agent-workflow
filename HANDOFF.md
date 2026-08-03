@@ -118,19 +118,18 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 ## Repository and Branch Truth
 
 - The only long-lived product branch is `main`. Short-lived feature and proof branches are deleted
-  after terminal merge, closeout, or evidence capture. The retirement ledger and exact recovery
-  tags are in
+  after terminal merge, closeout, or evidence capture. The closeout policy is in
   [`docs/reviews/2026-08-03-single-main-branch-closeout.md`](docs/reviews/2026-08-03-single-main-branch-closeout.md).
-- Historical failure/evidence commits are retained by versioned reports and `archive/*` tags, not
-  branch refs. Do not delete, reset, re-point, or dispatch from archive tags; they are recovery
-  anchors, not product direction.
+- Historical outcomes are retained only when they remain useful in versioned reports, tests, or
+  `main` history. Tags are reserved for named product releases and milestones, not execution or
+  proof evidence.
 - The obsolete postflight self-test worktree registration was retired after its Git link became
   invalid. Its recorded commit is reachable from `main`; the old directory is not repository truth.
 - Historical Agent Bus events 49–52 and 73–80 are evidence only: never read payloads, consume, ACK,
   or requeue them.
 - The 2026-07-26 semantic-loop branch refs were retired after their exact tips were recorded. V1–v4
-  are failed or intermediate evidence; v5 is the accepted executor result at `451cc60`. Recover
-  them only from the ledger's archive tags for a bounded audit.
+  are failed or intermediate evidence; v5 is the accepted executor result documented in the live
+  semantic-loop implementation report. Do not recreate branches for the retired attempts.
 
 Refresh refs before relying on this snapshot.
 
