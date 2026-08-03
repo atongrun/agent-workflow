@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
-import awf_terminal_recovery as recovery  # noqa: E402
+import awf_terminal_recovery as recovery  # noqa: E402, I001
 
 
 RUN_ID = "task-dousansi-dogfood-001-empty-state-v4"
