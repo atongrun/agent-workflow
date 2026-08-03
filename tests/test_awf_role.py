@@ -951,6 +951,25 @@ def test_pr_tuple_mismatch_fails_closed(monkeypatch, tmp_path, field, bad_value)
         awf_role.verify_pr_head(str(tmp_path), provenance)
 
 
+def test_merged_pr_is_allowed_only_for_explicit_terminal_recovery(monkeypatch, tmp_path):
+    provenance = _pr_provenance()
+    live = {
+        "number": 17,
+        "state": "MERGED",
+        "baseRefName": "main",
+        "baseRefOid": "a" * 40,
+        "headRefName": "feature/task",
+        "headRefOid": "b" * 40,
+        "headRepository": {"name": "project"},
+        "headRepositoryOwner": {"login": "contributor"},
+    }
+    monkeypatch.setattr(awf_role, "_gh_json", lambda *args: live)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.verify_pr_head(str(tmp_path), provenance)
+    assert awf_role.verify_pr_head(str(tmp_path), provenance, allow_merged=True) == provenance
+
+
 def test_v3_outbox_persists_complete_provenance_tuple(tmp_path):
     evidence = awf_role.RunEvidence(90, "coder", state_root=tmp_path / "state")
     provenance = _pr_provenance()
@@ -2166,6 +2185,15 @@ def test_import_model_report_includes_ignored_configured_artifact(repositories, 
     ) == str(workspace.resolve())
 
 
+def test_model_manifest_binds_semantic_index_not_binary_stat_cache(repositories):
+    _, _, executor = repositories
+    manifest = awf_role._model_git_manifest(str(executor))
+
+    assert "index" not in manifest
+    assert manifest["index-semantic"][0] == "git-index"
+    assert manifest["index-semantic"][1]
+
+
 @pytest.mark.parametrize("field", ["card", "report"])
 @pytest.mark.parametrize("escaped_path", ["absolute", "../outside.md"])
 def test_reviewer_rejects_repo_path_escape_before_model(monkeypatch, tmp_path, field, escaped_path):
@@ -2264,6 +2292,48 @@ def test_validate_embedded_review_report_accepts_fenced_wrapper():
     normalized = awf_role.validate_embedded_review_report(embedded)
 
     assert normalized == embedded
+
+
+@pytest.mark.parametrize("blocked_reason", [None, ""])
+def test_pass_review_report_normalizes_absent_blocked_reason(blocked_reason, tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(_review_markdown("PASS", blocked_reason=blocked_reason), encoding="utf-8")
+
+    normalized = awf_role.parse_review_report(report)
+
+    assert normalized["verdict"] == "PASS"
+    assert normalized["deterministic_failures"] == []
+    assert normalized["blocked_reason"] == ""
+    assert json.loads(json.dumps(normalized))["blocked_reason"] == ""
+
+
+def test_pass_review_report_rejects_nonempty_blocked_reason(tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(_review_markdown("PASS", blocked_reason="not blocked"), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.parse_review_report(report)
+
+
+@pytest.mark.parametrize("blocked_reason", [None, ""])
+def test_blocked_review_report_requires_nonempty_reason(blocked_reason, tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(_review_markdown("BLOCKED", blocked_reason=blocked_reason), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.parse_review_report(report)
+
+
+def test_blocked_review_report_accepts_nonempty_reason(tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(
+        _review_markdown("BLOCKED", blocked_reason="needs user decision"),
+        encoding="utf-8",
+    )
+
+    normalized = awf_role.parse_review_report(report)
+
+    assert normalized["blocked_reason"] == "needs user decision"
 
 
 _COMMAND_FAILURE = {
@@ -2979,7 +3049,7 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     monkeypatch,
     tmp_path,
 ):
-    content = _review_markdown("PASS")
+    content = _review_markdown("PASS", blocked_reason=None)
     ns, send_calls, tool_calls = _prepare_reviewer_routing(
         monkeypatch,
         tmp_path,
@@ -3053,6 +3123,8 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
         awf_role.role_reviewer(ns)
     assert len(tool_calls) == 1
     assert not send_calls
+    trusted_report = Path(os.environ["AWF_REPO_DIR"]).joinpath(ns.review_report)
+    trusted_report.unlink()
 
     ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
 
@@ -3060,6 +3132,18 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     assert len(tool_calls) == 1
     assert len(send_calls) == 1
     assert len(pr_checks) == 2
+    assert send_calls[0][0][3]["review_report"]["blocked_reason"] == ""
+    assert trusted_report.is_file()
+
+    monkeypatch.setattr(
+        awf_role,
+        "pre_invocation_gate",
+        lambda *args, **kwargs: argparse.Namespace(reason="duplicate_event"),
+    )
+    ns.evidence = awf_role.RunEvidence(103, "reviewer", state_root=state_root)
+    assert awf_role.role_reviewer(ns) == 0
+    assert len(tool_calls) == 1
+    assert len(send_calls) == 1
 
 
 def test_v3_reviewer_ambiguous_model_started_checkpoint_fails_cleanly(

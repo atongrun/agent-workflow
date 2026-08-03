@@ -18,6 +18,8 @@ Rules:
   comment; do not use a fenced Markdown wrapper):
   `<!-- awf-review-report` followed by a JSON object with `verdict`, `deterministic_failures`,
   and `blocked_reason`, followed by `-->`. Only PASS, REQUEST_CHANGES, or BLOCKED is valid.
+  For PASS, `blocked_reason` may be `null` or `""` and is normalized to `""`; for BLOCKED,
+  it must be a non-empty string.
   REQUEST_CHANGES requires structured deterministic evidence; BLOCKED requires an escalation
   reason. Do not include secrets or full diff/patch bodies.
 - Do not merely print the verdict to stdout. A successful tool process without a valid report file

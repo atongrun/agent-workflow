@@ -1493,7 +1493,11 @@ def git_out(repo: str, *args: str) -> str:
 _MODEL_GIT_MANIFESTS: dict[str, dict[str, tuple[str, str]]] = {}
 
 
-def _model_git_manifest(workspace: str) -> dict[str, tuple[str, str]]:
+def _model_git_manifest(
+    workspace: str,
+    *,
+    include_semantic_index: bool = True,
+) -> dict[str, tuple[str, str]]:
     """Hash mutable Git control metadata without invoking model-controlled Git."""
     git_dir = Path(workspace).resolve() / ".git"
     if not git_dir.is_dir():
@@ -1503,6 +1507,13 @@ def _model_git_manifest(workspace: str) -> dict[str, tuple[str, str]]:
         relative = path.relative_to(git_dir)
         parts = relative.parts
         if parts and parts[0] == "objects" and parts[:2] != ("objects", "info"):
+            continue
+        # The binary index contains platform-specific stat-cache data.  That
+        # cache can change after a read-only checkout/status operation without
+        # changing the staged tree, which made durable recovery reject an
+        # otherwise identical reviewer workspace on Windows.  Bind the
+        # semantic index state below instead of the volatile binary file.
+        if relative.as_posix() == "index":
             continue
         name = relative.as_posix()
         if path.is_symlink():
@@ -1514,6 +1525,13 @@ def _model_git_manifest(workspace: str) -> dict[str, tuple[str, str]]:
             manifest[name] = ("dir", "")
         else:
             manifest[name] = ("other", "")
+    if include_semantic_index:
+        staged = git_out(workspace, "ls-files", "--stage", "-z")
+        tree = git_out(workspace, "write-tree")
+        manifest["index-semantic"] = (
+            "git-index",
+            hashlib.sha256(staged.encode("utf-8") + b"\0" + tree.encode("ascii")).hexdigest(),
+        )
     return manifest
 
 
@@ -1527,7 +1545,11 @@ def assert_model_git_metadata(workspace: str) -> None:
     """Reject any model mutation to Git config, refs, index, hooks, or info files."""
     resolved = str(Path(workspace).resolve())
     expected = _MODEL_GIT_MANIFESTS.get(resolved)
-    if expected is None or _model_git_manifest(resolved) != expected:
+    if expected is None:
+        die("model process changed isolated workspace Git control metadata")
+    expected_control = {key: value for key, value in expected.items() if key != "index-semantic"}
+    current_control = _model_git_manifest(resolved, include_semantic_index=False)
+    if current_control != expected_control or _model_git_manifest(resolved) != expected:
         die("model process changed isolated workspace Git control metadata")
 
 
@@ -1566,6 +1588,45 @@ def recover_postflight_manifest(
     facts = dict(checkpoint.get("facts", {}))
     existing = facts.get("postflight_model_manifest_sha256")
     if isinstance(existing, str):
+        current = durable_model_manifest_sha256(workspace)
+        if current == existing:
+            return checkpoint, existing
+        # Checkpoints written before semantic index manifests used the raw
+        # binary index.  Migrate only a completed reviewer workspace whose
+        # dispatched HEAD and preserved ReviewReport still match the durable
+        # facts; no model or artifact rewrite is involved.
+        report_sha = facts.get("review_report_sha256")
+        report_files = sorted(Path(workspace).glob(".awf/artifacts/review-report-*.md"))
+        matching_report = any(
+            isinstance(report_sha, str)
+            and hashlib.sha256(path.read_bytes()).hexdigest() == report_sha
+            for path in report_files
+        )
+        if (
+            str(checkpoint.get("phase")) in {"model_imported", "pr_tuple_verified"}
+            and git_out(workspace, "rev-parse", "--verify", "HEAD^{commit}")
+            == checkpoint.get("source_commit")
+            and matching_report
+        ):
+            migrated_facts = {
+                **facts,
+                "legacy_postflight_model_manifest_sha256": existing,
+                "postflight_model_manifest_sha256": current,
+            }
+            migrated = {
+                **checkpoint,
+                "facts": migrated_facts,
+                "updated_at": _utc_now(),
+            }
+            validate_recovery_checkpoint(migrated)
+            _atomic_write_json(checkpoint_path, migrated)
+            record(
+                evidence,
+                "recovery_checkpoint",
+                recovery_phase=str(checkpoint["phase"]),
+                manifest_migration="semantic-index-v1",
+            )
+            return migrated, current
         return checkpoint, existing
     phases = _RECOVERY_PHASES_BY_ROLE[str(checkpoint["role"])]
     if str(checkpoint["phase"]) == "model_completed":
@@ -1956,6 +2017,8 @@ def _gh_create_pull_request(repo: str, provenance: dict[str, object]) -> int:
 def verify_pr_head(
     repo: str,
     provenance: dict[str, object],
+    *,
+    allow_merged: bool = False,
 ) -> dict[str, object]:
     pull_request = int(provenance["pull_request"])
     data = _gh_json(
@@ -1980,7 +2043,6 @@ def verify_pr_head(
             live_head_repo = f"{owner}/{name}"
     expected = {
         "number": pull_request,
-        "state": "OPEN",
         "baseRefName": provenance["base_ref"],
         "baseRefOid": provenance["base_sha"],
         "headRefName": provenance["head_ref"],
@@ -1989,6 +2051,9 @@ def verify_pr_head(
     for field, value in expected.items():
         if data.get(field) != value:
             die(f"pull request {field} does not match persisted provenance")
+    allowed_states = {"OPEN", "MERGED"} if allow_merged else {"OPEN"}
+    if data.get("state") not in allowed_states:
+        die("pull request state does not match persisted provenance")
     if live_head_repo != provenance["head_repo"]:
         die("pull request head repository does not match persisted provenance")
     return provenance
@@ -2089,6 +2154,7 @@ def verify_pr_remote_tuple(
     provenance: dict[str, object],
     *,
     verify_pr: bool,
+    allow_merged: bool = False,
 ) -> None:
     verify_upstream_base(repo, provenance)
     head_remote = str(provenance["head_remote"])
@@ -2109,7 +2175,7 @@ def verify_pr_remote_tuple(
     if live_head != provenance["head_sha"]:
         die("trusted contribution head SHA does not match persisted provenance")
     if verify_pr:
-        verify_pr_head(repo, provenance)
+        verify_pr_head(repo, provenance, allow_merged=allow_merged)
 
 
 def fetch_and_checkout_pr_head(
@@ -2117,8 +2183,14 @@ def fetch_and_checkout_pr_head(
     provenance: dict[str, object],
     *,
     verify_pr: bool,
+    allow_merged: bool = False,
 ) -> None:
-    verify_pr_remote_tuple(repo, provenance, verify_pr=verify_pr)
+    verify_pr_remote_tuple(
+        repo,
+        provenance,
+        verify_pr=verify_pr,
+        allow_merged=allow_merged,
+    )
     head_remote = str(provenance["head_remote"])
     head_ref = str(provenance["head_ref"])
     head_tracking = f"refs/remotes/{head_remote}/{head_ref}"
@@ -2373,7 +2445,12 @@ def _normalize_review_report(data: dict[str, object], markdown: str) -> dict[str
         _validate_deterministic_failure(item, index) for index, item in enumerate(failures)
     ]
     blocked_reason = data["blocked_reason"]
-    if not isinstance(blocked_reason, str):
+    # PASS has no blocking condition, so a model may express that absence as
+    # JSON null. Normalize it before the verdict-specific invariants below;
+    # BLOCKED and REQUEST_CHANGES retain strict string typing.
+    if verdict == "PASS" and blocked_reason is None:
+        blocked_reason = ""
+    elif not isinstance(blocked_reason, str):
         die("ReviewReport blocked_reason must be a string")
     blocked_reason = blocked_reason.strip()
 
@@ -3921,13 +3998,14 @@ def role_reviewer(a: argparse.Namespace) -> int:
             a.review_report,
             a.report,
         )
-        if (
-            not isinstance(expected_report_sha256, str)
-            or not persisted_report.is_file()
-            or hashlib.sha256(persisted_report.read_bytes()).hexdigest() != expected_report_sha256
-        ):
+        if not isinstance(expected_report_sha256, str):
             die("trusted ReviewReport does not match its recovery checkpoint")
-        persisted_report.unlink()
+        if persisted_report.is_file():
+            if hashlib.sha256(persisted_report.read_bytes()).hexdigest() != expected_report_sha256:
+                die("trusted ReviewReport does not match its recovery checkpoint")
+            # The report is re-imported from the durable model workspace after
+            # the trusted PR checkout has restored a clean tree.
+            persisted_report.unlink()
 
     if provenance is not None:
         try:
@@ -4226,7 +4304,7 @@ def role_architect(a: argparse.Namespace) -> int:
     provenance = None
     if _is_v3(a):
         provenance = provenance_from_args(a, repo, require_pr=True)
-        fetch_and_checkout_pr_head(repo, provenance, verify_pr=True)
+        fetch_and_checkout_pr_head(repo, provenance, verify_pr=True, allow_merged=True)
     else:
         fetch_and_checkout(repo, a.branch, a.commit)
 
