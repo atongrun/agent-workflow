@@ -117,21 +117,20 @@ these versioned files, and a fresh Executor must not need it when a TaskCard is 
 
 ## Repository and Branch Truth
 
-- The authoritative product branch is `main`. Dispatch floor `e118463` includes PR #32's exact PR-number
-  fix, PR #34's recovery/configuration matrix, PR #35's native dispatcher, PR #36's unified
-  subprocess boundary, PR #37's loop Preflight, PR #38's behavior-preserving provider-renderer
-  extraction, PR #39's downstream-readiness truth gate, and PR #40's v1-v3 executor-selection
-  integrity gate.
-- All prior failure/evidence branches were converted to `archive/*` tags (events 49, 50, 73–80 plus
-  prep/proof lanes). Do not delete, reset, re-point, or dispatch from archive tags; they are
-  evidence, not product direction.
-- A detached dirty postflight self-test worktree (`/private/tmp/agent-workflow-postflight-selftest`)
-  is preserved for separate audit; do not clean it as part of unrelated work.
+- The only long-lived product branch is `main`. Short-lived feature and proof branches are deleted
+  after terminal merge, closeout, or evidence capture. The retirement ledger and exact recovery
+  tags are in
+  [`docs/reviews/2026-08-03-single-main-branch-closeout.md`](docs/reviews/2026-08-03-single-main-branch-closeout.md).
+- Historical failure/evidence commits are retained by versioned reports and `archive/*` tags, not
+  branch refs. Do not delete, reset, re-point, or dispatch from archive tags; they are recovery
+  anchors, not product direction.
+- The obsolete postflight self-test worktree registration was retired after its Git link became
+  invalid. Its recorded commit is reachable from `main`; the old directory is not repository truth.
 - Historical Agent Bus events 49–52 and 73–80 are evidence only: never read payloads, consume, ACK,
   or requeue them.
-- The 2026-07-26 v1–v4 semantic-loop branches are failed or intermediate evidence. The v5 branch is
-  the successful evidence branch at executor commit `451cc60`; preserve all five refs and their
-  event-scoped evidence without reset, re-pointing, or redispatch.
+- The 2026-07-26 semantic-loop branch refs were retired after their exact tips were recorded. V1–v4
+  are failed or intermediate evidence; v5 is the accepted executor result at `451cc60`. Recover
+  them only from the ledger's archive tags for a bounded audit.
 
 Refresh refs before relying on this snapshot.
 
@@ -259,7 +258,8 @@ by the fresh v3 `DOUSANSI-DOGFOOD-001` run if the bound Deep proof remains curre
 
 ## Standing Rules
 
-- Feature branch + PR + CI for every change; never push to `main` directly.
+- `main` is the only long-lived branch. Use a short-lived feature branch + PR + CI for each change,
+  then delete the feature branch immediately after terminal closeout; never push to `main` directly.
 - Implementation and repository-truth documentation ship together; no code-first/docs-later
   closeout is complete.
 - TaskCards are frozen after commit; executors touch only Allowed paths; postflight contract stays
