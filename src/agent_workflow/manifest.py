@@ -37,6 +37,13 @@ class ManifestError(RuntimeError):
     """Credential-safe manifest validation failure."""
 
 
+def _same_windows_principal(left: str, right: str) -> bool:
+    """Match whoami and icacls forms when one omits the domain prefix."""
+    left = left.casefold()
+    right = right.casefold()
+    return left == right or left.rsplit("\\", 1)[-1] == right.rsplit("\\", 1)[-1]
+
+
 def default_manifest_path(repo: Path) -> Path:
     """Return the repository-local owner manifest location."""
     return Path(repo).resolve() / DEFAULT_MANIFEST_NAME
@@ -66,7 +73,7 @@ def _validate_path(path: Path) -> None:
         if acl.returncode != 0 or not principal:
             raise ManifestError("could not verify manifest owner ACL")
         entries = _parse_windows_aces(path, acl.stdout)
-        if not entries or any(owner.casefold() != principal.casefold() for owner, _ in entries):
+        if not entries or any(not _same_windows_principal(owner, principal) for owner, _ in entries):
             raise ManifestError("manifest ACL grants another principal")
         if any("(I)" in permissions for _, permissions in entries):
             raise ManifestError("manifest ACL must not be inherited")
@@ -108,24 +115,32 @@ def _lock_windows_manifest(path: Path) -> None:
     )
     if locked.returncode != 0:
         raise ManifestError("could not apply owner-only manifest ACL")
-    acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
-    if acl.returncode != 0:
-        raise ManifestError("could not verify manifest owner ACL")
-    entries = _parse_windows_aces(path, acl.stdout)
-    if not entries:
-        raise ManifestError("could not parse manifest owner ACL")
-    for owner, _permissions in entries:
-        if owner.casefold() == principal.casefold():
-            continue
-        for removal in ("/remove:g", "/remove:d"):
-            removed = subprocess.run(
-                ["icacls", str(path), removal, owner],
-                capture_output=True,
-                text=True,
-            )
-            if removed.returncode != 0:
-                raise ManifestError("could not remove an extra manifest principal")
-    _validate_path(path)
+    for _ in range(3):
+        acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+        if acl.returncode != 0:
+            raise ManifestError("could not verify manifest owner ACL")
+        entries = _parse_windows_aces(path, acl.stdout)
+        if not entries:
+            raise ManifestError("could not parse manifest owner ACL")
+        extras = [
+            owner for owner, _permissions in entries if not _same_windows_principal(owner, principal)
+        ]
+        for owner in extras:
+            for removal in ("/remove:g", "/remove:d"):
+                removed = subprocess.run(
+                    ["icacls", str(path), removal, owner],
+                    capture_output=True,
+                    text=True,
+                )
+                if removed.returncode != 0:
+                    raise ManifestError("could not remove an extra manifest principal")
+        try:
+            _validate_path(path)
+            return
+        except ManifestError:
+            if not extras:
+                raise
+    raise ManifestError("could not establish an owner-only manifest ACL")
 
 
 def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
