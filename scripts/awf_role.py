@@ -1888,6 +1888,7 @@ def stage_model_artifact(workspace: str, relative_path: str, label: str) -> Path
 
 def import_model_report(workspace: str, trusted_repo: str, report_path: str) -> Path:
     """Copy the sole reviewer output from an isolated workspace."""
+    normalize_machine_review_envelope(workspace, report_path)
     source = stage_model_artifact(workspace, report_path, "ReviewReport")
     delta_paths = _collect_delta_paths(workspace)
     if delta_paths != [report_path]:
@@ -1896,6 +1897,33 @@ def import_model_report(workspace: str, trusted_repo: str, report_path: str) -> 
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
     return destination
+
+
+def mark_artifact_invalid(
+    evidence: RunEvidence | None,
+    checkpoint_path: Path | None,
+    checkpoint: dict[str, object] | None,
+    reason: str,
+) -> dict[str, object] | None:
+    """Persist a bounded same-delivery artifact diagnosis without recovery."""
+    if checkpoint is None or checkpoint_path is None:
+        return checkpoint
+    facts = dict(checkpoint.get("facts", {}))
+    attempts = int(facts.get("artifact_correction_attempts", 0))
+    if attempts >= 1:
+        die(
+            "artifact_invalid recovery is exhausted; preserve the bound report SHA and "
+            "provenance, then obtain an owner-authorized replacement delivery"
+        )
+    return advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        str(checkpoint["phase"]),
+        artifact_status="artifact_invalid",
+        artifact_correction_attempts=attempts + 1,
+        artifact_error=reason[:512],
+    )
 
 
 def resolve_review_base(repo: str, base: str) -> str:
@@ -2256,16 +2284,39 @@ def executor_commit_message(branch: str, tool: str) -> str:
 
 
 def check_report(report_path: str) -> None:
-    """Fail if ``--report`` is empty or the path is not a regular file.
+    """Validate the trusted ImplementationReport artifact boundary.
 
     Called by coder after successful model execution but before git writes,
     and by reviewer after checkout but before model execution.
-    This is an existence gate only — no content or schema validation is performed.
+    Legacy prose reports remain compatible.  When a machine envelope is
+    present, it is parsed strictly before the imported-tree checkpoint.
     """
     if not report_path:
         die("--report is required; ImplementationReport must exist before commit or review")
     if not Path(report_path).is_file():
         die(f"ImplementationReport not found: {report_path}")
+    try:
+        content = Path(report_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        die("ImplementationReport is unreadable")
+    if not content.strip() or "\x00" in content:
+        die("ImplementationReport is empty or contains NUL")
+    envelope = re.findall(
+        r"<!--\s*awf-implementation-report\s*(?:\n\s*)?(\{.*?\})\s*-->",
+        content,
+        re.DOTALL,
+    )
+    if envelope:
+        if len(envelope) != 1:
+            die("ImplementationReport must contain exactly one machine envelope")
+        try:
+            value = json.loads(envelope[0], object_pairs_hook=_unique_json_object)
+        except (json.JSONDecodeError, DuplicateReviewReportKey):
+            die("ImplementationReport machine envelope is malformed")
+        if not isinstance(value, dict) or set(value) != {
+            "summary", "changed_files", "commands", "tests", "source_revision"
+        }:
+            die("ImplementationReport machine envelope has missing or unknown fields")
 
 
 def check_report_tracked_at_head(repo: str, relative_path: str) -> None:
@@ -2280,7 +2331,10 @@ def check_repo_file_tracked_at_head(repo: str, relative_path: str, label: str) -
         die(f"{label} is not tracked by the dispatched commit")
 
 
-_REVIEW_REPORT_RE = re.compile(r"<!--\s*awf-review-report\s*\n(.*?)\n\s*-->", re.DOTALL)
+_REVIEW_REPORT_RE = re.compile(
+    r"<!--\s*awf-review-report\s*(?:\n\s*)?(\{.*?\})(?:\s*\n\s*|\s*)-->",
+    re.DOTALL,
+)
 _REVIEW_REPORT_FENCED_RE = re.compile(r"```json\s*\n?(.*?)\n?```", re.DOTALL)
 _REVIEW_VERDICTS = {"PASS", "REQUEST_CHANGES", "BLOCKED"}
 _REVIEW_REPORT_MAX_BYTES = 16 * 1024
@@ -2302,6 +2356,38 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise DuplicateReviewReportKey(key)
         result[key] = value
     return result
+
+
+_INLINE_REVIEW_REPORT_RE = re.compile(
+    r"<!--\s*awf-review-report\s+(\{.*?\})\s*-->", re.DOTALL
+)
+
+
+def normalize_machine_review_envelope(workspace: str, report_path: str) -> None:
+    """Normalize a syntactically valid one-line model envelope in-place."""
+    source = resolve_repo_file(workspace, report_path, "ReviewReport")
+    try:
+        markdown = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return
+    matches = list(_INLINE_REVIEW_REPORT_RE.finditer(markdown))
+    if len(matches) != 1:
+        return
+    match = matches[0]
+    if "\n" in markdown[match.start() : match.end()].split("{", 1)[0]:
+        return
+    try:
+        machine = json.loads(match.group(1), object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, DuplicateReviewReportKey):
+        return
+    if not isinstance(machine, dict):
+        return
+    canonical = "<!-- awf-review-report\n" + json.dumps(
+        machine, ensure_ascii=False, indent=2, sort_keys=True
+    ) + "\n-->"
+    updated = markdown[: match.start()] + canonical + markdown[match.end() :]
+    if updated != markdown:
+        source.write_text(updated, encoding="utf-8", newline="\n")
 
 
 def resolve_review_report_path(repo: str, report_path: str, implementation_report: str) -> Path:
@@ -4159,6 +4245,19 @@ def role_reviewer(a: argparse.Namespace) -> int:
         else:
             assert_model_git_state(repo, a.branch, a.commit)
         review_report_path = import_model_report(model_repo, repo, a.review_report)
+        try:
+            review_report = parse_review_report(review_report_path)
+        except SystemExit:
+            mark_artifact_invalid(
+                evidence,
+                checkpoint_path,
+                checkpoint,
+                "trusted ReviewReport schema validation failed",
+            )
+            die(
+                "artifact_invalid: ReviewReport schema rejected before checkpoint advancement; "
+                "same-delivery correction was attempted once and no model replay is legal"
+            )
         if (
             checkpoint is not None
             and checkpoint_path is not None
@@ -4187,6 +4286,21 @@ def role_reviewer(a: argparse.Namespace) -> int:
         ):
             die("trusted ReviewReport does not match its recovery checkpoint")
     if checkpoint is not None and checkpoint_path is not None and provenance is not None:
+        if recovery_phase in {"model_imported", "pr_tuple_verified"}:
+            try:
+                review_report = parse_review_report(review_report_path)
+            except SystemExit:
+                mark_artifact_invalid(
+                    evidence,
+                    checkpoint_path,
+                    checkpoint,
+                    "trusted ReviewReport schema validation failed in legacy checkpoint",
+                )
+                die(
+                    "artifact_invalid: legacy checkpoint report is invalid; immutable report SHA "
+                    "and provenance are preserved, so only an owner-authorized replacement "
+                    "delivery is legal"
+                )
         if str(checkpoint["phase"]) == "model_imported":
             verify_pr_remote_tuple(repo, provenance, verify_pr=True)
             checkpoint = advance_recovery_checkpoint(

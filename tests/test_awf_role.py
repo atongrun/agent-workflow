@@ -2268,6 +2268,50 @@ def test_parse_review_report_accepts_legacy_fenced_wrapper(tmp_path):
     assert normalized["verdict"] == "PASS"
 
 
+def test_trusted_runner_normalizes_one_line_review_envelope_before_checkpoint(tmp_path):
+    report = tmp_path / "review.md"
+    report.write_text(
+        '<!-- awf-review-report {"verdict":"PASS","deterministic_failures":[],'
+        '"blocked_reason":null} -->\n', encoding="utf-8"
+    )
+    awf_role.normalize_machine_review_envelope(str(tmp_path), "review.md")
+    normalized = awf_role.parse_review_report(report)
+    assert normalized["verdict"] == "PASS"
+    assert report.read_text(encoding="utf-8").startswith("<!-- awf-review-report\n")
+
+
+def test_artifact_invalid_checkpoint_is_bounded_and_preserves_report_binding(tmp_path):
+    evidence = awf_role.RunEvidence(901, "reviewer", state_root=tmp_path / "state")
+    provenance = _pr_provenance(pull_request=28)
+    input_context = {
+        "key": "delivery-901", "delivery_id": "delivery-901",
+        "payload_sha256": "sha256:input", "source_event_id": 142,
+    }
+    path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence, input_context, role="reviewer", branch="feature/task",
+        source_commit="a" * 40, provenance=provenance,
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence, path, checkpoint, "model_started",
+        model_workspace="/state/model-workspace-901", model_manifest_sha256="sha256:model",
+        model_event_id=142, model_process="opencode",
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence, path, checkpoint, "model_completed",
+        model_workspace="/state/model-workspace-901", model_manifest_sha256="sha256:model",
+        model_event_id=142, model_process="opencode",
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence, path, checkpoint, "model_imported", review_report_sha256="invalid-bound-sha"
+    )
+    diagnosed = awf_role.mark_artifact_invalid(evidence, path, checkpoint, "schema rejected")
+    assert diagnosed["phase"] == "model_imported"
+    assert diagnosed["facts"]["artifact_status"] == "artifact_invalid"
+    assert diagnosed["facts"]["review_report_sha256"] == "invalid-bound-sha"
+    with pytest.raises(SystemExit, match="exhausted"):
+        awf_role.mark_artifact_invalid(evidence, path, diagnosed, "schema rejected")
+
+
 def test_parse_review_report_rejects_multiple_fenced_wrappers(tmp_path):
     report = tmp_path / "review.md"
     report.write_text(

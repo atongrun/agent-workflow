@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from agent_workflow.validation import (
     validate_role_semantics,
     validate_workflow_semantics,
 )
+from agent_workflow.manifest import ManifestError, derive_manifest, load_manifest, write_manifest
 
 ROLE_MAP_UNAVAILABLE_WARNING = (
     "role existence checks skipped: no named Role resources found in the validation target "
@@ -169,6 +171,163 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_card(card: str, repo: Path) -> Path:
+    candidate = Path(card)
+    if not candidate.is_absolute():
+        candidate = repo / candidate
+    if candidate.is_file():
+        return candidate.resolve()
+    for option in (repo / ".awf/cards" / card, repo / "docs" / card):
+        if option.is_file():
+            return option.resolve()
+    raise ManifestError(f"TaskCard not found: {card}")
+
+
+def _ops_module():
+    root = _find_project_root()
+    scripts = root / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import awf_control_plane
+
+    return awf_control_plane
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    try:
+        repo = Path(args.repo).resolve()
+        values = derive_manifest(
+            _resolve_card(args.card, repo),
+            branch=args.branch,
+            tool=args.tool,
+            model=args.model,
+            rework_budget=args.rework_budget,
+            upstream_repo=args.upstream_repo,
+            head_repo=args.head_repo,
+            upstream_remote=args.upstream_remote,
+            head_remote=args.head_remote,
+            base_ref=args.base_ref,
+        )
+        path = Path(args.manifest) if args.manifest else repo / ".awf" / "run-manifest.json"
+        write_manifest(path, values, replace=args.replace)
+    except (ManifestError, OSError) as exc:
+        print(f"ERROR: setup failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"configured RunManifest: {path.resolve()}")
+    print("secrets unchanged: configure dispatch.env separately; .envrc was not written")
+    return 0
+
+
+def _load_run(args: argparse.Namespace):
+    ops = _ops_module()
+    try:
+        return ops, ops.RunLedger(Path(args.state_root), args.run).recover()
+    except ops.ControlPlaneDenied as exc:
+        raise ManifestError(str(exc)) from exc
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    try:
+        _, (ledger, packet) = _load_run(args)
+    except ManifestError as exc:
+        print(f"ERROR: status unavailable: {exc}", file=sys.stderr)
+        return 1
+    failures = [
+        item
+        for item in ledger.get("decisions", [])
+        if isinstance(item, dict) and item.get("status") == "rejected"
+    ]
+    print(
+        f"run={args.run} state={ledger.get('terminal_state') or 'running'} "
+        f"stage={packet.get('stage', ledger.get('stage', ''))}"
+    )
+    print(f"checkpoint={packet.get('phase', packet.get('transition', 'not_recorded'))}")
+    print("health: listener=unknown bus=unknown postflight=unknown")
+    print(f"queue: pending=unknown attempts={ledger.get('attempts', 0)}")
+    print(f"first_failure={failures[0].get('reason', '') if failures else 'none'}")
+    print(f"next_legal_action={packet.get('next_action', 'stop')}")
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    try:
+        _, (ledger, packet) = _load_run(args)
+    except ManifestError as exc:
+        print(f"ERROR: resume unavailable: {exc}", file=sys.stderr)
+        return 1
+    action = str(packet.get("next_action", "stop"))
+    allowed = {
+        "clean_checkout", "listener_lease", "dispatch", "trusted_postflight",
+        "verify_pr_ci", "ledger_finalize", "refresh_main", "stop",
+    }
+    if action not in allowed:
+        print(
+            f"ERROR: resume denied; next action '{action}' is not protocol-authorized",
+            file=sys.stderr,
+        )
+        return 1
+    if ledger.get("terminal_state"):
+        print(f"run={args.run} terminal={ledger['terminal_state']}; no resume action is legal")
+        return 0
+    print(f"run={args.run} resume={action}")
+    print("only this single next action is legal; model replay and requeue are forbidden")
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    ops = _ops_module()
+    try:
+        repo = Path(args.repo).resolve()
+        card = _resolve_card(args.card, repo)
+        values = derive_manifest(
+            card,
+            branch=args.branch,
+            tool=args.tool,
+            model=args.model,
+            rework_budget=args.rework_budget,
+        )
+        run_id = args.run or values["task_id"]
+        authority_path = repo / "scripts" / "authority-manifest.example.json"
+        authority = ops.authority_manifest_binding(ops.load_authority_manifest(authority_path))
+        base = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        packet = ops.build_context_packet(
+            run_id=run_id, taskcard=str(card.relative_to(repo)), frozen_base=base,
+            branch=values["branch"], authority_manifest=authority,
+            next_action="clean_checkout", stage="implement",
+        )
+        ops.RunLedger(Path(args.state_root), run_id).initialize(
+            packet,
+            stage="implement",
+            max_attempts=1,
+            rework_budget=args.rework_budget,
+        )
+    except (ManifestError, OSError, subprocess.CalledProcessError, ops.ControlPlaneDenied) as exc:
+        print(f"ERROR: run failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"run={run_id} stage=implement next=clean_checkout")
+    print("serial runbook initialized; use awf status --run and awf resume --run")
+    return 0
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    scripts = _find_project_root() / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        import awf_dispatch
+        awf_dispatch.load_optional_config()
+        awf_dispatch.dispatch(args)
+    except RuntimeError as exc:
+        print(f"ERROR: dispatch failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _print_resource(resource) -> None:
     meta = resource.metadata
     print(f"apiVersion: {resource.apiVersion}")
@@ -240,6 +399,65 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser = subparsers.add_parser("inspect", help="Inspect a resource file")
     inspect_parser.add_argument("target", help="File to inspect")
     inspect_parser.set_defaults(func=cmd_inspect)
+
+    setup_parser = subparsers.add_parser("setup", help="Create a credential-free owner RunManifest")
+    setup_parser.add_argument("--repo", default=".")
+    setup_parser.add_argument("--card", required=True)
+    setup_parser.add_argument("--manifest", default="")
+    setup_parser.add_argument("--branch", default="")
+    setup_parser.add_argument("--tool", default="")
+    setup_parser.add_argument("--model", default="")
+    setup_parser.add_argument("--rework-budget", type=int, default=1)
+    setup_parser.add_argument("--upstream-repo", default="")
+    setup_parser.add_argument("--head-repo", default="")
+    setup_parser.add_argument("--upstream-remote", default="upstream")
+    setup_parser.add_argument("--head-remote", default="fork")
+    setup_parser.add_argument("--base-ref", default="main")
+    setup_parser.add_argument("--replace", action="store_true")
+    setup_parser.set_defaults(func=cmd_setup)
+
+    dispatch_parser = subparsers.add_parser(
+        "dispatch", help="Dispatch a TaskCard from its manifest"
+    )
+    dispatch_parser.add_argument("--repo", default=".", type=Path)
+    dispatch_parser.add_argument("--card", required=True)
+    dispatch_parser.add_argument("--manifest", type=Path, default=None)
+    dispatch_parser.add_argument("--branch", default="")
+    dispatch_parser.add_argument("--to", default="coder")
+    dispatch_parser.add_argument("--tool", default="")
+    dispatch_parser.add_argument("--model", default="")
+    dispatch_parser.add_argument("--report", default="")
+    dispatch_parser.add_argument("--review-report", default="")
+    dispatch_parser.add_argument("--upstream-repo", default="")
+    dispatch_parser.add_argument("--upstream-remote", default="upstream")
+    dispatch_parser.add_argument("--head-repo", default="")
+    dispatch_parser.add_argument("--head-remote", default="fork")
+    dispatch_parser.add_argument("--base-ref", default="main")
+    dispatch_parser.add_argument("--type", dest="event_type", default="task:awf-impl-v3")
+    dispatch_parser.add_argument("--no-push", action="store_true")
+    dispatch_parser.add_argument("--dry-run", action="store_true")
+    dispatch_parser.set_defaults(func=cmd_dispatch)
+
+    run_parser = subparsers.add_parser("run", help="Initialize the bounded serial operator run")
+    run_parser.add_argument("--repo", default=".")
+    run_parser.add_argument("--card", required=True)
+    run_parser.add_argument("--run", default="")
+    run_parser.add_argument("--branch", default="")
+    run_parser.add_argument("--tool", default="")
+    run_parser.add_argument("--model", default="")
+    run_parser.add_argument(
+        "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
+    )
+    run_parser.add_argument("--rework-budget", type=int, default=1)
+    run_parser.set_defaults(func=cmd_run)
+
+    for name, handler in (("status", cmd_status), ("resume", cmd_resume)):
+        operator_parser = subparsers.add_parser(name, help=f"{name.title()} a bounded operator run")
+        operator_parser.add_argument("--run", required=True)
+        operator_parser.add_argument(
+            "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
+        )
+        operator_parser.set_defaults(func=handler)
 
     args = parser.parse_args(argv)
     return args.func(args)
