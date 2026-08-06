@@ -268,8 +268,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     if not isinstance(queue, dict):
         queue = {}
     health_values = {
-        name: str(health.get(name) or "not_recorded")
-        for name in ("listener", "bus", "postflight")
+        name: str(health.get(name) or "not_recorded") for name in ("listener", "bus", "postflight")
     }
     pending = str(queue.get("pending") or "not_recorded")
     print(
