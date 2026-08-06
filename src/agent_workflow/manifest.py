@@ -94,7 +94,9 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
     paths = value.get("report_paths", {})
     if not isinstance(paths, dict) or set(paths) != {"implementation", "review"}:
         raise ManifestError("manifest report_paths must contain implementation and review")
-    if any(not isinstance(v, str) or not v or "\\" in v or ".." in v.split("/") for v in paths.values()):
+    if any(
+        not isinstance(v, str) or not v or "\\" in v or ".." in v.split("/") for v in paths.values()
+    ):
         raise ManifestError("manifest report paths are invalid")
     models = value.get("models", {})
     if not isinstance(models, dict) or any(
