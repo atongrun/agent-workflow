@@ -2281,7 +2281,7 @@ def test_trusted_runner_normalizes_one_line_review_envelope_before_checkpoint(tm
     assert report.read_text(encoding="utf-8").startswith("<!-- awf-review-report\n")
 
 
-def test_artifact_invalid_checkpoint_is_bounded_and_preserves_report_binding(tmp_path):
+def test_artifact_invalid_checkpoint_is_bounded_and_preserves_report_binding(tmp_path, capsys):
     evidence = awf_role.RunEvidence(901, "reviewer", state_root=tmp_path / "state")
     provenance = _pr_provenance(pull_request=28)
     input_context = {
@@ -2325,8 +2325,9 @@ def test_artifact_invalid_checkpoint_is_bounded_and_preserves_report_binding(tmp
     assert diagnosed["phase"] == "model_imported"
     assert diagnosed["facts"]["artifact_status"] == "artifact_invalid"
     assert diagnosed["facts"]["review_report_sha256"] == "invalid-bound-sha"
-    with pytest.raises(SystemExit, match="exhausted"):
+    with pytest.raises(SystemExit, match="1"):
         awf_role.mark_artifact_invalid(evidence, path, diagnosed, "schema rejected")
+    assert "artifact_invalid recovery is exhausted" in capsys.readouterr().err
 
 
 def test_parse_review_report_rejects_multiple_fenced_wrappers(tmp_path):
