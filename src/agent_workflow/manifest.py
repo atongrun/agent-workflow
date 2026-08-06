@@ -10,9 +10,9 @@ import json
 import os
 import re
 import stat
-import subprocess
 import tempfile
 from pathlib import Path
+from subprocess import run as _run
 from typing import Any
 
 FORMAT = "awf.run-manifest.v1"
@@ -67,8 +67,8 @@ def _validate_path(path: Path) -> None:
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
         raise ManifestError("manifest must be a regular, non-symlink file")
     if os.name == "nt":
-        acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
-        identity = subprocess.run(["whoami"], capture_output=True, text=True)
+        acl = _run(["icacls", str(path)], capture_output=True, text=True)
+        identity = _run(["whoami"], capture_output=True, text=True)
         principal = identity.stdout.strip() if identity.returncode == 0 else ""
         if acl.returncode != 0 or not principal:
             raise ManifestError("could not verify manifest owner ACL")
@@ -106,11 +106,11 @@ def _parse_windows_aces(path: Path, output: str) -> list[tuple[str, str]]:
 
 def _lock_windows_manifest(path: Path) -> None:
     """Restrict a manifest ACL to the current Windows principal."""
-    identity = subprocess.run(["whoami"], capture_output=True, text=True)
+    identity = _run(["whoami"], capture_output=True, text=True)
     principal = identity.stdout.strip() if identity.returncode == 0 else ""
     if not principal:
         raise ManifestError("could not determine manifest owner")
-    locked = subprocess.run(
+    locked = _run(
         ["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"],
         capture_output=True,
         text=True,
@@ -118,7 +118,7 @@ def _lock_windows_manifest(path: Path) -> None:
     if locked.returncode != 0:
         raise ManifestError("could not apply owner-only manifest ACL")
     for _ in range(3):
-        acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+        acl = _run(["icacls", str(path)], capture_output=True, text=True)
         if acl.returncode != 0:
             raise ManifestError("could not verify manifest owner ACL")
         entries = _parse_windows_aces(path, acl.stdout)
@@ -131,7 +131,7 @@ def _lock_windows_manifest(path: Path) -> None:
         ]
         for owner in extras:
             for removal in ("/remove:g", "/remove:d"):
-                removed = subprocess.run(
+                removed = _run(
                     ["icacls", str(path), removal, owner],
                     capture_output=True,
                     text=True,
