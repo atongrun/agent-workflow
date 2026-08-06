@@ -73,7 +73,9 @@ def _validate_path(path: Path) -> None:
         if acl.returncode != 0 or not principal:
             raise ManifestError("could not verify manifest owner ACL")
         entries = _parse_windows_aces(path, acl.stdout)
-        if not entries or any(not _same_windows_principal(owner, principal) for owner, _ in entries):
+        if not entries or any(
+            not _same_windows_principal(owner, principal) for owner, _ in entries
+        ):
             raise ManifestError("manifest ACL grants another principal")
         if any("(I)" in permissions for _, permissions in entries):
             raise ManifestError("manifest ACL must not be inherited")
@@ -123,7 +125,9 @@ def _lock_windows_manifest(path: Path) -> None:
         if not entries:
             raise ManifestError("could not parse manifest owner ACL")
         extras = [
-            owner for owner, _permissions in entries if not _same_windows_principal(owner, principal)
+            owner
+            for owner, _permissions in entries
+            if not _same_windows_principal(owner, principal)
         ]
         for owner in extras:
             for removal in ("/remove:g", "/remove:d"):
