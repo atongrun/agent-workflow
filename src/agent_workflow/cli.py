@@ -9,7 +9,14 @@ from pathlib import Path
 
 from agent_workflow import __version__
 from agent_workflow.errors import ParseError
-from agent_workflow.manifest import ManifestError, derive_manifest, write_manifest
+from agent_workflow.manifest import (
+    ManifestError,
+    default_manifest_path,
+    derive_manifest,
+    load_manifest,
+    resolve_manifest_card,
+    write_manifest,
+)
 from agent_workflow.validation import (
     load_role_map_from_files,
     parse_all_resources,
@@ -183,6 +190,23 @@ def _resolve_card(card: str, repo: Path) -> Path:
     raise ManifestError(f"TaskCard not found: {card}")
 
 
+def _load_owner_manifest(repo: Path, card: Path, path: str = "") -> tuple[dict, Path]:
+    """Load the one owner manifest and ensure it belongs to this TaskCard."""
+    manifest_path = Path(path).expanduser() if path else default_manifest_path(repo)
+    try:
+        values = load_manifest(manifest_path)
+    except ManifestError as exc:
+        raise ManifestError(f"owner RunManifest unavailable: {exc}") from exc
+    if resolve_manifest_card(values, repo) != card.resolve():
+        raise ManifestError("owner RunManifest card does not match --card")
+    return values, manifest_path.resolve()
+
+
+def _manifest_value(values: dict, key: str, default: str = "") -> str:
+    value = values.get(key, default)
+    return str(value) if value is not None else default
+
+
 def _ops_module():
     root = _find_project_root()
     scripts = root / "scripts"
@@ -237,14 +261,30 @@ def cmd_status(args: argparse.Namespace) -> int:
         for item in ledger.get("decisions", [])
         if isinstance(item, dict) and item.get("status") == "rejected"
     ]
+    health = packet.get("health") or ledger.get("health") or {}
+    if not isinstance(health, dict):
+        health = {}
+    queue = packet.get("queue") or ledger.get("queue") or {}
+    if not isinstance(queue, dict):
+        queue = {}
+    health_values = {
+        name: str(health.get(name) or "not_recorded")
+        for name in ("listener", "bus", "postflight")
+    }
+    pending = str(queue.get("pending") or "not_recorded")
     print(
         f"run={args.run} state={ledger.get('terminal_state') or 'running'} "
         f"stage={packet.get('stage', ledger.get('stage', ''))}"
     )
     checkpoint = packet.get("phase") or packet.get("transition") or "not_recorded"
     print(f"checkpoint={checkpoint}")
-    print("health: listener=unknown bus=unknown postflight=unknown")
-    print(f"queue: pending=unknown attempts={ledger.get('attempts', 0)}")
+    print(
+        "health: "
+        f"listener={health_values['listener']} "
+        f"bus={health_values['bus']} "
+        f"postflight={health_values['postflight']}"
+    )
+    print(f"queue: pending={pending} attempts={ledger.get('attempts', 0)}")
     print(f"first_failure={failures[0].get('reason', '') if failures else 'none'}")
     print(f"next_legal_action={packet.get('next_action', 'stop')}")
     return 0
@@ -286,14 +326,35 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         repo = Path(args.repo).resolve()
         card = _resolve_card(args.card, repo)
-        values = derive_manifest(
-            card,
-            branch=args.branch,
-            tool=args.tool,
-            model=args.model,
-            rework_budget=args.rework_budget,
-        )
-        run_id = args.run or values["task_id"]
+        values, _ = _load_owner_manifest(repo, card, args.manifest)
+        supplied = {
+            "branch": args.branch,
+            "tool": args.tool,
+            "model": args.model,
+        }
+        expected = {
+            "branch": _manifest_value(values, "branch"),
+            "tool": _manifest_value(values.get("models", {}), "tool"),
+            "model": _manifest_value(values.get("models", {}), "model"),
+        }
+        if not expected["tool"]:
+            raise ManifestError("owner RunManifest tool is empty; rerun awf setup --replace --tool")
+        for field, value in expected.items():
+            if supplied[field] and supplied[field] != value:
+                raise ManifestError(f"--{field} conflicts with owner RunManifest")
+        manifest_budget = values.get("rework_budget", 0)
+        if (
+            args.rework_budget is not None
+            and args.rework_budget != 1
+            and args.rework_budget != manifest_budget
+        ):
+            raise ManifestError("--rework-budget conflicts with owner RunManifest")
+        canonical_run_id = f"task-{str(values['branch']).rsplit('/', 1)[-1]}"
+        if args.run and args.run != canonical_run_id:
+            raise ManifestError(
+                f"--run must be {canonical_run_id!r} to match trusted listener recovery"
+            )
+        run_id = canonical_run_id
         authority_path = repo / "scripts" / "authority-manifest.example.json"
         authority = ops.authority_manifest_binding(ops.load_authority_manifest(authority_path))
         base = subprocess.run(
@@ -315,7 +376,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             packet,
             stage="implement",
             max_attempts=1,
-            rework_budget=args.rework_budget,
+            rework_budget=int(manifest_budget),
         )
     except (ManifestError, OSError, subprocess.CalledProcessError, ops.ControlPlaneDenied) as exc:
         print(f"ERROR: run failed: {exc}", file=sys.stderr)
@@ -417,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_parser.add_argument("--card", required=True)
     setup_parser.add_argument("--manifest", default="")
     setup_parser.add_argument("--branch", default="")
-    setup_parser.add_argument("--tool", default="")
+    setup_parser.add_argument("--tool", required=True)
     setup_parser.add_argument("--model", default="")
     setup_parser.add_argument("--rework-budget", type=int, default=1)
     setup_parser.add_argument("--upstream-repo", default="")
@@ -441,10 +502,10 @@ def main(argv: list[str] | None = None) -> int:
     dispatch_parser.add_argument("--report", default="")
     dispatch_parser.add_argument("--review-report", default="")
     dispatch_parser.add_argument("--upstream-repo", default="")
-    dispatch_parser.add_argument("--upstream-remote", default="upstream")
+    dispatch_parser.add_argument("--upstream-remote", default="")
     dispatch_parser.add_argument("--head-repo", default="")
-    dispatch_parser.add_argument("--head-remote", default="fork")
-    dispatch_parser.add_argument("--base-ref", default="main")
+    dispatch_parser.add_argument("--head-remote", default="")
+    dispatch_parser.add_argument("--base-ref", default="")
     dispatch_parser.add_argument("--type", dest="event_type", default="task:awf-impl-v3")
     dispatch_parser.add_argument("--no-push", action="store_true")
     dispatch_parser.add_argument("--dry-run", action="store_true")
@@ -453,6 +514,7 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = subparsers.add_parser("run", help="Initialize the bounded serial operator run")
     run_parser.add_argument("--repo", default=".")
     run_parser.add_argument("--card", required=True)
+    run_parser.add_argument("--manifest", default="")
     run_parser.add_argument("--run", default="")
     run_parser.add_argument("--branch", default="")
     run_parser.add_argument("--tool", default="")

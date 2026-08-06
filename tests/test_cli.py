@@ -10,6 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from agent_workflow import __version__, cli
+from agent_workflow.manifest import derive_manifest, write_manifest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -478,3 +479,88 @@ class TestCLIInspect:
         assert captured.out == ""
         assert captured.err == "ERROR: simulated read failure\n"
         assert "Traceback" not in captured.err
+
+
+def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_path: Path, capsys):
+    card = tmp_path / "card.md"
+    card.write_text(
+        "## Task ID\n\nDOGFOOD-001\n\n- **Task branch**: `card-branch`\n",
+        encoding="utf-8",
+    )
+    values = derive_manifest(card, branch="owner-branch", tool="codex", rework_budget=4)
+    manifest = write_manifest(tmp_path / ".awf" / "run-manifest.json", values)
+    captured = {}
+
+    class FakeLedger:
+        def __init__(self, _state_root, run_id):
+            captured["run_id"] = run_id
+
+        def initialize(self, packet, **kwargs):
+            captured["packet"] = packet
+            captured["kwargs"] = kwargs
+
+    class FakeOps:
+        ControlPlaneDenied = RuntimeError
+        RunLedger = FakeLedger
+
+        @staticmethod
+        def load_authority_manifest(_path):
+            return {"allowed_operations": ["diagnose"]}
+
+        @staticmethod
+        def authority_manifest_binding(_manifest):
+            return {"sha256": "sha256:" + "a" * 64, "allowed_operations": ["diagnose"]}
+
+        @staticmethod
+        def build_context_packet(**kwargs):
+            return kwargs
+
+    monkeypatch.setattr(cli, "_ops_module", lambda: FakeOps)
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "a" * 40 + "\n", ""),
+    )
+    args = Namespace(
+        repo=str(tmp_path),
+        card="card.md",
+        manifest=str(manifest),
+        branch="",
+        tool="",
+        model="",
+        run="",
+        state_root=str(tmp_path / "state"),
+        rework_budget=1,
+    )
+
+    assert cli.cmd_run(args) == 0
+    assert captured["run_id"] == "task-owner-branch"
+    assert captured["packet"]["branch"] == "owner-branch"
+    assert captured["kwargs"]["rework_budget"] == 4
+    assert "run=task-owner-branch" in capsys.readouterr().out
+
+
+def test_status_labels_unrecorded_health_and_queue(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli,
+        "_load_run",
+        lambda _args: (
+            object,
+            (
+                {"terminal_state": "", "attempts": 0, "decisions": []},
+                {
+                    "stage": "implement",
+                    "phase": "",
+                    "transition": "",
+                    "next_action": "clean_checkout",
+                },
+            ),
+        ),
+    )
+    result = cli.cmd_status(Namespace(run="task-DOGFOOD-001", state_root="/tmp/state"))
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "checkpoint=not_recorded" in output
+    assert "health: listener=not_recorded bus=not_recorded postflight=not_recorded" in output
+    assert "queue: pending=not_recorded attempts=0" in output

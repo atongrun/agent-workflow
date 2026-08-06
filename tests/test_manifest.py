@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_workflow.manifest import ManifestError, derive_manifest, load_manifest, write_manifest
+from agent_workflow.manifest import (
+    ManifestError,
+    default_manifest_path,
+    derive_manifest,
+    load_manifest,
+    resolve_manifest_card,
+    write_manifest,
+)
 
 
 def card(path: Path, task_id: str = "DOGFOOD-001") -> Path:
@@ -37,3 +44,11 @@ def test_manifest_replace_is_explicit(tmp_path: Path):
     path = write_manifest(tmp_path / "manifest.json", values)
     with pytest.raises(ManifestError, match="already exists"):
         write_manifest(path, values, replace=False)
+
+
+def test_manifest_resolves_repository_default_and_bound_card(tmp_path: Path):
+    task_card = card(tmp_path / "card.md")
+    values = derive_manifest(task_card)
+
+    assert default_manifest_path(tmp_path) == tmp_path / ".awf" / "run-manifest.json"
+    assert resolve_manifest_card(values, tmp_path) == task_card.resolve()

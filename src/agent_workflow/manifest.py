@@ -29,10 +29,24 @@ _ALLOWED = {
     "provenance",
 }
 _PROVENANCE_KEYS = {"upstream_repo", "head_repo", "upstream_remote", "head_remote", "base_ref"}
+DEFAULT_MANIFEST_NAME = ".awf/run-manifest.json"
 
 
 class ManifestError(RuntimeError):
     """Credential-safe manifest validation failure."""
+
+
+def default_manifest_path(repo: Path) -> Path:
+    """Return the repository-local owner manifest location."""
+    return Path(repo).resolve() / DEFAULT_MANIFEST_NAME
+
+
+def resolve_manifest_card(value: dict[str, Any], repo: Path) -> Path:
+    """Resolve and validate the card bound into an owner manifest."""
+    card = Path(str(value["card"]))
+    if not card.is_absolute():
+        card = Path(repo).resolve() / card
+    return card.resolve()
 
 
 def _validate_path(path: Path) -> None:
