@@ -187,6 +187,23 @@ reading or mutating historical events. `scripts/awf_handoff_check.py` remains th
 checklist entry and now renders the Fast report. Role listeners opt into the disposable control
 route with `--enable-preflight`.
 
+## Thin Operations Menu
+
+The non-core operator surface has one owner-controlled `RunManifest` and a
+bounded serial runbook:
+
+```bash
+awf setup --repo . --card <path-or-id>
+awf run --repo . --card <path-or-id>
+awf status --run <run-id>
+awf resume --run <run-id>
+```
+
+`awf setup` writes only credential-free `.awf/run-manifest.json`; secrets remain
+in the existing owner-only `dispatch.env`, and `.envrc` is never written.
+Resume is fail-closed and cannot replay a model, ACK, requeue, or historical
+delivery.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream

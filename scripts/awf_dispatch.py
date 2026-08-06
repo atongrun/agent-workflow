@@ -16,6 +16,11 @@ from awf_config import ConfigError, default_config_path, load_into_environment, 
 from awf_delivery import canonical_json, canonical_payload_sha256, make_delivery_id
 
 try:
+    from agent_workflow.manifest import ManifestError, derive_manifest, load_manifest
+except ModuleNotFoundError:
+    from src.agent_workflow.manifest import ManifestError, derive_manifest, load_manifest
+
+try:
     from awf_executor import CompletedProcess, ExecutionFailure
     from awf_executor import run as run_command
 except ModuleNotFoundError:  # package import in tests
@@ -174,9 +179,10 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog="awf-dispatch")
     value.add_argument("--repo", required=True, type=Path)
     value.add_argument("--card", required=True)
-    value.add_argument("--branch", required=True)
+    value.add_argument("--branch", default="")
+    value.add_argument("--manifest", type=Path, default=None)
     value.add_argument("--to", default="coder")
-    value.add_argument("--tool", default="opencode")
+    value.add_argument("--tool", default="")
     value.add_argument("--model", default="")
     value.add_argument("--report", default="")
     value.add_argument("--review-report", default="")
@@ -193,9 +199,70 @@ def parser() -> argparse.ArgumentParser:
 
 def dispatch(args: argparse.Namespace) -> None:
     repo = args.repo.resolve()
-    card_path = repo / args.card
+    card_path = Path(args.card)
+    if not card_path.is_absolute():
+        card_path = repo / card_path
+    if not card_path.exists():
+        card_path = next(
+            (
+                item
+                for item in (repo / ".awf" / "cards" / args.card, repo / "docs" / args.card)
+                if item.is_file()
+            ),
+            card_path,
+        )
     require(repo.is_dir(), f"repo not found: {repo}")
     require(card_path.is_file(), f"card not found: {card_path}")
+    manifest = None
+    if args.manifest is not None:
+        try:
+            manifest = load_manifest(args.manifest)
+        except ManifestError as exc:
+            fail(f"invalid RunManifest: {exc}")
+        manifest_card = Path(str(manifest["card"]))
+        if not manifest_card.is_absolute():
+            manifest_card = repo / manifest_card
+        if manifest_card.resolve() != card_path.resolve():
+            fail("RunManifest card does not match --card")
+    elif not args.branch:
+        try:
+            manifest = derive_manifest(card_path, tool=args.tool, model=args.model)
+        except ManifestError as exc:
+            fail(f"cannot derive RunManifest from TaskCard: {exc}")
+    if manifest is not None:
+        expected = {
+            "branch": str(manifest["branch"]),
+            "tool": str(manifest.get("models", {}).get("tool", "")),
+            "model": str(manifest.get("models", {}).get("model", "")),
+            "report": str(manifest["report_paths"]["implementation"]),
+            "review_report": str(manifest["report_paths"]["review"]),
+        }
+        for field, value in expected.items():
+            supplied = getattr(args, field)
+            if supplied and value and supplied != value:
+                fail(f"--{field.replace('_', '-')} conflicts with owner RunManifest")
+            if value:
+                setattr(args, field, value)
+        if args.event_type == "task:awf-impl-v3":
+            args.event_type = str(manifest.get("routes", {}).get("implement", args.event_type))
+        provenance_values = manifest.get("provenance", {})
+        for field in ("upstream_repo", "head_repo", "upstream_remote", "head_remote", "base_ref"):
+            value = str(provenance_values.get(field, ""))
+            if value:
+                supplied = getattr(args, field)
+                if (
+                    supplied
+                    and supplied != value
+                    and supplied
+                    != {
+                        "upstream_remote": "upstream",
+                        "head_remote": "fork",
+                        "base_ref": "main",
+                    }.get(field, "")
+                ):
+                    fail(f"--{field.replace('_', '-')} conflicts with owner RunManifest")
+                setattr(args, field, value)
+    args.tool = args.tool or "opencode"
     is_v3 = args.event_type.endswith("-v3")
     task_id = args.branch.rsplit("/", 1)[-1]
     report = args.report or f".awf/artifacts/impl-report-{task_id}.md"
