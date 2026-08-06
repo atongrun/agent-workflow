@@ -9,6 +9,7 @@ from pathlib import Path
 
 from agent_workflow import __version__
 from agent_workflow.errors import ParseError
+from agent_workflow.manifest import ManifestError, derive_manifest, write_manifest
 from agent_workflow.validation import (
     load_role_map_from_files,
     parse_all_resources,
@@ -18,7 +19,6 @@ from agent_workflow.validation import (
     validate_role_semantics,
     validate_workflow_semantics,
 )
-from agent_workflow.manifest import ManifestError, derive_manifest, load_manifest, write_manifest
 
 ROLE_MAP_UNAVAILABLE_WARNING = (
     "role existence checks skipped: no named Role resources found in the validation target "
@@ -257,8 +257,14 @@ def cmd_resume(args: argparse.Namespace) -> int:
         return 1
     action = str(packet.get("next_action", "stop"))
     allowed = {
-        "clean_checkout", "listener_lease", "dispatch", "trusted_postflight",
-        "verify_pr_ci", "ledger_finalize", "refresh_main", "stop",
+        "clean_checkout",
+        "listener_lease",
+        "dispatch",
+        "trusted_postflight",
+        "verify_pr_ci",
+        "ledger_finalize",
+        "refresh_main",
+        "stop",
     }
     if action not in allowed:
         print(
@@ -296,9 +302,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             check=True,
         ).stdout.strip()
         packet = ops.build_context_packet(
-            run_id=run_id, taskcard=str(card.relative_to(repo)), frozen_base=base,
-            branch=values["branch"], authority_manifest=authority,
-            next_action="clean_checkout", stage="implement",
+            run_id=run_id,
+            taskcard=str(card.relative_to(repo)),
+            frozen_base=base,
+            branch=values["branch"],
+            authority_manifest=authority,
+            next_action="clean_checkout",
+            stage="implement",
         )
         ops.RunLedger(Path(args.state_root), run_id).initialize(
             packet,
@@ -320,6 +330,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         sys.path.insert(0, str(scripts))
     try:
         import awf_dispatch
+
         awf_dispatch.load_optional_config()
         awf_dispatch.dispatch(args)
     except RuntimeError as exc:

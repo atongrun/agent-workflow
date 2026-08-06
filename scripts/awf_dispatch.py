@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from awf_artifact_contract import ArtifactContractError, compile_stage_artifact_contract
 from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_delivery import canonical_json, canonical_payload_sha256, make_delivery_id
+
 try:
     from agent_workflow.manifest import ManifestError, derive_manifest, load_manifest
 except ModuleNotFoundError:
@@ -245,17 +246,20 @@ def dispatch(args: argparse.Namespace) -> None:
         if args.event_type == "task:awf-impl-v3":
             args.event_type = str(manifest.get("routes", {}).get("implement", args.event_type))
         provenance_values = manifest.get("provenance", {})
-        for field in (
-            "upstream_repo", "head_repo", "upstream_remote", "head_remote", "base_ref"
-        ):
+        for field in ("upstream_repo", "head_repo", "upstream_remote", "head_remote", "base_ref"):
             value = str(provenance_values.get(field, ""))
             if value:
                 supplied = getattr(args, field)
-                if supplied and supplied != value and supplied != {
-                    "upstream_remote": "upstream",
-                    "head_remote": "fork",
-                    "base_ref": "main",
-                }.get(field, ""):
+                if (
+                    supplied
+                    and supplied != value
+                    and supplied
+                    != {
+                        "upstream_remote": "upstream",
+                        "head_remote": "fork",
+                        "base_ref": "main",
+                    }.get(field, "")
+                ):
                     fail(f"--{field.replace('_', '-')} conflicts with owner RunManifest")
                 setattr(args, field, value)
     args.tool = args.tool or "opencode"

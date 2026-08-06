@@ -28,9 +28,7 @@ _ALLOWED = {
     "rework_budget",
     "provenance",
 }
-_PROVENANCE_KEYS = {
-    "upstream_repo", "head_repo", "upstream_remote", "head_remote", "base_ref"
-}
+_PROVENANCE_KEYS = {"upstream_repo", "head_repo", "upstream_remote", "head_remote", "base_ref"}
 
 
 class ManifestError(RuntimeError):
@@ -87,17 +85,16 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
     if not _ID_RE.fullmatch(value["task_id"]):
         raise ManifestError("manifest task_id is invalid")
     routes = value.get("routes", {})
-    if not isinstance(routes, dict) or not routes or any(
-        not isinstance(k, str) or not isinstance(v, str) or not v for k, v in routes.items()
+    if (
+        not isinstance(routes, dict)
+        or not routes
+        or any(not isinstance(k, str) or not isinstance(v, str) or not v for k, v in routes.items())
     ):
         raise ManifestError("manifest routes must be a non-empty string map")
     paths = value.get("report_paths", {})
     if not isinstance(paths, dict) or set(paths) != {"implementation", "review"}:
         raise ManifestError("manifest report_paths must contain implementation and review")
-    if any(
-        not isinstance(v, str) or not v or "\\" in v or ".." in v.split("/")
-        for v in paths.values()
-    ):
+    if any(not isinstance(v, str) or not v or "\\" in v or ".." in v.split("/") for v in paths.values()):
         raise ManifestError("manifest report paths are invalid")
     models = value.get("models", {})
     if not isinstance(models, dict) or any(

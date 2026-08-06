@@ -2314,7 +2314,11 @@ def check_report(report_path: str) -> None:
         except (json.JSONDecodeError, DuplicateReviewReportKey):
             die("ImplementationReport machine envelope is malformed")
         if not isinstance(value, dict) or set(value) != {
-            "summary", "changed_files", "commands", "tests", "source_revision"
+            "summary",
+            "changed_files",
+            "commands",
+            "tests",
+            "source_revision",
         }:
             die("ImplementationReport machine envelope has missing or unknown fields")
 
@@ -2358,9 +2362,7 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-_INLINE_REVIEW_REPORT_RE = re.compile(
-    r"<!--\s*awf-review-report\s+(\{.*?\})\s*-->", re.DOTALL
-)
+_INLINE_REVIEW_REPORT_RE = re.compile(r"<!--\s*awf-review-report\s+(\{.*?\})\s*-->", re.DOTALL)
 
 
 def normalize_machine_review_envelope(workspace: str, report_path: str) -> None:
@@ -2382,9 +2384,11 @@ def normalize_machine_review_envelope(workspace: str, report_path: str) -> None:
         return
     if not isinstance(machine, dict):
         return
-    canonical = "<!-- awf-review-report\n" + json.dumps(
-        machine, ensure_ascii=False, indent=2, sort_keys=True
-    ) + "\n-->"
+    canonical = (
+        "<!-- awf-review-report\n"
+        + json.dumps(machine, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n-->"
+    )
     updated = markdown[: match.start()] + canonical + markdown[match.end() :]
     if updated != markdown:
         source.write_text(updated, encoding="utf-8", newline="\n")
