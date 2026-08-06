@@ -241,7 +241,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         f"run={args.run} state={ledger.get('terminal_state') or 'running'} "
         f"stage={packet.get('stage', ledger.get('stage', ''))}"
     )
-    print(f"checkpoint={packet.get('phase', packet.get('transition', 'not_recorded'))}")
+    checkpoint = packet.get("phase") or packet.get("transition") or "not_recorded"
+    print(f"checkpoint={checkpoint}")
     print("health: listener=unknown bus=unknown postflight=unknown")
     print(f"queue: pending=unknown attempts={ledger.get('attempts', 0)}")
     print(f"first_failure={failures[0].get('reason', '') if failures else 'none'}")
