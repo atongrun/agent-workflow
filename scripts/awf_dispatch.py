@@ -16,9 +16,19 @@ from awf_config import ConfigError, default_config_path, load_into_environment, 
 from awf_delivery import canonical_json, canonical_payload_sha256, make_delivery_id
 
 try:
-    from agent_workflow.manifest import ManifestError, derive_manifest, load_manifest
+    from agent_workflow.manifest import (
+        ManifestError,
+        default_manifest_path,
+        load_manifest,
+        resolve_manifest_card,
+    )
 except ModuleNotFoundError:
-    from src.agent_workflow.manifest import ManifestError, derive_manifest, load_manifest
+    from src.agent_workflow.manifest import (
+        ManifestError,
+        default_manifest_path,
+        load_manifest,
+        resolve_manifest_card,
+    )
 
 try:
     from awf_executor import CompletedProcess, ExecutionFailure
@@ -187,10 +197,10 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--report", default="")
     value.add_argument("--review-report", default="")
     value.add_argument("--upstream-repo", default="")
-    value.add_argument("--upstream-remote", default="upstream")
+    value.add_argument("--upstream-remote", default="")
     value.add_argument("--head-repo", default="")
-    value.add_argument("--head-remote", default="fork")
-    value.add_argument("--base-ref", default="main")
+    value.add_argument("--head-remote", default="")
+    value.add_argument("--base-ref", default="")
     value.add_argument("--type", dest="event_type", default="task:awf-impl-v3")
     value.add_argument("--no-push", action="store_true")
     value.add_argument("--dry-run", action="store_true")
@@ -214,21 +224,20 @@ def dispatch(args: argparse.Namespace) -> None:
     require(repo.is_dir(), f"repo not found: {repo}")
     require(card_path.is_file(), f"card not found: {card_path}")
     manifest = None
-    if args.manifest is not None:
+    manifest_path = args.manifest
+    if manifest_path is None:
+        candidate = default_manifest_path(repo)
+        if candidate.is_file():
+            manifest_path = candidate
+    if manifest_path is not None:
         try:
-            manifest = load_manifest(args.manifest)
+            manifest = load_manifest(manifest_path)
         except ManifestError as exc:
             fail(f"invalid RunManifest: {exc}")
-        manifest_card = Path(str(manifest["card"]))
-        if not manifest_card.is_absolute():
-            manifest_card = repo / manifest_card
-        if manifest_card.resolve() != card_path.resolve():
+        if resolve_manifest_card(manifest, repo) != card_path.resolve():
             fail("RunManifest card does not match --card")
     elif not args.branch:
-        try:
-            manifest = derive_manifest(card_path, tool=args.tool, model=args.model)
-        except ManifestError as exc:
-            fail(f"cannot derive RunManifest from TaskCard: {exc}")
+        fail("owner RunManifest is required when --branch is omitted; run awf setup first")
     if manifest is not None:
         expected = {
             "branch": str(manifest["branch"]),
@@ -239,7 +248,7 @@ def dispatch(args: argparse.Namespace) -> None:
         }
         for field, value in expected.items():
             supplied = getattr(args, field)
-            if supplied and value and supplied != value:
+            if supplied and supplied != value:
                 fail(f"--{field.replace('_', '-')} conflicts with owner RunManifest")
             if value:
                 setattr(args, field, value)
@@ -250,19 +259,13 @@ def dispatch(args: argparse.Namespace) -> None:
             value = str(provenance_values.get(field, ""))
             if value:
                 supplied = getattr(args, field)
-                if (
-                    supplied
-                    and supplied != value
-                    and supplied
-                    != {
-                        "upstream_remote": "upstream",
-                        "head_remote": "fork",
-                        "base_ref": "main",
-                    }.get(field, "")
-                ):
+                if supplied and supplied != value:
                     fail(f"--{field.replace('_', '-')} conflicts with owner RunManifest")
                 setattr(args, field, value)
-    args.tool = args.tool or "opencode"
+    require(bool(args.tool), "dispatch requires an explicit --tool or owner RunManifest selection")
+    args.upstream_remote = args.upstream_remote or "upstream"
+    args.head_remote = args.head_remote or "fork"
+    args.base_ref = args.base_ref or "main"
     is_v3 = args.event_type.endswith("-v3")
     task_id = args.branch.rsplit("/", 1)[-1]
     report = args.report or f".awf/artifacts/impl-report-{task_id}.md"

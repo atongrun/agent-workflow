@@ -201,8 +201,12 @@ awf resume --run <run-id>
 
 `awf setup` writes only credential-free `.awf/run-manifest.json`; secrets remain
 in the existing owner-only `dispatch.env`, and `.envrc` is never written.
-Resume is fail-closed and cannot replay a model, ACK, requeue, or historical
-delivery.
+`awf run` and default `awf dispatch` consume that owner manifest and reject
+conflicting execution metadata; `dispatch.env` remains limited to secrets and
+runtime binaries. The default run ID is `task-<branch-task-suffix>`, matching
+trusted listener recovery. Status labels unrecorded health/checkpoint/queue values
+explicitly, and resume is fail-closed: it cannot replay a model, ACK, requeue,
+or historical delivery.
 
 ## Product Gate
 

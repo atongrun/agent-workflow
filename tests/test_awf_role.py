@@ -111,6 +111,8 @@ def native_dispatch_argv(repo: Path, *args: str) -> list[str]:
         str(NATIVE_DISPATCH_PATH),
         "--repo",
         str(repo),
+        "--tool",
+        "opencode",
         *args,
     ]
 
@@ -3546,6 +3548,8 @@ def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path, monkeypatch):
         str(repo),
         "--card",
         "task.md",
+        "--tool",
+        "opencode",
         "--branch",
         "feature/task",
         "--type",

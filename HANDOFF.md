@@ -95,6 +95,18 @@ contract is in
 
 ## Product Position
 
+### Thin operations menu contract
+
+The owner-only `.awf/run-manifest.json` is the sole source for TaskCard-derived
+branch, route, report, model, provenance, and rework metadata. `awf run` and
+default `awf dispatch` validate and consume it; `dispatch.env` supplies only
+secrets and runtime binaries. The serial operator uses the listener-compatible
+`task-<branch-task-suffix>` run ID, and `awf status` renders missing
+health/checkpoint/queue observations as `not_recorded`. Initial manifests with
+an empty tool require an explicit `awf setup --replace --tool <tool>` migration.
+`awf resume` reports one legal next action and does not execute replay, ACK,
+requeue, or redispatch.
+
 Agent Workflow is a model-agnostic development method, structured handoff protocol, and verifiable
 process contract. It isolates scarce high-value-model capacity in downstream projects by assigning
 frequent bounded work to lower-cost models and reserving high-value participation for architecture,
