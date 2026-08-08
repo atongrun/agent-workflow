@@ -155,6 +155,14 @@ with read-only tools and returns the ReviewReport on stdout; the trusted runner 
 to the requested ReviewReport path only after a successful Pi exit. `dispatch.env` may set
 `AWF_PI_BIN` when the `pi` executable is not on `PATH`.
 
+Mixed-role runs freeze both selections in the owner RunManifest and in one machine-readable
+`awf-reviewer-selection` JSON comment in the TaskCard. Dispatch rejects any disagreement before
+Git or Agent Bus mutation. The exact TaskCard commit is already delivery-hash-bound; coder and
+reviewer handlers re-read it after trusted checkout and fail before model invocation on role
+selection drift. Coder handoff uses the frozen reviewer pair, while `REQUEST_CHANGES` returns to
+the frozen coder pair. Cards without the block keep the legacy same-tool selection and v3 payload
+shape.
+
 The operations surface also has one strict, cross-platform Python
 [configuration loader](docs/tasks/config-recovery-maturity-implementation-report.md). Bootstrap,
 handoff checks, listeners, dispatch, and native service entry points share the same data-only
@@ -197,7 +205,9 @@ The non-core operator surface has one owner-controlled `RunManifest` and a
 bounded serial runbook:
 
 ```bash
-awf setup --repo . --card <path-or-id>
+awf setup --repo . --card <path-or-id> \
+  --tool opencode --model <coder-model> \
+  --reviewer-tool pi --reviewer-model <reviewer-model>
 awf run --repo . --card <path-or-id>
 awf status --run <run-id>
 awf resume --run <run-id>

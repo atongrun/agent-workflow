@@ -37,6 +37,7 @@ except ModuleNotFoundError:  # package import in tests
     from .awf_executor import CompletedProcess, ExecutionFailure
     from .awf_executor import run as run_command
 from awf_network import add_url_host_to_no_proxy
+from awf_taskcard import TaskCardContractError, reviewer_selection_contract
 
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9_.-]{1,100}$")
 _REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -194,6 +195,8 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--to", default="coder")
     value.add_argument("--tool", default="")
     value.add_argument("--model", default="")
+    value.add_argument("--reviewer-tool", default="")
+    value.add_argument("--reviewer-model", default="")
     value.add_argument("--report", default="")
     value.add_argument("--review-report", default="")
     value.add_argument("--upstream-repo", default="")
@@ -243,11 +246,13 @@ def dispatch(args: argparse.Namespace) -> None:
             "branch": str(manifest["branch"]),
             "tool": str(manifest.get("models", {}).get("tool", "")),
             "model": str(manifest.get("models", {}).get("model", "")),
+            "reviewer_tool": str(manifest.get("models", {}).get("reviewer_tool", "")),
+            "reviewer_model": str(manifest.get("models", {}).get("reviewer_model", "")),
             "report": str(manifest["report_paths"]["implementation"]),
             "review_report": str(manifest["report_paths"]["review"]),
         }
         for field, value in expected.items():
-            supplied = getattr(args, field)
+            supplied = getattr(args, field, "")
             if supplied and supplied != value:
                 fail(f"--{field.replace('_', '-')} conflicts with owner RunManifest")
             if value:
@@ -263,6 +268,26 @@ def dispatch(args: argparse.Namespace) -> None:
                     fail(f"--{field.replace('_', '-')} conflicts with owner RunManifest")
                 setattr(args, field, value)
     require(bool(args.tool), "dispatch requires an explicit --tool or owner RunManifest selection")
+    try:
+        selections = reviewer_selection_contract(
+            card_path.read_text(encoding="utf-8"),
+            fallback_tool=args.tool,
+            fallback_model=args.model,
+        )
+    except (OSError, UnicodeError, TaskCardContractError) as exc:
+        fail(f"TaskCard reviewer selection rejected before dispatch: {exc}")
+    reviewer_tool_arg = getattr(args, "reviewer_tool", "")
+    reviewer_model_arg = getattr(args, "reviewer_model", "")
+    reviewer_tool = reviewer_tool_arg or args.tool
+    reviewer_model = reviewer_model_arg or args.model
+    require(
+        (selections.coder.tool, selections.coder.model) == (args.tool, args.model),
+        "TaskCard coder selection conflicts with owner RunManifest",
+    )
+    require(
+        (selections.reviewer.tool, selections.reviewer.model) == (reviewer_tool, reviewer_model),
+        "TaskCard reviewer selection conflicts with owner RunManifest",
+    )
     args.upstream_remote = args.upstream_remote or "upstream"
     args.head_remote = args.head_remote or "fork"
     args.base_ref = args.base_ref or "main"

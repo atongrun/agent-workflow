@@ -225,6 +225,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
             branch=args.branch,
             tool=args.tool,
             model=args.model,
+            reviewer_tool=getattr(args, "reviewer_tool", ""),
+            reviewer_model=getattr(args, "reviewer_model", ""),
             rework_budget=args.rework_budget,
             upstream_repo=args.upstream_repo,
             head_repo=args.head_repo,
@@ -330,11 +332,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             "branch": args.branch,
             "tool": args.tool,
             "model": args.model,
+            "reviewer_tool": getattr(args, "reviewer_tool", ""),
+            "reviewer_model": getattr(args, "reviewer_model", ""),
         }
         expected = {
             "branch": _manifest_value(values, "branch"),
             "tool": _manifest_value(values.get("models", {}), "tool"),
             "model": _manifest_value(values.get("models", {}), "model"),
+            "reviewer_tool": _manifest_value(values.get("models", {}), "reviewer_tool"),
+            "reviewer_model": _manifest_value(values.get("models", {}), "reviewer_model"),
         }
         if not expected["tool"]:
             raise ManifestError("owner RunManifest tool is empty; rerun awf setup --replace --tool")
@@ -479,6 +485,8 @@ def main(argv: list[str] | None = None) -> int:
     setup_parser.add_argument("--branch", default="")
     setup_parser.add_argument("--tool", required=True)
     setup_parser.add_argument("--model", default="")
+    setup_parser.add_argument("--reviewer-tool", default="")
+    setup_parser.add_argument("--reviewer-model", default="")
     setup_parser.add_argument("--rework-budget", type=int, default=1)
     setup_parser.add_argument("--upstream-repo", default="")
     setup_parser.add_argument("--head-repo", default="")
@@ -498,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
     dispatch_parser.add_argument("--to", default="coder")
     dispatch_parser.add_argument("--tool", default="")
     dispatch_parser.add_argument("--model", default="")
+    dispatch_parser.add_argument("--reviewer-tool", default="")
+    dispatch_parser.add_argument("--reviewer-model", default="")
     dispatch_parser.add_argument("--report", default="")
     dispatch_parser.add_argument("--review-report", default="")
     dispatch_parser.add_argument("--upstream-repo", default="")
@@ -518,6 +528,8 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--branch", default="")
     run_parser.add_argument("--tool", default="")
     run_parser.add_argument("--model", default="")
+    run_parser.add_argument("--reviewer-tool", default="")
+    run_parser.add_argument("--reviewer-model", default="")
     run_parser.add_argument(
         "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
     )

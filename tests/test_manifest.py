@@ -52,3 +52,39 @@ def test_manifest_resolves_repository_default_and_bound_card(tmp_path: Path):
 
     assert default_manifest_path(tmp_path) == tmp_path / ".awf" / "run-manifest.json"
     assert resolve_manifest_card(values, tmp_path) == task_card.resolve()
+
+
+def test_manifest_derives_independent_coder_and_reviewer_models(tmp_path: Path):
+    values = derive_manifest(
+        card(tmp_path / "card.md"),
+        tool="opencode",
+        model="coder/model",
+        reviewer_tool="pi",
+        reviewer_model="reviewer/model",
+    )
+
+    assert values["models"] == {
+        "tool": "opencode",
+        "model": "coder/model",
+        "reviewer_tool": "pi",
+        "reviewer_model": "reviewer/model",
+    }
+
+
+def test_manifest_defaults_reviewer_selection_to_legacy_coder_selection(tmp_path: Path):
+    values = derive_manifest(
+        card(tmp_path / "card.md"),
+        tool="opencode",
+        model="legacy/model",
+    )
+
+    assert values["models"]["reviewer_tool"] == "opencode"
+    assert values["models"]["reviewer_model"] == "legacy/model"
+
+
+def test_manifest_rejects_partial_reviewer_selection(tmp_path: Path):
+    values = derive_manifest(card(tmp_path / "card.md"), tool="opencode")
+    del values["models"]["reviewer_model"]
+
+    with pytest.raises(ManifestError, match="reviewer selection"):
+        write_manifest(tmp_path / "manifest.json", values)

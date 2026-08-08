@@ -3213,6 +3213,36 @@ def test_reviewer_routes_exactly_one_valid_verdict(
     assert payload["review_report_path"] == ns.review_report
     assert payload["tool"] == "opencode"
     assert payload["model"] == ""
+
+
+def test_pi_reviewer_rework_routes_back_to_frozen_opencode_coder(monkeypatch, tmp_path):
+    content = _review_markdown("REQUEST_CHANGES", failures=[_COMMAND_FAILURE])
+    ns, send_calls, tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        content,
+        tool="pi",
+    )
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    (repo / "task.md").write_text(
+        """card
+<!-- awf-reviewer-selection
+{
+  "coder": {"tool": "opencode", "model": "coder/model"},
+  "reviewer": {"tool": "pi", "model": ""}
+}
+-->
+""",
+        encoding="utf-8",
+    )
+
+    assert awf_role.role_reviewer(ns) == 0
+
+    assert len(tool_calls) == 1
+    assert len(send_calls) == 1
+    payload = send_calls[0][0][3]
+    assert payload["tool"] == "opencode"
+    assert payload["model"] == "coder/model"
     assert payload["review_report"]["format"] == "awf.review-report.v1"
     assert payload["review_report"]["verdict"] in content
     assert payload["review_report"]["markdown"] == content
@@ -5579,6 +5609,31 @@ def test_coder_verified_remote_sha_sends_one_review_event(monkeypatch, tmp_path)
     assert send_calls[0][0][2] == "task:awf-review"
     assert send_calls[0][0][3]["commit"] == "verified-sha"
     assert send_calls[0][0][3]["review_report"] == ".awf/review.md"
+
+
+def test_coder_handoff_uses_frozen_pi_reviewer_selection(monkeypatch, tmp_path):
+    ns, send_calls = _prepare_coder_handoff_test(monkeypatch, tmp_path)
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    with (repo / "task.md").open("a", encoding="utf-8") as handle:
+        handle.write(
+            """
+<!-- awf-reviewer-selection
+{
+  "coder": {"tool": "opencode", "model": ""},
+  "reviewer": {"tool": "pi", "model": "reviewer/model"}
+}
+-->
+"""
+        )
+    monkeypatch.setattr(awf_role, "git", lambda *a, **kw: 0)
+    monkeypatch.setattr(awf_role, "git_out", lambda *a, **kw: "verified-sha")
+
+    assert awf_role.role_coder(ns) == 0
+
+    assert len(send_calls) == 1
+    review_payload = send_calls[0][0][3]
+    assert review_payload["tool"] == "pi"
+    assert review_payload["model"] == "reviewer/model"
 
 
 def test_assert_model_git_state_rejects_local_head_change(repositories):

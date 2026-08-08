@@ -178,6 +178,12 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         not isinstance(k, str) or not isinstance(v, str) for k, v in models.items()
     ):
         raise ManifestError("manifest models must be a string map")
+    model_keys = set(models)
+    if model_keys - {"tool", "model", "reviewer_tool", "reviewer_model"}:
+        raise ManifestError("manifest models contains unknown fields")
+    reviewer_keys = model_keys & {"reviewer_tool", "reviewer_model"}
+    if reviewer_keys and reviewer_keys != {"reviewer_tool", "reviewer_model"}:
+        raise ManifestError("manifest reviewer selection must contain tool and model")
     budget = value.get("rework_budget", 0)
     if not isinstance(budget, int) or isinstance(budget, bool) or not 0 <= budget <= 100:
         raise ManifestError("manifest rework_budget is invalid")
@@ -229,6 +235,8 @@ def derive_manifest(
     branch: str = "",
     tool: str = "",
     model: str = "",
+    reviewer_tool: str = "",
+    reviewer_model: str = "",
     rework_budget: int = 1,
     upstream_repo: str = "",
     head_repo: str = "",
@@ -270,7 +278,12 @@ def derive_manifest(
             "implementation": f".awf/artifacts/impl-report-{task_id}.md",
             "review": f".awf/artifacts/review-report-{task_id}.md",
         },
-        "models": {"tool": tool, "model": model},
+        "models": {
+            "tool": tool,
+            "model": model,
+            "reviewer_tool": reviewer_tool or tool,
+            "reviewer_model": reviewer_model if reviewer_tool or reviewer_model else model,
+        },
         "rework_budget": rework_budget,
         "provenance": {
             key: value
