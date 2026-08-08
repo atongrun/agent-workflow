@@ -516,6 +516,9 @@ def test_listener_preflight_routes_are_explicit_opt_in(tmp_path, monkeypatch):
         "AWF_CODER_TOKEN": "test-token",
     }
     monkeypatch.setattr(awf_listen.os, "environ", environment)
+    monkeypatch.setattr(
+        awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve()
+    )
     monkeypatch.setattr(awf_listen, "load_into_environment", lambda _path: {})
     seen: list[str] = []
     monkeypatch.setattr(

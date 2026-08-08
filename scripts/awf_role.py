@@ -1896,12 +1896,13 @@ def prepare_model_workspace(
     expected_commit: str,
     *,
     state_dir: Path | None = None,
+    workspace_prefix: str = "model-workspace-",
 ) -> str:
     """Create a fresh no-remote clone for one untrusted model invocation."""
     parent = str(state_dir) if state_dir is not None else None
     if state_dir is not None:
         state_dir.mkdir(parents=True, exist_ok=True)
-    workspace = Path(tempfile.mkdtemp(prefix="model-workspace-", dir=parent)).resolve()
+    workspace = Path(tempfile.mkdtemp(prefix=workspace_prefix, dir=parent)).resolve()
     clone = run_command(
         ["git", "clone", "--no-hardlinks", "--no-checkout", source_repo, str(workspace)],
         stdin=DEVNULL,
@@ -2348,6 +2349,100 @@ def fetch_and_checkout_pr_head(
         die("cannot checkout the exact trusted contribution head")
     if git_out(repo, "rev-parse", "--verify", "HEAD^{commit}") != provenance["head_sha"]:
         die("checked out contribution head does not match persisted provenance")
+
+
+def fetch_dispatched_commit(repo: str, branch: str, expected_commit: str) -> str:
+    """Fetch one legacy delivery without reading or changing the source working tree."""
+    if git(repo, "check-ref-format", "--branch", branch) != 0:
+        die(f"invalid task branch {branch!r}")
+    if not _COMMIT_RE.fullmatch(expected_commit):
+        die("event commit must be a 7-64 character hexadecimal Git object ID")
+    remote_ref = f"refs/remotes/origin/{branch}"
+    refspec = f"+refs/heads/{branch}:{remote_ref}"
+    if git(repo, "fetch", "--quiet", "origin", refspec) != 0:
+        die("cannot fetch the dispatched task ref from origin")
+    resolved_expected = git_out(repo, "rev-parse", "--verify", f"{expected_commit}^{{commit}}")
+    remote_head = git_out(repo, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
+    if not resolved_expected:
+        die(f"event commit {expected_commit} is not available after fetch")
+    if remote_head != resolved_expected:
+        die(
+            f"origin/{branch} changed after dispatch; expected {resolved_expected}, "
+            f"found {remote_head}"
+        )
+    return resolved_expected
+
+
+def prepare_terminal_workspace(
+    repo: str,
+    branch: str,
+    expected_commit: str,
+    *,
+    provenance: dict[str, object] | None,
+    evidence: RunEvidence | None,
+) -> str:
+    """Materialize one read-only, event-scoped workspace for terminal verification.
+
+    The listener's configured repository is only a trusted object source. Its index,
+    branch, and working tree are never inspected or changed, so operator files and a
+    coder/reviewer checkout cannot turn a healthy decision into a handler failure.
+    """
+    state_dir = evidence.run_dir if evidence is not None else None
+    parent = str(state_dir) if state_dir is not None else None
+    if state_dir is not None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+    workspace_path = Path(
+        tempfile.mkdtemp(prefix="terminal-workspace-", dir=parent)
+    ).resolve()
+    clone = run_command(
+        ["git", "clone", "--no-hardlinks", "--no-checkout", repo, str(workspace_path)],
+        stdin=DEVNULL,
+        capture_output=True,
+        env=child_env(),
+    )
+    if clone.returncode != 0:
+        die("failed to create isolated terminal workspace")
+    workspace = str(workspace_path)
+    if git(workspace, "remote", "remove", "origin") != 0:
+        die("failed to detach terminal workspace from the source checkout")
+
+    if provenance is not None:
+        remote_names = {
+            str(provenance["upstream_remote"]),
+            str(provenance["head_remote"]),
+        }
+        for remote_name in sorted(remote_names):
+            remote_url = git_out(repo, "remote", "get-url", remote_name)
+            if not remote_url or git(workspace, "remote", "add", remote_name, remote_url) != 0:
+                die(f"terminal workspace cannot bind trusted remote {remote_name}")
+        verify_pr_remote_tuple(workspace, provenance, verify_pr=True, allow_merged=True)
+        commit = str(provenance["head_sha"])
+    else:
+        remote_url = git_out(repo, "remote", "get-url", "origin")
+        if not remote_url or git(workspace, "remote", "add", "origin", remote_url) != 0:
+            die("terminal workspace cannot bind the legacy origin")
+        commit = fetch_dispatched_commit(workspace, branch, expected_commit)
+
+    if git(workspace, "checkout", "--detach", commit) != 0:
+        die("failed to checkout terminal decision commit")
+    for remote_name in git_out(workspace, "remote").splitlines():
+        if remote_name and git(workspace, "remote", "remove", remote_name) != 0:
+            die("failed to remove terminal workspace remotes")
+    if git(workspace, "config", "core.logAllRefUpdates", "false") != 0:
+        die("failed to disable terminal workspace reflogs")
+    logs = workspace_path / ".git" / "logs"
+    if logs.exists():
+        shutil.rmtree(logs)
+    fetch_head = workspace_path / ".git" / "FETCH_HEAD"
+    if fetch_head.exists():
+        fetch_head.unlink()
+    if git_out(workspace, "rev-parse", "--verify", "HEAD^{commit}") != commit:
+        die("terminal workspace does not match the decision commit")
+    if git_out(workspace, "remote"):
+        die("terminal workspace must not retain a Git remote")
+    freeze_model_git_metadata(workspace)
+    record(evidence, "terminal_workspace_ready", workspace=workspace, commit=commit)
+    return workspace
 
 
 def assert_model_git_state(repo: str, branch: str, expected_commit: str) -> None:
@@ -4673,18 +4768,22 @@ def role_architect(a: argparse.Namespace) -> int:
     provenance = None
     if _is_v3(a):
         provenance = provenance_from_args(a, repo, require_pr=True)
-        fetch_and_checkout_pr_head(repo, provenance, verify_pr=True, allow_merged=True)
-    else:
-        fetch_and_checkout(repo, a.branch, a.commit)
+    terminal_repo = prepare_terminal_workspace(
+        repo,
+        a.branch,
+        a.commit,
+        provenance=provenance,
+        evidence=evidence,
+    )
 
-    card_path = resolve_repo_file(repo, a.card, "TaskCard")
+    card_path = resolve_repo_file(terminal_repo, a.card, "TaskCard")
     if not card_path.is_file():
         die("TaskCard is not tracked at the terminal decision commit")
-    check_repo_file_tracked_at_head(repo, a.card, "TaskCard")
-    report_path = resolve_repo_file(repo, a.report, "ImplementationReport")
+    check_repo_file_tracked_at_head(terminal_repo, a.card, "TaskCard")
+    report_path = resolve_repo_file(terminal_repo, a.report, "ImplementationReport")
     check_report(str(report_path))
-    check_report_tracked_at_head(repo, a.report)
-    resolve_review_report_path(repo, a.review_report, a.report)
+    check_report_tracked_at_head(terminal_repo, a.report)
+    resolve_review_report_path(terminal_repo, a.review_report, a.report)
 
     if _control_plane_enabled():
         task_id = a.branch.rsplit("/", 1)[-1]

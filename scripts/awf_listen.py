@@ -20,13 +20,16 @@ with `agent-bus send --to <role> --type control:shutdown`.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_control_plane import (
     ControlPlaneDenied,
+    _lock as control_plane_lock,
     authorize_operation,
     default_state_root,
     load_authority_manifest,
@@ -48,6 +51,135 @@ DEFAULT_ON_TYPE = {
     "coder": "task:awf-impl-v3",
     "reviewer": "task:awf-review-v3",
 }
+
+
+def _pid_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        synchronize = 0x00100000
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == 5
+        try:
+            wait_timeout = 0x00000102
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _read_listener_lease(path: Path) -> dict[str, object] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _git_read(repo: Path, *args: str):
+    try:
+        return run_command(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except ExecutionFailure as exc:
+        die(f"workspace readiness failed: cannot run Git: {exc}")
+
+
+def check_workspace_readiness(repo: Path, role: str) -> Path:
+    """Require a role-owned Git root before any event can be consumed."""
+    resolved = repo.resolve()
+    if not resolved.is_dir():
+        die(f"repo not found: {resolved}")
+    result = _git_read(resolved, "rev-parse", "--is-inside-work-tree")
+    if result.returncode != 0 or result.stdout.strip() != "true":
+        die(f"workspace readiness failed: not a Git worktree: {resolved}")
+    top = _git_read(resolved, "rev-parse", "--show-toplevel")
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != resolved:
+        die(f"workspace ownership failed: --repo must name the Git root: {resolved}")
+    if role in {"coder", "reviewer"}:
+        status = _git_read(resolved, "status", "--porcelain")
+        if status.returncode != 0:
+            die(f"workspace readiness failed: Git status unavailable: {resolved}")
+        if status.stdout.strip():
+            die(
+                f"workspace ownership failed: role={role} requires a dedicated clean repo; "
+                "operator files were left unchanged"
+            )
+    return resolved
+
+
+def acquire_listener_lease(state_root: Path, role: str, repo: Path) -> Path:
+    """Claim one live role and one live role-scoped repository before Bus connect."""
+    lease_dir = state_root.resolve() / "listeners"
+    lease_dir.mkdir(parents=True, exist_ok=True)
+    resolved_repo = os.path.normcase(str(repo.resolve()))
+    own_path = lease_dir / f"{role}.json"
+
+    with control_plane_lock(lease_dir / ".registry.lock"):
+        for path in sorted(lease_dir.glob("*.json")):
+            lease = _read_listener_lease(path)
+            if lease is None:
+                die(f"listener lease is unreadable; inspect before retrying: {path}")
+            if not _pid_alive(lease.get("pid")):
+                path.unlink(missing_ok=True)
+                continue
+            owner_role = str(lease.get("role", path.stem))
+            owner_repo = os.path.normcase(str(lease.get("repo", "")))
+            owner_pid = int(lease["pid"])
+            if owner_role == role:
+                die(
+                    f"duplicate listener: role={role} already owned by pid={owner_pid} "
+                    f"repo={owner_repo or '<unknown>'}"
+                )
+            if owner_repo == resolved_repo:
+                die(
+                    f"role-repo conflict: repo={resolved_repo} is owned by "
+                    f"role={owner_role} pid={owner_pid}"
+                )
+
+        record = {"pid": os.getpid(), "role": role, "repo": resolved_repo}
+        try:
+            fd = os.open(own_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            die(f"duplicate listener: role={role} lease appeared during startup")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(record, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    return own_path
+
+
+def release_listener_lease(path: Path, role: str, repo: Path) -> None:
+    """Release only the exact lease created by this process."""
+    expected = {
+        "pid": os.getpid(),
+        "role": role,
+        "repo": os.path.normcase(str(repo.resolve())),
+    }
+    try:
+        with control_plane_lock(path.parent / ".registry.lock"):
+            lease = _read_listener_lease(path)
+            if lease == expected:
+                path.unlink(missing_ok=True)
+    except (ControlPlaneDenied, OSError) as exc:
+        print(f"awf_listen: listener lease cleanup deferred: {exc}", file=sys.stderr)
 
 
 def die(msg: str):
@@ -209,6 +341,8 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(__file__).resolve().parent / "authority-manifest.example.json",
     )
     a = p.parse_args(argv)
+    if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", a.role):
+        die("role must be a lowercase safe identifier")
 
     try:
         config_path = a.config or default_config_path()
@@ -231,8 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     if on_type.endswith("-v3") and (not a.upstream_repo or not a.head_repo):
         die("v3 listeners require --upstream-repo and --head-repo trusted local configuration")
 
-    if not Path(a.repo).is_dir():
-        die(f"repo not found: {a.repo}")
+    repo = check_workspace_readiness(Path(a.repo), a.role)
 
     url = os.environ.get("AGENT_BUS_URL")
     if not url:
@@ -259,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
     # Config the handler needs is passed via the ENVIRONMENT (inherited by the
     # agent-bus listener and thus by each handler process it spawns).
     os.environ["AWF_SCRIPT_DIR"] = str(script_dir)
-    os.environ["AWF_REPO_DIR"] = a.repo
+    os.environ["AWF_REPO_DIR"] = str(repo)
     os.environ["AWF_TOOL"] = a.tool
     os.environ["AWF_MODEL"] = a.model
     os.environ["AWF_BASE"] = a.base
@@ -292,9 +425,12 @@ def main(argv: list[str] | None = None) -> int:
         head_remote=a.head_remote,
     )
 
-    print(f"[listen] role={a.role} repo={a.repo} tool={a.tool} model={a.model or '<default>'}")
+    print(f"[listen] role={a.role} repo={repo} tool={a.tool} model={a.model or '<default>'}")
     print(f"[listen] on '{on_type}' -> {role_script}")
-    print(f"[listen] stop via: agent-bus send --to {a.role} --type control:shutdown")
+    print(
+        f"[listen] stop locally with Ctrl-C; remote stop: "
+        f"agent-bus send --to {a.role} --type control:shutdown"
+    )
 
     listen_argv = [
         bus,
@@ -302,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
         "--agent",
         a.role,
         "--workdir",
-        a.repo,
+        str(repo),
         "--handler-timeout",
         "3600",
     ]
@@ -343,14 +479,30 @@ def main(argv: list[str] | None = None) -> int:
         ]
 
     try:
-        return run_command(
-            listen_argv,
-            allow_shell_wrapper=True,
-            secrets=(token,),
-        ).returncode
-    except ExecutionFailure as exc:
-        die(str(exc))
+        listener_root = (a.state_root or default_state_root()).resolve()
+        lease_path = acquire_listener_lease(listener_root, a.role, repo)
+    except (ControlPlaneDenied, OSError) as exc:
+        die(f"listener ownership gate failed: {exc}")
+    try:
+        try:
+            return run_command(
+                listen_argv,
+                allow_shell_wrapper=True,
+                secrets=(token,),
+            ).returncode
+        except KeyboardInterrupt:
+            print(f"awf_listen: role={a.role} stopped locally", file=sys.stderr)
+            return 130
+        except ExecutionFailure as exc:
+            die(str(exc))
+    finally:
+        release_listener_lease(lease_path, a.role, repo)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except KeyboardInterrupt:
+        print("awf_listen: stopped locally", file=sys.stderr)
+        exit_code = 130
+    raise SystemExit(exit_code)

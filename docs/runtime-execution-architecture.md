@@ -170,3 +170,22 @@ Eliminating this final external template requires an Agent Bus argv/JSON handler
 contract. Until that upstream contract exists, the template remains a narrow
 compatibility boundary and payload placeholder quoting remains owned by Agent
 Bus.
+
+## Listener ownership and terminal workspace
+
+`awf_listen.py` establishes local ownership before starting Agent Bus. The configured path must be
+the Git root; coder and reviewer roots must be clean, while architect roots may contain operator
+work because terminal verification is isolated. A per-user, registry-locked lease rejects a live
+duplicate role or two live roles sharing one repository. Stale leases are removed only after an
+OS-specific, non-signalling PID check. These denials occur before the listener can consume an event.
+
+The architect terminal handler treats its configured repository as read-only configuration and
+object input. It creates a fresh event-scoped clone, copies the already validated remote URLs,
+performs all fetch, PR tuple, exact-commit, TaskCard, and ImplementationReport checks inside that
+workspace, then removes its remotes. It never checks out, stashes, cleans, or updates refs in the
+source checkout. Ledger persistence still precedes inbox completion, and Agent Bus still owns the
+success-gated ACK.
+
+`Ctrl-C` is a local lifecycle action, not a transport event. The listener returns 130, releases
+only its matching lease under the same registry lock, and emits one concise diagnostic without a
+Python traceback. `control:shutdown` remains available for remote cooperative stop.

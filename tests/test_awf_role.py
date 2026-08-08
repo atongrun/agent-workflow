@@ -2762,8 +2762,8 @@ def test_architect_terminal_consumer_completes_and_replays_without_model(
     checkout_calls = []
     monkeypatch.setattr(
         awf_role,
-        "fetch_and_checkout_pr_head",
-        lambda *args, **kwargs: checkout_calls.append((args, kwargs)),
+        "prepare_terminal_workspace",
+        lambda *args, **kwargs: checkout_calls.append((args, kwargs)) or str(repo),
     )
     monkeypatch.setattr(awf_role, "check_report_tracked_at_head", lambda *args: None)
     monkeypatch.setattr(awf_role, "check_repo_file_tracked_at_head", lambda *args: None)
@@ -2776,10 +2776,118 @@ def test_architect_terminal_consumer_completes_and_replays_without_model(
     ns.evidence = awf_role.RunEvidence(202, "architect", state_root=state_root)
     monkeypatch.setattr(
         awf_role,
-        "fetch_and_checkout_pr_head",
+        "prepare_terminal_workspace",
         lambda *args, **kwargs: pytest.fail("completed terminal delivery must replay directly"),
     )
     assert awf_role.role_architect(ns) == 0
+
+
+def test_architect_terminal_consumer_uses_isolated_workspace_when_source_is_dirty(
+    repositories, monkeypatch, tmp_path
+):
+    _, seed, source = repositories
+    report = """# Implementation Report
+<!-- awf-implementation-report
+{
+  "summary": "done",
+  "changed_files": ["task.md"],
+  "commands": ["python -m pytest"],
+  "tests": ["passed"],
+  "source_revision": "trusted"
+}
+-->
+"""
+    remote_head = commit(seed, "implementation report", "implementation.md", report)
+    run("git", "push", "origin", "feature/task", cwd=seed)
+    source_head = run("git", "rev-parse", "HEAD", cwd=source)
+    source_remote_ref = run("git", "rev-parse", "origin/feature/task", cwd=source)
+    (source / "README.md").write_text("operator edit\n", encoding="utf-8")
+    dirty = source / "operator-notes.txt"
+    dirty.write_text("preserve me\n", encoding="utf-8")
+
+    _, _, ns = _architect_decision_args(tmp_path)
+    ns.input_type = "decision:awf-ready"
+    ns.branch = "feature/task"
+    ns.commit = remote_head
+    ns.card = "task.md"
+    ns.report = "implementation.md"
+    payload = awf_role.input_payload(ns, "architect")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "reviewer", ns.input_type, ns.payload_sha256, ns.source_event_id
+    )
+    ns.evidence = awf_role.RunEvidence(205, "architect", state_root=tmp_path / "state")
+    monkeypatch.setenv("AWF_REPO_DIR", str(source))
+
+    assert awf_role.role_architect(ns) == 0
+    assert (source / "README.md").read_text(encoding="utf-8") == "operator edit\n"
+    assert dirty.read_text(encoding="utf-8") == "preserve me\n"
+    assert run("git", "status", "--porcelain", cwd=source).splitlines() == [
+        " M README.md",
+        "?? operator-notes.txt",
+    ]
+    assert run("git", "rev-parse", "HEAD", cwd=source) == source_head
+    assert run("git", "rev-parse", "origin/feature/task", cwd=source) == source_remote_ref
+    inbox = awf_role.delivery_state_path(ns.evidence, "inbox", ns.delivery_id)
+    assert json.loads(inbox.read_text(encoding="utf-8"))["status"] == "completed"
+
+
+def test_v3_architect_terminal_fetch_and_verification_stay_outside_dirty_source(
+    repositories, monkeypatch, tmp_path
+):
+    origin, seed, source = repositories
+    report = "# Implementation Report\ntrusted result\n"
+    remote_head = commit(seed, "v3 implementation report", "implementation.md", report)
+    run("git", "push", "origin", "feature/task", cwd=seed)
+    run("git", "fetch", "origin", "feature/task", cwd=source)
+    base_sha = run("git", "rev-parse", "main", cwd=seed)
+    run("git", "remote", "add", "upstream", str(origin), cwd=source)
+    run("git", "remote", "add", "fork", str(origin), cwd=source)
+
+    source_head = run("git", "rev-parse", "HEAD", cwd=source)
+    source_remote_ref = run("git", "rev-parse", "origin/feature/task", cwd=source)
+    (source / "README.md").write_text("operator edit\n", encoding="utf-8")
+    dirty = source / "operator-notes.txt"
+    dirty.write_text("preserve me\n", encoding="utf-8")
+
+    _, _, ns = _architect_decision_args(tmp_path)
+    provenance = _pr_provenance(
+        base_sha=base_sha,
+        head_sha=remote_head,
+        upstream_remote="upstream",
+        head_remote="fork",
+    )
+    ns.branch = provenance["head_ref"]
+    ns.commit = remote_head
+    ns.card = "task.md"
+    ns.report = "implementation.md"
+    for field, value in provenance.items():
+        setattr(ns, field, value)
+    payload = awf_role.input_payload(ns, "architect")
+    ns.payload_sha256 = awf_role.canonical_payload_sha256(payload)
+    ns.delivery_id = awf_role.make_delivery_id(
+        "reviewer", ns.input_type, ns.payload_sha256, ns.source_event_id
+    )
+    ns.evidence = awf_role.RunEvidence(206, "architect", state_root=tmp_path / "state")
+    monkeypatch.setenv("AWF_REPO_DIR", str(source))
+    monkeypatch.setattr(awf_role, "provenance_from_args", lambda *_args, **_kwargs: provenance)
+    verified_workspaces = []
+
+    def verify_in_terminal(repo, _provenance, **_kwargs):
+        assert Path(repo).resolve() != source.resolve()
+        verified_workspaces.append(Path(repo).resolve())
+
+    monkeypatch.setattr(awf_role, "verify_pr_remote_tuple", verify_in_terminal)
+
+    assert awf_role.role_architect(ns) == 0
+    assert len(verified_workspaces) == 1
+    assert verified_workspaces[0].name.startswith("terminal-workspace-")
+    assert (source / "README.md").read_text(encoding="utf-8") == "operator edit\n"
+    assert dirty.read_text(encoding="utf-8") == "preserve me\n"
+    assert run("git", "rev-parse", "HEAD", cwd=source) == source_head
+    assert run("git", "rev-parse", "origin/feature/task", cwd=source) == source_remote_ref
+    inbox = awf_role.delivery_state_path(ns.evidence, "inbox", ns.delivery_id)
+    assert json.loads(inbox.read_text(encoding="utf-8"))["status"] == "completed"
 
 
 @pytest.mark.parametrize(
@@ -2795,7 +2903,9 @@ def test_architect_persists_terminal_ledger_and_summary_before_inbox(
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
     monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
     monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
-    monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role, "prepare_terminal_workspace", lambda *args, **kwargs: str(repo)
+    )
     monkeypatch.setattr(awf_role, "check_report_tracked_at_head", lambda *args: None)
     monkeypatch.setattr(awf_role, "check_repo_file_tracked_at_head", lambda *args: None)
 
