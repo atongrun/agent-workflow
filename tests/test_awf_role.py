@@ -1907,6 +1907,7 @@ def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
 def test_tool_pi_review_rejects_oversized_trusted_diff_before_model(monkeypatch, tmp_path):
     prompt_file = tmp_path / "prompt.md"
     prompt_file.write_text("review instructions", encoding="utf-8")
+
     def reject_oversized(*args):
         raise SystemExit(1)
 
