@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from argparse import Namespace
 from pathlib import Path
@@ -508,6 +509,7 @@ def test_default_coder_listener_covers_impl_and_rework_with_distinct_handlers(
         "AWF_CODER_TOKEN": "test-token",
     }
     monkeypatch.setattr(awf_listen.os, "environ", environment)
+    monkeypatch.setattr(awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve())
     seen: list[str] = []
 
     class Completed:
@@ -530,6 +532,8 @@ def test_default_coder_listener_covers_impl_and_rework_with_distinct_handlers(
                 "upstream/project",
                 "--head-repo",
                 "contributor/project",
+                "--state-root",
+                str(tmp_path / "state"),
             ]
         )
         == 0
@@ -554,6 +558,7 @@ def test_default_architect_listener_covers_ready_and_blocked_terminal_decisions(
         "AWF_ARCH_TOKEN": "test-token",
     }
     monkeypatch.setattr(awf_listen.os, "environ", environment)
+    monkeypatch.setattr(awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve())
     seen: list[str] = []
 
     class Completed:
@@ -576,6 +581,8 @@ def test_default_architect_listener_covers_ready_and_blocked_terminal_decisions(
                 "upstream/project",
                 "--head-repo",
                 "contributor/project",
+                "--state-root",
+                str(tmp_path / "state"),
             ]
         )
         == 0
@@ -589,6 +596,157 @@ def test_default_architect_listener_covers_ready_and_blocked_terminal_decisions(
     assert "--review-feedback" in first_handler
     assert "--review-feedback" in second_handler
     assert "--review-feedback {payload.review_report}" in second_handler
+
+
+def test_listener_rejects_duplicate_role_before_connecting_to_bus(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    environment = {
+        "AGENT_BUS_URL": "http://bus.invalid",
+        "AWF_CODER_TOKEN": "test-token",
+    }
+    monkeypatch.setattr(awf_listen.os, "environ", environment)
+    monkeypatch.setattr(awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve())
+    lease_dir = tmp_path / "state" / "listeners"
+    lease_dir.mkdir(parents=True)
+    (lease_dir / "coder.json").write_text(
+        json.dumps({"pid": os.getpid(), "role": "coder", "repo": str(repo.resolve())}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        awf_listen,
+        "run_command",
+        lambda *_args, **_kwargs: pytest.fail("duplicate listener must fail before Bus connect"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        awf_listen.main(
+            [
+                "--role",
+                "coder",
+                "--repo",
+                str(repo),
+                "--upstream-repo",
+                "upstream/project",
+                "--head-repo",
+                "contributor/project",
+                "--state-root",
+                str(tmp_path / "state"),
+            ]
+        )
+
+
+def test_listener_rejects_role_repo_conflict_before_connecting_to_bus(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "shared-repo"
+    repo.mkdir()
+    environment = {
+        "AGENT_BUS_URL": "http://bus.invalid",
+        "AWF_REVIEWER_TOKEN": "test-token",
+    }
+    monkeypatch.setattr(awf_listen.os, "environ", environment)
+    monkeypatch.setattr(awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve())
+    lease_dir = tmp_path / "state" / "listeners"
+    lease_dir.mkdir(parents=True)
+    (lease_dir / "coder.json").write_text(
+        json.dumps({"pid": os.getpid(), "role": "coder", "repo": str(repo.resolve())}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        awf_listen,
+        "run_command",
+        lambda *_args, **_kwargs: pytest.fail("role/repo conflict must fail before Bus connect"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        awf_listen.main(
+            [
+                "--role",
+                "reviewer",
+                "--repo",
+                str(repo),
+                "--upstream-repo",
+                "upstream/project",
+                "--head-repo",
+                "contributor/project",
+                "--state-root",
+                str(tmp_path / "state"),
+            ]
+        )
+
+
+def test_listener_ctrl_c_releases_lease_without_traceback(monkeypatch, tmp_path: Path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    environment = {
+        "AGENT_BUS_URL": "http://bus.invalid",
+        "AWF_CODER_TOKEN": "test-token",
+    }
+    monkeypatch.setattr(awf_listen.os, "environ", environment)
+    monkeypatch.setattr(awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve())
+    monkeypatch.setattr(
+        awf_listen,
+        "run_command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    assert (
+        awf_listen.main(
+            [
+                "--role",
+                "coder",
+                "--repo",
+                str(repo),
+                "--upstream-repo",
+                "upstream/project",
+                "--head-repo",
+                "contributor/project",
+                "--state-root",
+                str(tmp_path / "state"),
+            ]
+        )
+        == 130
+    )
+    assert not (tmp_path / "state" / "listeners" / "coder.json").exists()
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "stopped locally" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("role", "status", "allowed"),
+    [
+        ("coder", " M task.md\n", False),
+        ("reviewer", "?? notes.txt\n", False),
+        ("architect", " M task.md\n", True),
+    ],
+)
+def test_listener_workspace_readiness_is_role_scoped(
+    monkeypatch, tmp_path: Path, role: str, status: str, allowed: bool
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    class Completed:
+        returncode = 0
+
+        def __init__(self, stdout: str):
+            self.stdout = stdout
+
+    def fake_git(_repo: Path, *args: str):
+        if args == ("rev-parse", "--is-inside-work-tree"):
+            return Completed("true\n")
+        if args == ("rev-parse", "--show-toplevel"):
+            return Completed(str(repo.resolve()) + "\n")
+        if args == ("status", "--porcelain"):
+            return Completed(status)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(awf_listen, "_git_read", fake_git)
+    if allowed:
+        assert awf_listen.check_workspace_readiness(repo, role) == repo.resolve()
+    else:
+        with pytest.raises(SystemExit, match="2"):
+            awf_listen.check_workspace_readiness(repo, role)
 
 
 def test_default_control_plane_routes_include_all_v3_stage_types():

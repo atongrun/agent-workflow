@@ -171,7 +171,16 @@ depends on Git Bash. CI exercises the recovery/configuration suite on Linux and 
 automated infrastructure evidence, not the separate three-card live dogfood gate.
 The architect listener also consumes validated `PASS` and `BLOCKED` terminal decisions
 deterministically, so a successful route can reach automatic ACK and pending-empty without a manual
-terminal handler.
+terminal handler. Terminal verification now runs in a fresh event-scoped, no-remote workspace:
+the configured source checkout supplies only validated remote bindings and is never fetched,
+checked out, stashed, cleaned, or overwritten. Dirty operator files therefore cannot spend a
+healthy terminal delivery's retry budget.
+
+Every listener also completes a pre-Bus ownership gate. Coder and reviewer roles require a
+dedicated clean Git root; architect may use a dirty source checkout because its terminal work is
+isolated. A per-user listener lease rejects duplicate role PIDs and cross-role repository sharing
+before any event can reach a handler. Local `Ctrl-C` stops with exit code 130, removes the matching
+lease, and does not require a `control:shutdown` event.
 
 TaskCard dispatch is native Python on every supported host:
 `python scripts/awf_dispatch.py ...`. The retained `scripts/awf-dispatch.sh` file is a small POSIX

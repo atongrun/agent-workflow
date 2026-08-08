@@ -1,11 +1,11 @@
 # Repository Handoff
 
-> Current through the 2026-08-08 independent coder/reviewer selection handoff. The minimum
+> Current through the 2026-08-09 dogfood operations UX repair. The minimum
 > dispatch floor is the merge containing this handoff; repository files and live Git refs are
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-08
+## Current Handoff State: 2026-08-09
 
 The operations P0 prerequisites exposed by the stopped downstream run are merged: durable
 run-ledger and context-packet gates, same-delivery checkpoint/outbox recovery, strict Python
@@ -19,6 +19,16 @@ provider interface. Pi uses a pure argv renderer, read-only tools, explicit text
 non-interactive execution, trusted stdout persistence, and the existing isolated reviewer,
 selection-integrity, checkpoint/recovery, ReviewReport, outbox, and ACK gates. Pi coder execution
 remains unsupported.
+
+The current operations UX repair keeps architect terminal verification out of shared checkouts.
+Each terminal delivery creates an event-scoped no-remote workspace, copies only validated remote
+bindings into it, and performs fetch, exact PR/commit verification, and artifact reads there. The
+source checkout's HEAD, index, remote-tracking refs, tracked edits, and untracked files are left
+unchanged. Listener startup now fails before Bus connection when the role workspace is not ready,
+the same role already has a live PID, or another live role owns the same repository. Coder and
+reviewer listeners require clean dedicated roots; architect may be dirty. Local `Ctrl-C` returns
+130 without a traceback and releases only its exact lease. Terminal ledger-before-inbox ordering,
+same-delivery replay, ACK-on-handler-success, v1-v3 payloads, and Agent Bus remain unchanged.
 
 The follow-up closes the mixed-role selection gap without changing the v3 payload schema. The
 owner RunManifest can freeze `reviewer_tool`/`reviewer_model`, and the exact committed TaskCard

@@ -74,7 +74,8 @@ reliable crash detection.
 ## Stopping: service vs. graceful
 
 - `just down` / `winsw stop` — stop the service now.
-- `agent-bus send --to <role> --type control:shutdown` — ask the listener to finish
+- local foreground listener: press `Ctrl-C` (clean exit 130, no shutdown event required)
+- `agent-bus send --to <role> --type control:shutdown` — ask a remote listener to finish
   its current handler and exit gracefully. With `Restart=on-failure` / WinSW
   `onfailure restart`, a *clean* exit does **not** trigger a restart, so a graceful
   shutdown stays down until you `up` again.
