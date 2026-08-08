@@ -1,11 +1,10 @@
 # Repository Handoff
 
-> Current through the 2026-08-01 v1-v3 selection-integrity merge and Dousansi-bound Deep
-> Preflight. The minimum dispatch floor is `e118463`; repository files and live Git refs are
-> authoritative for any later documentation-only advance. This document contains no private
-> endpoint, credential, host, personal-path, or event-payload data.
+> Current through the 2026-08-08 reviewer-only Pi adapter addition. The minimum dispatch floor is
+> `e118463`; repository files and live Git refs are authoritative for any later advance. This
+> document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-01
+## Current Handoff State: 2026-08-08
 
 The operations P0 prerequisites exposed by the stopped downstream run are merged: durable
 run-ledger and context-packet gates, same-delivery checkpoint/outbox recovery, strict Python
@@ -13,6 +12,12 @@ configuration loading, native Python dispatch, one subprocess boundary, determin
 terminal consumption, and Fast/Deep Preflight. PR #37 proved a fresh disposable no-model Deep
 route and PR #38 extracted the existing Codex/OpenCode argv renderers without changing provider
 selection, payloads, recovery, stage transitions, or ACK-sensitive lifecycle.
+
+The current addition implements the evidence-backed Pi reviewer need without introducing a generic
+provider interface. Pi uses a pure argv renderer, read-only tools, explicit text-mode
+non-interactive execution, trusted stdout persistence, and the existing isolated reviewer,
+selection-integrity, checkpoint/recovery, ReviewReport, outbox, and ACK gates. Pi coder execution
+remains unsupported.
 
 The current follow-up makes the Fast model-tool gate role-scoped without weakening model-executing
 runtimes: only `source-role=architect` may explicitly declare the tool `not-applicable`; coder and
@@ -31,9 +36,10 @@ configuration, role, runtime, or transport change requires a fresh Fast check an
 a new Deep proof.
 
 The next product gate is a fresh bounded downstream dogfood on the existing OpenCode coder and
-Codex/OpenCode reviewer execution paths. A generic invocation/result contract, registry, resolver,
-Claude adapter, or Pi adapter is not a prerequisite and remains deferred until dogfood proves a
-real need.
+Codex/OpenCode/Pi reviewer execution paths. The Pi adapter is reviewer-only: `dispatch.env` may
+set `AWF_PI_BIN`, Pi runs with read-only tools, and the trusted runner persists Pi stdout as the
+ReviewReport only after rc=0. A generic invocation/result contract, registry, resolver, or Claude
+adapter is not a prerequisite and remains deferred until dogfood proves a real need.
 
 ### v1-v3 executor-selection integrity
 
@@ -238,7 +244,8 @@ persistent Mac dogfood checkout has a current bound Deep proof.
 Restart is therefore authorized only as a wholly fresh v3 run from refreshed downstream `main`:
 new v4 task branch, frozen TaskCard commit, run ledger, context packet, delivery, and event. The
 selected listener `tool` and `model` must match the hashed delivery identity exactly. Switching
-agent tools requires a new version-only Fast check; rerun Deep if the report requests it or if the
+agent tools requires a new version-only Fast check; `AWF_PI_BIN` can be supplied by the existing
+owner-only `dispatch.env` when Pi is selected. Rerun Deep if the report requests it or if the
 runtime/transport facts materially changed.
 
 These are downstream readiness and operations gates. They do not justify an Agent Host, generic
@@ -255,8 +262,8 @@ engine, Agent Bus protocol change, or provider-contract migration before dogfood
    refreshed downstream `origin/main`. Never resume or mutate preserved historical events.
 4. **Complete three bounded downstream TaskCards.** Keep at least two normal paths free of
    high-value-model calls and record every escalation with a stable reason code.
-5. **Reassess provider abstraction from evidence.** Start the next adapter phase only if the run
-   exposes repeated provider-bound lifecycle friction or requires a currently unsupported provider.
+5. **Reassess provider abstraction from evidence.** Start any broader adapter phase only if the run
+   exposes repeated provider-bound lifecycle friction or requires another unsupported provider.
 
 ## Next-Agent Start Sequence
 

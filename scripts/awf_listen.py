@@ -11,7 +11,7 @@ executor side has no bash/cmd/WSL shell-dialect problems on Windows.
 Config comes from the strict, shell-free Python loader (or an explicit environment):
     AGENT_BUS_URL, AWF_<ROLE>_TOKEN            (required)
     AWF_BUS_BIN                                (agent-bus binary; default: agent-bus)
-    AWF_OPENCODE_BIN / AWF_CODEX_BIN           (tool binaries; optional)
+    AWF_OPENCODE_BIN / AWF_CODEX_BIN / AWF_PI_BIN  (tool binaries; optional)
 
 control:shutdown is built into `agent-bus listen`; the VPS can stop this listener
 with `agent-bus send --to <role> --type control:shutdown`.

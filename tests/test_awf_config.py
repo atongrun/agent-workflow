@@ -51,6 +51,16 @@ def test_parse_accepts_legacy_export_without_shell_interpretation(tmp_path):
     assert loaded["AWF_BUS_BIN"] == "${HOME}/bin/agent-bus"
 
 
+def test_parse_accepts_pi_binary_configuration():
+    loaded = awf_config.parse_config_text(
+        "AGENT_BUS_URL=http://bus.invalid\n"
+        "AWF_REVIEWER_TOKEN=controlled-token\n"
+        "AWF_PI_BIN=/opt/homebrew/bin/pi\n"
+    )
+
+    assert loaded["AWF_PI_BIN"] == "/opt/homebrew/bin/pi"
+
+
 @pytest.mark.parametrize(
     ("text", "reason"),
     [

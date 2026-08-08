@@ -90,6 +90,7 @@ def test_agent_adapter_renderers_are_pure_operations_modules():
     expected_functions = {
         "codex.py": {"render_reviewer_invocation"},
         "opencode.py": {"render_executor_argv", "render_reviewer_argv"},
+        "pi.py": {"render_reviewer_argv"},
     }
     violations = []
 
@@ -120,6 +121,7 @@ def test_agent_adapter_renderers_are_pure_operations_modules():
         "__init__.py",
         "codex.py",
         "opencode.py",
+        "pi.py",
     ]
     assert violations == []
 
@@ -130,6 +132,7 @@ def test_awf_role_tool_wrappers_delegate_rendering():
         "tool_opencode_exec": "render_opencode_executor_argv",
         "tool_opencode_review": "render_opencode_reviewer_argv",
         "tool_codex_review": "render_codex_reviewer_invocation",
+        "tool_pi_review": "render_pi_reviewer_argv",
     }
     functions = {
         node.name: node

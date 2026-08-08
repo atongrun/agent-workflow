@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add a reviewer-only Pi adapter with explicit text-mode non-interactive argv, read-only tools,
+  trusted stdout-to-ReviewReport persistence after exit zero, `AWF_PI_BIN` configuration, and the
+  existing selection-integrity, isolated-workspace, checkpoint/recovery, schema, outbox, and ACK
+  gates. Coder support and a generic provider registry remain out of scope.
+
 ### Fixed
 
 - Reject metadata-complete v1-v3 coder/reviewer deliveries when listener-local `AWF_TOOL` or

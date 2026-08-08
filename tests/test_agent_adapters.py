@@ -6,6 +6,7 @@ import pytest
 
 from scripts.agent_adapters.codex import render_reviewer_invocation
 from scripts.agent_adapters.opencode import render_executor_argv, render_reviewer_argv
+from scripts.agent_adapters.pi import render_reviewer_argv as render_pi_reviewer_argv
 
 
 @pytest.mark.parametrize(
@@ -139,3 +140,41 @@ def test_render_codex_reviewer_invocation_is_exact(model, card_text):
 
     assert argv == expected_argv
     assert stdin == expected_stdin
+
+
+@pytest.mark.parametrize("model", ["", "provider/model"])
+def test_render_pi_reviewer_argv_is_exact(model):
+    argv = render_pi_reviewer_argv(
+        binary="pi-test",
+        base="main",
+        model=model,
+        review_report_path=".awf/review.md",
+        context_file="/state/pi-review-context.md",
+    )
+
+    message = (
+        "Review the attached trusted context against base ref `main`. "
+        "Use only read-only repository inspection tools. "
+        "Return the complete filled-in Markdown ReviewReport as stdout. "
+        "The trusted runner will persist stdout to the exact ReviewReport path; do not "
+        "claim you wrote a file. ReviewReport output path: .awf/review.md"
+    )
+    expected = [
+        "pi-test",
+        "--print",
+        "--mode",
+        "text",
+        "--no-session",
+        "--no-approve",
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-context-files",
+        "--tools",
+        "read,grep,find,ls",
+    ]
+    if model:
+        expected += ["--model", model]
+    expected += ["@/state/pi-review-context.md", message]
+
+    assert argv == expected
