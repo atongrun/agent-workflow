@@ -3782,9 +3782,7 @@ def role_coder(a: argparse.Namespace) -> int:
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "coder", evidence)
     validate_delivery_selection(a, input_context, tool=tool, model=model)
-    selections = reviewer_selection_contract(
-        "", fallback_tool=tool, fallback_model=model
-    )
+    selections = reviewer_selection_contract("", fallback_tool=tool, fallback_model=model)
     provenance = None
     contract: PostflightContract | None = None
     fresh_contract_prevalidated = False

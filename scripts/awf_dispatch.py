@@ -285,8 +285,7 @@ def dispatch(args: argparse.Namespace) -> None:
         "TaskCard coder selection conflicts with owner RunManifest",
     )
     require(
-        (selections.reviewer.tool, selections.reviewer.model)
-        == (reviewer_tool, reviewer_model),
+        (selections.reviewer.tool, selections.reviewer.model) == (reviewer_tool, reviewer_model),
         "TaskCard reviewer selection conflicts with owner RunManifest",
     )
     args.upstream_remote = args.upstream_remote or "upstream"

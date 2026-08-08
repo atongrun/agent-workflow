@@ -6,7 +6,6 @@ import json
 import re
 from dataclasses import dataclass
 
-
 _REVIEWER_SELECTION_RE = re.compile(
     r"<!--\s*awf-reviewer-selection\s*\n(?P<body>.*?)\n\s*-->",
     re.DOTALL,
