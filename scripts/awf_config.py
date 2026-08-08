@@ -36,6 +36,7 @@ ALLOWED_KEYS = frozenset(
         "AWF_BUS_BIN",
         "AWF_OPENCODE_BIN",
         "AWF_CODEX_BIN",
+        "AWF_PI_BIN",
         "AWF_GH_BIN",
     }
 )

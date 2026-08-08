@@ -11,6 +11,28 @@ start and track execution, and enforce checkpoint, postflight, outbox, and ACK
 ordering. It passes each rendered invocation to `scripts/awf_executor.py`, the
 only operating-system process boundary.
 
+Reviewer providers are intentionally narrow: Codex, OpenCode, and Pi. Pi is
+reviewer-only. Its adapter invokes `pi --print --mode text` with read-only tools
+(`read,grep,find,ls`), no session, and no project-local approval, extensions,
+skills, prompt-template, or context autoloading. Because that tool set cannot write files, the trusted runner
+captures stdout and atomically persists it as the exact ReviewReport path only
+after Pi exits with status 0; the existing ReviewReport parser and routing gate
+still validate size, schema, secrets, and verdict before ACK-sensitive work.
+The trusted runner also supplies a credential-free base-to-HEAD diff capped at
+64 KiB so Pi can inspect the committed change without a command tool. The
+prompt, diff, template, and TaskCard travel through a runner-owned `@file`
+attachment outside the model workspace, keeping Windows argv short and keeping
+the sole importable workspace delta equal to the ReviewReport. If that context
+or the ImplementationReport is insufficient, the Pi prompt requires `BLOCKED`,
+not a speculative `PASS`.
+Pi provider authentication and model catalogs remain owned by Pi's external
+configuration directory. `model_env()` preserves explicit
+`PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR` pointers outside the
+trusted repository; `--no-session` prevents review-session persistence, but Pi
+may still take its own settings lock. The listener service identity must have a
+usable Pi configuration directory, and Fast Preflight must probe that actual
+CLI identity before dispatch.
+
 For metadata-complete v1-v3 coder/reviewer deliveries, the lifecycle first reconstructs and hashes
 the payload, validates its delivery identity, and then requires the effective listener-local
 `tool`/`model` selection to match that hashed selection. This compatibility gate runs before the

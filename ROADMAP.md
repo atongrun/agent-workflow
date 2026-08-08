@@ -90,6 +90,9 @@ Completed engineering gates:
 - [x] Make Fast model-tool readiness role-scoped: only a non-model architect runtime may declare
   `not-applicable`; coder/reviewer still require a real version-only probe, and the resulting
   role/policy or tool/version facts are bound into the Deep fingerprint.
+- [x] Add a reviewer-only Pi adapter with read-only tools, trusted stdout-to-ReviewReport
+  persistence, selection-integrity, and same-delivery recovery gates; keep coder support and a
+  generic provider registry out of scope.
 
 Remaining Phase 2 work:
 
@@ -99,7 +102,7 @@ Remaining Phase 2 work:
   [`docs/tasks/config-recovery-maturity-implementation-report.md`](docs/tasks/config-recovery-maturity-implementation-report.md).
 - [x] Exercise coder and reviewer recovery with an automated same-delivery fault matrix across
   model/process, artifact/tree, commit, fork, PR, and prepared/attempting/ambiguous/sent outbox
-  boundaries. Both reviewer model adapters preserve zero additional invocations after
+  boundaries. Supported reviewer model paths preserve zero additional invocations after
   `model_started`.
 - [x] Add a no-model architect terminal consumer for validated ready/blocked decisions so terminal
   ACK and pending-empty do not depend on a manual handler.

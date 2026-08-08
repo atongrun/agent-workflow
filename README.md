@@ -150,6 +150,10 @@ For every metadata-complete v1-v3 coder or reviewer delivery, the effective list
 `model` must also match the selection already bound into the canonical payload hash. Mismatches fail
 before control-plane authorization, recovery/outbox work, model invocation, or inbox completion;
 legacy direct handlers without delivery metadata retain their environment overrides.
+Reviewer execution currently accepts Codex, OpenCode, and a narrow Pi reviewer adapter. Pi runs
+with read-only tools and returns the ReviewReport on stdout; the trusted runner writes that stdout
+to the requested ReviewReport path only after a successful Pi exit. `dispatch.env` may set
+`AWF_PI_BIN` when the `pi` executable is not on `PATH`.
 
 The operations surface also has one strict, cross-platform Python
 [configuration loader](docs/tasks/config-recovery-maturity-implementation-report.md). Bootstrap,

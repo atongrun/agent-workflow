@@ -17,7 +17,7 @@ Design:
   - Named arguments (not positional) so stage-to-stage field order can never drift.
   - Per-listener config comes from the environment (set by awf_listen.py):
       AWF_SCRIPT_DIR, AWF_REPO_DIR, AWF_TOOL, AWF_MODEL, AWF_BASE, AWF_NO_PUSH,
-      AGENT_BUS_URL, AWF_BUS_BIN, AWF_<ROLE>_TOKEN, AWF_OPENCODE_BIN
+      AGENT_BUS_URL, AWF_BUS_BIN, AWF_<ROLE>_TOKEN, AWF_OPENCODE_BIN, AWF_PI_BIN
   - The card/prompt travel as FILES (never inlined into a shell string).
   - External commands cross awf_executor as argv with shell=False.
     Windows npm .cmd shims require a safe PowerShell companion; .bat is rejected.
@@ -47,6 +47,9 @@ from agent_adapters.opencode import (
 )
 from agent_adapters.opencode import (
     render_reviewer_argv as render_opencode_reviewer_argv,
+)
+from agent_adapters.pi import (
+    render_reviewer_argv as render_pi_reviewer_argv,
 )
 from awf_artifact_contract import ArtifactContractError, validate_stage_artifact_contract
 from awf_control_plane import (
@@ -1213,6 +1216,8 @@ _MODEL_ENV_ALLOWLIST = {
     "OS",
     "PATH",
     "PATHEXT",
+    "PI_CODING_AGENT_DIR",
+    "PI_CODING_AGENT_SESSION_DIR",
     "PROCESSOR_ARCHITECTURE",
     "PROCESSOR_IDENTIFIER",
     "PROGRAMDATA",
@@ -1306,7 +1311,12 @@ def model_env(repo: str | None = None) -> dict[str, str]:
     Keeps only required platform, path, proxy, locale, certificate, and UTF-8
     settings. Runner/Bus metadata, inherited Git config, cloud credentials, model
     provider keys, arbitrary secret variables, and executable injection variables
-    never reach untrusted model processes (OpenCode, Codex).
+    never reach untrusted model processes (OpenCode, Codex, Pi).
+
+    OpenCode and Pi configuration-directory pointers are preserved when they resolve
+    outside the trusted Workflow repository because those CLIs own provider authentication
+    and model catalogs. Pi still runs with ``--no-session``; its settings/config directory
+    remains an explicit external runtime dependency rather than Workflow evidence.
 
     When a repository is supplied, process-scoped Git config denies every transport
     protocol in addition to ordinary commit/push hooks. Trusted postflight commands
@@ -1379,6 +1389,30 @@ def verification_env() -> dict[str, str]:
     return e
 
 
+_CAPTURED_STDOUT_MAX_BYTES = 16 * 1024
+
+
+def read_bounded_stdout(proc, max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES) -> tuple[str, bool]:
+    """Drain one text stdout pipe and kill the child if it exceeds the report bound."""
+    if proc.stdout is None:
+        die("captured model stdout pipe is unavailable")
+    chunks: list[str] = []
+    size = 0
+    while True:
+        chunk = proc.stdout.read(4096)
+        if not chunk:
+            break
+        size += len(chunk.encode("utf-8"))
+        if size > max_bytes:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            return "", True
+        chunks.append(chunk)
+    proc.wait()
+    return "".join(chunks), False
+
+
 def spawn(
     argv: list[str],
     *,
@@ -1387,6 +1421,7 @@ def spawn(
     env: dict[str, str] | None = None,
     evidence: RunEvidence | None = None,
     tracked_phase: str | None = None,
+    stdout_path: str | None = None,
 ) -> int:
     """Run a command as a real argv (no shell). Handles Windows .cmd/.bat shims.
 
@@ -1398,6 +1433,8 @@ def spawn(
     ``env`` defaults to ``child_env()`` (full parent environment). Pass
     ``model_env()`` for model subprocesses to strip credentials.
     """
+    if stdout_path is not None and stdin is not None:
+        die("captured model stdout cannot be combined with explicit stdin")
     executable = Path(argv[0]).name if argv else "<empty>"
     log(f"exec: {executable} argc={len(argv)}")
     if evidence is not None and tracked_phase is not None:
@@ -1407,6 +1444,7 @@ def spawn(
                 argv,
                 cwd=cwd,
                 stdin=PIPE if stdin is not None else DEVNULL,
+                stdout=PIPE if stdout_path is not None else None,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -1433,7 +1471,12 @@ def spawn(
             },
         )
         try:
-            proc.communicate(stdin)
+            if stdout_path is not None:
+                stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc)
+            else:
+                proc.communicate(stdin)
+                stdout_text = ""
+                stdout_limit_exceeded = False
         except BaseException:
             if proc.poll() is None:
                 proc.kill()
@@ -1454,8 +1497,35 @@ def spawn(
             **{
                 f"{tracked_phase}_rc": proc.returncode,
                 f"{tracked_phase}_duration_seconds": round(time.monotonic() - started, 6),
+                **(
+                    {f"{tracked_phase}_stdout_limit_exceeded": True}
+                    if stdout_limit_exceeded
+                    else {}
+                ),
             },
         )
+        if stdout_limit_exceeded:
+            die("captured model stdout exceeds 16 KiB")
+        if stdout_path is not None and proc.returncode == 0:
+            atomic_write_text(Path(stdout_path), stdout_text or "")
+        return proc.returncode
+    if stdout_path is not None:
+        proc = start_command(
+            argv,
+            cwd=cwd,
+            stdin=DEVNULL,
+            stdout=PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env or child_env(),
+            allow_shell_wrapper=True,
+        )
+        stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc)
+        if stdout_limit_exceeded:
+            die("captured model stdout exceeds 16 KiB")
+        if proc.returncode == 0:
+            atomic_write_text(Path(stdout_path), stdout_text)
         return proc.returncode
     proc = run_command(
         argv,
@@ -1469,6 +1539,25 @@ def spawn(
         allow_shell_wrapper=True,
     )
     return proc.returncode
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Atomically write trusted UTF-8 text output to one exact path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
+    with temp_path.open("x", encoding="utf-8", newline="\n") as output:
+        output.write(text)
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temp_path, path)
+    try:
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def git(repo: str, *args: str) -> int:
@@ -1688,7 +1777,7 @@ def recover_completed_model_checkpoint(
         not isinstance(workspace, str)
         or not isinstance(manifest_sha256, str)
         or not isinstance(model_event_id, int)
-        or model_process not in {"opencode", "codex"}
+        or model_process not in {"opencode", "codex", "pi"}
         or checkpoint_role not in _RECOVERY_PHASES_BY_ROLE
         or evidence.role != checkpoint_role
         or not evidence.log_path.is_file()
@@ -1775,6 +1864,26 @@ def postflight_git_out(workspace: str, *args: str) -> str:
     if proc.returncode != 0:
         die("credential-free model workspace Git read failed")
     return proc.stdout.decode("utf-8", errors="replace").rstrip("\n\r")
+
+
+def bounded_postflight_git_out(workspace: str, max_bytes: int, *args: str) -> str:
+    """Return one credential-free Git read while bounding captured text."""
+    proc = start_command(
+        ["git", "-C", workspace, *args],
+        stdin=DEVNULL,
+        stdout=PIPE,
+        stderr=DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=postflight_git_env(),
+    )
+    output, exceeded = read_bounded_stdout(proc, max_bytes=max_bytes)
+    if exceeded:
+        die(f"credential-free model workspace Git output exceeds {max_bytes} bytes")
+    if proc.returncode != 0:
+        die("credential-free model workspace Git read failed")
+    return output.rstrip("\n\r")
 
 
 def prepare_model_workspace(
@@ -3191,6 +3300,68 @@ def tool_opencode_review(
     return spawn(invocation_argv, cwd=repo, env=model_env(repo))
 
 
+def tool_pi_review(
+    repo: str,
+    base: str,
+    prompt_file: str,
+    card_file: str,
+    model: str,
+    review_report_path: str,
+    evidence: RunEvidence | None = None,
+) -> int:
+    """Run Pi as a read-only reviewer and persist stdout as the ReviewReport."""
+    binp = env("AWF_PI_BIN", "pi")
+    template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
+    card_text = read_text(card_file) if card_file and Path(card_file).is_file() else ""
+    trusted_diff = bounded_postflight_git_out(
+        repo,
+        64 * 1024,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        f"{base}...HEAD",
+        "--",
+    )
+    if not trusted_diff:
+        trusted_diff = "(empty diff)"
+    context = read_text(prompt_file)
+    context += (
+        "\n\n--- Pi read-only reviewer boundary ---\n\n"
+        "The trusted runner supplied the exact base-to-HEAD diff because this Pi adapter has "
+        "no command tool. Inspect repository files with the read-only tools as needed. Treat "
+        "verification results in the ImplementationReport as evidence; if the diff or report "
+        "is insufficient for a deterministic verdict, return BLOCKED rather than claiming PASS."
+        f"\n\n--- Trusted committed diff ---\n\n{trusted_diff}"
+        f"\n\n--- Required ReviewReport template ---\n\n{read_text(str(template_path))}"
+    )
+    if card_text:
+        context += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + card_text
+
+    def invoke(context_path: Path) -> int:
+        atomic_write_text(context_path, context)
+        invocation_argv = render_pi_reviewer_argv(
+            binary=binp,
+            base=base,
+            model=model,
+            review_report_path=review_report_path,
+            context_file=str(context_path),
+        )
+        return spawn(
+            invocation_argv,
+            cwd=repo,
+            env=model_env(repo),
+            evidence=evidence,
+            tracked_phase="pi" if evidence is not None else None,
+            stdout_path=review_report_path,
+        )
+
+    if evidence is not None:
+        return invoke(evidence.run_dir / "pi-review-context.md")
+    with tempfile.TemporaryDirectory(prefix="awf-pi-review-") as context_dir:
+        return invoke(Path(context_dir) / "review-context.md")
+
+
 # ---------------------------------------------------------------------------
 # Agent Bus event emission (reuse the agent-bus CLI for auth consistency)
 # ---------------------------------------------------------------------------
@@ -4042,7 +4213,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     duplicate = gate is not None and getattr(gate, "reason", "") == "duplicate_event"
     checkpoint_path: Path | None = None
     checkpoint: dict[str, object] | None = None
-    if provenance is not None and evidence is not None and tool == "opencode":
+    if provenance is not None and evidence is not None and tool in {"opencode", "pi"}:
         checkpoint_path = delivery_state_path(
             evidence,
             "checkpoint",
@@ -4141,9 +4312,10 @@ def role_reviewer(a: argparse.Namespace) -> int:
     )
     if recovery_phase == "model_not_started":
         log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
+    reviewer_tools = {"codex", "opencode", "pi"}
     if tool == "codex" and checkpoint is None:
         rc = tool_codex_review(repo, base_commit, prompt_file, card_file, model, a.review_report)
-    elif tool in {"codex", "opencode"} and recovery_phase == "model_not_started":
+    elif tool in reviewer_tools and recovery_phase == "model_not_started":
         model_state_dir = evidence.run_dir if evidence is not None else None
         model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
         model_base = "awf-review-base"
@@ -4178,8 +4350,18 @@ def role_reviewer(a: argparse.Namespace) -> int:
                 str(model_review_report_path),
                 evidence,
             )
-        else:
+        elif tool == "opencode":
             rc = tool_opencode_review(
+                model_repo,
+                model_base,
+                prompt_file,
+                model_card_file,
+                model,
+                str(model_review_report_path),
+                evidence,
+            )
+        else:
+            rc = tool_pi_review(
                 model_repo,
                 model_base,
                 prompt_file,
@@ -4201,7 +4383,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
                     model_process=tool,
                 )
             recovery_phase = "model_completed"
-    elif tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
+    elif tool in reviewer_tools and recovery_phase != "model_not_started":
         facts = dict(checkpoint["facts"]) if checkpoint is not None else {}
         model_workspace = facts.get("model_workspace")
         if not isinstance(model_workspace, str) or not model_workspace:
@@ -4227,7 +4409,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         model_base = "awf-review-base"
         rc = 0
     elif checkpoint is None:
-        die("reviewer tool must be codex or opencode")
+        die("reviewer tool must be codex, opencode, or pi")
     else:
         rc = 0
     if checkpoint is not None and recovery_phase not in {
@@ -4235,12 +4417,12 @@ def role_reviewer(a: argparse.Namespace) -> int:
         "model_completed",
     }:
         rc = 0
-    if tool not in {"codex", "opencode"}:
-        die("reviewer tool must be codex or opencode")
+    if tool not in reviewer_tools:
+        die("reviewer tool must be codex, opencode, or pi")
     if rc != 0:
         die(f"reviewer tool '{tool}' failed (rc={rc}); no verdict routed")
 
-    if tool in {"codex", "opencode"} and recovery_phase != "model_not_started":
+    if tool in reviewer_tools and recovery_phase != "model_not_started":
         assert_model_workspace_state(model_repo, a.commit)
         if git_out(model_repo, "rev-parse", "--verify", f"{model_base}^{{commit}}") != base_commit:
             die("model process changed the isolated reviewer base ref")

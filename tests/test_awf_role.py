@@ -1296,6 +1296,18 @@ def test_model_env_preserves_credential_free_proxy(monkeypatch):
     assert awf_role.model_env()["HTTPS_PROXY"] == "http://127.0.0.1:7890"
 
 
+def test_model_env_preserves_external_pi_runtime_directories(monkeypatch, tmp_path):
+    pi_config = tmp_path / "pi-config"
+    pi_sessions = tmp_path / "pi-sessions"
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_config))
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(pi_sessions))
+
+    environment = awf_role.model_env()
+
+    assert environment["PI_CODING_AGENT_DIR"] == str(pi_config)
+    assert environment["PI_CODING_AGENT_SESSION_DIR"] == str(pi_sessions)
+
+
 def test_model_env_blocks_git_commit(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1832,6 +1844,91 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
     ]
 
 
+def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
+    """The Pi reviewer adapter captures stdout and lets the trusted runner write the report."""
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("review instructions")
+    card_file = tmp_path / "task.md"
+    card_file.write_text("# TaskCard\n")
+    captured: dict = {}
+
+    def fake_spawn(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(awf_role, "spawn", fake_spawn)
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "secret")
+    monkeypatch.setenv("AWF_PI_BIN", "pi-test")
+    monkeypatch.setattr(awf_role, "bounded_postflight_git_out", lambda *args: "trusted diff")
+    evidence = awf_role.RunEvidence(68, "reviewer", state_root=tmp_path / "state")
+    report_path = str(tmp_path / ".awf" / "review.md")
+
+    rc = awf_role.tool_pi_review(
+        str(tmp_path),
+        "main",
+        str(prompt_file),
+        str(card_file),
+        "provider/model",
+        report_path,
+        evidence=evidence,
+    )
+
+    assert rc == 0
+    assert "AGENT_BUS_TOKEN" not in captured["kwargs"]["env"]
+    assert captured["kwargs"]["evidence"] is evidence
+    assert captured["kwargs"]["tracked_phase"] == "pi"
+    assert captured["kwargs"]["stdout_path"] == report_path
+    assert captured["argv"][:-2] == [
+        "pi-test",
+        "--print",
+        "--mode",
+        "text",
+        "--no-session",
+        "--no-approve",
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-context-files",
+        "--tools",
+        "read,grep,find,ls",
+        "--model",
+        "provider/model",
+    ]
+    assert captured["argv"][-2].startswith("@")
+    context_path = Path(captured["argv"][-2][1:])
+    context = context_path.read_text(encoding="utf-8")
+    assert "--- Trusted committed diff ---\n\ntrusted diff" in context
+    assert "<!-- awf-review-report" in context
+    assert "--- TaskCard (acceptance criteria to verify) ---" in context
+    assert "against base ref `main`" in captured["argv"][-1]
+
+
+def test_tool_pi_review_rejects_oversized_trusted_diff_before_model(monkeypatch, tmp_path):
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("review instructions", encoding="utf-8")
+
+    def reject_oversized(*args):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(awf_role, "bounded_postflight_git_out", reject_oversized)
+    monkeypatch.setattr(
+        awf_role,
+        "spawn",
+        lambda *args, **kwargs: pytest.fail("oversized diff must fail before Pi invocation"),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.tool_pi_review(
+            str(tmp_path),
+            "main",
+            str(prompt_file),
+            "",
+            "",
+            str(tmp_path / ".awf" / "review.md"),
+        )
+
+
 def test_tool_codex_review_preserves_model_card_and_tracked_phase(monkeypatch, tmp_path):
     prompt_file = tmp_path / "prompt.md"
     prompt_file.write_text("review instructions")
@@ -1963,6 +2060,165 @@ def test_spawn_stdin_when_provided(monkeypatch):
     assert captured.get("stdin") is not subprocess.DEVNULL
 
 
+@pytest.mark.parametrize(("returncode", "should_write"), [(0, True), (3, False)])
+def test_spawn_stdout_path_writes_only_after_success(
+    monkeypatch, tmp_path, returncode, should_write
+):
+    import io
+
+    captured = {}
+    stdout_path = tmp_path / "review.md"
+
+    class CapturingProcess:
+        def __init__(self):
+            self.pid = 4321
+            self.returncode = returncode
+            self.stdout = io.StringIO("review stdout")
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self):
+            return self.returncode
+
+    def fake_start(*args, **kwargs):
+        captured.update(kwargs)
+        return CapturingProcess()
+
+    monkeypatch.setattr(awf_role, "start_command", fake_start)
+
+    assert awf_role.spawn(["pi"], stdout_path=str(stdout_path)) == returncode
+
+    assert captured["stdout"] is subprocess.PIPE
+    assert stdout_path.exists() is should_write
+    if should_write:
+        assert stdout_path.read_text(encoding="utf-8") == "review stdout"
+
+
+@pytest.mark.parametrize(("returncode", "should_write"), [(0, True), (4, False)])
+def test_tracked_spawn_stdout_path_preserves_phase_evidence(
+    monkeypatch, tmp_path, returncode, should_write
+):
+    import io
+
+    class CapturingProcess:
+        def __init__(self, rc):
+            self.pid = 4321
+            self.returncode = rc
+            self.stdout = io.StringIO("tracked review stdout")
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            raise AssertionError("successful communicate should not kill")
+
+        def wait(self):
+            return self.returncode
+
+    captured = {}
+
+    def fake_start(*args, **kwargs):
+        captured.update(kwargs)
+        return CapturingProcess(returncode)
+
+    monkeypatch.setattr(awf_role, "start_command", fake_start)
+    evidence = awf_role.RunEvidence(66, "reviewer", state_root=tmp_path / "state")
+    stdout_path = tmp_path / "review.md"
+
+    assert (
+        awf_role.spawn(
+            ["pi"],
+            cwd=str(tmp_path),
+            evidence=evidence,
+            tracked_phase="pi",
+            stdout_path=str(stdout_path),
+        )
+        == returncode
+    )
+
+    assert captured["stdout"] is subprocess.PIPE
+    assert stdout_path.exists() is should_write
+    result = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    assert result["last_phase"] == "pi_exit"
+    assert result["pi_pid"] == 4321
+    assert result["pi_rc"] == returncode
+
+
+def test_tracked_spawn_kills_oversized_stdout_before_report_persistence(
+    monkeypatch, tmp_path, capsys
+):
+    import io
+
+    class OversizedProcess:
+        pid = 4321
+        returncode = None
+        stdout = io.StringIO("x" * (16 * 1024 + 1))
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr(awf_role, "start_command", lambda *args, **kwargs: OversizedProcess())
+    evidence = awf_role.RunEvidence(67, "reviewer", state_root=tmp_path / "state")
+    stdout_path = tmp_path / "review.md"
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.spawn(
+            ["pi"],
+            evidence=evidence,
+            tracked_phase="pi",
+            stdout_path=str(stdout_path),
+        )
+
+    assert not stdout_path.exists()
+    assert "exceeds 16 KiB" in capsys.readouterr().err
+    result = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    assert result["pi_rc"] == -9
+    assert result["pi_stdout_limit_exceeded"] is True
+
+
+def test_bounded_postflight_git_out_kills_oversized_diff(monkeypatch, tmp_path, capsys):
+    import io
+
+    class OversizedGitProcess:
+        returncode = None
+        stdout = io.StringIO("x" * 17)
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self):
+            return self.returncode
+
+    captured = {}
+
+    def fake_start(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return OversizedGitProcess()
+
+    monkeypatch.setattr(awf_role, "start_command", fake_start)
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.bounded_postflight_git_out(str(tmp_path), 16, "diff", "main...HEAD")
+
+    assert captured["argv"] == ["git", "-C", str(tmp_path), "diff", "main...HEAD"]
+    assert captured["kwargs"]["stdout"] is subprocess.PIPE
+    assert "exceeds 16 bytes" in capsys.readouterr().err
+
+
 def test_send_event_stdin_devnull(monkeypatch):
     """send_event() uses subprocess.DEVNULL for its subprocess.run call."""
     monkeypatch.setenv("AGENT_BUS_URL", "http://bus")
@@ -2068,6 +2324,7 @@ def test_coder_missing_report_gate(monkeypatch, tmp_path):
     [
         ("codex", "tool_codex_review"),
         ("opencode", "tool_opencode_review"),
+        ("pi", "tool_pi_review"),
     ],
 )
 def test_reviewer_missing_report_gate(monkeypatch, tmp_path, tool, review_attr):
@@ -2185,6 +2442,52 @@ def test_import_model_report_includes_ignored_configured_artifact(repositories, 
         str(workspace),
         checkpoint["facts"]["postflight_model_manifest_sha256"],
     ) == str(workspace.resolve())
+
+
+def test_pi_reviewer_recovery_accepts_completed_process_log(monkeypatch, tmp_path):
+    evidence = awf_role.RunEvidence(119, "reviewer", state_root=tmp_path / "state")
+    input_context = {
+        "key": "input-delivery",
+        "delivery_id": "input-delivery",
+        "payload_sha256": "sha256:input",
+        "source_event_id": 118,
+    }
+    checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="reviewer",
+        branch="feature/task",
+        source_commit="a" * 40,
+        provenance=_pr_provenance(),
+    )
+    workspace = tmp_path / "model-workspace-119"
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+        "model_started",
+        model_workspace=str(workspace),
+        model_manifest_sha256="sha256:model",
+        model_event_id=119,
+        model_process="pi",
+    )
+    evidence.record("pi_start", pi_pid=123, pi_cwd=str(workspace))
+    evidence.record("pi_exit", pi_rc=0)
+    monkeypatch.setattr(
+        awf_role,
+        "restore_durable_model_manifest",
+        lambda _evidence, path, _manifest: path,
+    )
+
+    recovered = awf_role.recover_completed_model_checkpoint(
+        evidence,
+        checkpoint_path,
+        checkpoint,
+    )
+
+    assert recovered["phase"] == "model_completed"
+    assert recovered["facts"]["model_process"] == "pi"
+    assert recovered["facts"]["recovered_from_process_log"] is True
 
 
 def test_model_manifest_binds_semantic_index_not_binary_stat_cache(repositories):
@@ -2613,11 +2916,12 @@ def _prepare_reviewer_routing(
             (Path(args[0]) / args[5]).write_text(content, encoding="utf-8")
         return tool_rc
 
-    monkeypatch.setattr(
-        awf_role,
-        "tool_codex_review" if tool == "codex" else "tool_opencode_review",
-        fake_review,
-    )
+    review_attr = {
+        "codex": "tool_codex_review",
+        "opencode": "tool_opencode_review",
+        "pi": "tool_pi_review",
+    }[tool]
+    monkeypatch.setattr(awf_role, review_attr, fake_review)
     send_calls = []
     monkeypatch.setattr(
         awf_role,
@@ -2707,6 +3011,11 @@ def test_delivery_selection_mismatch_fails_before_ack_sensitive_lifecycle(
     monkeypatch.setattr(
         awf_role,
         "tool_codex_review",
+        lambda *args, **kwargs: pytest.fail("selection gate must precede reviewer model launch"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "tool_pi_review",
         lambda *args, **kwargs: pytest.fail("selection gate must precede reviewer model launch"),
     )
     monkeypatch.setattr(
@@ -3031,7 +3340,7 @@ def test_each_reviewer_route_send_failure_is_nonzero(monkeypatch, tmp_path, verd
     assert len(send_calls) == 1
 
 
-@pytest.mark.parametrize("tool", ["opencode", "codex"])
+@pytest.mark.parametrize("tool", ["opencode", "codex", "pi"])
 def test_v3_reviewer_send_failure_replay_does_not_rerun_model(monkeypatch, tmp_path, tool):
     content = _review_markdown("PASS")
     ns, send_calls, tool_calls = _prepare_reviewer_routing(
