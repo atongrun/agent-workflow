@@ -29,10 +29,12 @@ from pathlib import Path
 from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
 from awf_control_plane import (
     ControlPlaneDenied,
-    _lock as control_plane_lock,
     authorize_operation,
     default_state_root,
     load_authority_manifest,
+)
+from awf_control_plane import (
+    _lock as control_plane_lock,
 )
 
 try:

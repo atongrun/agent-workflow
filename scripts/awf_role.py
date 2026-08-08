@@ -2391,9 +2391,7 @@ def prepare_terminal_workspace(
     parent = str(state_dir) if state_dir is not None else None
     if state_dir is not None:
         state_dir.mkdir(parents=True, exist_ok=True)
-    workspace_path = Path(
-        tempfile.mkdtemp(prefix="terminal-workspace-", dir=parent)
-    ).resolve()
+    workspace_path = Path(tempfile.mkdtemp(prefix="terminal-workspace-", dir=parent)).resolve()
     clone = run_command(
         ["git", "clone", "--no-hardlinks", "--no-checkout", repo, str(workspace_path)],
         stdin=DEVNULL,

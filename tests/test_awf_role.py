@@ -2903,9 +2903,7 @@ def test_architect_persists_terminal_ledger_and_summary_before_inbox(
     monkeypatch.setenv("AWF_REPO_DIR", str(repo))
     monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
     monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
-    monkeypatch.setattr(
-        awf_role, "prepare_terminal_workspace", lambda *args, **kwargs: str(repo)
-    )
+    monkeypatch.setattr(awf_role, "prepare_terminal_workspace", lambda *args, **kwargs: str(repo))
     monkeypatch.setattr(awf_role, "check_report_tracked_at_head", lambda *args: None)
     monkeypatch.setattr(awf_role, "check_repo_file_tracked_at_head", lambda *args: None)
 

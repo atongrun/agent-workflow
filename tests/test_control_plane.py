@@ -509,9 +509,7 @@ def test_default_coder_listener_covers_impl_and_rework_with_distinct_handlers(
         "AWF_CODER_TOKEN": "test-token",
     }
     monkeypatch.setattr(awf_listen.os, "environ", environment)
-    monkeypatch.setattr(
-        awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve()
-    )
+    monkeypatch.setattr(awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve())
     seen: list[str] = []
 
     class Completed:
@@ -560,9 +558,7 @@ def test_default_architect_listener_covers_ready_and_blocked_terminal_decisions(
         "AWF_ARCH_TOKEN": "test-token",
     }
     monkeypatch.setattr(awf_listen.os, "environ", environment)
-    monkeypatch.setattr(
-        awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve()
-    )
+    monkeypatch.setattr(awf_listen, "check_workspace_readiness", lambda repo, _role: repo.resolve())
     seen: list[str] = []
 
     class Completed:
@@ -640,9 +636,7 @@ def test_listener_rejects_duplicate_role_before_connecting_to_bus(monkeypatch, t
         )
 
 
-def test_listener_rejects_role_repo_conflict_before_connecting_to_bus(
-    monkeypatch, tmp_path: Path
-):
+def test_listener_rejects_role_repo_conflict_before_connecting_to_bus(monkeypatch, tmp_path: Path):
     repo = tmp_path / "shared-repo"
     repo.mkdir()
     environment = {
