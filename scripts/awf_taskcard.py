@@ -10,7 +10,8 @@ _REVIEWER_SELECTION_RE = re.compile(
     r"<!--\s*awf-reviewer-selection\s*\n(?P<body>.*?)\n\s*-->",
     re.DOTALL,
 )
-_SUPPORTED_TOOLS = frozenset({"codex", "opencode", "pi"})
+_CODER_TOOLS = frozenset({"codex", "opencode"})
+_REVIEWER_TOOLS = frozenset({"codex", "opencode", "pi"})
 
 
 class TaskCardContractError(ValueError):
@@ -29,12 +30,12 @@ class ReviewerSelectionContract:
     reviewer: RoleSelection
 
 
-def _selection(value: object, role: str) -> RoleSelection:
+def _selection(value: object, role: str, supported_tools: frozenset[str]) -> RoleSelection:
     if not isinstance(value, dict) or set(value) != {"tool", "model"}:
         raise TaskCardContractError(f"{role} selection must contain only tool and model")
     tool = value.get("tool")
     model = value.get("model")
-    if tool not in _SUPPORTED_TOOLS:
+    if tool not in supported_tools:
         raise TaskCardContractError(f"{role} tool is unsupported")
     if not isinstance(model, str) or len(model) > 200 or any(ord(char) < 0x20 for char in model):
         raise TaskCardContractError(f"{role} model is invalid")
@@ -61,6 +62,6 @@ def reviewer_selection_contract(
     if not isinstance(value, dict) or set(value) != {"coder", "reviewer"}:
         raise TaskCardContractError("reviewer selection block must contain coder and reviewer")
     return ReviewerSelectionContract(
-        coder=_selection(value["coder"], "coder"),
-        reviewer=_selection(value["reviewer"], "reviewer"),
+        coder=_selection(value["coder"], "coder", _CODER_TOOLS),
+        reviewer=_selection(value["reviewer"], "reviewer", _REVIEWER_TOOLS),
     )
