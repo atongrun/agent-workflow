@@ -2823,7 +2823,7 @@ def test_architect_terminal_consumer_uses_isolated_workspace_when_source_is_dirt
     assert (source / "README.md").read_text(encoding="utf-8") == "operator edit\n"
     assert dirty.read_text(encoding="utf-8") == "preserve me\n"
     assert run("git", "status", "--porcelain", cwd=source).splitlines() == [
-        " M README.md",
+        "M README.md",
         "?? operator-notes.txt",
     ]
     assert run("git", "rev-parse", "HEAD", cwd=source) == source_head
