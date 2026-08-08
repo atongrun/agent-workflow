@@ -11,6 +11,11 @@
 
 ### Fixed
 
+- Bind independent coder and reviewer selections through the owner RunManifest and the exact
+  committed TaskCard. Mixed OpenCode-coder/Pi-reviewer runs now hand off the frozen reviewer
+  selection, route `REQUEST_CHANGES` back to the frozen coder selection, and fail before model
+  invocation when either role drifts. Existing cards without the optional selection block retain
+  the prior same-tool behavior and the v3 payload schema is unchanged.
 - Reject metadata-complete v1-v3 coder/reviewer deliveries when listener-local `AWF_TOOL` or
   `AWF_MODEL` differs from the integrity-hashed payload selection, before control-plane,
   recovery/outbox, model, or inbox lifecycle work; emit reviewer verdict identity from the

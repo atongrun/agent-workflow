@@ -40,6 +40,15 @@ control-plane pre-invocation decision, recovery/outbox replay, model launch, out
 inbox completion. Direct local entry points without delivery metadata keep their existing
 environment-override behavior.
 
+When coder and reviewer use different providers, the owner RunManifest and one strict
+`awf-reviewer-selection` JSON comment in the frozen TaskCard carry both role pairs. The initial
+delivery already hashes the exact TaskCard path and commit, so the committed block is transitively
+bound without adding optional fields to historical v3 payloads. Dispatch compares the manifest
+and TaskCard before mutation. After trusted checkout, each handler validates its own pair before
+model invocation; coder review handoff emits the reviewer pair, and a reviewer
+`REQUEST_CHANGES` route emits the coder pair. A card without the block preserves the historical
+same-pair behavior.
+
 Workflow business modules and provider renderers do not import `subprocess`,
 select a shell, join argv into a command string, or use `shell=True`.
 

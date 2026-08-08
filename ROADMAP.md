@@ -93,6 +93,9 @@ Completed engineering gates:
 - [x] Add a reviewer-only Pi adapter with read-only tools, trusted stdout-to-ReviewReport
   persistence, selection-integrity, and same-delivery recovery gates; keep coder support and a
   generic provider registry out of scope.
+- [x] Freeze independent coder/reviewer selections in the owner RunManifest and exact committed
+  TaskCard; route OpenCode-to-Pi review and Pi-to-OpenCode deterministic rework without changing
+  the v3 payload schema or weakening pre-model selection-integrity.
 
 Remaining Phase 2 work:
 

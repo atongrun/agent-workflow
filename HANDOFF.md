@@ -1,7 +1,8 @@
 # Repository Handoff
 
-> Current through the 2026-08-08 reviewer-only Pi adapter addition. The minimum dispatch floor is
-> `e118463`; repository files and live Git refs are authoritative for any later advance. This
+> Current through the 2026-08-08 independent coder/reviewer selection handoff. The minimum
+> dispatch floor is the merge containing this handoff; repository files and live Git refs are
+> authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
 ## Current Handoff State: 2026-08-08
@@ -18,6 +19,14 @@ provider interface. Pi uses a pure argv renderer, read-only tools, explicit text
 non-interactive execution, trusted stdout persistence, and the existing isolated reviewer,
 selection-integrity, checkpoint/recovery, ReviewReport, outbox, and ACK gates. Pi coder execution
 remains unsupported.
+
+The follow-up closes the mixed-role selection gap without changing the v3 payload schema. The
+owner RunManifest can freeze `reviewer_tool`/`reviewer_model`, and the exact committed TaskCard
+must carry the same coder/reviewer pairs in one `awf-reviewer-selection` JSON comment. Dispatch
+compares both sources before mutation. Trusted handlers re-read the bound TaskCard after checkout:
+coder handoff selects the frozen reviewer, Pi `REQUEST_CHANGES` selects the frozen coder, and any
+role mismatch fails before model invocation. Legacy TaskCards without the block retain same-tool
+behavior.
 
 The current follow-up makes the Fast model-tool gate role-scoped without weakening model-executing
 runtimes: only `source-role=architect` may explicitly declare the tool `not-applicable`; coder and

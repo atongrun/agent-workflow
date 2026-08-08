@@ -73,6 +73,11 @@ from awf_executor import (
 from awf_executor import (
     start as start_command,
 )
+from awf_taskcard import (
+    ReviewerSelectionContract,
+    TaskCardContractError,
+    reviewer_selection_contract,
+)
 
 
 def log(msg: str) -> None:
@@ -2927,6 +2932,34 @@ def validate_implementation_report_contract(
         die(f"implementation artifact contract rejected before model invocation: {exc}")
 
 
+def load_reviewer_selection_contract(
+    card_path: str,
+    *,
+    fallback_tool: str,
+    fallback_model: str,
+) -> ReviewerSelectionContract:
+    """Load stage selections from the exact frozen TaskCard before a model starts."""
+    try:
+        return reviewer_selection_contract(
+            Path(card_path).read_text(encoding="utf-8"),
+            fallback_tool=fallback_tool,
+            fallback_model=fallback_model,
+        )
+    except (OSError, UnicodeError, TaskCardContractError) as exc:
+        die(f"TaskCard reviewer selection rejected before model invocation: {exc}")
+
+
+def validate_frozen_role_selection(
+    selection: object,
+    *,
+    role: str,
+    tool: str,
+    model: str,
+) -> None:
+    if (getattr(selection, "tool", None), getattr(selection, "model", None)) != (tool, model):
+        die(f"TaskCard {role} selection mismatch")
+
+
 # ---------------------------------------------------------------------------
 # Postflight gates (run after model succeeds, before git write / send_event)
 # ---------------------------------------------------------------------------
@@ -3749,6 +3782,9 @@ def role_coder(a: argparse.Namespace) -> int:
     evidence = getattr(a, "evidence", None)
     input_context = validate_input_delivery(a, "coder", evidence)
     validate_delivery_selection(a, input_context, tool=tool, model=model)
+    selections = reviewer_selection_contract(
+        "", fallback_tool=tool, fallback_model=model
+    )
     provenance = None
     contract: PostflightContract | None = None
     fresh_contract_prevalidated = False
@@ -3781,6 +3817,17 @@ def role_coder(a: argparse.Namespace) -> int:
                 die(f"card not found after checkout: {card_file}")
             contract = parse_postflight_contract(card_file)
             validate_implementation_report_contract(card_file, a, evidence)
+            selections = load_reviewer_selection_contract(
+                card_file,
+                fallback_tool=tool,
+                fallback_model=model,
+            )
+            validate_frozen_role_selection(
+                selections.coder,
+                role="coder",
+                tool=tool,
+                model=model,
+            )
             fresh_contract_prevalidated = True
     gate = pre_invocation_gate(a, "coder", evidence)
 
@@ -4119,6 +4166,18 @@ def role_coder(a: argparse.Namespace) -> int:
         if input_type.endswith("-v2")
         else "task:awf-review"
     )
+    card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
+    selections = load_reviewer_selection_contract(
+        card_file,
+        fallback_tool=tool,
+        fallback_model=model,
+    )
+    validate_frozen_role_selection(
+        selections.coder,
+        role="coder",
+        tool=tool,
+        model=model,
+    )
     review_base = {
         "task_id": a.branch.rsplit("/", 1)[-1],
         "branch": a.branch,
@@ -4126,8 +4185,8 @@ def role_coder(a: argparse.Namespace) -> int:
         "commit": new_commit,
         "report": a.report,
         "review_report": a.review_report,
-        "tool": tool,
-        "model": model,
+        "tool": selections.reviewer.tool,
+        "model": selections.reviewer.model,
     }
     if provenance is not None:
         review_base.update(provenance_payload(provenance))
@@ -4279,6 +4338,17 @@ def role_reviewer(a: argparse.Namespace) -> int:
     card_file = str(resolve_repo_file(repo, a.card, "TaskCard"))
     if not Path(card_file).is_file():
         die(f"card not found after checkout: {card_file}")
+    selections = load_reviewer_selection_contract(
+        card_file,
+        fallback_tool=tool,
+        fallback_model=model,
+    )
+    validate_frozen_role_selection(
+        selections.reviewer,
+        role="reviewer",
+        tool=tool,
+        model=model,
+    )
 
     # ImplementationReport gate — fail before any model invocation
     implementation_report = resolve_repo_file(repo, a.report, "ImplementationReport")
@@ -4513,6 +4583,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         route = (route[0], f"{route[1]}-v3")
     elif getattr(a, "input_type", "").endswith("-v2"):
         route = (route[0], f"{route[1]}-v2")
+    target_selection = selections.coder if verdict == "REQUEST_CHANGES" else selections.reviewer
     verdict_base = {
         "task_id": a.branch.rsplit("/", 1)[-1],
         "branch": a.branch,
@@ -4521,8 +4592,8 @@ def role_reviewer(a: argparse.Namespace) -> int:
         "report": a.report,
         "review_report_path": a.review_report,
         "review_report": review_report,
-        "tool": tool,
-        "model": model,
+        "tool": target_selection.tool,
+        "model": target_selection.model,
     }
     if provenance is not None:
         verdict_base.update(provenance_payload(provenance))
