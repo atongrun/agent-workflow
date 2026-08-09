@@ -1,95 +1,45 @@
-# Listener services (three-OS)
+# Listener service compatibility assets
 
-These are candidate operations templates for running the Agent Workflow listener under a native
-service manager. The wrappers, launchd/systemd templates, WinSW definition, and `just` menu are
-implemented, but their three-OS installation, reboot, crash-recovery, and unattended-listener
-behavior has **not** been accepted end to end. Treat the commands below as an operations surface to
-validate, not as proof that supervision already survives real failures on every OS.
-
-This surface is outside the thin `awf` validation core. It supervises dogfood runner/listener
-scripts that use external Agent Bus transport and model CLIs; it does not make those concerns part
-of the core method contract.
-
-For ordinary interactive operation from an installed wheel, prefer the cross-platform local
-user-process surface:
+The accepted lifecycle surface is profile-first:
 
 ```text
-awf node doctor --profile <name-or-absolute-json>
-awf node start --profile <name-or-absolute-json>
-awf node status --profile <name-or-absolute-json>
-awf node logs --profile <name-or-absolute-json>
-awf node stop --profile <name-or-absolute-json>
+awf node install --profile <absolute-profile.json>
+awf node start --profile <absolute-profile.json>
+awf node status --profile <absolute-profile.json>
+awf node logs --profile <absolute-profile.json>
+awf node stop --profile <absolute-profile.json>
+awf node restart --profile <absolute-profile.json>
+awf node upgrade --profile <absolute-profile.json>
+awf node uninstall --profile <absolute-profile.json>
 ```
 
-The native service templates below remain an explicitly separate, minimally proven integration
-layer. The node commands do not install launchd, systemd, or WinSW services.
+The files in this directory are compatibility examples only. They now accept one secret-free
+`AWF_PROFILE` path and invoke the same foreground contract; they must not assemble role, route,
+tool, state, or remote arguments independently. New installations should use `awf node install`,
+which renders a native launchd user agent, lingering systemd user unit, or WinSW definition from
+the complete profile.
 
-## What's here
+Tokens and other credentials remain in the profile-selected strict `dispatch.env`; no generated
+unit, XML, command line, profile, or install record contains them.
 
-| File | OS | Role |
-|------|----|----|
-| `awf-listen-service.sh` | macOS / Linux | thin launcher for native `awf_service.py` |
-| `awf-listen-service.cmd` | Windows | thin launcher for native `awf_service.py` |
-| `../awf_service.py` | all | strict config load + listener argv assembly |
-| `com.agentworkflow.listener.plist.template` | macOS | launchd service template |
-| `agent-workflow-listener.service.template` | Linux | systemd service template |
-| `agent-workflow-listener.xml` | Windows | WinSW service definition |
+## Windows prerequisites
 
-**No secrets live in any of these.** Tokens stay in `~/.config/awf/dispatch.env` (owner-only).
-The shared Python loader treats that file as data, validates its path/owner/permissions/keys, and
-never invokes a shell. Service definitions carry only role/repo/tool.
+The profile must select `lifecycle.mode=service`, include the absolute WinSW v2.12.0 binary path
+and SHA-256, and name a pre-provisioned least-privileged `service_account`. Agent Workflow never
+downloads WinSW, accepts a password, or falls back to `LocalSystem`.
 
-## Prerequisites
+The first install renders and registers a password-free service, then fails closed until an
+administrator binds the account directly in SCM. Follow the exact `sc.exe config ...` instruction
+printed by the CLI, rerun `install`, then use `start`. Grant only Log on as a service plus access to
+the fixed wheel, profile, dispatch config, dedicated checkout, state, logs, and selected model CLI.
 
-- `dispatch.env` in place — run `python scripts/awf_bootstrap.py` first.
-- `just` (the ops menu). Install once:
-  - macOS: `brew install just`
-  - Linux: `sudo apt install just` or `cargo install just`
-  - Windows: `winget install --id Casey.Just` or `scoop install just`
+## Persistence claims
 
-## Use (macOS / Linux)
+- `lifecycle.mode=session` is an interactive local process. `awf node start` refuses to claim SSH
+  durability and requires `--allow-session-bound` for an explicit temporary remote session.
+- `lifecycle.mode=service` is supervised by the native manager. Agent Bus remains transport only;
+  lifecycle commands never inspect, ACK, requeue, resend, or dispatch deliveries.
+- Windows post-SSH durability is accepted only after the session A/B matrix in
+  `docs/runtime-node-lifecycle-architecture.md`. CI or a same-session smoke is not that proof.
 
-From the repo root:
-
-```bash
-just role=reviewer repo=/path/to/agent-bus doctor            # readiness + is it installed?
-just role=reviewer repo=/path/to/agent-bus install-service   # render template + load
-just role=reviewer status
-just role=reviewer logs
-just role=reviewer down          # stop
-just role=reviewer up            # start
-just role=reviewer uninstall-service
-```
-
-`install-service` fills the template placeholders, validates it (`plutil -lint` /
-`systemd-analyze verify`), and loads it. Re-running is idempotent (it boots out /
-reloads first). systemd installs system-level under `/etc/systemd/system/`; launchd
-installs a user LaunchAgent under `~/Library/LaunchAgents/`.
-
-## Use (Windows — WinSW, manual once)
-
-WinSW is a tiny (<1 MB) single-exe supervisor; unlike NSSM it's maintained and has
-reliable crash detection.
-
-1. Download `WinSW.exe` (x64) from https://github.com/winsw/winsw/releases.
-2. Put it in `scripts/service/` and rename it `agent-workflow-listener.exe`
-   (WinSW pairs `<name>.exe` with `<name>.xml`).
-3. Edit `agent-workflow-listener.xml`, filling the `__PLACEHOLDERS__`:
-   `__ROLE__`, `__REPO__`, `__TOOL__`, `__CMD_WRAPPER__` (absolute path to
-   `awf-listen-service.cmd`), and `__PYTHON__` (absolute native Python executable).
-4. From an admin shell:
-   ```
-   agent-workflow-listener.exe install
-   agent-workflow-listener.exe start
-   agent-workflow-listener.exe status
-   ```
-   Logs roll next to the exe (`agent-workflow-listener.out.log`).
-
-## Stopping: service vs. graceful
-
-- `just down` / `winsw stop` — stop the service now.
-- local foreground listener: press `Ctrl-C` (clean exit 130, no shutdown event required)
-- `agent-bus send --to <role> --type control:shutdown` — ask a remote listener to finish
-  its current handler and exit gracefully. With `Restart=on-failure` / WinSW
-  `onfailure restart`, a *clean* exit does **not** trigger a restart, so a graceful
-  shutdown stays down until you `up` again.
+Local stop is always a manager/process action. It does not require `control:shutdown`.

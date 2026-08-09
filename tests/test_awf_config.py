@@ -195,4 +195,5 @@ def test_production_entrypoints_use_native_python_without_sourcing_configuration
     assert "awf_dispatch.py" in sources["scripts/awf-dispatch.sh"]
     assert "load_into_environment" in sources["scripts/awf_dispatch.py"]
     assert "shell=true" not in sources["scripts/awf_dispatch.py"]
-    assert "load_into_environment" in sources["scripts/awf_service.py"]
+    assert "load_profile" in sources["scripts/awf_service.py"]
+    assert "awf_profile" in sources["scripts/awf_service.py"]

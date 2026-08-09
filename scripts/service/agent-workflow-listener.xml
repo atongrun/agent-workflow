@@ -9,8 +9,7 @@
     3.  agent-workflow-listener.exe install
         agent-workflow-listener.exe start
 
-  Holds NO secrets — only role/repo/tool. The .cmd shim starts native Python,
-  which strictly parses dispatch.env as data.
+  Holds NO secrets — only one absolute node profile path.
 
   onfailure restart => auto-restart on a crash. A clean stop (control:shutdown or
   `stop`) does not loop.
@@ -22,11 +21,9 @@
 
   <executable>__CMD_WRAPPER__</executable>
 
-  <workingdirectory>__REPO__</workingdirectory>
+  <workingdirectory>__WORKING_DIRECTORY__</workingdirectory>
 
-  <env name="AWF_ROLE" value="__ROLE__"/>
-  <env name="AWF_REPO" value="__REPO__"/>
-  <env name="AWF_TOOL" value="__TOOL__"/>
+  <env name="AWF_PROFILE" value="__PROFILE__"/>
   <env name="AWF_PYTHON" value="__PYTHON__"/>
 
   <onfailure action="restart" delay="10 sec"/>

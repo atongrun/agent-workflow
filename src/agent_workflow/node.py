@@ -18,6 +18,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 
 from agent_workflow import __version__
+from agent_workflow.node_service import NodeServiceError
 from agent_workflow.resources import authority_manifest_path, operations_dir, schemas_dir
 
 PROFILE_FORMAT = "awf.node-profile.v1"
@@ -88,6 +89,15 @@ class NodeProfile:
     def digest(self) -> str:
         body = json.dumps(self.values, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+    @property
+    def lifecycle(self) -> dict[str, object]:
+        value = self.values.get("lifecycle")
+        return value if isinstance(value, dict) else {"mode": "session"}
+
+    @property
+    def lifecycle_mode(self) -> str:
+        return str(self.lifecycle.get("mode", "session"))
 
 
 @dataclass(frozen=True)
@@ -186,6 +196,26 @@ def _validate_profile_semantics(profile: NodeProfile) -> None:
     on_type = str(profile.values.get("on_type", ""))
     if (not on_type or on_type.endswith("-v3")) and not profile.values.get("upstream_repo"):
         raise NodeError("v3 profiles require upstream_repo and head_repo")
+    lifecycle = profile.lifecycle
+    manager = str(lifecycle.get("manager", "auto"))
+    windows_fields = ("service_account", "winsw_executable", "winsw_sha256")
+    if profile.lifecycle_mode == "session":
+        unexpected = sorted(key for key in lifecycle if key != "mode")
+        if unexpected:
+            raise NodeError("session lifecycle accepts only mode")
+        return
+    if manager == "winsw":
+        missing = [key for key in windows_fields if not lifecycle.get(key)]
+        if missing:
+            raise NodeError(f"WinSW lifecycle requires {', '.join(missing)}")
+        if lifecycle.get("scope", "system") != "system":
+            raise NodeError("WinSW lifecycle scope must be system")
+        if not Path(str(lifecycle["winsw_executable"])).expanduser().is_absolute():
+            raise NodeError("WinSW executable must be an absolute path")
+    elif any(lifecycle.get(key) for key in windows_fields):
+        raise NodeError("service_account and WinSW settings are Windows-only")
+    if manager in {"launchd", "systemd"} and lifecycle.get("scope", "user") != "user":
+        raise NodeError(f"{manager} lifecycle currently supports only user scope")
 
 
 def _operations_modules():
@@ -585,7 +615,20 @@ def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
     return argv
 
 
-def start(profile: NodeProfile) -> int:
+def _inside_ssh_session() -> bool:
+    return any(os.environ.get(key) for key in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"))
+
+
+def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
+    if profile.lifecycle_mode == "service":
+        from agent_workflow import node_service
+
+        return node_service.run_action(profile, "start")
+    if _inside_ssh_session() and not allow_session_bound:
+        raise NodeError(
+            "session-bound node start is unsafe inside SSH; use lifecycle.mode=service, "
+            "node foreground under an external supervisor, or --allow-session-bound temporarily"
+        )
     _load_runtime_config(profile)
     _, awf_listen = _operations_modules()
     try:
@@ -642,7 +685,56 @@ def _start_locked(profile: NodeProfile) -> int:
     return 0
 
 
+def _foreground_record(profile: NodeProfile, launch_id: str) -> None:
+    existing = _process_record(profile)
+    if existing and _pid_alive(existing.get("pid")):
+        raise NodeError(f"node already running with pid={existing.get('pid')}")
+    record = {
+        "format": "awf.node-process.v1",
+        "pid": os.getpid(),
+        "launch_id": launch_id,
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "role": profile.role,
+        "repo": str(profile.repo),
+        "started_at": utc_now(),
+        "lifecycle": "foreground",
+    }
+    _atomic_write(profile.process_path, record)
+
+
+def _clear_foreground_record(profile: NodeProfile, launch_id: str) -> None:
+    record = _process_record(profile)
+    if record and record.get("pid") == os.getpid() and record.get("launch_id") == launch_id:
+        profile.process_path.unlink(missing_ok=True)
+
+
+def foreground(profile: NodeProfile) -> int:
+    """Run the complete listener in this process for a native supervisor."""
+    _local_readiness(profile)
+    _, awf_listen = _operations_modules()
+    launch_id = uuid.uuid4().hex
+    _foreground_record(profile, launch_id)
+    previous_sigterm = None
+
+    def stop_on_sigterm(_signum, _frame):
+        raise KeyboardInterrupt
+
+    if os.name != "nt" and hasattr(signal, "SIGTERM"):
+        previous_sigterm = signal.signal(signal.SIGTERM, stop_on_sigterm)
+    try:
+        return int(awf_listen.main(_listener_argv(profile, launch_id)[2:]))
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+        _clear_foreground_record(profile, launch_id)
+
+
 def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False) -> int:
+    if profile.lifecycle_mode == "service":
+        from agent_workflow import node_service
+
+        node_service.run_action(profile, "status")
     try:
         record = _process_record(profile)
     except NodeError:
@@ -661,6 +753,10 @@ def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False)
 
 
 def stop(profile: NodeProfile) -> int:
+    if profile.lifecycle_mode == "service":
+        from agent_workflow import node_service
+
+        return node_service.run_action(profile, "stop")
     _, awf_listen = _operations_modules()
     try:
         with awf_listen.control_plane_lock(profile.node_dir / ".lifecycle.lock"):
@@ -717,6 +813,10 @@ def _stop_locked(profile: NodeProfile) -> int:
 
 
 def logs(profile: NodeProfile, lines: int) -> int:
+    if profile.lifecycle_mode == "service":
+        from agent_workflow import node_service
+
+        return node_service.run_action(profile, "logs", lines=lines)
     if lines < 1 or lines > 10000:
         raise NodeError("--lines must be between 1 and 10000")
     try:
@@ -738,17 +838,31 @@ def run(
     run_id: str = "",
     json_output: bool = False,
     ttl_seconds: int = 3600,
+    allow_session_bound: bool = False,
 ) -> int:
     try:
         profile = load_profile(profile_value)
         handlers = {
             "doctor": lambda: doctor(profile, json_output=json_output, ttl_seconds=ttl_seconds),
-            "start": lambda: start(profile),
+            "foreground": lambda: foreground(profile),
+            "install": lambda: _service_action(profile, "install"),
+            "start": lambda: start(profile, allow_session_bound=allow_session_bound),
             "status": lambda: status(profile, run_id, json_output=json_output),
             "stop": lambda: stop(profile),
             "logs": lambda: logs(profile, lines),
+            "restart": lambda: _service_action(profile, "restart"),
+            "upgrade": lambda: _service_action(profile, "upgrade"),
+            "uninstall": lambda: _service_action(profile, "uninstall"),
         }
         return handlers[command]()
-    except (NodeError, OSError) as exc:
+    except (NodeError, NodeServiceError, OSError) as exc:
         print(f"ERROR: node {command} failed: {exc}", file=sys.stderr)
         return 1
+
+
+def _service_action(profile: NodeProfile, action: str) -> int:
+    if profile.lifecycle_mode != "service":
+        raise NodeError(f"node {action} requires lifecycle.mode=service")
+    from agent_workflow import node_service
+
+    return node_service.run_action(profile, action)
