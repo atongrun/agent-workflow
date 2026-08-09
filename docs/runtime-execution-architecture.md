@@ -2,7 +2,12 @@
 
 ## Decision
 
-All local production command execution crosses `scripts/awf_executor.py`.
+All delivery, model, Git, and other trusted Workflow command execution crosses
+`scripts/awf_executor.py`. The non-core `awf node` lifecycle has one explicit exception: it may
+start the foreground listener or invoke a native service manager with fixed structured argv. That
+adapter never executes a delivery command, interprets payloads, or participates in checkpoint,
+outbox, inbox, or ACK ordering. Keeping this process-supervision boundary explicit avoids
+misclassifying launchd/systemd/WinSW as a second Workflow runtime.
 Pure renderers under `scripts/agent_adapters/` own provider-specific argv,
 prompt, stdin, file-attachment, model-flag, read-only, and output-path syntax.
 The trusted Workflow lifecycle in `scripts/awf_role.py` continues to select the

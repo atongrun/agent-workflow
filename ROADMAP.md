@@ -116,6 +116,9 @@ Remaining Phase 2 work:
 - [x] Add one credential-free, cross-platform role profile and the thin installed-wheel
   `awf node doctor/start/status/stop/logs` local user-process surface without adding a scheduler,
   provider registry, GUI, or new Agent Bus responsibility.
+- [x] Separate session-bound and native-service node lifecycles; fail closed for remote session
+  starts, supervise one profile-derived foreground listener, and keep transport/ACK recovery out of
+  the service adapter. Real Windows post-SSH session A/B acceptance remains an external release gate.
 - [x] Aggregate listener, workspace, checkpoint, queue, artifact, PR, and CI facts in a read-only
   node status snapshot; distinguish ReviewReport raw `file_sha256` from normalized
   `canonical_report_sha256` and label unknown facts without inference.

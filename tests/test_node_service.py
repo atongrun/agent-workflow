@@ -162,4 +162,3 @@ def test_service_health_requires_manager_lease_and_profile_agreement():
         lease_bound=True,
         orphaned=True,
     ) == "degraded"
-

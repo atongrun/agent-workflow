@@ -238,7 +238,7 @@ trusted listener recovery. Status labels unrecorded health/checkpoint/queue valu
 explicitly, and resume is fail-closed: it cannot replay a model, ACK, requeue,
 or historical delivery.
 
-An installed wheel also exposes the same thin local listener lifecycle on every supported OS:
+An installed wheel exposes explicit session-bound and service-managed listener lifecycles:
 
 ```bash
 awf node doctor --profile reviewer-mac
@@ -248,6 +248,10 @@ awf node status --profile reviewer-mac
 awf node status --profile reviewer-mac --run task-DOGFOOD-001 --json
 awf node logs --profile reviewer-mac --lines 100
 awf node stop --profile reviewer-mac
+awf node install --profile coder-windows-service
+awf node restart --profile coder-windows-service
+awf node upgrade --profile coder-windows-service
+awf node uninstall --profile coder-windows-service
 ```
 
 ```json
@@ -263,13 +267,34 @@ awf node stop --profile reviewer-mac
 }
 ```
 
+Persistent profiles add a secret-free lifecycle object. Windows also pins the operator-supplied
+WinSW binary and names a pre-provisioned least-privileged service account; passwords are never
+accepted or written by `awf`:
+
+```json
+{
+  "lifecycle": {
+    "mode": "service",
+    "manager": "winsw",
+    "scope": "system",
+    "service_account": ".\\awf-coder",
+    "winsw_executable": "C:\\Tools\\WinSW-x64.exe",
+    "winsw_sha256": "sha256:<64 lowercase hex>"
+  }
+}
+```
+
 A named profile resolves to the platform config directory under `awf/profiles/<name>.json`; an
 absolute JSON path is also accepted. The `awf.node-profile.v1` schema contains only non-secret
 role, repository, tool, route, state, and log settings. Tokens and the Bus URL remain exclusively
 in owner-only `dispatch.env`. `doctor` checks the schema, role/tool boundary, strict credential
-file, role-aware Git workspace, Bus health, and model executable before `start`; it does not replace
-the existing Fast/Deep remote-dispatch proof. This is a local user-process surface, not a scheduler
-or a claim that native service installation has been accepted on every platform.
+file, role-aware Git workspace, Bus health, and model executable before start; it does not replace
+the existing Fast/Deep remote-dispatch proof. Profiles that omit `lifecycle` retain the local
+`session` mode. Under SSH, session start is rejected unless `--allow-session-bound` makes the
+temporary limitation explicit. `service` mode renders the same complete profile into a native
+manager definition whose target is `awf node foreground`; it does not add scheduling or move
+delivery lifecycle into Agent Bus. Windows durability is not accepted until a new SSH session
+proves the manager, listener PID, launch identity, lease, queue consumption, and clean local stop.
 
 `doctor --json` emits one credential-free `awf.node-readiness.v1` snapshot for operator discovery.
 It binds the installed `awf`, profile, strict configuration, workspace, selected tool version, and

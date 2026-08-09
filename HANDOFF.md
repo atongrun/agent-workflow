@@ -14,13 +14,21 @@ terminal consumption, and Fast/Deep Preflight. PR #37 proved a fresh disposable 
 route and PR #38 extracted the existing Codex/OpenCode argv renderers without changing provider
 selection, payloads, recovery, stage transitions, or ACK-sensitive lifecycle.
 
-The installed operations wheel now has a thin `awf node doctor/start/status/stop/logs` surface for
-one role profile. The same credential-free JSON schema and commands are used on macOS, Windows,
-and Linux; secrets remain in strict owner-only `dispatch.env`. Startup performs local schema,
-workspace, credential-file, Bus, and model-tool readiness before spawning the listener. PID and
-log files provide only local user-process lifecycle control; platform service templates remain a
-separate unaccepted integration layer. See
-[`docs/tasks/thin-node-operations-implementation-report.md`](docs/tasks/thin-node-operations-implementation-report.md).
+The installed operations wheel has an explicit node lifecycle contract. Existing profiles default
+to `session`: local process-group control remains compatible, but `start` fails closed inside SSH
+unless the operator explicitly accepts temporary session binding. A profile may instead select
+`service`, in which case one adapter supervises the same in-process foreground listener through a
+launchd user agent, lingering systemd user unit, or password-free WinSW definition. Secrets remain
+in strict owner-only `dispatch.env`; the service profile, definition, argv, and install record are
+credential-free. Agent Bus stays transport-only and no lifecycle command can read, ACK, requeue,
+resend, or dispatch an event. See [`docs/runtime-node-lifecycle-architecture.md`](docs/runtime-node-lifecycle-architecture.md).
+
+The Windows implementation deliberately does not use `DETACHED_PROCESS` or
+`CREATE_BREAKAWAY_FROM_JOB`. Current-host OpenSSH Job probes proved that a new process group remains
+session-bound, while breakaway survival loses the existing cross-session Ctrl-Break stop primitive.
+WinSW installation verifies an operator-supplied binary digest, rejects LocalSystem, and requires a
+pre-provisioned least-privileged SCM account. CI is implementation evidence only; the architecture
+document's fresh session A/B post-SSH matrix remains the acceptance gate.
 
 The node doctor also has a bounded machine-readable operator snapshot:
 `awf node doctor --profile <profile> --json --ttl-seconds <seconds>`. It lets an architect replace
