@@ -47,7 +47,7 @@ def main() -> int:
 import os
 import sys
 from pathlib import Path
-from agent_workflow import cli
+from agent_workflow import cli, status
 from agent_workflow.resources import operations_dir, schemas_dir, templates_dir
 
 operations = operations_dir()
@@ -83,6 +83,7 @@ assert Path(awf_listen.__file__).resolve().is_relative_to(operations)
 assert Path(awf_role.__file__).resolve().is_relative_to(operations)
 assert awf_control_plane.DEFAULT_ROUTES
 assert callable(awf_dispatch.main)
+assert status.STATUS_FORMAT == "awf.node-status.v1"
 assert Path(cli._ops_module().__file__).resolve().is_relative_to(operations)
 assert cli._authority_manifest_for_repo(Path.cwd()) == (
     operations / "authority-manifest.example.json"

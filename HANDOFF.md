@@ -22,6 +22,12 @@ log files provide only local user-process lifecycle control; platform service te
 separate unaccepted integration layer. See
 [`docs/tasks/thin-node-operations-implementation-report.md`](docs/tasks/thin-node-operations-implementation-report.md).
 
+`awf node status --profile <profile> [--run <run-id>] [--json]` is the factual read-only view. It
+keeps recorded and live PR/CI facts separate, reports unavailable observations honestly, and names
+ReviewReport raw-file and normalized-object hashes as `file_sha256` and
+`canonical_report_sha256`. The reader does not invoke recovery or any event lifecycle mutation.
+See [`docs/tasks/factual-node-status-implementation-report.md`](docs/tasks/factual-node-status-implementation-report.md).
+
 The current addition implements the evidence-backed Pi reviewer need without introducing a generic
 provider interface. Pi uses a pure argv renderer, read-only tools, explicit text-mode
 non-interactive execution, trusted stdout persistence, and the existing isolated reviewer,

@@ -116,6 +116,9 @@ Remaining Phase 2 work:
 - [x] Add one credential-free, cross-platform role profile and the thin installed-wheel
   `awf node doctor/start/status/stop/logs` local user-process surface without adding a scheduler,
   provider registry, GUI, or new Agent Bus responsibility.
+- [x] Aggregate listener, workspace, checkpoint, queue, artifact, PR, and CI facts in a read-only
+  node status snapshot; distinguish ReviewReport raw `file_sha256` from normalized
+  `canonical_report_sha256` and label unknown facts without inference.
 - [x] Replace the production Bash TaskCard dispatcher with a native Python entry point; retain the
   shell file only as a POSIX compatibility shim and remove Git Bash/WSL from Windows dispatch.
 - [ ] Record the capacity-isolation metrics defined in

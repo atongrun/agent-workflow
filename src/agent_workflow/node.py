@@ -421,21 +421,21 @@ def _start_locked(profile: NodeProfile) -> int:
     return 0
 
 
-def status(profile: NodeProfile) -> int:
-    record = _process_record(profile)
-    if not record:
-        print(f"profile={profile.name} role={profile.role} listener=stopped")
-        return 3
-    if record.get("profile_sha256") != profile.digest:
+def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False) -> int:
+    try:
+        record = _process_record(profile)
+    except NodeError:
+        record = None
+    if record and record.get("profile_sha256") != profile.digest:
         raise NodeError("profile changed after listener start; stop using the original profile")
-    pid = record.get("pid")
-    alive = _pid_alive(pid) and _lease_matches(profile, _listener_lease(profile), pid)
-    print(
-        f"profile={profile.name} role={profile.role} "
-        f"listener={'running' if alive else 'stale'} pid={record.get('pid')}"
-    )
-    print(f"repo={profile.repo} log={profile.log_path}")
-    return 0 if alive else 3
+    from agent_workflow import status as factual_status
+
+    value = factual_status.snapshot(profile, run_id)
+    if json_output:
+        print(json.dumps(value, indent=2, sort_keys=True))
+    else:
+        factual_status.print_human(value)
+    return 0
 
 
 def stop(profile: NodeProfile) -> int:
@@ -494,13 +494,20 @@ def logs(profile: NodeProfile, lines: int) -> int:
     return 0
 
 
-def run(command: str, profile_value: str, *, lines: int = 100) -> int:
+def run(
+    command: str,
+    profile_value: str,
+    *,
+    lines: int = 100,
+    run_id: str = "",
+    json_output: bool = False,
+) -> int:
     try:
         profile = load_profile(profile_value)
         handlers = {
             "doctor": lambda: doctor(profile),
             "start": lambda: start(profile),
-            "status": lambda: status(profile),
+            "status": lambda: status(profile, run_id, json_output=json_output),
             "stop": lambda: stop(profile),
             "logs": lambda: logs(profile, lines),
         }

@@ -164,6 +164,28 @@ def test_status_rejects_profile_drift(tmp_path: Path):
         node.status(profile)
 
 
+def test_status_json_is_a_read_only_snapshot(monkeypatch, capsys, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    from agent_workflow import status as factual_status
+
+    monkeypatch.setattr(
+        factual_status,
+        "snapshot",
+        lambda value, run_id: {
+            "format": "awf.node-status.v1",
+            "profile": value.name,
+            "run_id": run_id,
+        },
+    )
+
+    assert node.status(profile, "task-1", json_output=True) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "format": "awf.node-status.v1",
+        "profile": profile.name,
+        "run_id": "task-1",
+    }
+
+
 def test_stop_refuses_to_signal_a_mismatched_process_record(monkeypatch, tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
     profile.node_dir.mkdir(parents=True)
@@ -295,9 +317,22 @@ def test_cli_routes_all_node_commands(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         node,
         "run",
-        lambda command, profile, lines=100: calls.append((command, profile, lines)) or 0,
+        lambda command, profile, lines=100, run_id="", json_output=False: calls.append(
+            (command, profile, lines, run_id, json_output)
+        )
+        or 0,
     )
 
     assert cli.main(["node", "doctor", "--profile", "reviewer-mac"]) == 0
     assert cli.main(["node", "logs", "--profile", str(tmp_path), "--lines", "12"]) == 0
-    assert calls == [("doctor", "reviewer-mac", 100), ("logs", str(tmp_path), 12)]
+    assert (
+        cli.main(
+            ["node", "status", "--profile", "reviewer-mac", "--run", "task-1", "--json"]
+        )
+        == 0
+    )
+    assert calls == [
+        ("doctor", "reviewer-mac", 100, "", False),
+        ("logs", str(tmp_path), 12, "", False),
+        ("status", "reviewer-mac", 100, "task-1", True),
+    ]
