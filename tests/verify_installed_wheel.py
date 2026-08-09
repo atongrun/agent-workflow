@@ -47,7 +47,7 @@ def main() -> int:
 import os
 import sys
 from pathlib import Path
-from agent_workflow import cli, status
+from agent_workflow import cli, node, status
 from agent_workflow.resources import operations_dir, schemas_dir, templates_dir
 
 operations = operations_dir()
@@ -84,6 +84,7 @@ assert Path(awf_role.__file__).resolve().is_relative_to(operations)
 assert awf_control_plane.DEFAULT_ROUTES
 assert callable(awf_dispatch.main)
 assert status.STATUS_FORMAT == "awf.node-status.v1"
+assert node.READINESS_FORMAT == "awf.node-readiness.v1"
 assert Path(cli._ops_module().__file__).resolve().is_relative_to(operations)
 assert cli._authority_manifest_for_repo(Path.cwd()) == (
     operations / "authority-manifest.example.json"
@@ -96,6 +97,16 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
             cwd=outside,
             env=clean_env,
         )
+        doctor_help = subprocess.run(
+            [str(awf), "node", "doctor", "--help"],
+            check=True,
+            cwd=outside,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+        )
+        assert "--json" in doctor_help.stdout
+        assert "--ttl-seconds" in doctor_help.stdout
         missing_profile = subprocess.run(
             [str(awf), "node", "status", "--profile", "missing-profile"],
             cwd=outside,

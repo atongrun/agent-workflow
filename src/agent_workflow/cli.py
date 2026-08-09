@@ -55,6 +55,7 @@ def cmd_node(args: argparse.Namespace) -> int:
         lines=getattr(args, "lines", 100),
         run_id=getattr(args, "run", ""),
         json_output=getattr(args, "json", False),
+        ttl_seconds=getattr(args, "ttl_seconds", 3600),
     )
 
 
@@ -570,6 +571,9 @@ def main(argv: list[str] | None = None) -> int:
         if name == "status":
             command.add_argument("--run", default="")
             command.add_argument("--json", action="store_true")
+        if name == "doctor":
+            command.add_argument("--json", action="store_true")
+            command.add_argument("--ttl-seconds", type=int, default=3600)
         command.set_defaults(func=cmd_node)
 
     args = parser.parse_args(argv)

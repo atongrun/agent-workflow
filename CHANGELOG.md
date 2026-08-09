@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add `awf node doctor --json --ttl-seconds` as a credential-free, fingerprinted operator
+  discovery snapshot that can replace repeated SSH probes during a short serial run while keeping
+  Fast/Deep Preflight as the only remote-dispatch authority.
+
 ## [0.3.0-rc.2] — 2026-08-09
 
 ### Added

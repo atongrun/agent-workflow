@@ -119,6 +119,9 @@ Remaining Phase 2 work:
 - [x] Aggregate listener, workspace, checkpoint, queue, artifact, PR, and CI facts in a read-only
   node status snapshot; distinguish ReviewReport raw `file_sha256` from normalized
   `canonical_report_sha256` and label unknown facts without inference.
+- [x] Add a credential-free `awf node doctor --json` discovery snapshot so one remote command can
+  replace repeated host/path/tool readiness probes across a short serial run, without creating a
+  second authority cache or adding Agent Bus runtime semantics.
 - [x] Replace the production Bash TaskCard dispatcher with a native Python entry point; retain the
   shell file only as a POSIX compatibility shim and remove Git Bash/WSL from Windows dispatch.
 - [ ] Record the capacity-isolation metrics defined in

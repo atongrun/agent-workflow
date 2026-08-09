@@ -11,11 +11,12 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from agent_workflow import __version__
 from agent_workflow.resources import authority_manifest_path, operations_dir, schemas_dir
 
 PROFILE_FORMAT = "awf.node-profile.v1"
@@ -29,6 +30,8 @@ TOOL_CONFIG = {
     "opencode": ("AWF_OPENCODE_BIN", "opencode"),
     "pi": ("AWF_PI_BIN", "pi"),
 }
+READINESS_FORMAT = "awf.node-readiness.v1"
+MAX_READINESS_TTL_SECONDS = 86400
 
 
 class NodeError(RuntimeError):
@@ -85,8 +88,21 @@ class NodeProfile:
         return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class LocalReadiness:
+    config: dict[str, str]
+    repo: Path
+    bus_executable: str
+    tool_executable: str
+    tool_version_sha256: str
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def default_config_home() -> Path:
@@ -251,7 +267,17 @@ def _atomic_write(path: Path, value: dict[str, object]) -> None:
         temp.unlink(missing_ok=True)
 
 
-def _load_runtime_config(profile: NodeProfile) -> tuple[dict[str, str], Path]:
+def _version_sha256(stdout: str, stderr: str) -> str:
+    body = (stdout + "\0" + stderr).encode("utf-8")
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+def _resolved_executable(value: str) -> str:
+    resolved = shutil.which(value)
+    return str(Path(resolved).resolve()) if resolved else str(Path(value).resolve())
+
+
+def _local_readiness(profile: NodeProfile) -> LocalReadiness:
     awf_config, awf_listen = _operations_modules()
     try:
         config = awf_config.load_config(profile.config_path)
@@ -291,6 +317,8 @@ def _load_runtime_config(profile: NodeProfile) -> tuple[dict[str, str], Path]:
         raise NodeError("local readiness failed; Agent Bus health probe failed") from exc
     if bus_probe.returncode != 0:
         raise NodeError("local readiness failed; Agent Bus health probe failed")
+    tool = ""
+    tool_version_sha256 = ""
     if profile.role != "architect":
         key, default = TOOL_CONFIG[str(profile.values["tool"])]
         tool = awf_config.native_executable(config.get(key, default))
@@ -308,13 +336,148 @@ def _load_runtime_config(profile: NodeProfile) -> tuple[dict[str, str], Path]:
             raise NodeError("local readiness failed; selected model probe failed") from exc
         if tool_probe.returncode != 0:
             raise NodeError("local readiness failed; selected model probe failed")
-    return config, repo
+        tool_version_sha256 = _version_sha256(tool_probe.stdout or "", tool_probe.stderr or "")
+    return LocalReadiness(
+        config=config,
+        repo=repo,
+        bus_executable=_resolved_executable(bus),
+        tool_executable=_resolved_executable(tool) if tool else "",
+        tool_version_sha256=tool_version_sha256,
+    )
 
 
-def doctor(profile: NodeProfile) -> int:
-    _load_runtime_config(profile)
-    record = _process_record(profile)
-    state = "running" if record and _pid_alive(record.get("pid")) else "stopped"
+def _load_runtime_config(profile: NodeProfile) -> tuple[dict[str, str], Path]:
+    readiness = _local_readiness(profile)
+    return readiness.config, readiness.repo
+
+
+def _listener_snapshot(profile: NodeProfile) -> dict[str, object]:
+    try:
+        record = _process_record(profile)
+        lease = _listener_lease(profile)
+    except NodeError:
+        return {
+            "status": "unknown",
+            "pid": None,
+            "profile_sha256": "",
+            "lease_bound": False,
+        }
+    pid = record.get("pid") if record else None
+    digest_matches = bool(record and record.get("profile_sha256") == profile.digest)
+    alive = bool(record and digest_matches and _pid_alive(pid))
+    bound = bool(alive and _lease_matches(profile, lease, pid))
+    return {
+        "status": "running" if bound else "stale" if record else "stopped",
+        "pid": pid,
+        "profile_sha256": record.get("profile_sha256", "") if record else "",
+        "lease_bound": bound,
+    }
+
+
+def _readiness_fingerprint(
+    profile: NodeProfile,
+    readiness: LocalReadiness,
+    listener: dict[str, object],
+) -> str:
+    config_body = json.dumps(readiness.config, sort_keys=True, separators=(",", ":"))
+    config_sha256 = hashlib.sha256(config_body.encode("utf-8")).hexdigest()
+    selected = {
+        "awf_version": __version__,
+        "runtime": {
+            "platform": sys.platform,
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        },
+        "operations_dir": str(operations_dir().resolve()),
+        "profile_sha256": profile.digest,
+        "config_sha256": config_sha256,
+        "repo": str(readiness.repo),
+        "bus_executable": readiness.bus_executable,
+        "tool_executable": readiness.tool_executable,
+        "tool_version_sha256": readiness.tool_version_sha256,
+        "listener": listener,
+    }
+    body = json.dumps(selected, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(("awf-node-readiness-v1\0" + body).encode()).hexdigest()
+
+
+def doctor_report(
+    profile: NodeProfile,
+    readiness: LocalReadiness,
+    *,
+    ttl_seconds: int,
+    observed_at: datetime,
+) -> dict[str, object]:
+    if ttl_seconds < 1 or ttl_seconds > MAX_READINESS_TTL_SECONDS:
+        raise NodeError(f"--ttl-seconds must be between 1 and {MAX_READINESS_TTL_SECONDS}")
+    listener = _listener_snapshot(profile)
+    tool_status = "not_applicable" if profile.role == "architect" else "pass"
+    return {
+        "format": READINESS_FORMAT,
+        "status": "ready",
+        "observed_at": observed_at.isoformat(),
+        "valid_until": (observed_at + timedelta(seconds=ttl_seconds)).isoformat(),
+        "scope": "operator-discovery-only",
+        "awf_version": __version__,
+        "runtime": {
+            "platform": sys.platform,
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        },
+        "profile": {
+            "name": profile.name,
+            "role": profile.role,
+            "tool": str(profile.values["tool"]),
+            "model": str(profile.values.get("model", "")),
+        },
+        "profile_sha256": profile.digest,
+        "fingerprint": _readiness_fingerprint(profile, readiness, listener),
+        "listener": listener,
+        "layers": [
+            {"id": "profile", "status": "pass"},
+            {"id": "configuration", "status": "pass"},
+            {
+                "id": "workspace",
+                "status": "pass",
+                "scope": "source" if profile.role == "architect" else "dedicated_role",
+            },
+            {"id": "agent_bus", "status": "pass"},
+            {
+                "id": "model_tool",
+                "status": tool_status,
+                "version_sha256": readiness.tool_version_sha256,
+                "model_invoked": False,
+            },
+        ],
+        "remote_dispatch": {
+            "status": "not_proven",
+            "required_gate": "fast/deep-preflight",
+        },
+        "invalidate_on": [
+            "ttl_expired",
+            "profile_or_selection_changed",
+            "awf_or_tool_changed",
+            "configuration_or_workspace_changed",
+            "listener_or_bus_failure",
+        ],
+    }
+
+
+def doctor(
+    profile: NodeProfile,
+    *,
+    json_output: bool = False,
+    ttl_seconds: int = 3600,
+) -> int:
+    readiness = _local_readiness(profile)
+    report = doctor_report(
+        profile,
+        readiness,
+        ttl_seconds=ttl_seconds,
+        observed_at=_now(),
+    )
+    if json_output:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+    state = str(report["listener"]["status"])
     print(
         f"profile={profile.name} role={profile.role} readiness=pass listener={state} "
         f"repo={profile.repo}"
@@ -502,11 +665,12 @@ def run(
     lines: int = 100,
     run_id: str = "",
     json_output: bool = False,
+    ttl_seconds: int = 3600,
 ) -> int:
     try:
         profile = load_profile(profile_value)
         handlers = {
-            "doctor": lambda: doctor(profile),
+            "doctor": lambda: doctor(profile, json_output=json_output, ttl_seconds=ttl_seconds),
             "start": lambda: start(profile),
             "status": lambda: status(profile, run_id, json_output=json_output),
             "stop": lambda: stop(profile),

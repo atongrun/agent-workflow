@@ -22,6 +22,13 @@ log files provide only local user-process lifecycle control; platform service te
 separate unaccepted integration layer. See
 [`docs/tasks/thin-node-operations-implementation-report.md`](docs/tasks/thin-node-operations-implementation-report.md).
 
+The node doctor also has a bounded machine-readable operator snapshot:
+`awf node doctor --profile <profile> --json --ttl-seconds <seconds>`. It lets an architect replace
+sequential host, path, tool, Bus, workspace, and listener discovery commands with one remote call.
+The credential-free fingerprint and validity window are discovery evidence only; the report never
+claims dispatch authority, writes a cache, emits an event, or replaces Fast/Deep Preflight. See
+[`docs/tasks/node-readiness-snapshot-implementation-report.md`](docs/tasks/node-readiness-snapshot-implementation-report.md).
+
 `awf node status --profile <profile> [--run <run-id>] [--json]` is the factual read-only view. It
 keeps recorded and live PR/CI facts separate, reports unavailable observations honestly, and names
 ReviewReport raw-file and normalized-object hashes as `file_sha256` and

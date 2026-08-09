@@ -58,26 +58,9 @@ def _sha256(path: Path) -> str:
 def _listener(profile: NodeProfile) -> dict[str, object]:
     from agent_workflow import node
 
-    try:
-        record = node._process_record(profile)
-        lease = node._listener_lease(profile)
-    except node.NodeError:
-        return {
-            "source": "node_process_record+listener_lease+pid_probe",
-            "status": "unknown",
-            "pid": None,
-            "profile_sha256": "",
-            "lease_bound": False,
-        }
-    pid = record.get("pid") if record else None
-    alive = bool(record and node._pid_alive(pid))
-    bound = bool(alive and node._lease_matches(profile, lease, pid))
     return {
         "source": "node_process_record+listener_lease+pid_probe",
-        "status": "running" if bound else "stale" if record else "stopped",
-        "pid": pid,
-        "profile_sha256": record.get("profile_sha256", "") if record else "",
-        "lease_bound": bound,
+        **node._listener_snapshot(profile),
     }
 
 
