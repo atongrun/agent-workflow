@@ -685,12 +685,25 @@ def _stop_locked(profile: NodeProfile) -> int:
     pid = record.get("pid")
     if not isinstance(pid, int) or pid < 1:
         raise NodeError("process record PID is invalid; refusing to signal")
+    lease = _listener_lease(profile)
+    launch_id = record.get("launch_id", "")
     if not _pid_alive(pid):
+        matching_listener_alive = bool(
+            isinstance(launch_id, str)
+            and launch_id
+            and _lease_matches(profile, lease, pid, launch_id)
+            and lease
+            and _pid_alive(lease.get("pid"))
+        )
+        if matching_listener_alive:
+            raise NodeError(
+                "node launcher is not alive but its listener lease is still live; "
+                "refusing to declare stopped"
+            )
         profile.process_path.unlink(missing_ok=True)
         print(f"profile={profile.name} listener=stopped stale_record=removed")
         return 0
-    launch_id = record.get("launch_id", "")
-    if not _live_lease_matches(profile, _listener_lease(profile), pid, launch_id):
+    if not _live_lease_matches(profile, lease, pid, launch_id):
         raise NodeError("live listener lease does not match this profile; refusing to signal")
     if os.name == "nt":
         os.kill(pid, signal.CTRL_BREAK_EVENT)

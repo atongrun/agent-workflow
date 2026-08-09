@@ -712,6 +712,47 @@ def test_stop_refuses_dead_listener_behind_live_launcher(monkeypatch, tmp_path: 
         node.stop(profile)
 
 
+def test_stop_preserves_record_when_launcher_is_dead_but_listener_is_alive(
+    monkeypatch, tmp_path: Path
+):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    profile.node_dir.mkdir(parents=True)
+    profile.process_path.write_text(
+        json.dumps(
+            {
+                "pid": 42,
+                "launch_id": "a" * 32,
+                "profile_sha256": profile.digest,
+                "profile": str(profile.path),
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 84)
+    monkeypatch.setattr(
+        node,
+        "_listener_lease",
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": value.role,
+            "repo": str(value.repo),
+        },
+    )
+    monkeypatch.setattr(
+        node.os, "killpg", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+    monkeypatch.setattr(
+        node.os, "kill", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+
+    with pytest.raises(node.NodeError, match="listener lease is still live"):
+        node.stop(profile)
+    assert profile.process_path.exists()
+
+
 def test_logs_returns_only_the_requested_tail(capsys, tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
     profile.log_path.parent.mkdir(parents=True)

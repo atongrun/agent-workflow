@@ -25,6 +25,8 @@ listener accepts only the internal 128-bit hexadecimal form, and readiness/statu
 exact match together with role, repository, and live launcher plus listener PIDs. Direct-PID
 matching remains only for process records created before this field existed. Role/repository
 identity alone remains insufficient. A stale lease cannot make a reused launcher PID signalable.
+Conversely, a dead launcher with a still-live matching listener preserves its process record and
+fails closed instead of declaring success, deleting evidence, or signaling the interpreter PID.
 
 This avoids encoding a Windows parent-child special case in the common ownership contract. A
 launcher may delegate through one or more processes without changing listener ownership, while
@@ -42,6 +44,8 @@ local stop still targets the process group deliberately created by the node.
   process group only after a differently numbered listener lease presents that same identity.
 - Stale-listener regressions prove status is not `running` and stop does not signal when only the
   launcher PID appears live.
+- Orphan-risk regression proves a live listener behind a dead launcher preserves the process record
+  and produces a blocking diagnostic without signaling either PID.
 - The child releases its own lease through the normal cleanup path; the test does not leave an
   orphan listener or manually mutate a lease.
 
