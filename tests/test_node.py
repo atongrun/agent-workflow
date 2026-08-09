@@ -341,10 +341,7 @@ def test_cli_routes_all_node_commands(monkeypatch, tmp_path: Path):
 
     assert cli.main(["node", "doctor", "--profile", "reviewer-mac"]) == 0
     assert cli.main(["node", "logs", "--profile", str(tmp_path), "--lines", "12"]) == 0
-    assert (
-        cli.main(["node", "status", "--profile", "reviewer-mac", "--run", "task-1", "--json"])
-        == 0
-    )
+    assert cli.main(["node", "status", "--profile", "reviewer-mac", "--run", "task-1", "--json"]) == 0
     assert calls == [
         ("doctor", "reviewer-mac", 100, "", False),
         ("logs", str(tmp_path), 12, "", False),
