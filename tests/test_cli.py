@@ -60,6 +60,16 @@ def test_preflight_forwards_to_packaged_operation(monkeypatch):
     assert received == [["resume-deep", "--probe-id", "probe-1"]]
 
 
+def test_preflight_does_not_expose_internal_handler_commands(monkeypatch, capsys):
+    operation = SimpleNamespace(main=lambda _argv: 0)
+    monkeypatch.setitem(sys.modules, "awf_preflight", operation)
+
+    result = cli.main(["preflight", "handle-result"])
+
+    assert result == 2
+    assert capsys.readouterr().err == "ERROR: awf preflight supports only resume-deep\n"
+
+
 class TestCLIValidate:
     def test_validate_role_passes(self):
         result = run_awf("validate", "roles/planner.yaml")

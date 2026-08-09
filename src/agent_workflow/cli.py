@@ -426,6 +426,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
 def cmd_preflight(args: argparse.Namespace) -> int:
     """Run the packaged preflight CLI without requiring a source checkout."""
+    if not args.preflight_args or args.preflight_args[0] != "resume-deep":
+        print("ERROR: awf preflight supports only resume-deep", file=sys.stderr)
+        return 2
     scripts = operations_dir()
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
@@ -549,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     dispatch_parser.set_defaults(func=cmd_dispatch)
 
     preflight_parser = subparsers.add_parser(
-        "preflight", help="Run Fast, Deep, or late-result preflight recovery"
+        "preflight", help="Recover one completed Deep result after caller timeout"
     )
     preflight_parser.add_argument("preflight_args", nargs=argparse.REMAINDER)
     preflight_parser.set_defaults(func=cmd_preflight)
