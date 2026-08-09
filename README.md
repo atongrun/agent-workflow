@@ -294,8 +294,10 @@ console session; RDP-only and pre-login operation are outside this user-scope co
 user remains the normal model/Git/config identity; no
 service account, password, WinSW binary, or PowerShell setup is required. Agent Bus
 `control:shutdown` remains the graceful remote stop, while `awf node stop` independently terminates
-the exact bound local process tree. Windows durability is not accepted until a new SSH session
-proves the manager, listener PID, launch identity, lease, queue consumption, and clean local stop.
+the exact bound local process tree. Windows durability was accepted only after a new SSH session
+proved the manager, listener PID, launch identity, lease, queue consumption, crash recovery, and
+clean local stop. The evidence matrix is recorded in the
+[lifecycle implementation report](docs/tasks/windows-listener-service-lifecycle-implementation-report.md).
 
 `doctor --json` emits one credential-free `awf.node-readiness.v1` snapshot for operator discovery.
 It binds the installed `awf`, profile, strict configuration, workspace, selected tool version, and

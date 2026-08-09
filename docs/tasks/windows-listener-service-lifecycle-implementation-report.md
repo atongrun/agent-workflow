@@ -61,8 +61,8 @@ code changed.
 - GitHub CI at `aa0f943`: all six Linux, Windows, macOS runtime, and installed-wheel jobs passed.
 - Independent architecture review: GO before implementation. Independent code review found one
   blocking uninstall/reinstall defect; the fix removes only the exact install record after native
-  uninstall and adds reinstall regressions. Review of the final live-acceptance delta is required
-  before merge.
+  uninstall and adds reinstall regressions. Final review of the live-acceptance delta returned
+  APPROVE with no blocking findings before PR #72 merged as `401a269`.
 - Payload-free Windows probes: Task Scheduler work survived its creating SSH session; Scheduler End
   alone orphaned a child and was rejected; exact-bound `taskkill /T /F` followed by End removed the
   complete observed tree. The nominal `RestartOnFailure` setting did not restart a failing action
