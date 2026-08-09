@@ -422,6 +422,12 @@ class WinSWAdapter:
                 "password= <prompted-secret>"
             )
 
+    def _require_installed(self) -> dict[str, object]:
+        record = _require_installed(self.profile, "winsw")
+        if record.get("winsw_sha256") != _sha256(self.executable):
+            raise NodeServiceError("installed WinSW digest does not match its record")
+        return record
+
     def install(self, *, force: bool = False) -> int:
         _guard_install(self.profile, "winsw", force=force)
         source = self._source_binary()
@@ -447,17 +453,15 @@ class WinSWAdapter:
         return 0
 
     def start(self) -> int:
-        record = _require_installed(self.profile, "winsw")
+        self._require_installed()
         self._source_binary()
-        if record.get("winsw_sha256") != _sha256(self.executable):
-            raise NodeServiceError("installed WinSW digest does not match its record")
         self._require_account()
         _run([str(self.executable), "start"])
         _wait_bound(self.profile)
         return self.status()
 
     def status(self) -> int:
-        _require_installed(self.profile, "winsw")
+        self._require_installed()
         self._require_account()
         result = _run([str(self.executable), "status"], check=False)
         if result.returncode != 0 or "active" not in result.stdout.lower():

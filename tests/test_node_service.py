@@ -186,6 +186,29 @@ def test_install_record_rejects_profile_drift(tmp_path: Path):
         node_service._require_installed(profile, "systemd")
 
 
+def test_winsw_status_rejects_installed_binary_drift(monkeypatch, tmp_path: Path):
+    executable = tmp_path / "WinSW.exe"
+    executable.write_bytes(b"expected")
+    profile = SimpleNamespace(
+        node_dir=tmp_path,
+        lifecycle={"service_account": ".\\awf-coder"},
+    )
+    adapter = node_service.WinSWAdapter(profile)
+    monkeypatch.setattr(
+        node_service,
+        "_require_installed",
+        lambda value, manager: {"winsw_sha256": "sha256:" + "0" * 64},
+    )
+    monkeypatch.setattr(
+        node_service.WinSWAdapter,
+        "executable",
+        property(lambda self: executable),
+    )
+
+    with pytest.raises(node_service.NodeServiceError, match="WinSW digest"):
+        adapter._require_installed()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="exercises native Windows token/process APIs")
 def test_windows_native_process_identity_tree_and_account_smoke():
     identity = node_service._windows_process_identity(os.getpid())
