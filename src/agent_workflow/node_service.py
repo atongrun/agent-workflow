@@ -197,8 +197,47 @@ def _write_install_record(
     )
 
 
+def _install_record(profile) -> dict[str, object]:
+    path = profile.node_dir / "service" / "install.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise NodeServiceError(f"service install record is unavailable: {path}") from exc
+    if not isinstance(value, dict) or value.get("format") != "awf.node-service-install.v1":
+        raise NodeServiceError(f"service install record is invalid: {path}")
+    return value
+
+
+def _require_installed(profile, manager: str) -> dict[str, object]:
+    from agent_workflow import __version__
+
+    record = _install_record(profile)
+    expected = {
+        "manager": manager,
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "python": str(Path(sys.executable).resolve()),
+        "awf_version": __version__,
+    }
+    if any(record.get(key) != value for key, value in expected.items()):
+        raise NodeServiceError("service installation drifted; restore the profile or run upgrade")
+    definition = Path(str(record.get("definition", "")))
+    if not definition.is_file() or _sha256(definition) != record.get("definition_sha256"):
+        raise NodeServiceError("installed service definition digest does not match its record")
+    if _sha256(Path(sys.executable).resolve()) != record.get("python_sha256"):
+        raise NodeServiceError("installed Python digest does not match its record; run upgrade")
+    return record
+
+
+def _guard_install(profile, manager: str, *, force: bool) -> None:
+    path = profile.node_dir / "service" / "install.json"
+    if not path.exists() or force:
+        return
+    _require_installed(profile, manager)
+
+
 class Adapter(Protocol):
-    def install(self) -> int: ...
+    def install(self, *, force: bool = False) -> int: ...
     def start(self) -> int: ...
     def status(self) -> int: ...
     def logs(self, *, lines: int = 100) -> int: ...
@@ -228,7 +267,8 @@ class SystemdAdapter:
                 f"loginctl enable-linger {getpass.getuser()}"
             )
 
-    def install(self) -> int:
+    def install(self, *, force: bool = False) -> int:
+        _guard_install(self.profile, "systemd", force=force)
         self._require_linger()
         _atomic_write(self.definition, _render_systemd(self.profile, self.unit).encode())
         _run(["systemctl", "--user", "daemon-reload"])
@@ -237,12 +277,14 @@ class SystemdAdapter:
         return 0
 
     def start(self) -> int:
+        _require_installed(self.profile, "systemd")
         self._require_linger()
         _run(["systemctl", "--user", "start", self.unit])
         _wait_bound(self.profile)
         return self.status()
 
     def status(self) -> int:
+        _require_installed(self.profile, "systemd")
         result = _run(["systemctl", "--user", "is-active", self.unit], check=False)
         if result.returncode != 0 or result.stdout.strip() != "active":
             raise NodeServiceError(f"systemd unit is not active: {self.unit}")
@@ -263,7 +305,7 @@ class SystemdAdapter:
 
     def upgrade(self) -> int:
         self.stop()
-        self.install()
+        self.install(force=True)
         return self.start()
 
     def uninstall(self) -> int:
@@ -290,7 +332,8 @@ class LaunchdAdapter:
     def domain(self) -> str:
         return f"gui/{os.getuid()}"
 
-    def install(self) -> int:
+    def install(self, *, force: bool = False) -> int:
+        _guard_install(self.profile, "launchd", force=force)
         _atomic_write(self.definition, _render_launchd(self.profile, self.label))
         _run(["launchctl", "bootout", self.domain, str(self.definition)], check=False)
         _run(["launchctl", "bootstrap", self.domain, str(self.definition)])
@@ -299,12 +342,14 @@ class LaunchdAdapter:
         return 0
 
     def start(self) -> int:
+        _require_installed(self.profile, "launchd")
         _run(["launchctl", "enable", f"{self.domain}/{self.label}"])
         _run(["launchctl", "kickstart", f"{self.domain}/{self.label}"])
         _wait_bound(self.profile)
         return self.status()
 
     def status(self) -> int:
+        _require_installed(self.profile, "launchd")
         _run(["launchctl", "print", f"{self.domain}/{self.label}"])
         return _bound_listener_status(self.profile)
 
@@ -322,7 +367,7 @@ class LaunchdAdapter:
 
     def upgrade(self) -> int:
         self.stop()
-        self.install()
+        self.install(force=True)
         return self.start()
 
     def uninstall(self) -> int:
@@ -377,7 +422,8 @@ class WinSWAdapter:
                 "password= <prompted-secret>"
             )
 
-    def install(self) -> int:
+    def install(self, *, force: bool = False) -> int:
+        _guard_install(self.profile, "winsw", force=force)
         source = self._source_binary()
         self.directory.mkdir(parents=True, exist_ok=True)
         if source != self.executable:
@@ -401,13 +447,17 @@ class WinSWAdapter:
         return 0
 
     def start(self) -> int:
+        record = _require_installed(self.profile, "winsw")
         self._source_binary()
+        if record.get("winsw_sha256") != _sha256(self.executable):
+            raise NodeServiceError("installed WinSW digest does not match its record")
         self._require_account()
         _run([str(self.executable), "start"])
         _wait_bound(self.profile)
         return self.status()
 
     def status(self) -> int:
+        _require_installed(self.profile, "winsw")
         self._require_account()
         result = _run([str(self.executable), "status"], check=False)
         if result.returncode != 0 or "active" not in result.stdout.lower():
@@ -416,7 +466,18 @@ class WinSWAdapter:
         return _bound_listener_status(self.profile)
 
     def logs(self, *, lines: int = 100) -> int:
-        return _tail_file(self.profile.log_path, lines)
+        candidates = [
+            self.directory / f"{self.service_id}.out.log",
+            self.directory / f"{self.service_id}.err.log",
+            self.directory / f"{self.service_id}.wrapper.log",
+        ]
+        available = [path for path in candidates if path.is_file()]
+        if not available:
+            raise NodeServiceError(f"WinSW logs are unavailable under {self.directory}")
+        for path in available:
+            print(f"== {path.name} ==")
+            _tail_file(path, lines)
+        return 0
 
     def stop(self) -> int:
         from agent_workflow import node
@@ -439,7 +500,7 @@ class WinSWAdapter:
     def upgrade(self) -> int:
         self.stop()
         self.uninstall()
-        self.install()
+        self.install(force=True)
         return self.start()
 
     def uninstall(self) -> int:

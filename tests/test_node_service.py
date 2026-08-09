@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -166,3 +167,30 @@ def test_service_health_requires_manager_lease_and_profile_agreement():
         )
         == "degraded"
     )
+
+
+def test_install_record_rejects_profile_drift(tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    definition = tmp_path / "service.definition"
+    definition.write_text("fixed", encoding="utf-8")
+    node_service._write_install_record(
+        profile,
+        "systemd",
+        definition,
+        {"manager_id": "awf-node-coder-win.service"},
+    )
+
+    assert node_service._require_installed(profile, "systemd")["profile_sha256"] == profile.digest
+    profile.values["model"] = "changed-after-install"
+    with pytest.raises(node_service.NodeServiceError, match="drifted"):
+        node_service._require_installed(profile, "systemd")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises native Windows token/process APIs")
+def test_windows_native_process_identity_tree_and_account_smoke():
+    identity = node_service._windows_process_identity(os.getpid())
+
+    assert identity is not None
+    assert node_service._windows_identity_alive(identity)
+    assert identity in node_service._windows_process_tree(os.getpid())
+    assert "\\" in node_service._windows_process_account(os.getpid())
