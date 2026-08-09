@@ -26,9 +26,7 @@
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>AWF_ROLE</key><string>__ROLE__</string>
-        <key>AWF_REPO</key><string>__REPO__</string>
-        <key>AWF_TOOL</key><string>__TOOL__</string>
+        <key>AWF_PROFILE</key><string>__PROFILE__</string>
         <key>AWF_PYTHON</key><string>__PYTHON__</string>
     </dict>
 

@@ -238,7 +238,7 @@ trusted listener recovery. Status labels unrecorded health/checkpoint/queue valu
 explicitly, and resume is fail-closed: it cannot replay a model, ACK, requeue,
 or historical delivery.
 
-An installed wheel also exposes the same thin local listener lifecycle on every supported OS:
+An installed wheel exposes explicit session-bound and user-managed listener lifecycles:
 
 ```bash
 awf node doctor --profile reviewer-mac
@@ -248,6 +248,10 @@ awf node status --profile reviewer-mac
 awf node status --profile reviewer-mac --run task-DOGFOOD-001 --json
 awf node logs --profile reviewer-mac --lines 100
 awf node stop --profile reviewer-mac
+awf node install --profile coder-windows
+awf node restart --profile coder-windows
+awf node upgrade --profile coder-windows
+awf node uninstall --profile coder-windows
 ```
 
 ```json
@@ -263,13 +267,35 @@ awf node stop --profile reviewer-mac
 }
 ```
 
+Persistent user profiles add one secret-free lifecycle object:
+
+```json
+{
+  "lifecycle": {
+    "mode": "managed",
+    "manager": "auto",
+    "scope": "user"
+  }
+}
+```
+
 A named profile resolves to the platform config directory under `awf/profiles/<name>.json`; an
 absolute JSON path is also accepted. The `awf.node-profile.v1` schema contains only non-secret
 role, repository, tool, route, state, and log settings. Tokens and the Bus URL remain exclusively
 in owner-only `dispatch.env`. `doctor` checks the schema, role/tool boundary, strict credential
-file, role-aware Git workspace, Bus health, and model executable before `start`; it does not replace
-the existing Fast/Deep remote-dispatch proof. This is a local user-process surface, not a scheduler
-or a claim that native service installation has been accepted on every platform.
+file, role-aware Git workspace, Bus health, and model executable before start; it does not replace
+the existing Fast/Deep remote-dispatch proof. Profiles that omit `lifecycle` retain the local
+`session` mode. Under SSH, session start is rejected unless `--allow-session-bound` makes the
+temporary limitation explicit. `managed` mode renders the same complete profile into a launchd
+user agent, lingering systemd user unit, or Windows Task Scheduler `InteractiveToken` task whose
+target is `awf node reconcile`. The reconciler reads an atomic desired-state JSON record and runs
+the unchanged foreground listener. Windows currently requires the same user to own the active local
+console session; RDP-only and pre-login operation are outside this user-scope contract. The Windows
+user remains the normal model/Git/config identity; no
+service account, password, WinSW binary, or PowerShell setup is required. Agent Bus
+`control:shutdown` remains the graceful remote stop, while `awf node stop` independently terminates
+the exact bound local process tree. Windows durability is not accepted until a new SSH session
+proves the manager, listener PID, launch identity, lease, queue consumption, and clean local stop.
 
 `doctor --json` emits one credential-free `awf.node-readiness.v1` snapshot for operator discovery.
 It binds the installed `awf`, profile, strict configuration, workspace, selected tool version, and

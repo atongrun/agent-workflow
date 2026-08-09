@@ -18,6 +18,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 
 from agent_workflow import __version__
+from agent_workflow.node_service import NodeServiceError
 from agent_workflow.resources import authority_manifest_path, operations_dir, schemas_dir
 
 PROFILE_FORMAT = "awf.node-profile.v1"
@@ -88,6 +89,81 @@ class NodeProfile:
     def digest(self) -> str:
         body = json.dumps(self.values, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+    @property
+    def lifecycle(self) -> dict[str, object]:
+        value = self.values.get("lifecycle")
+        return value if isinstance(value, dict) else {"mode": "session"}
+
+    @property
+    def lifecycle_mode(self) -> str:
+        return str(self.lifecycle.get("mode", "session"))
+
+
+def lifecycle_mode(profile: NodeProfile) -> str:
+    return profile.lifecycle_mode
+
+
+def lifecycle_settings(profile: NodeProfile) -> dict[str, object]:
+    return dict(profile.lifecycle)
+
+
+def desired_state_path(profile: NodeProfile) -> Path:
+    return profile.node_dir / "desired-state.json"
+
+
+def _desired_lock_path(profile: NodeProfile) -> Path:
+    return profile.node_dir / ".desired-state.lock"
+
+
+def _read_desired_state(profile: NodeProfile) -> dict[str, object]:
+    path = desired_state_path(profile)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "format": "awf.node-desired-state.v1",
+            "state": "stopped",
+            "profile": str(profile.path),
+            "profile_sha256": profile.digest,
+            "generation": 0,
+        }
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise NodeError(f"managed desired state is unreadable: {path}") from exc
+    if not isinstance(value, dict) or value.get("format") != "awf.node-desired-state.v1":
+        raise NodeError(f"managed desired state is invalid: {path}")
+    if value.get("profile") != str(profile.path) or value.get("profile_sha256") != profile.digest:
+        raise NodeError("managed desired state profile drifted; run start or upgrade")
+    if value.get("state") not in {"running", "stopped"}:
+        raise NodeError("managed desired state must be running or stopped")
+    return value
+
+
+def write_desired_state(
+    profile: NodeProfile,
+    state: str,
+    *,
+    generation: int | None = None,
+) -> dict[str, object]:
+    if state not in {"running", "stopped"}:
+        raise NodeError("managed desired state must be running or stopped")
+    _, awf_listen = _operations_modules()
+    try:
+        with awf_listen.control_plane_lock(_desired_lock_path(profile)):
+            if generation is None:
+                current = _read_desired_state(profile)
+                generation = int(current.get("generation", 0)) + 1
+            value = {
+                "format": "awf.node-desired-state.v1",
+                "state": state,
+                "profile": str(profile.path),
+                "profile_sha256": profile.digest,
+                "generation": generation,
+            }
+            _atomic_write(desired_state_path(profile), value)
+            return value
+    except awf_listen.ControlPlaneDenied as exc:
+        raise NodeError("managed desired state lock is unavailable") from exc
 
 
 @dataclass(frozen=True)
@@ -186,6 +262,19 @@ def _validate_profile_semantics(profile: NodeProfile) -> None:
     on_type = str(profile.values.get("on_type", ""))
     if (not on_type or on_type.endswith("-v3")) and not profile.values.get("upstream_repo"):
         raise NodeError("v3 profiles require upstream_repo and head_repo")
+    lifecycle = profile.lifecycle
+    manager = str(lifecycle.get("manager", "auto"))
+    if profile.lifecycle_mode == "session":
+        unexpected = sorted(key for key in lifecycle if key != "mode")
+        if unexpected:
+            raise NodeError("session lifecycle accepts only mode")
+        return
+    if profile.lifecycle_mode != "managed":
+        raise NodeError("lifecycle.mode must be session or managed")
+    if lifecycle.get("scope", "user") != "user":
+        raise NodeError("managed lifecycle currently supports only user scope")
+    if manager not in {"auto", "launchd", "systemd", "task-scheduler"}:
+        raise NodeError(f"unsupported managed lifecycle manager: {manager}")
 
 
 def _operations_modules():
@@ -305,6 +394,47 @@ def _wait_for_stop(
 def _pid_alive(pid: object) -> bool:
     _, awf_listen = _operations_modules()
     return bool(awf_listen._pid_alive(pid))
+
+
+def _windows_process_creation_filetime(pid: int) -> int | None:
+    """Return the kernel creation identity used to reject Windows PID reuse."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessTimes.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return None
+    creation = wintypes.FILETIME()
+    exit_time = wintypes.FILETIME()
+    kernel_time = wintypes.FILETIME()
+    user_time = wintypes.FILETIME()
+    try:
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(creation),
+            ctypes.byref(exit_time),
+            ctypes.byref(kernel_time),
+            ctypes.byref(user_time),
+        ):
+            return None
+        return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _atomic_write(path: Path, value: dict[str, object]) -> None:
@@ -521,6 +651,8 @@ def doctor(
     json_output: bool = False,
     ttl_seconds: int = 3600,
 ) -> int:
+    if profile.lifecycle_mode == "managed":
+        _managed_action(profile, "doctor")
     readiness = _local_readiness(profile)
     report = doctor_report(
         profile,
@@ -585,7 +717,85 @@ def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
     return argv
 
 
-def start(profile: NodeProfile) -> int:
+def _inside_ssh_session() -> bool:
+    return any(os.environ.get(key) for key in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"))
+
+
+def render_managed_definition(profile: NodeProfile, *, manager: str) -> str:
+    from agent_workflow import node_service
+
+    return node_service.render_definition(profile, manager=manager)
+
+
+def resolve_managed_manager(
+    manager: str,
+    *,
+    platform: str = sys.platform,
+    scope: str = "user",
+) -> str:
+    if scope != "user":
+        raise NodeError("managed lifecycle currently supports only user scope")
+    from agent_workflow import node_service
+
+    return node_service.resolve_manager(manager, platform=platform)
+
+
+def _resolve_managed_manager(profile: NodeProfile):
+    from agent_workflow import node_service
+
+    return node_service.adapter_for(profile)
+
+
+def _managed_action(profile: NodeProfile, action: str, *args, **kwargs) -> int:
+    if profile.lifecycle_mode != "managed":
+        raise NodeError(f"node {action} requires lifecycle.mode=managed")
+    manager = _resolve_managed_manager(profile)
+    handler = getattr(manager, action, None)
+    if handler is None:
+        raise NodeError(f"managed lifecycle manager does not support {action}")
+    result = handler(*args, **kwargs)
+    if isinstance(result, dict):
+        return 0
+    return int(result)
+
+
+def install(profile: NodeProfile) -> int:
+    desired_exists = desired_state_path(profile).exists()
+    result = _managed_action(profile, "install")
+    if not desired_exists:
+        write_desired_state(profile, "stopped")
+    return result
+
+
+def restart(profile: NodeProfile) -> int:
+    write_desired_state(profile, "stopped")
+    _managed_action(profile, "stop")
+    write_desired_state(profile, "running")
+    return _managed_action(profile, "start")
+
+
+def upgrade(profile: NodeProfile) -> int:
+    write_desired_state(profile, "stopped")
+    _managed_action(profile, "stop_for_upgrade")
+    _managed_action(profile, "install", force=True)
+    write_desired_state(profile, "running")
+    return _managed_action(profile, "start")
+
+
+def uninstall(profile: NodeProfile) -> int:
+    write_desired_state(profile, "stopped")
+    return _managed_action(profile, "uninstall")
+
+
+def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
+    if profile.lifecycle_mode == "managed":
+        write_desired_state(profile, "running")
+        return _managed_action(profile, "start")
+    if _inside_ssh_session() and not allow_session_bound:
+        raise NodeError(
+            "session-bound node start is unsafe inside SSH; use lifecycle.mode=managed, "
+            "node foreground under an external supervisor, or --allow-session-bound temporarily"
+        )
     _load_runtime_config(profile)
     _, awf_listen = _operations_modules()
     try:
@@ -642,7 +852,78 @@ def _start_locked(profile: NodeProfile) -> int:
     return 0
 
 
+def _foreground_record(profile: NodeProfile, launch_id: str) -> None:
+    existing = _process_record(profile)
+    if existing and _pid_alive(existing.get("pid")):
+        raise NodeError(f"node already running with pid={existing.get('pid')}")
+    record = {
+        "format": "awf.node-process.v1",
+        "pid": os.getpid(),
+        "launch_id": launch_id,
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "role": profile.role,
+        "repo": str(profile.repo),
+        "started_at": utc_now(),
+        "lifecycle": "foreground",
+    }
+    if os.name == "nt":
+        creation = _windows_process_creation_filetime(os.getpid())
+        if creation is None:
+            raise NodeError("cannot bind the managed Windows process creation identity")
+        record["process_creation_filetime"] = creation
+    _atomic_write(profile.process_path, record)
+
+
+def _clear_foreground_record(profile: NodeProfile, launch_id: str) -> None:
+    record = _process_record(profile)
+    if record and record.get("pid") == os.getpid() and record.get("launch_id") == launch_id:
+        profile.process_path.unlink(missing_ok=True)
+
+
+def foreground(profile: NodeProfile) -> int:
+    """Run the complete listener in this process for a native supervisor."""
+    _local_readiness(profile)
+    _, awf_listen = _operations_modules()
+    launch_id = uuid.uuid4().hex
+    _foreground_record(profile, launch_id)
+    previous_sigterm = None
+
+    def stop_on_sigterm(_signum, _frame):
+        raise KeyboardInterrupt
+
+    if os.name != "nt" and hasattr(signal, "SIGTERM"):
+        previous_sigterm = signal.signal(signal.SIGTERM, stop_on_sigterm)
+    result = 1
+    try:
+        result = int(awf_listen.main(_listener_argv(profile, launch_id)[2:]))
+        return result
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+        _clear_foreground_record(profile, launch_id)
+        if profile.lifecycle_mode == "managed" and result == 0:
+            write_desired_state(profile, "stopped")
+
+
+def reconcile(profile: NodeProfile) -> int:
+    if profile.lifecycle_mode != "managed":
+        raise NodeError("node reconcile requires lifecycle.mode=managed")
+    desired = _read_desired_state(profile)
+    if desired["state"] == "stopped":
+        return 0
+    snapshot = _listener_snapshot(profile)
+    if snapshot.get("status") == "running":
+        return 0
+    result = foreground(profile)
+    if result == 0 and _read_desired_state(profile).get("state") != "stopped":
+        write_desired_state(profile, "stopped")
+    return result
+
+
 def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False) -> int:
+    if profile.lifecycle_mode == "managed":
+        _managed_action(profile, "status")
     try:
         record = _process_record(profile)
     except NodeError:
@@ -661,6 +942,9 @@ def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False)
 
 
 def stop(profile: NodeProfile) -> int:
+    if profile.lifecycle_mode == "managed":
+        write_desired_state(profile, "stopped")
+        return _managed_action(profile, "stop")
     _, awf_listen = _operations_modules()
     try:
         with awf_listen.control_plane_lock(profile.node_dir / ".lifecycle.lock"):
@@ -717,6 +1001,8 @@ def _stop_locked(profile: NodeProfile) -> int:
 
 
 def logs(profile: NodeProfile, lines: int) -> int:
+    if profile.lifecycle_mode == "managed":
+        return _managed_action(profile, "logs", lines)
     if lines < 1 or lines > 10000:
         raise NodeError("--lines must be between 1 and 10000")
     try:
@@ -738,17 +1024,73 @@ def run(
     run_id: str = "",
     json_output: bool = False,
     ttl_seconds: int = 3600,
+    allow_session_bound: bool = False,
 ) -> int:
     try:
         profile = load_profile(profile_value)
         handlers = {
             "doctor": lambda: doctor(profile, json_output=json_output, ttl_seconds=ttl_seconds),
-            "start": lambda: start(profile),
+            "foreground": lambda: foreground(profile),
+            "reconcile": lambda: reconcile(profile),
+            "install": lambda: install(profile),
+            "start": lambda: start(profile, allow_session_bound=allow_session_bound),
             "status": lambda: status(profile, run_id, json_output=json_output),
             "stop": lambda: stop(profile),
             "logs": lambda: logs(profile, lines),
+            "restart": lambda: restart(profile),
+            "upgrade": lambda: upgrade(profile),
+            "uninstall": lambda: uninstall(profile),
         }
         return handlers[command]()
-    except (NodeError, OSError) as exc:
+    except (NodeError, NodeServiceError, OSError) as exc:
         print(f"ERROR: node {command} failed: {exc}", file=sys.stderr)
         return 1
+
+
+def _managed_stop_snapshot(manager, profile: NodeProfile) -> dict[str, object]:
+    stop = getattr(manager, "stop", None)
+    if stop is None:
+        raise NodeError("managed stop fail closed: manager does not support stop")
+    result = stop()
+    if int(result or 0) != 0:
+        raise NodeError("managed stop fail closed: manager stop returned a non-zero result")
+    try:
+        record = _process_record(profile)
+    except NodeError:
+        record = None
+    return {
+        "status": "stopped",
+        "pid": record.get("pid") if record else None,
+        "launch_id": record.get("launch_id", "") if record else "",
+    }
+
+
+def _clear_managed_stale_stop(profile: NodeProfile, snapshot: dict[str, object]) -> int:
+    if snapshot.get("status") != "stopped":
+        raise NodeError("managed stop degraded; fail closed before clearing listener state")
+    record = _process_record(profile)
+    lease = _listener_lease(profile)
+    if not record and not lease:
+        return 0
+    if not record or not lease:
+        raise NodeError("managed stop degraded; fail closed on incomplete listener state")
+    launch_id = record.get("launch_id", "")
+    expected = {
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+    if any(record.get(key) != value for key, value in expected.items()):
+        raise NodeError("managed stop degraded; fail closed on profile drift")
+    if snapshot.get("pid") != record.get("pid") or snapshot.get("launch_id") != launch_id:
+        raise NodeError("managed stop degraded; fail closed on launch identity mismatch")
+    if not isinstance(launch_id, str) or not launch_id:
+        raise NodeError("managed stop degraded; fail closed on missing launch identity")
+    if not _lease_matches(profile, lease, record.get("pid"), launch_id):
+        raise NodeError("managed stop degraded; fail closed on lease mismatch")
+    if _pid_alive(record.get("pid")) or _pid_alive(lease.get("pid")):
+        raise NodeError("managed stop degraded; fail closed while listener PID is alive")
+    profile.process_path.unlink(missing_ok=True)
+    (profile.state_root / "listeners" / f"{profile.role}.json").unlink(missing_ok=True)
+    return 0

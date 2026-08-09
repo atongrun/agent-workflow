@@ -24,6 +24,16 @@
     "config": {"type": "string", "minLength": 1},
     "gh_bin": {"type": "string", "minLength": 1},
     "enable_preflight": {"type": "boolean"},
-    "no_push": {"type": "boolean"}
+    "no_push": {"type": "boolean"},
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {"enum": ["session", "managed"]},
+        "manager": {"enum": ["auto", "launchd", "systemd", "task-scheduler"]},
+        "scope": {"const": "user"}
+      }
+    }
   }
 }

@@ -49,14 +49,15 @@ def cmd_version(args: argparse.Namespace) -> int:
 
 
 def cmd_node(args: argparse.Namespace) -> int:
-    return node.run(
-        args.node_command,
-        args.profile,
-        lines=getattr(args, "lines", 100),
-        run_id=getattr(args, "run", ""),
-        json_output=getattr(args, "json", False),
-        ttl_seconds=getattr(args, "ttl_seconds", 3600),
-    )
+    options = {
+        "lines": getattr(args, "lines", 100),
+        "run_id": getattr(args, "run", ""),
+        "json_output": getattr(args, "json", False),
+        "ttl_seconds": getattr(args, "ttl_seconds", 3600),
+    }
+    if getattr(args, "allow_session_bound", False):
+        options["allow_session_bound"] = True
+    return node.run(args.node_command, args.profile, **options)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -563,7 +564,19 @@ def main(argv: list[str] | None = None) -> int:
 
     node_parser = subparsers.add_parser("node", help="Operate one local role listener")
     node_commands = node_parser.add_subparsers(dest="node_command", required=True)
-    for name in ("doctor", "start", "status", "stop", "logs"):
+    for name in (
+        "doctor",
+        "foreground",
+        "reconcile",
+        "install",
+        "start",
+        "status",
+        "stop",
+        "logs",
+        "restart",
+        "upgrade",
+        "uninstall",
+    ):
         command = node_commands.add_parser(name)
         command.add_argument("--profile", required=True)
         if name == "logs":
@@ -574,6 +587,8 @@ def main(argv: list[str] | None = None) -> int:
         if name == "doctor":
             command.add_argument("--json", action="store_true")
             command.add_argument("--ttl-seconds", type=int, default=3600)
+        if name == "start":
+            command.add_argument("--allow-session-bound", action="store_true")
         command.set_defaults(func=cmd_node)
 
     args = parser.parse_args(argv)
