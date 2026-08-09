@@ -712,6 +712,89 @@ def wait_for_zero(config: dict[str, str], roles: tuple[str, str], timeout: float
     raise PreflightError("DEEP_PENDING_DRIFT", "disposable queues did not return to baseline")
 
 
+def validate_deep_result(
+    result: dict[str, object],
+    *,
+    probe_id: str,
+    fingerprint: str,
+    source_role: str,
+    target_role: str,
+) -> tuple[int, int]:
+    expected = {
+        "format": "awf.preflight-control-result.v1",
+        "probe_id": probe_id,
+        "fingerprint": fingerprint,
+        "request_type": REQUEST_TYPE,
+        "result_type": RESULT_TYPE,
+        "source_role": source_role,
+        "target_role": target_role,
+        "request_child_rc": 0,
+        "result_child_rc": 0,
+    }
+    if any(result.get(key) != value for key, value in expected.items()):
+        raise PreflightError("DEEP_IDENTITY_MISMATCH", "disposable result identity is invalid")
+    request_event = result.get("request_event_id")
+    reply_event = result.get("reply_event_id")
+    if type(request_event) is not int or request_event < 1:
+        raise PreflightError("DEEP_ACK_NOT_PROVEN", "request event identity is missing")
+    if type(reply_event) is not int or reply_event < 1:
+        raise PreflightError("DEEP_ACK_NOT_PROVEN", "result event identity is missing")
+    return request_event, reply_event
+
+
+def finalize_deep_report(
+    args: argparse.Namespace,
+    fast: FastResult,
+    *,
+    probe_id: str,
+    result: dict[str, object],
+    pending_before: dict[str, int],
+    pending_after: dict[str, int],
+    recovered_after_timeout: bool,
+) -> dict[str, object]:
+    request_event, reply_event = validate_deep_result(
+        result,
+        probe_id=probe_id,
+        fingerprint=fast.fingerprint,
+        source_role=args.source_role,
+        target_role=args.target_role,
+    )
+    completed = utc_now()
+    deep = {
+        "required": True,
+        "current": True,
+        "probe_id": probe_id,
+        "source_role": args.source_role,
+        "target_role": args.target_role,
+        "request_event_id": request_event,
+        "reply_event_id": reply_event,
+        "pending_before": pending_before,
+        "pending_after": pending_after,
+        "request_handler": "pass",
+        "request_child": "pass",
+        "result_handler": "pass",
+        "result_child": "pass",
+        "request_ack_evidence": "inferred-handler-success-and-zero-pending",
+        "reply_ack_evidence": "inferred-handler-success-and-zero-pending",
+    }
+    if recovered_after_timeout:
+        deep["recovered_after_timeout"] = True
+    report = {
+        **fast.report,
+        "mode": "deep",
+        "generated_at": iso(completed),
+        "expires_at": iso(completed + timedelta(seconds=args.ttl_seconds)),
+        "status": "PASS",
+        "allow_taskcard_authoring": True,
+        "allow_remote_dispatch": True,
+        "required_next_action": "remote_dispatch_allowed",
+        "deep": deep,
+    }
+    report = sign_deep_report(report, fast.config, args.source_role, args.target_role)
+    atomic_write(cache_path(args.state_root), report)
+    return report
+
+
 def _run_deep(args: argparse.Namespace) -> dict[str, object]:
     args.intent = "remote-dispatch"
     fast = run_fast(args)
@@ -782,56 +865,15 @@ def _run_deep(args: argparse.Namespace) -> dict[str, object]:
         raise PreflightError("DEEP_SEND_FAILED", "disposable request could not be sent")
     result = wait_for_result(result_file, args.timeout)
     after = wait_for_zero(fast.config, roles, min(args.timeout, 20))
-    expected = {
-        "format": "awf.preflight-control-result.v1",
-        "probe_id": probe_id,
-        "fingerprint": fast.fingerprint,
-        "request_type": REQUEST_TYPE,
-        "result_type": RESULT_TYPE,
-        "source_role": args.source_role,
-        "target_role": args.target_role,
-        "request_child_rc": 0,
-        "result_child_rc": 0,
-    }
-    if any(result.get(key) != value for key, value in expected.items()):
-        raise PreflightError("DEEP_IDENTITY_MISMATCH", "disposable result identity is invalid")
-    request_event = result.get("request_event_id")
-    reply_event = result.get("reply_event_id")
-    if not isinstance(request_event, int) or request_event < 1:
-        raise PreflightError("DEEP_ACK_NOT_PROVEN", "request event identity is missing")
-    if not isinstance(reply_event, int) or reply_event < 1:
-        raise PreflightError("DEEP_ACK_NOT_PROVEN", "result event identity is missing")
-    completed = utc_now()
-    report = {
-        **fast.report,
-        "mode": "deep",
-        "generated_at": iso(completed),
-        "expires_at": iso(completed + timedelta(seconds=args.ttl_seconds)),
-        "status": "PASS",
-        "allow_taskcard_authoring": True,
-        "allow_remote_dispatch": True,
-        "required_next_action": "remote_dispatch_allowed",
-        "deep": {
-            "required": True,
-            "current": True,
-            "probe_id": probe_id,
-            "source_role": args.source_role,
-            "target_role": args.target_role,
-            "request_event_id": request_event,
-            "reply_event_id": reply_event,
-            "pending_before": before,
-            "pending_after": after,
-            "request_handler": "pass",
-            "request_child": "pass",
-            "result_handler": "pass",
-            "result_child": "pass",
-            "request_ack_evidence": "inferred-handler-success-and-zero-pending",
-            "reply_ack_evidence": "inferred-handler-success-and-zero-pending",
-        },
-    }
-    report = sign_deep_report(report, fast.config, args.source_role, args.target_role)
-    atomic_write(cache_path(args.state_root), report)
-    return report
+    return finalize_deep_report(
+        args,
+        fast,
+        probe_id=probe_id,
+        result=result,
+        pending_before=before,
+        pending_after=after,
+        recovered_after_timeout=False,
+    )
 
 
 def run_deep(args: argparse.Namespace) -> dict[str, object]:
@@ -863,6 +905,75 @@ def run_deep(args: argparse.Namespace) -> dict[str, object]:
             "allow_remote_dispatch": False,
             "required_next_action": "fix_fast_preflight" if fast_failed else "run_deep_preflight",
             "deep": {"required": True, "current": False, "error_code": exc.code},
+        }
+
+
+def _run_resume_deep(args: argparse.Namespace) -> dict[str, object]:
+    if not PROBE_ID_RE.fullmatch(args.probe_id):
+        raise PreflightError("DEEP_IDENTITY_INVALID", "probe identity is invalid")
+    args.intent = "remote-dispatch"
+    fast = run_fast(args)
+    fast_failures = [
+        layer
+        for layer in fast.report["layers"]
+        if layer["id"] in REMOTE_LAYERS and layer["status"] != "PASS"
+    ]
+    if fast_failures:
+        raise PreflightError("DEEP_FAST_FAILED", "current Fast preflight is not dispatch-ready")
+    result_path = probe_dir(args.state_root, args.probe_id) / "source-result.json"
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PreflightError("DEEP_RESULT_MISSING", "durable source result is unavailable") from exc
+    if not isinstance(result, dict):
+        raise PreflightError("DEEP_RESULT_MISSING", "durable source result is invalid")
+    roles = (args.source_role, args.target_role)
+    pending_after = {role: pending_count(fast.config, role) for role in roles}
+    if any(pending_after.values()):
+        raise PreflightError("DEEP_PENDING_DRIFT", "disposable queues are not empty")
+    # Deep only emits its request after proving a zero baseline. The durable
+    # same-probe result therefore carries that protocol fact across caller loss.
+    zero_baseline = {role: 0 for role in roles}
+    return finalize_deep_report(
+        args,
+        fast,
+        probe_id=args.probe_id,
+        result=result,
+        pending_before=zero_baseline,
+        pending_after=pending_after,
+        recovered_after_timeout=True,
+    )
+
+
+def run_resume_deep(args: argparse.Namespace) -> dict[str, object]:
+    """Finalize one durable late result without sending or mutating its delivery."""
+    try:
+        return _run_resume_deep(args)
+    except PreflightError as exc:
+        try:
+            base = run_fast(args).report
+        except Exception:
+            base = {
+                "format": REPORT_FORMAT,
+                "generated_at": iso(utc_now()),
+                "layers": [],
+                "fingerprint": "",
+            }
+        return {
+            **base,
+            "mode": "deep",
+            "status": "FAIL",
+            "allow_taskcard_authoring": bool(base.get("allow_taskcard_authoring", False)),
+            "allow_remote_dispatch": False,
+            "required_next_action": "fix_fast_preflight"
+            if exc.code == "DEEP_FAST_FAILED"
+            else "resume_deep_preflight",
+            "deep": {
+                "required": True,
+                "current": False,
+                "probe_id": getattr(args, "probe_id", ""),
+                "error_code": exc.code,
+            },
         }
 
 
@@ -1033,6 +1144,10 @@ def parser() -> argparse.ArgumentParser:
     deep.add_argument("--ttl-seconds", type=int, default=86400)
     deep.add_argument("--timeout", type=float, default=60)
     deep.add_argument("--force", action="store_true")
+    resume = commands.add_parser("resume-deep")
+    common(resume)
+    resume.add_argument("--probe-id", required=True)
+    resume.add_argument("--ttl-seconds", type=int, default=86400)
     request = commands.add_parser("handle-request", help=argparse.SUPPRESS)
     result = commands.add_parser("handle-result", help=argparse.SUPPRESS)
     for handler in (request, result):
@@ -1058,6 +1173,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.ttl_seconds < 1 or args.timeout <= 0:
                 raise PreflightError("DEEP_ARGUMENT_INVALID", "TTL and timeout must be positive")
             report = run_deep(args)
+        elif args.command == "resume-deep":
+            if args.ttl_seconds < 1:
+                raise PreflightError("DEEP_ARGUMENT_INVALID", "TTL must be positive")
+            report = run_resume_deep(args)
         elif args.command == "handle-request":
             return handle_request(args)
         else:

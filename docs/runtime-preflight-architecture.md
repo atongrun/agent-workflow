@@ -73,6 +73,17 @@ post-baseline is the v1 ACK evidence. The report labels it as inferred because A
 read-only per-event ACK-status endpoint. No code path invokes `agent-bus ack`, `read`, `requeue`, or
 redispatch. Failure stays fail-closed and never becomes dispatch authority.
 
+If the initiating process times out before `source-result.json` arrives, the result handler may
+still complete the same delivery and write that durable evidence. `awf preflight resume-deep
+--probe-id <id>` is
+the only supported late-result finalizer. It reruns Fast, requires the current fingerprint to match
+the result, requires both scoped queues to be zero, revalidates both event IDs and child results,
+and signs the normal cache. It never sends an event or invokes an Agent Bus delivery-lifecycle
+command. The recovered `pending_before` remains zero because the original Deep implementation
+cannot send until it has established that baseline; the canonical same-probe result carries this
+protocol fact across caller loss. Missing, malformed, mismatched, or nonzero-pending evidence stays
+fail closed.
+
 ## Listener deployment rule
 
 Existing listeners must be restarted on the new code with `--enable-preflight` before Deep can
