@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -293,6 +294,56 @@ def test_task_scheduler_commands_do_not_depend_on_localized_status_output(tmp_pa
     assert status["localized_output_ignored"] is True
     assert calls[0][0].lower().endswith("schtasks.exe")
     assert "/Query" in calls[0]
+
+
+def test_task_scheduler_uninstall_allows_clean_reinstall(tmp_path: Path):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    calls: list[list[str]] = []
+    manager = node_service.TaskSchedulerAdapter(
+        profile,
+        run_command=lambda argv, **kwargs: calls.append(argv) or "",
+        current_user=node_service._current_windows_user(),
+    )
+
+    manager.install()
+    manager.uninstall()
+    manager.install()
+
+    creates = [argv for argv in calls if "/Create" in argv]
+    assert len(creates) == 2
+    assert manager.definition.is_file()
+    assert (profile.node_dir / "managed" / "install.json").is_file()
+
+
+def test_launchd_uninstall_allows_clean_reinstall(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path, manager="launchd")
+    definition = tmp_path / "launch-agent.plist"
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        node_service.LaunchdAdapter,
+        "definition",
+        property(lambda self: definition),
+    )
+    monkeypatch.setattr(
+        node_service,
+        "_run",
+        lambda argv, **kwargs: calls.append(argv)
+        or subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    manager = node_service.LaunchdAdapter(profile)
+
+    manager.install()
+    manager.uninstall()
+    manager.install()
+
+    bootstraps = [argv for argv in calls if "bootstrap" in argv]
+    assert len(bootstraps) == 2
+    assert definition.is_file()
+    assert (profile.node_dir / "managed" / "install.json").is_file()
 
 
 @pytest.mark.parametrize(

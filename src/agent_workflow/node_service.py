@@ -280,6 +280,10 @@ def _install_record(profile) -> dict[str, object]:
     return value
 
 
+def _remove_install_record(profile) -> None:
+    (_service_dir(profile) / "install.json").unlink(missing_ok=True)
+
+
 def _require_installed(profile, manager: str) -> dict[str, object]:
     from agent_workflow import __version__
 
@@ -395,6 +399,7 @@ class SystemdAdapter:
         _after_manager_stop(self.profile)
         self.definition.unlink(missing_ok=True)
         _run(["systemctl", "--user", "daemon-reload"])
+        _remove_install_record(self.profile)
         return 0
 
 
@@ -464,6 +469,7 @@ class LaunchdAdapter:
         _run(["launchctl", "bootout", self.domain, str(self.definition)], check=False)
         _after_manager_stop(self.profile)
         self.definition.unlink(missing_ok=True)
+        _remove_install_record(self.profile)
         return 0
 
 
@@ -585,6 +591,8 @@ class TaskSchedulerAdapter:
     def uninstall(self) -> int:
         self.stop()
         self._call(["schtasks.exe", "/Delete", "/TN", self.task_name, "/F"])
+        self.definition.unlink(missing_ok=True)
+        _remove_install_record(self.profile)
         return 0
 
 
