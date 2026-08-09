@@ -26,3 +26,10 @@ profile option, platform branch, background retry service, or Agent Bus responsi
 
 Complete Linux, Windows, macOS runtime, and installed-wheel validation is delegated to CI under
 the repository's macOS test policy.
+
+## Follow-up finding
+
+The next Windows downstream attempt proved that the longer timeout alone was insufficient. The
+virtual-environment launcher PID observed by the parent differs from the interpreter PID written
+by the listener. The per-start identity binding and real installed-venv regression are recorded
+in `windows-venv-pid-binding-implementation-report.md`.

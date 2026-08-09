@@ -179,6 +179,20 @@ work because terminal verification is isolated. A per-user, registry-locked leas
 duplicate role or two live roles sharing one repository. Stale leases are removed only after an
 OS-specific, non-signalling PID check. These denials occur before the listener can consume an event.
 
+The thin `awf node` lifecycle does not assume that its spawned PID is the interpreter PID. Each
+managed start creates a random launch identity shared only by its process record and listener lease.
+Readiness, status, and stop require that identity plus the role/repository binding. The listener PID
+continues to own duplicate detection, while the spawned launcher/process-group PID continues to own
+liveness checks and local interrupt signaling. Both PIDs must still be live before a managed node is
+reported running or signaled; local stop waits for both sides to exit. Legacy process records without
+a launch identity use only their exact PID; role/repository similarity is never sufficient ownership
+proof.
+
+If the launcher disappears while its launch-bound listener PID remains live, `awf node stop` keeps
+the process record and fails closed. It neither reports a false stop nor signals the interpreter PID
+outside the process-group contract. A stale record is removed automatically only when no matching
+listener process remains alive.
+
 The architect terminal handler treats its configured repository as read-only configuration and
 object input. It creates a fresh event-scoped clone, copies the already validated remote URLs,
 performs all fetch, PR tuple, exact-commit, TaskCard, and ImplementationReport checks inside that

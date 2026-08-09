@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Bind listener readiness to a per-start launch identity instead of assuming the spawned launcher
+  PID equals the interpreter PID. Windows virtual-environment redirectors can return a different
+  PID from `Popen`; the cross-platform identity preserves trusted ownership without depending on
+  process topology or accepting role/repository identity alone.
+
 ## [0.3.0-rc.3] — 2026-08-09
 
 ### Added

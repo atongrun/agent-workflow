@@ -168,6 +168,82 @@ def test_listener_snapshot_treats_profile_drift_as_stale(monkeypatch, tmp_path: 
     assert node._listener_snapshot(profile)["status"] == "stale"
 
 
+def test_listener_lease_requires_exact_launch_identity_when_present(tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    lease = {
+        "pid": 84,
+        "launch_id": "a" * 32,
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+
+    assert node._lease_matches(profile, lease, 42, "a" * 32)
+    assert not node._lease_matches(profile, lease, 42, "b" * 32)
+    assert not node._lease_matches(profile, lease, 84, "b" * 32)
+
+
+def test_listener_lease_keeps_direct_pid_compatibility_without_launch_identity(tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    lease = {"pid": 42, "role": profile.role, "repo": str(profile.repo)}
+
+    assert node._lease_matches(profile, lease, 42)
+    assert not node._lease_matches(profile, lease, 7)
+
+
+def test_listener_snapshot_accepts_distinct_pid_with_bound_launch_identity(
+    monkeypatch, tmp_path: Path
+):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    monkeypatch.setattr(
+        node,
+        "_process_record",
+        lambda value: {
+            "pid": 42,
+            "launch_id": "a" * 32,
+            "profile_sha256": profile.digest,
+        },
+    )
+    monkeypatch.setattr(
+        node,
+        "_listener_lease",
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": profile.role,
+            "repo": str(profile.repo),
+        },
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid in {42, 84})
+
+    assert node._listener_snapshot(profile)["status"] == "running"
+
+
+def test_listener_snapshot_rejects_dead_listener_behind_live_launcher(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    monkeypatch.setattr(
+        node,
+        "_process_record",
+        lambda value: {
+            "pid": 42,
+            "launch_id": "a" * 32,
+            "profile_sha256": profile.digest,
+        },
+    )
+    monkeypatch.setattr(
+        node,
+        "_listener_lease",
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": profile.role,
+            "repo": str(profile.repo),
+        },
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 42)
+
+    assert node._listener_snapshot(profile)["status"] == "stale"
+
+
 def readiness(profile: node.NodeProfile, **changes: object) -> node.LocalReadiness:
     values: dict[str, object] = {
         "config": {"AGENT_BUS_URL": "https://bus.invalid", "AWF_REVIEWER_TOKEN": "secret"},
@@ -324,8 +400,10 @@ def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatc
     assert node.start(profile) == 0
     record = json.loads(profile.process_path.read_text(encoding="utf-8"))
     assert record["pid"] == 4321
+    assert len(record["launch_id"]) == 32
     assert record["profile_sha256"] == profile.digest
     assert Path(observed["argv"][1]).name == "awf_listen.py"
+    assert observed["argv"][-2:] == ["--node-launch-id", record["launch_id"]]
     assert observed["cwd"] == profile.repo
     assert observed["stdin"] is node.subprocess.DEVNULL
 
@@ -351,13 +429,19 @@ def test_listener_start_waits_for_a_slow_windows_lease(monkeypatch, tmp_path: Pa
     def listener_lease(_profile):
         if elapsed < 4:
             return None
-        return {"pid": 4321, "role": profile.role, "repo": str(profile.repo)}
+        return {
+            "pid": 9876,
+            "launch_id": "a" * 32,
+            "role": profile.role,
+            "repo": str(profile.repo),
+        }
 
     monkeypatch.setattr(node.time, "monotonic", monotonic)
     monkeypatch.setattr(node.time, "sleep", sleep)
     monkeypatch.setattr(node, "_listener_lease", listener_lease)
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 9876)
 
-    node._wait_for_listener_lease(profile, Process())
+    node._wait_for_listener_lease(profile, Process(), "a" * 32)
 
     assert elapsed >= 4
 
@@ -385,7 +469,7 @@ def test_listener_start_timeout_remains_bounded_and_fail_closed(monkeypatch, tmp
     monkeypatch.setattr(node, "_listener_lease", lambda _profile: None)
 
     with pytest.raises(node.NodeError, match="listener readiness timed out"):
-        node._wait_for_listener_lease(profile, Process())
+        node._wait_for_listener_lease(profile, Process(), "a" * 32)
 
     assert elapsed >= node.LISTENER_START_TIMEOUT_SECONDS
 
@@ -474,6 +558,7 @@ def test_stop_refuses_to_signal_a_mismatched_process_record(monkeypatch, tmp_pat
         json.dumps(
             {
                 "pid": 42,
+                "launch_id": "a" * 32,
                 "profile_sha256": profile.digest,
                 "profile": str(profile.path),
                 "role": "coder",
@@ -498,6 +583,7 @@ def test_stop_signals_the_bound_posix_process_group(monkeypatch, tmp_path: Path)
         json.dumps(
             {
                 "pid": 42,
+                "launch_id": "a" * 32,
                 "profile_sha256": profile.digest,
                 "profile": str(profile.path),
                 "role": profile.role,
@@ -510,7 +596,12 @@ def test_stop_signals_the_bound_posix_process_group(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(
         node,
         "_listener_lease",
-        lambda value: {"pid": 42, "role": value.role, "repo": str(value.repo)},
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": value.role,
+            "repo": str(value.repo),
+        },
     )
     signals = []
     monkeypatch.setattr(
@@ -530,6 +621,7 @@ def test_stop_signals_the_bound_windows_process_group(monkeypatch, tmp_path: Pat
         json.dumps(
             {
                 "pid": 42,
+                "launch_id": "a" * 32,
                 "profile_sha256": profile.digest,
                 "profile": str(profile.path),
                 "role": profile.role,
@@ -542,7 +634,12 @@ def test_stop_signals_the_bound_windows_process_group(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(
         node,
         "_listener_lease",
-        lambda value: {"pid": 42, "role": value.role, "repo": str(value.repo)},
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": value.role,
+            "repo": str(value.repo),
+        },
     )
     signals = []
     monkeypatch.setattr(node.os, "kill", lambda pid, sig: signals.append((pid, sig)))
@@ -575,6 +672,85 @@ def test_stop_refuses_live_pid_without_matching_listener_lease(monkeypatch, tmp_
 
     with pytest.raises(node.NodeError, match="lease does not match"):
         node.stop(profile)
+
+
+def test_stop_refuses_dead_listener_behind_live_launcher(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    profile.node_dir.mkdir(parents=True)
+    profile.process_path.write_text(
+        json.dumps(
+            {
+                "pid": 42,
+                "launch_id": "a" * 32,
+                "profile_sha256": profile.digest,
+                "profile": str(profile.path),
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 42)
+    monkeypatch.setattr(
+        node,
+        "_listener_lease",
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": value.role,
+            "repo": str(value.repo),
+        },
+    )
+    monkeypatch.setattr(
+        node.os, "killpg", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+    monkeypatch.setattr(
+        node.os, "kill", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+
+    with pytest.raises(node.NodeError, match="lease does not match"):
+        node.stop(profile)
+
+
+def test_stop_preserves_record_when_launcher_is_dead_but_listener_is_alive(
+    monkeypatch, tmp_path: Path
+):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    profile.node_dir.mkdir(parents=True)
+    profile.process_path.write_text(
+        json.dumps(
+            {
+                "pid": 42,
+                "launch_id": "a" * 32,
+                "profile_sha256": profile.digest,
+                "profile": str(profile.path),
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 84)
+    monkeypatch.setattr(
+        node,
+        "_listener_lease",
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": value.role,
+            "repo": str(value.repo),
+        },
+    )
+    monkeypatch.setattr(
+        node.os, "killpg", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+    monkeypatch.setattr(
+        node.os, "kill", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+
+    with pytest.raises(node.NodeError, match="listener lease is still live"):
+        node.stop(profile)
+    assert profile.process_path.exists()
 
 
 def test_logs_returns_only_the_requested_tail(capsys, tmp_path: Path):

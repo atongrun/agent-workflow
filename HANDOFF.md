@@ -29,12 +29,16 @@ The credential-free fingerprint and validity window are discovery evidence only;
 claims dispatch authority, writes a cache, emits an event, or replaces Fast/Deep Preflight. See
 [`docs/tasks/node-readiness-snapshot-implementation-report.md`](docs/tasks/node-readiness-snapshot-implementation-report.md).
 
-Node startup now allows 15 seconds, instead of 3 seconds, for the child listener to repeat its
-startup validation and publish the matching role/repository/PID lease. The longer window addresses
-an observed Windows run where the listener reached Agent Bus but the parent terminated it before
-recognizing the lease. Process-exit detection remains immediate and an absent or mismatched lease
-still fails closed at the bounded deadline. See
-[`docs/tasks/windows-listener-startup-implementation-report.md`](docs/tasks/windows-listener-startup-implementation-report.md).
+Node startup allows 15 seconds for the child listener to repeat startup validation and publish its
+lease. A follow-up downstream run proved that elapsed time was not the remaining Windows boundary:
+the virtual-environment `python.exe` redirector PID returned by `Popen` differs from the real
+interpreter PID written into the lease. Node-managed starts now bind the process record and listener
+lease with one random per-start identity, independent of launcher depth, while retaining the
+launcher PID for process-group signaling and the interpreter PID for listener conflict detection.
+Process-exit detection remains immediate and an absent or unrelated lease still fails closed at the
+bounded deadline. Installed-wheel CI launches a real venv child and locks both the Windows
+redirector observation and launch-identity contract. See
+[`docs/tasks/windows-venv-pid-binding-implementation-report.md`](docs/tasks/windows-venv-pid-binding-implementation-report.md).
 
 `awf node status --profile <profile> [--run <run-id>] [--json]` is the factual read-only view. It
 keeps recorded and live PR/CI facts separate, reports unavailable observations honestly, and names
