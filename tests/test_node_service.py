@@ -331,8 +331,7 @@ def test_launchd_uninstall_allows_clean_reinstall(
     monkeypatch.setattr(
         node_service,
         "_run",
-        lambda argv, **kwargs: calls.append(argv)
-        or subprocess.CompletedProcess(argv, 0, "", ""),
+        lambda argv, **kwargs: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
     )
     manager = node_service.LaunchdAdapter(profile)
 
