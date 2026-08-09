@@ -902,7 +902,10 @@ def _task_reconcile(profile_value: str, log_value: str) -> int:
                     )
                 return node.reconcile(profile)
             except (node.NodeError, NodeServiceError, OSError) as exc:
-                print(f"ERROR: task reconcile failed: {exc}", file=sys.stderr)
+                message = f"ERROR: task reconcile failed: {exc}\n".encode(
+                    "utf-8", errors="replace"
+                )
+                log.write(message)
                 return 1
     finally:
         if saved_stdout is not None:
