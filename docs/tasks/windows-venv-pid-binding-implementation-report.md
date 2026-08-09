@@ -22,8 +22,9 @@ The lifecycle now separates three identities that the original implementation co
 
 Every node-managed start uses the same launch-identity contract on Windows, macOS, and Linux. The
 listener accepts only the internal 128-bit hexadecimal form, and readiness/status/stop require its
-exact match together with role and repository. Direct-PID matching remains only for process records
-created before this field existed. Role/repository identity alone remains insufficient.
+exact match together with role, repository, and live launcher plus listener PIDs. Direct-PID
+matching remains only for process records created before this field existed. Role/repository
+identity alone remains insufficient. A stale lease cannot make a reused launcher PID signalable.
 
 This avoids encoding a Windows parent-child special case in the common ownership contract. A
 launcher may delegate through one or more processes without changing listener ownership, while
@@ -39,6 +40,8 @@ local stop still targets the process group deliberately created by the node.
   contract.
 - Lifecycle tests prove start records and forwards the identity, and stop signals the launcher
   process group only after a differently numbered listener lease presents that same identity.
+- Stale-listener regressions prove status is not `running` and stop does not signal when only the
+  launcher PID appears live.
 - The child releases its own lease through the normal cleanup path; the test does not leave an
   orphan listener or manually mutate a lease.
 

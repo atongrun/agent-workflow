@@ -213,9 +213,37 @@ def test_listener_snapshot_accepts_distinct_pid_with_bound_launch_identity(
             "repo": str(profile.repo),
         },
     )
-    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 42)
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid in {42, 84})
 
     assert node._listener_snapshot(profile)["status"] == "running"
+
+
+def test_listener_snapshot_rejects_dead_listener_behind_live_launcher(
+    monkeypatch, tmp_path: Path
+):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    monkeypatch.setattr(
+        node,
+        "_process_record",
+        lambda value: {
+            "pid": 42,
+            "launch_id": "a" * 32,
+            "profile_sha256": profile.digest,
+        },
+    )
+    monkeypatch.setattr(
+        node,
+        "_listener_lease",
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": profile.role,
+            "repo": str(profile.repo),
+        },
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 42)
+
+    assert node._listener_snapshot(profile)["status"] == "stale"
 
 
 def readiness(profile: node.NodeProfile, **changes: object) -> node.LocalReadiness:
@@ -413,6 +441,7 @@ def test_listener_start_waits_for_a_slow_windows_lease(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(node.time, "monotonic", monotonic)
     monkeypatch.setattr(node.time, "sleep", sleep)
     monkeypatch.setattr(node, "_listener_lease", listener_lease)
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 9876)
 
     node._wait_for_listener_lease(profile, Process(), "a" * 32)
 
@@ -641,6 +670,44 @@ def test_stop_refuses_live_pid_without_matching_listener_lease(monkeypatch, tmp_
     monkeypatch.setattr(node, "_listener_lease", lambda value: None)
     monkeypatch.setattr(
         node.os, "killpg", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+
+    with pytest.raises(node.NodeError, match="lease does not match"):
+        node.stop(profile)
+
+
+def test_stop_refuses_dead_listener_behind_live_launcher(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    profile.node_dir.mkdir(parents=True)
+    profile.process_path.write_text(
+        json.dumps(
+            {
+                "pid": 42,
+                "launch_id": "a" * 32,
+                "profile_sha256": profile.digest,
+                "profile": str(profile.path),
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 42)
+    monkeypatch.setattr(
+        node,
+        "_listener_lease",
+        lambda value: {
+            "pid": 84,
+            "launch_id": "a" * 32,
+            "role": value.role,
+            "repo": str(value.repo),
+        },
+    )
+    monkeypatch.setattr(
+        node.os, "killpg", lambda *args: pytest.fail("must not signal"), raising=False
+    )
+    monkeypatch.setattr(
+        node.os, "kill", lambda *args: pytest.fail("must not signal"), raising=False
     )
 
     with pytest.raises(node.NodeError, match="lease does not match"):

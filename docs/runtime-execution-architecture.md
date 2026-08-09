@@ -183,8 +183,10 @@ The thin `awf node` lifecycle does not assume that its spawned PID is the interp
 managed start creates a random launch identity shared only by its process record and listener lease.
 Readiness, status, and stop require that identity plus the role/repository binding. The listener PID
 continues to own duplicate detection, while the spawned launcher/process-group PID continues to own
-liveness checks and local interrupt signaling. Legacy process records without a launch identity use
-only their exact PID; role/repository similarity is never sufficient ownership proof.
+liveness checks and local interrupt signaling. Both PIDs must still be live before a managed node is
+reported running or signaled; local stop waits for both sides to exit. Legacy process records without
+a launch identity use only their exact PID; role/repository similarity is never sufficient ownership
+proof.
 
 The architect terminal handler treats its configured repository as read-only configuration and
 object input. It creates a fresh event-scoped clone, copies the already validated remote URLs,

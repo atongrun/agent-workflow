@@ -243,6 +243,21 @@ def _lease_matches(
     )
 
 
+def _live_lease_matches(
+    profile: NodeProfile,
+    lease: dict[str, object] | None,
+    pid: object,
+    launch_id: object = "",
+    *,
+    launcher_alive: bool | None = None,
+) -> bool:
+    if not _lease_matches(profile, lease, pid, launch_id):
+        return False
+    if launcher_alive is None:
+        launcher_alive = _pid_alive(pid)
+    return bool(launcher_alive and lease and _pid_alive(lease.get("pid")))
+
+
 def _wait_for_listener_lease(
     profile: NodeProfile,
     process,
@@ -251,9 +266,16 @@ def _wait_for_listener_lease(
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if process.poll() is not None:
+        launcher_alive = process.poll() is None
+        if not launcher_alive:
             raise NodeError(f"listener exited during startup; inspect {profile.log_path}")
-        if _lease_matches(profile, _listener_lease(profile), process.pid, launch_id):
+        if _live_lease_matches(
+            profile,
+            _listener_lease(profile),
+            process.pid,
+            launch_id,
+            launcher_alive=launcher_alive,
+        ):
             return
         time.sleep(0.05)
     raise NodeError(f"listener readiness timed out; inspect {profile.log_path}")
@@ -267,9 +289,14 @@ def _wait_for_stop(
 ) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not _pid_alive(pid) or not _lease_matches(
-            profile, _listener_lease(profile), pid, launch_id
-        ):
+        lease = _listener_lease(profile)
+        launcher_alive = _pid_alive(pid)
+        listener_alive = bool(
+            _lease_matches(profile, lease, pid, launch_id)
+            and lease
+            and _pid_alive(lease.get("pid"))
+        )
+        if not launcher_alive and not listener_alive:
             return True
         time.sleep(0.05)
     return False
@@ -391,9 +418,12 @@ def _listener_snapshot(profile: NodeProfile) -> dict[str, object]:
         }
     pid = record.get("pid") if record else None
     digest_matches = bool(record and record.get("profile_sha256") == profile.digest)
-    alive = bool(record and digest_matches and _pid_alive(pid))
     launch_id = record.get("launch_id", "") if record else ""
-    bound = bool(alive and _lease_matches(profile, lease, pid, launch_id))
+    bound = bool(
+        record
+        and digest_matches
+        and _live_lease_matches(profile, lease, pid, launch_id)
+    )
     return {
         "status": "running" if bound else "stale" if record else "stopped",
         "pid": pid,
@@ -664,7 +694,7 @@ def _stop_locked(profile: NodeProfile) -> int:
         print(f"profile={profile.name} listener=stopped stale_record=removed")
         return 0
     launch_id = record.get("launch_id", "")
-    if not _lease_matches(profile, _listener_lease(profile), pid, launch_id):
+    if not _live_lease_matches(profile, _listener_lease(profile), pid, launch_id):
         raise NodeError("live listener lease does not match this profile; refusing to signal")
     if os.name == "nt":
         os.kill(pid, signal.CTRL_BREAK_EVENT)
