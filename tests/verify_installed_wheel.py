@@ -82,7 +82,9 @@ assert Path(awf_role.__file__).resolve().is_relative_to(operations)
 assert awf_control_plane.DEFAULT_ROUTES
 assert callable(awf_dispatch.main)
 assert Path(cli._ops_module().__file__).resolve().is_relative_to(operations)
-assert cli._authority_manifest_for_repo(Path.cwd()) == operations / "authority-manifest.example.json"
+assert cli._authority_manifest_for_repo(Path.cwd()) == (
+    operations / "authority-manifest.example.json"
+)
 """
         subprocess.run([str(python), "-c", proof], check=True, cwd=outside, env=clean_env)
         subprocess.run(
