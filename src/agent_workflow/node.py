@@ -55,11 +55,7 @@ class NodeProfile:
     @property
     def state_root(self) -> Path:
         configured = self.values.get("state_root")
-        return (
-            Path(str(configured)).expanduser().resolve()
-            if configured
-            else default_state_root()
-        )
+        return Path(str(configured)).expanduser().resolve() if configured else default_state_root()
 
     @property
     def node_dir(self) -> Path:
@@ -81,11 +77,7 @@ class NodeProfile:
     @property
     def config_path(self) -> Path:
         configured = self.values.get("config")
-        return (
-            Path(str(configured)).expanduser().resolve()
-            if configured
-            else default_config_path()
-        )
+        return Path(str(configured)).expanduser().resolve() if configured else default_config_path()
 
     @property
     def digest(self) -> str:
@@ -121,9 +113,7 @@ def default_state_root() -> Path:
         if not root:
             raise NodeError("LOCALAPPDATA is required to resolve node state")
         return Path(root) / "agent-workflow"
-    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / (
-        "agent-workflow"
-    )
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / ("agent-workflow")
 
 
 def resolve_profile_path(value: str) -> Path:
@@ -218,8 +208,7 @@ def _lease_matches(profile: NodeProfile, lease: dict[str, object] | None, pid: o
         lease
         and lease.get("pid") == pid
         and lease.get("role") == profile.role
-        and os.path.normcase(str(lease.get("repo", "")))
-        == os.path.normcase(str(profile.repo))
+        and os.path.normcase(str(lease.get("repo", ""))) == os.path.normcase(str(profile.repo))
     )
 
 

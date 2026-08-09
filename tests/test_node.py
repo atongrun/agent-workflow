@@ -63,9 +63,7 @@ def test_profile_rejects_relative_repo(tmp_path: Path):
 
 
 @pytest.mark.parametrize("field", ["state_root", "log_file"])
-def test_node_write_paths_cannot_dirty_the_role_repository(
-    monkeypatch, tmp_path: Path, field: str
-):
+def test_node_write_paths_cannot_dirty_the_role_repository(monkeypatch, tmp_path: Path, field: str):
     repo = (tmp_path / "repo").resolve()
     repo.mkdir()
     target = repo / ("state" if field == "state_root" else "listener.log")
@@ -98,9 +96,7 @@ def test_architect_profile_makes_the_no_model_boundary_explicit(tmp_path: Path):
         node.load_profile(str(invalid))
 
 
-def test_start_writes_bound_process_record_and_uses_packaged_listener(
-    monkeypatch, tmp_path: Path
-):
+def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatch, tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
     profile.repo.mkdir()
     monkeypatch.setattr(node, "_load_runtime_config", lambda value: ({}, value.repo))
