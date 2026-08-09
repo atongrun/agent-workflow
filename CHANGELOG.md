@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.5] — 2026-08-09
+
+### Added
+
+- Add one versioned `lifecycle.mode=managed` node-profile contract with native Windows Task
+  Scheduler, macOS launchd, and Linux systemd ownership. Managed install/start/status/stop keeps
+  Agent Bus limited to transport while the operating system owns listener persistence across the
+  operator session boundary.
+
+### Fixed
+
+- Keep managed listener identity fail closed with exact task/service ownership, real PID,
+  `launch_id`, role, repository, profile digest, lease, and queue-connected status. Surface native
+  scheduler startup failures without weakening the existing local listener or Workflow gates.
+
 ## [0.3.0-rc.4] — 2026-08-09
 
 ### Fixed
@@ -163,7 +178,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.4...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.5...HEAD
+[0.3.0-rc.5]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.4...v0.3.0-rc.5
 [0.3.0-rc.4]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.3...v0.3.0-rc.4
 [0.3.0-rc.3]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.2...v0.3.0-rc.3
 [0.3.0-rc.2]: https://github.com/atongrun/agent-workflow/compare/v0.2.0...v0.3.0-rc.2
