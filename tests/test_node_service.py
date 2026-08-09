@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_workflow import node
-from agent_workflow import node_service
+from agent_workflow import node, node_service
 
 
 def profile_values(tmp_path: Path, **changes: object) -> dict[str, object]:
@@ -214,7 +213,7 @@ def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
 ):
     profile = load_managed_profile(tmp_path, manager="task-scheduler")
     calls: list[list[str]] = []
-    manager = node.TaskSchedulerManager(
+    manager = node_service.TaskSchedulerAdapter(
         profile,
         run_command=lambda argv, **kwargs: calls.append(argv) or "",
         current_user=r"DESKTOP\alice",
@@ -250,7 +249,7 @@ def test_task_scheduler_stop_ends_task_and_exact_bound_taskkills_process_tree(
 ):
     profile = load_managed_profile(tmp_path, manager="task-scheduler")
     calls: list[list[str]] = []
-    manager = node.TaskSchedulerManager(
+    manager = node_service.TaskSchedulerAdapter(
         profile,
         run_command=lambda argv, **kwargs: calls.append(argv) or "",
         current_user=r"DESKTOP\alice",
@@ -281,7 +280,7 @@ def test_windows_taskkill_requires_matching_kernel_creation_identity(
 def test_task_scheduler_commands_do_not_depend_on_localized_status_output(tmp_path: Path):
     profile = load_managed_profile(tmp_path, manager="task-scheduler")
     calls: list[list[str]] = []
-    manager = node.TaskSchedulerManager(
+    manager = node_service.TaskSchedulerAdapter(
         profile,
         run_command=lambda argv, **kwargs: calls.append(argv) or "本次任务成功完成。",
         current_user=r"DESKTOP\alice",

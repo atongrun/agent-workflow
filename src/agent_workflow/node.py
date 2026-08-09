@@ -19,7 +19,6 @@ from jsonschema import Draft202012Validator
 
 from agent_workflow import __version__
 from agent_workflow.node_service import NodeServiceError
-from agent_workflow.node_service import TaskSchedulerAdapter as TaskSchedulerManager
 from agent_workflow.resources import authority_manifest_path, operations_dir, schemas_dir
 
 PROFILE_FORMAT = "awf.node-profile.v1"

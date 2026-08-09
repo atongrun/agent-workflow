@@ -92,7 +92,9 @@ def _task_reconcile_argv(profile) -> list[str]:
 
 
 def _manager_action_argv(profile, manager: str) -> list[str]:
-    return _task_reconcile_argv(profile) if manager == "task-scheduler" else _reconcile_argv(profile)
+    return (
+        _task_reconcile_argv(profile) if manager == "task-scheduler" else _reconcile_argv(profile)
+    )
 
 
 def _service_dir(profile) -> Path:
@@ -108,9 +110,7 @@ def _render_task_scheduler(profile, user: str) -> bytes:
     ET.register_namespace("", namespace)
     task = ET.Element("Task", {"version": "1.3", "xmlns": namespace})
     registration = ET.SubElement(task, "RegistrationInfo")
-    ET.SubElement(registration, "Description").text = (
-        "Reconciles one Agent Workflow role listener."
-    )
+    ET.SubElement(registration, "Description").text = "Reconciles one Agent Workflow role listener."
     triggers = ET.SubElement(task, "Triggers")
     logon = ET.SubElement(triggers, "LogonTrigger")
     ET.SubElement(logon, "Enabled").text = "true"
