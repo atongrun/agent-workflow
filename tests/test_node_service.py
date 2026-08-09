@@ -329,6 +329,11 @@ def test_launchd_uninstall_allows_clean_reinstall(
         property(lambda self: definition),
     )
     monkeypatch.setattr(
+        node_service.LaunchdAdapter,
+        "domain",
+        property(lambda self: "gui/501"),
+    )
+    monkeypatch.setattr(
         node_service,
         "_run",
         lambda argv, **kwargs: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
