@@ -8,6 +8,7 @@ import sys
 import tomllib
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent_workflow import __version__, cli
 from agent_workflow.manifest import derive_manifest, write_manifest
@@ -46,6 +47,27 @@ class TestCLIVersion:
             (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         )
         assert __version__ == project_metadata["project"]["version"]
+
+
+def test_preflight_forwards_to_packaged_operation(monkeypatch):
+    received = []
+    operation = SimpleNamespace(main=lambda argv: received.append(argv) or 7)
+    monkeypatch.setitem(sys.modules, "awf_preflight", operation)
+
+    result = cli.main(["preflight", "resume-deep", "--probe-id", "probe-1"])
+
+    assert result == 7
+    assert received == [["resume-deep", "--probe-id", "probe-1"]]
+
+
+def test_preflight_does_not_expose_internal_handler_commands(monkeypatch, capsys):
+    operation = SimpleNamespace(main=lambda _argv: 0)
+    monkeypatch.setitem(sys.modules, "awf_preflight", operation)
+
+    result = cli.main(["preflight", "handle-result"])
+
+    assert result == 2
+    assert capsys.readouterr().err == "ERROR: awf preflight supports only resume-deep\n"
 
 
 class TestCLIValidate:

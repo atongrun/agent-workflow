@@ -169,6 +169,15 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
         )
         assert "--json" in doctor_help.stdout
         assert "--ttl-seconds" in doctor_help.stdout
+        resume_help = subprocess.run(
+            [str(awf), "preflight", "resume-deep", "--help"],
+            check=True,
+            cwd=outside,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+        )
+        assert "--probe-id" in resume_help.stdout
         missing_profile = subprocess.run(
             [str(awf), "node", "status", "--profile", "missing-profile"],
             cwd=outside,

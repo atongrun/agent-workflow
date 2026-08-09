@@ -211,7 +211,10 @@ are mutually exclusive, and coder/reviewer cannot use the exception. Fast mode i
 TaskCard-authoring readiness from remote-dispatch authority. Explicit Deep mode is required only
 for a first remote dispatch, a material runtime/transport change or failure, or an expired proof;
 it uses disposable no-model control events and automatic handler-success ACK evidence without
-reading or mutating historical events. `scripts/awf_handoff_check.py` remains the legacy human
+reading or mutating historical events. If the initiating command times out but its exact result
+arrives later, `awf preflight resume-deep --probe-id <probe-id> ...` revalidates
+the durable result, current fingerprint, and zero queues without sending or altering a delivery.
+`scripts/awf_handoff_check.py` remains the legacy human
 checklist entry and now renders the Fast report. Role listeners opt into the disposable control
 route with `--enable-preflight`.
 

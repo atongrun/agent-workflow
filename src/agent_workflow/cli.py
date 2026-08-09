@@ -424,6 +424,19 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Run the packaged preflight CLI without requiring a source checkout."""
+    if not args.preflight_args or args.preflight_args[0] != "resume-deep":
+        print("ERROR: awf preflight supports only resume-deep", file=sys.stderr)
+        return 2
+    scripts = operations_dir()
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import awf_preflight
+
+    return awf_preflight.main(args.preflight_args)
+
+
 def _print_resource(resource) -> None:
     meta = resource.metadata
     print(f"apiVersion: {resource.apiVersion}")
@@ -537,6 +550,12 @@ def main(argv: list[str] | None = None) -> int:
     dispatch_parser.add_argument("--no-push", action="store_true")
     dispatch_parser.add_argument("--dry-run", action="store_true")
     dispatch_parser.set_defaults(func=cmd_dispatch)
+
+    preflight_parser = subparsers.add_parser(
+        "preflight", help="Recover one completed Deep result after caller timeout"
+    )
+    preflight_parser.add_argument("preflight_args", nargs=argparse.REMAINDER)
+    preflight_parser.set_defaults(func=cmd_preflight)
 
     run_parser = subparsers.add_parser("run", help="Initialize the bounded serial operator run")
     run_parser.add_argument("--repo", default=".")

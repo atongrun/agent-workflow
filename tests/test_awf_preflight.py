@@ -440,6 +440,90 @@ def test_deep_success_requires_matching_result_and_zero_pending(tmp_path, monkey
     assert awf_preflight.cache_path(value.state_root).is_file()
 
 
+def test_resume_deep_finalizes_existing_result_without_sending(tmp_path, monkeypatch):
+    value = args(tmp_path, intent="remote-dispatch")
+    value.probe_id = "awf-preflight-" + "9" * 32
+    monkeypatch.setattr(awf_preflight, "run_fast", lambda _args: passing_fast(tmp_path))
+    monkeypatch.setattr(awf_preflight, "pending_count", lambda *_args: 0)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        awf_preflight,
+        "run_command",
+        lambda argv, **_kwargs: (
+            calls.append([str(item) for item in argv])
+            or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+    )
+    awf_preflight.atomic_write(
+        awf_preflight.probe_dir(value.state_root, value.probe_id) / "source-result.json",
+        {
+            "format": "awf.preflight-control-result.v1",
+            "probe_id": value.probe_id,
+            "fingerprint": "a" * 64,
+            "request_event_id": 41,
+            "reply_event_id": 42,
+            "request_type": awf_preflight.REQUEST_TYPE,
+            "result_type": awf_preflight.RESULT_TYPE,
+            "source_role": "architect",
+            "target_role": "coder",
+            "request_child_rc": 0,
+            "result_child_rc": 0,
+        },
+    )
+
+    report = awf_preflight.run_resume_deep(value)
+
+    assert report["status"] == "PASS"
+    assert report["allow_remote_dispatch"] is True
+    assert report["deep"]["probe_id"] == value.probe_id
+    assert report["deep"]["request_event_id"] == 41
+    assert report["deep"]["reply_event_id"] == 42
+    assert report["deep"]["recovered_after_timeout"] is True
+    assert report["deep"]["pending_after"] == {"architect": 0, "coder": 0}
+    assert awf_preflight.cache_path(value.state_root).is_file()
+    forbidden = {"send", "listen", "ack", "read", "requeue", "redispatch"}
+    assert not any(forbidden.intersection(call) for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("fingerprint", "pending", "error_code"),
+    [
+        ("b" * 64, 0, "DEEP_IDENTITY_MISMATCH"),
+        ("a" * 64, 1, "DEEP_PENDING_DRIFT"),
+    ],
+)
+def test_resume_deep_fails_closed_on_identity_or_pending_drift(
+    tmp_path, monkeypatch, fingerprint, pending, error_code
+):
+    value = args(tmp_path, intent="remote-dispatch")
+    value.probe_id = "awf-preflight-" + "8" * 32
+    monkeypatch.setattr(awf_preflight, "run_fast", lambda _args: passing_fast(tmp_path))
+    monkeypatch.setattr(awf_preflight, "pending_count", lambda *_args: pending)
+    awf_preflight.atomic_write(
+        awf_preflight.probe_dir(value.state_root, value.probe_id) / "source-result.json",
+        {
+            "format": "awf.preflight-control-result.v1",
+            "probe_id": value.probe_id,
+            "fingerprint": fingerprint,
+            "request_event_id": 41,
+            "reply_event_id": 42,
+            "request_type": awf_preflight.REQUEST_TYPE,
+            "result_type": awf_preflight.RESULT_TYPE,
+            "source_role": "architect",
+            "target_role": "coder",
+            "request_child_rc": 0,
+            "result_child_rc": 0,
+        },
+    )
+
+    report = awf_preflight.run_resume_deep(value)
+
+    assert report["status"] == "FAIL"
+    assert report["allow_remote_dispatch"] is False
+    assert report["deep"]["error_code"] == error_code
+    assert not awf_preflight.cache_path(value.state_root).exists()
+
+
 def test_request_and_result_handlers_run_children_and_publish_evidence(tmp_path, monkeypatch):
     config_path = tmp_path / "dispatch.env"
     config_path.write_text("placeholder\n", encoding="utf-8")
