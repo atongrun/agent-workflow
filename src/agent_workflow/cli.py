@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from agent_workflow import __version__
+from agent_workflow import __version__, node
 from agent_workflow.errors import ParseError
 from agent_workflow.manifest import (
     ManifestError,
@@ -46,6 +46,10 @@ def _find_project_root() -> Path:
 def cmd_version(args: argparse.Namespace) -> int:
     print(f"awf {__version__}")
     return 0
+
+
+def cmd_node(args: argparse.Namespace) -> int:
+    return node.run(args.node_command, args.profile, lines=getattr(args, "lines", 100))
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -549,6 +553,15 @@ def main(argv: list[str] | None = None) -> int:
             "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
         )
         operator_parser.set_defaults(func=handler)
+
+    node_parser = subparsers.add_parser("node", help="Operate one local role listener")
+    node_commands = node_parser.add_subparsers(dest="node_command", required=True)
+    for name in ("doctor", "start", "status", "stop", "logs"):
+        command = node_commands.add_parser(name)
+        command.add_argument("--profile", required=True)
+        if name == "logs":
+            command.add_argument("--lines", type=int, default=100)
+        command.set_defaults(func=cmd_node)
 
     args = parser.parse_args(argv)
     return args.func(args)

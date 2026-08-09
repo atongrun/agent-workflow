@@ -113,6 +113,9 @@ Remaining Phase 2 work:
   role/repository ownership and readiness before Bus connection; make local interrupt exit cleanly.
 - [x] Package production operations modules, adapters, guards, service assets, and templates in the
   wheel; verify a fresh installed tree outside the source checkout on all three CI platforms.
+- [x] Add one credential-free, cross-platform role profile and the thin installed-wheel
+  `awf node doctor/start/status/stop/logs` local user-process surface without adding a scheduler,
+  provider registry, GUI, or new Agent Bus responsibility.
 - [x] Replace the production Bash TaskCard dispatcher with a native Python entry point; retain the
   shell file only as a POSIX compatibility shim and remove Git Bash/WSL from Windows dispatch.
 - [ ] Record the capacity-isolation metrics defined in

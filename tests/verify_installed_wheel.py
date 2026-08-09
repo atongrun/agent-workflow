@@ -48,9 +48,10 @@ import os
 import sys
 from pathlib import Path
 from agent_workflow import cli
-from agent_workflow.resources import operations_dir, templates_dir
+from agent_workflow.resources import operations_dir, schemas_dir, templates_dir
 
 operations = operations_dir()
+schemas = schemas_dir()
 templates = templates_dir()
 required = [
     operations / "awf_listen.py",
@@ -61,6 +62,7 @@ required = [
     operations / "model-bin" / "model_git_guard.py",
     operations / "model-git-hooks" / "pre-commit",
     operations / "service" / "agent-workflow-listener.service.template",
+    schemas / "node-profile.schema.json",
     templates / "artifacts" / "review-report.md",
 ]
 assert all(path.is_file() for path in required), required
@@ -93,6 +95,16 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
             cwd=outside,
             env=clean_env,
         )
+        missing_profile = subprocess.run(
+            [str(awf), "node", "status", "--profile", "missing-profile"],
+            cwd=outside,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+        )
+        assert missing_profile.returncode == 1
+        assert "profile is unavailable or invalid" in missing_profile.stderr
+        assert "Traceback" not in missing_profile.stderr
     return 0
 
 

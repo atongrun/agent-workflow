@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow.dev/schemas/node-profile.schema.json",
+  "title": "Agent Workflow node profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "name", "role", "repo", "tool"],
+  "properties": {
+    "format": {"const": "awf.node-profile.v1"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"},
+    "role": {"enum": ["architect", "coder", "reviewer"]},
+    "repo": {"type": "string", "minLength": 1},
+    "tool": {"enum": ["none", "codex", "opencode", "pi"]},
+    "model": {"type": "string"},
+    "on_type": {"type": "string", "minLength": 1},
+    "base": {"type": "string", "minLength": 1},
+    "upstream_repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "upstream_remote": {"type": "string", "minLength": 1},
+    "head_repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "head_remote": {"type": "string", "minLength": 1},
+    "base_ref": {"type": "string", "minLength": 1},
+    "state_root": {"type": "string", "minLength": 1},
+    "log_file": {"type": "string", "minLength": 1},
+    "config": {"type": "string", "minLength": 1},
+    "gh_bin": {"type": "string", "minLength": 1},
+    "enable_preflight": {"type": "boolean"},
+    "no_push": {"type": "boolean"}
+  }
+}

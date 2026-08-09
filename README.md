@@ -238,6 +238,37 @@ trusted listener recovery. Status labels unrecorded health/checkpoint/queue valu
 explicitly, and resume is fail-closed: it cannot replay a model, ACK, requeue,
 or historical delivery.
 
+An installed wheel also exposes the same thin local listener lifecycle on every supported OS:
+
+```bash
+awf node doctor --profile reviewer-mac
+awf node start --profile reviewer-mac
+awf node status --profile reviewer-mac
+awf node logs --profile reviewer-mac --lines 100
+awf node stop --profile reviewer-mac
+```
+
+```json
+{
+  "format": "awf.node-profile.v1",
+  "name": "reviewer-mac",
+  "role": "reviewer",
+  "repo": "/absolute/path/to/dedicated-review-checkout",
+  "tool": "pi",
+  "model": "reviewer-model",
+  "upstream_repo": "owner/project",
+  "head_repo": "contributor/project"
+}
+```
+
+A named profile resolves to the platform config directory under `awf/profiles/<name>.json`; an
+absolute JSON path is also accepted. The `awf.node-profile.v1` schema contains only non-secret
+role, repository, tool, route, state, and log settings. Tokens and the Bus URL remain exclusively
+in owner-only `dispatch.env`. `doctor` checks the schema, role/tool boundary, strict credential
+file, role-aware Git workspace, Bus health, and model executable before `start`; it does not replace
+the existing Fast/Deep remote-dispatch proof. This is a local user-process surface, not a scheduler
+or a claim that native service installation has been accepted on every platform.
+
 ## Product Gate
 
 **Use first, abstract second.** Technical transport success proves feasibility, not downstream
