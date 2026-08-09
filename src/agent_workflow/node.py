@@ -435,7 +435,8 @@ def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False)
         print(json.dumps(value, indent=2, sort_keys=True))
     else:
         factual_status.print_human(value)
-    return 0
+    listener = value.get("listener")
+    return 0 if isinstance(listener, dict) and listener.get("status") == "running" else 3
 
 
 def stop(profile: NodeProfile) -> int:

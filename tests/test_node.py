@@ -175,6 +175,7 @@ def test_status_json_is_a_read_only_snapshot(monkeypatch, capsys, tmp_path: Path
             "format": "awf.node-status.v1",
             "profile": value.name,
             "run_id": run_id,
+            "listener": {"status": "running"},
         },
     )
 
@@ -183,7 +184,23 @@ def test_status_json_is_a_read_only_snapshot(monkeypatch, capsys, tmp_path: Path
         "format": "awf.node-status.v1",
         "profile": profile.name,
         "run_id": "task-1",
+        "listener": {"status": "running"},
     }
+
+
+def test_status_preserves_stopped_health_exit_code(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    from agent_workflow import status as factual_status
+
+    monkeypatch.setattr(
+        factual_status,
+        "snapshot",
+        lambda value, run_id: {"listener": {"status": "stopped"}},
+    )
+    monkeypatch.setattr(factual_status, "print_human", lambda value: None)
+
+    assert node.status(profile) == 3
+    assert node.status(profile, json_output=True) == 3
 
 
 def test_stop_refuses_to_signal_a_mismatched_process_record(monkeypatch, tmp_path: Path):
