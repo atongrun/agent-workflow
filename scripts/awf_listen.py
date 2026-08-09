@@ -126,7 +126,13 @@ def check_workspace_readiness(repo: Path, role: str) -> Path:
     return resolved
 
 
-def acquire_listener_lease(state_root: Path, role: str, repo: Path) -> Path:
+def acquire_listener_lease(
+    state_root: Path,
+    role: str,
+    repo: Path,
+    *,
+    launch_id: str = "",
+) -> Path:
     """Claim one live role and one live role-scoped repository before Bus connect."""
     lease_dir = state_root.resolve() / "listeners"
     lease_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +162,8 @@ def acquire_listener_lease(state_root: Path, role: str, repo: Path) -> Path:
                 )
 
         record = {"pid": os.getpid(), "role": role, "repo": resolved_repo}
+        if launch_id:
+            record["launch_id"] = launch_id
         try:
             fd = os.open(own_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
@@ -168,13 +176,17 @@ def acquire_listener_lease(state_root: Path, role: str, repo: Path) -> Path:
     return own_path
 
 
-def release_listener_lease(path: Path, role: str, repo: Path) -> None:
+def release_listener_lease(
+    path: Path,
+    role: str,
+    repo: Path,
+    *,
+    launch_id: str = "",
+) -> None:
     """Release only the exact lease created by this process."""
-    expected = {
-        "pid": os.getpid(),
-        "role": role,
-        "repo": os.path.normcase(str(repo.resolve())),
-    }
+    expected = {"pid": os.getpid(), "role": role, "repo": os.path.normcase(str(repo.resolve()))}
+    if launch_id:
+        expected["launch_id"] = launch_id
     try:
         with control_plane_lock(path.parent / ".registry.lock"):
             lease = _read_listener_lease(path)
@@ -324,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--base-ref", default="main")
     p.add_argument("--gh-bin", default="gh")
     p.add_argument("--state-root", type=Path, default=None)
+    p.add_argument("--node-launch-id", default="", help=argparse.SUPPRESS)
     p.add_argument(
         "--enable-preflight",
         action="store_true",
@@ -345,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", a.role):
         die("role must be a lowercase safe identifier")
+    if a.node_launch_id and not re.fullmatch(r"[0-9a-f]{32}", a.node_launch_id):
+        die("node launch identity is invalid")
 
     try:
         config_path = a.config or default_config_path()
@@ -482,7 +497,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         listener_root = (a.state_root or default_state_root()).resolve()
-        lease_path = acquire_listener_lease(listener_root, a.role, repo)
+        lease_path = acquire_listener_lease(
+            listener_root,
+            a.role,
+            repo,
+            launch_id=a.node_launch_id,
+        )
     except (ControlPlaneDenied, OSError) as exc:
         die(f"listener ownership gate failed: {exc}")
     try:
@@ -498,7 +518,12 @@ def main(argv: list[str] | None = None) -> int:
         except ExecutionFailure as exc:
             die(str(exc))
     finally:
-        release_listener_lease(lease_path, a.role, repo)
+        release_listener_lease(
+            lease_path,
+            a.role,
+            repo,
+            launch_id=a.node_launch_id,
+        )
 
 
 if __name__ == "__main__":

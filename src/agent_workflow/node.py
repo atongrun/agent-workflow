@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -220,10 +221,23 @@ def _listener_lease(profile: NodeProfile) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
 
 
-def _lease_matches(profile: NodeProfile, lease: dict[str, object] | None, pid: object) -> bool:
+def _lease_matches(
+    profile: NodeProfile,
+    lease: dict[str, object] | None,
+    pid: object,
+    launch_id: object = "",
+) -> bool:
+    identity_matches = bool(
+        lease
+        and (
+            lease.get("launch_id") == launch_id
+            if isinstance(launch_id, str) and launch_id
+            else lease.get("pid") == pid
+        )
+    )
     return bool(
         lease
-        and lease.get("pid") == pid
+        and identity_matches
         and lease.get("role") == profile.role
         and os.path.normcase(str(lease.get("repo", ""))) == os.path.normcase(str(profile.repo))
     )
@@ -232,22 +246,30 @@ def _lease_matches(profile: NodeProfile, lease: dict[str, object] | None, pid: o
 def _wait_for_listener_lease(
     profile: NodeProfile,
     process,
+    launch_id: str,
     timeout: float = LISTENER_START_TIMEOUT_SECONDS,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise NodeError(f"listener exited during startup; inspect {profile.log_path}")
-        if _lease_matches(profile, _listener_lease(profile), process.pid):
+        if _lease_matches(profile, _listener_lease(profile), process.pid, launch_id):
             return
         time.sleep(0.05)
     raise NodeError(f"listener readiness timed out; inspect {profile.log_path}")
 
 
-def _wait_for_stop(profile: NodeProfile, pid: int, timeout: float = 5) -> bool:
+def _wait_for_stop(
+    profile: NodeProfile,
+    pid: int,
+    launch_id: object = "",
+    timeout: float = 5,
+) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not _pid_alive(pid) or not _lease_matches(profile, _listener_lease(profile), pid):
+        if not _pid_alive(pid) or not _lease_matches(
+            profile, _listener_lease(profile), pid, launch_id
+        ):
             return True
         time.sleep(0.05)
     return False
@@ -370,7 +392,8 @@ def _listener_snapshot(profile: NodeProfile) -> dict[str, object]:
     pid = record.get("pid") if record else None
     digest_matches = bool(record and record.get("profile_sha256") == profile.digest)
     alive = bool(record and digest_matches and _pid_alive(pid))
-    bound = bool(alive and _lease_matches(profile, lease, pid))
+    launch_id = record.get("launch_id", "") if record else ""
+    bound = bool(alive and _lease_matches(profile, lease, pid, launch_id))
     return {
         "status": "running" if bound else "stale" if record else "stopped",
         "pid": pid,
@@ -491,7 +514,7 @@ def doctor(
     return 0
 
 
-def _listener_argv(profile: NodeProfile) -> list[str]:
+def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
     values = profile.values
     argv = [
         sys.executable,
@@ -531,6 +554,8 @@ def _listener_argv(profile: NodeProfile) -> list[str]:
         argv.append("--enable-preflight")
     if values.get("no_push"):
         argv.append("--no-push")
+    if launch_id:
+        argv.extend(["--node-launch-id", launch_id])
     return argv
 
 
@@ -554,9 +579,10 @@ def _start_locked(profile: NodeProfile) -> int:
     flags = 0
     if os.name == "nt":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP
+    launch_id = uuid.uuid4().hex
     with profile.log_path.open("ab", buffering=0) as log:
         process = subprocess.Popen(
-            _listener_argv(profile),
+            _listener_argv(profile, launch_id),
             cwd=profile.repo,
             stdin=subprocess.DEVNULL,
             stdout=log,
@@ -567,6 +593,7 @@ def _start_locked(profile: NodeProfile) -> int:
     record = {
         "format": "awf.node-process.v1",
         "pid": process.pid,
+        "launch_id": launch_id,
         "profile": str(profile.path),
         "profile_sha256": profile.digest,
         "role": profile.role,
@@ -575,7 +602,7 @@ def _start_locked(profile: NodeProfile) -> int:
     }
     _atomic_write(profile.process_path, record)
     try:
-        _wait_for_listener_lease(profile, process)
+        _wait_for_listener_lease(profile, process, launch_id)
     except NodeError:
         profile.process_path.unlink(missing_ok=True)
         if process.poll() is None:
@@ -636,13 +663,14 @@ def _stop_locked(profile: NodeProfile) -> int:
         profile.process_path.unlink(missing_ok=True)
         print(f"profile={profile.name} listener=stopped stale_record=removed")
         return 0
-    if not _lease_matches(profile, _listener_lease(profile), pid):
+    launch_id = record.get("launch_id", "")
+    if not _lease_matches(profile, _listener_lease(profile), pid, launch_id):
         raise NodeError("live listener lease does not match this profile; refusing to signal")
     if os.name == "nt":
         os.kill(pid, signal.CTRL_BREAK_EVENT)
     else:
         os.killpg(pid, signal.SIGINT)
-    if not _wait_for_stop(profile, pid):
+    if not _wait_for_stop(profile, pid, launch_id):
         raise NodeError(f"listener did not stop after local interrupt; inspect {profile.log_path}")
     profile.process_path.unlink(missing_ok=True)
     print(f"stopped profile={profile.name} pid={pid}")

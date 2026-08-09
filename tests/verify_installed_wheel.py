@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -17,6 +18,66 @@ def venv_python(root: Path) -> Path:
 
 def venv_awf(root: Path) -> Path:
     return root / ("Scripts/awf.exe" if os.name == "nt" else "bin/awf")
+
+
+def verify_listener_pid_binding(
+    python: Path,
+    root: Path,
+    clean_env: dict[str, str],
+) -> None:
+    state_root = root / "listener-state"
+    repo = root / "listener-repo"
+    repo.mkdir()
+    child = """
+import json
+import sys
+from pathlib import Path
+from agent_workflow.resources import operations_dir
+
+sys.path.insert(0, str(operations_dir()))
+import awf_listen
+
+state_root = Path(sys.argv[1])
+repo = Path(sys.argv[2])
+launch_id = sys.argv[3]
+lease_path = awf_listen.acquire_listener_lease(
+    state_root, "coder", repo, launch_id=launch_id
+)
+print(json.dumps({
+    "lease": json.loads(lease_path.read_text(encoding="utf-8")),
+    "parent_pid": __import__("os").getppid(),
+}), flush=True)
+try:
+    sys.stdin.read()
+finally:
+    awf_listen.release_listener_lease(
+        lease_path, "coder", repo, launch_id=launch_id
+    )
+"""
+    launch_id = "a" * 32
+    process = subprocess.Popen(
+        [str(python), "-c", child, str(state_root), str(repo), launch_id],
+        cwd=root,
+        env=clean_env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        observation = json.loads(process.stdout.readline())
+        lease = observation["lease"]
+        assert lease["launch_id"] == launch_id
+        if os.name == "nt":
+            assert lease["pid"] != process.pid
+            assert observation["parent_pid"] == process.pid
+        else:
+            assert lease["pid"] == process.pid
+    finally:
+        assert process.stdin is not None
+        process.stdin.close()
+        assert process.wait(timeout=10) == 0
 
 
 def main() -> int:
@@ -91,6 +152,7 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
 )
 """
         subprocess.run([str(python), "-c", proof], check=True, cwd=outside, env=clean_env)
+        verify_listener_pid_binding(python, root, clean_env)
         subprocess.run(
             [str(awf), "version"],
             check=True,
