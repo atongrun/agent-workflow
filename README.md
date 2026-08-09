@@ -242,6 +242,7 @@ An installed wheel also exposes the same thin local listener lifecycle on every 
 
 ```bash
 awf node doctor --profile reviewer-mac
+awf node doctor --profile reviewer-mac --json --ttl-seconds 3600
 awf node start --profile reviewer-mac
 awf node status --profile reviewer-mac
 awf node status --profile reviewer-mac --run task-DOGFOOD-001 --json
@@ -269,6 +270,14 @@ in owner-only `dispatch.env`. `doctor` checks the schema, role/tool boundary, st
 file, role-aware Git workspace, Bus health, and model executable before `start`; it does not replace
 the existing Fast/Deep remote-dispatch proof. This is a local user-process surface, not a scheduler
 or a claim that native service installation has been accepted on every platform.
+
+`doctor --json` emits one credential-free `awf.node-readiness.v1` snapshot for operator discovery.
+It binds the installed `awf`, profile, strict configuration, workspace, selected tool version, and
+listener observation into a SHA-256 fingerprint and gives the observation a bounded reuse window.
+An architect may collect it with one remote command and reuse it across a short serial TaskCard
+run while the listed invalidation conditions remain false. The snapshot is not written, sent over
+Agent Bus, or accepted as dispatch authority: `remote_dispatch.status` is always `not_proven`, and
+the existing Fast/Deep Preflight remains mandatory where its policy requires it.
 
 Node status is read-only. It labels the source of listener/PID/lease, Git workspace, run-ledger,
 delivery-checkpoint, Agent Bus pending, artifact, pull-request, and CI observations; unavailable

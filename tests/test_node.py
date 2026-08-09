@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -94,6 +98,206 @@ def test_architect_profile_makes_the_no_model_boundary_explicit(tmp_path: Path):
     invalid = write_profile(tmp_path, role="architect", tool="codex")
     with pytest.raises(node.NodeError, match="tool must be none"):
         node.load_profile(str(invalid))
+
+
+def test_local_readiness_captures_only_tool_version_hash(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    profile.repo.mkdir()
+    calls: list[list[str]] = []
+    config = {
+        "AGENT_BUS_URL": "https://bus.invalid",
+        "AWF_REVIEWER_TOKEN": "top-secret",
+        "AWF_BUS_BIN": "agent-bus",
+        "AWF_PI_BIN": "pi",
+    }
+
+    class Config:
+        @staticmethod
+        def load_config(path):
+            return config
+
+        @staticmethod
+        def native_executable(value):
+            return value
+
+    class Listen:
+        class ExecutionFailure(RuntimeError):
+            pass
+
+        @staticmethod
+        def check_workspace_readiness(repo, role):
+            return repo
+
+        @staticmethod
+        def run_command(argv, **kwargs):
+            calls.append(argv)
+            if argv == ["pi", "--version"]:
+                return subprocess.CompletedProcess(argv, 0, "pi 1.2.3", "")
+            return subprocess.CompletedProcess(argv, 0, "healthy", "")
+
+    monkeypatch.setattr(node, "_operations_modules", lambda: (Config, Listen))
+    monkeypatch.setattr(node.shutil, "which", lambda value: f"/tools/{value}")
+    monkeypatch.setitem(
+        sys.modules,
+        "awf_network",
+        SimpleNamespace(add_url_host_to_no_proxy=lambda environment, url: None),
+    )
+
+    result = node._local_readiness(profile)
+
+    assert ["agent-bus", "doctor"] in calls
+    assert ["pi", "--version"] in calls
+    assert result.tool_version_sha256 == node._version_sha256("pi 1.2.3", "")
+    assert result.config["AWF_REVIEWER_TOKEN"] == "top-secret"
+
+
+def test_listener_snapshot_treats_profile_drift_as_stale(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    monkeypatch.setattr(
+        node,
+        "_process_record",
+        lambda value: {"pid": 42, "profile_sha256": "sha256:old"},
+    )
+    monkeypatch.setattr(node, "_listener_lease", lambda value: {"pid": 42})
+    monkeypatch.setattr(
+        node,
+        "_pid_alive",
+        lambda pid: pytest.fail("a drifted process must not be treated as this profile"),
+    )
+
+    assert node._listener_snapshot(profile)["status"] == "stale"
+
+
+def readiness(profile: node.NodeProfile, **changes: object) -> node.LocalReadiness:
+    values: dict[str, object] = {
+        "config": {"AGENT_BUS_URL": "https://bus.invalid", "AWF_REVIEWER_TOKEN": "secret"},
+        "repo": profile.repo,
+        "bus_executable": "/tools/agent-bus",
+        "tool_executable": "/tools/pi",
+        "tool_version_sha256": "sha256:" + "1" * 64,
+    }
+    values.update(changes)
+    return node.LocalReadiness(**values)
+
+
+def test_doctor_json_emits_secret_free_reusable_snapshot(monkeypatch, capsys, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    observed = datetime(2026, 8, 9, 1, 2, 3, tzinfo=timezone.utc)
+    monkeypatch.setattr(node, "_local_readiness", lambda value: readiness(value))
+    monkeypatch.setattr(
+        node,
+        "_listener_snapshot",
+        lambda value: {
+            "status": "running",
+            "pid": 4321,
+            "profile_sha256": value.digest,
+            "lease_bound": True,
+        },
+    )
+    monkeypatch.setattr(node, "_now", lambda: observed)
+
+    assert node.doctor(profile, json_output=True, ttl_seconds=3600) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["format"] == "awf.node-readiness.v1"
+    assert report["status"] == "ready"
+    assert report["observed_at"] == "2026-08-09T01:02:03+00:00"
+    assert report["valid_until"] == "2026-08-09T02:02:03+00:00"
+    assert report["scope"] == "operator-discovery-only"
+    assert report["awf_version"] == node.__version__
+    assert report["runtime"] == {
+        "platform": sys.platform,
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+    }
+    assert report["profile"] == {
+        "name": "reviewer-mac",
+        "role": "reviewer",
+        "tool": "pi",
+        "model": "",
+    }
+    assert report["profile_sha256"] == profile.digest
+    assert report["fingerprint"].startswith("sha256:")
+    assert report["listener"]["status"] == "running"
+    assert report["remote_dispatch"] == {
+        "status": "not_proven",
+        "required_gate": "fast/deep-preflight",
+    }
+    serialized = json.dumps(report, sort_keys=True)
+    assert "secret" not in serialized
+    assert "bus.invalid" not in serialized
+    assert str(profile.repo) not in serialized
+    assert "/tools/" not in serialized
+
+
+def test_doctor_fingerprint_changes_with_tool_version(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    listener = {
+        "status": "stopped",
+        "pid": None,
+        "profile_sha256": "",
+        "lease_bound": False,
+    }
+    monkeypatch.setattr(node, "_listener_snapshot", lambda value: listener)
+    first = node.doctor_report(
+        profile,
+        readiness(profile),
+        ttl_seconds=3600,
+        observed_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+    )
+    second = node.doctor_report(
+        profile,
+        readiness(profile, tool_version_sha256="sha256:" + "2" * 64),
+        ttl_seconds=3600,
+        observed_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+    )
+
+    assert first["fingerprint"] != second["fingerprint"]
+
+
+def test_doctor_rejects_invalid_snapshot_ttl(tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+
+    with pytest.raises(node.NodeError, match="ttl-seconds"):
+        node.doctor_report(
+            profile,
+            readiness(profile),
+            ttl_seconds=0,
+            observed_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+        )
+
+
+def test_cli_routes_doctor_json_and_ttl(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+
+    def run(command, profile, **kwargs):
+        captured.update({"command": command, "profile": profile, **kwargs})
+        return 0
+
+    monkeypatch.setattr(node, "run", run)
+    profile = str(write_profile(tmp_path))
+
+    assert (
+        cli.main(
+            [
+                "node",
+                "doctor",
+                "--profile",
+                profile,
+                "--json",
+                "--ttl-seconds",
+                "900",
+            ]
+        )
+        == 0
+    )
+    assert captured == {
+        "command": "doctor",
+        "profile": profile,
+        "lines": 100,
+        "run_id": "",
+        "json_output": True,
+        "ttl_seconds": 900,
+    }
 
 
 def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatch, tmp_path: Path):
