@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.7] — 2026-08-09
+
+### Fixed
+
+- Preserve the owner RunManifest's implementation-report path when a stable TaskCard identity and
+  a longer branch-derived delivery identity differ. Dispatch and listener validation now bind the
+  same safe path to the committed TaskCard's sole implementation-report declaration without
+  changing delivery IDs, run ledgers, payload schemas, or ACK ordering.
+
 ## [0.3.0-rc.6] — 2026-08-09
 
 ### Fixed
@@ -188,7 +197,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.6...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.7...HEAD
+[0.3.0-rc.7]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.6...v0.3.0-rc.7
 [0.3.0-rc.6]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.5...v0.3.0-rc.6
 [0.3.0-rc.5]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.4...v0.3.0-rc.5
 [0.3.0-rc.4]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.3...v0.3.0-rc.4

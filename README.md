@@ -333,7 +333,7 @@ Install the published release candidate without an Agent Workflow source checkou
 
 ```bash
 python -m pip install \
-  https://github.com/atongrun/agent-workflow/releases/download/v0.3.0-rc.6/agent_workflow-0.3.0rc6-py3-none-any.whl
+  https://github.com/atongrun/agent-workflow/releases/download/v0.3.0-rc.7/agent_workflow-0.3.0rc7-py3-none-any.whl
 awf version
 ```
 
