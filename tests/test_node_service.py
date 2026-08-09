@@ -85,9 +85,7 @@ def test_session_start_allows_explicit_temporary_override(monkeypatch, tmp_path:
 
 
 def test_foreground_runs_complete_profile_listener_in_same_process(monkeypatch, tmp_path: Path):
-    profile = node.load_profile(
-        str(write_profile(tmp_path, lifecycle=None))
-    )
+    profile = node.load_profile(str(write_profile(tmp_path, lifecycle=None)))
     profile.values["enable_preflight"] = True
     observed: list[str] = []
     listener = SimpleNamespace(main=lambda argv: observed.extend(argv) or 17)
@@ -148,17 +146,23 @@ def test_service_actions_dispatch_only_to_adapter(monkeypatch, tmp_path: Path):
 
 
 def test_service_health_requires_manager_lease_and_profile_agreement():
-    assert node_service.service_health(
-        manager_running=True,
-        process_owner_matches=True,
-        profile_digest_matches=True,
-        lease_bound=True,
-        orphaned=False,
-    ) == "running"
-    assert node_service.service_health(
-        manager_running=False,
-        process_owner_matches=True,
-        profile_digest_matches=True,
-        lease_bound=True,
-        orphaned=True,
-    ) == "degraded"
+    assert (
+        node_service.service_health(
+            manager_running=True,
+            process_owner_matches=True,
+            profile_digest_matches=True,
+            lease_bound=True,
+            orphaned=False,
+        )
+        == "running"
+    )
+    assert (
+        node_service.service_health(
+            manager_running=False,
+            process_owner_matches=True,
+            profile_digest_matches=True,
+            lease_bound=True,
+            orphaned=True,
+        )
+        == "degraded"
+    )
