@@ -164,6 +164,9 @@ def _validate_profile_semantics(profile: NodeProfile) -> None:
         value = profile.values.get(field)
         if value and not Path(str(value)).expanduser().is_absolute():
             raise NodeError(f"profile {field} must be an absolute path")
+    for field, path in (("state_root", profile.state_root), ("log_file", profile.log_path)):
+        if path == profile.repo or path.is_relative_to(profile.repo):
+            raise NodeError(f"profile {field} must be outside the role repository")
     if profile.role == "coder" and profile.values["tool"] == "pi":
         raise NodeError("Pi is reviewer-only and cannot be selected for coder")
     if profile.role == "architect" and profile.values["tool"] != "none":

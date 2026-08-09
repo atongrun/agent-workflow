@@ -26,7 +26,9 @@ URLs and role tokens from drifting into the profile. Those values remain in stri
 `dispatch.env` and are loaded by the existing parser.
 
 The semantic gate retains the current execution boundary: Pi is reviewer-only, while architect
-terminal handling remains no-model. Repository, state, log, and config paths must be absolute.
+terminal handling remains no-model. Repository, state, log, and config paths must be absolute;
+node-managed state and logs must also remain outside the role repository so lifecycle bookkeeping
+cannot dirty or append to business files before listener readiness.
 
 ## Lifecycle and readiness
 

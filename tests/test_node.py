@@ -62,6 +62,26 @@ def test_profile_rejects_relative_repo(tmp_path: Path):
         node.load_profile(str(path))
 
 
+@pytest.mark.parametrize("field", ["state_root", "log_file"])
+def test_node_write_paths_cannot_dirty_the_role_repository(
+    monkeypatch, tmp_path: Path, field: str
+):
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    target = repo / ("state" if field == "state_root" else "listener.log")
+    path = write_profile(tmp_path, repo=str(repo), **{field: str(target)})
+    monkeypatch.setattr(
+        node.subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("listener must not start"),
+    )
+
+    assert node.run("start", str(path)) == 1
+    assert not target.exists()
+    state_root = target if field == "state_root" else (tmp_path / "state").resolve()
+    assert not (state_root / "nodes" / "reviewer-mac" / "process.json").exists()
+
+
 def test_profile_preserves_pi_reviewer_only_boundary(tmp_path: Path):
     path = write_profile(tmp_path, role="coder", tool="pi")
 
