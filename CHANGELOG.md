@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.3] — 2026-08-09
+
 ### Added
 
 - Add `awf node doctor --json --ttl-seconds` as a credential-free, fingerprinted operator
@@ -152,7 +154,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.2...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.3...HEAD
+[0.3.0-rc.3]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.2...v0.3.0-rc.3
 [0.3.0-rc.2]: https://github.com/atongrun/agent-workflow/compare/v0.2.0...v0.3.0-rc.2
 [0.2.0]: https://github.com/atongrun/agent-workflow/compare/a08664da1640207bd8757609cbf83348249df709...v0.2.0
 [0.1.0]: https://github.com/atongrun/agent-workflow/commit/a08664da1640207bd8757609cbf83348249df709
