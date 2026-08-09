@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -891,22 +892,24 @@ def _task_reconcile(profile_value: str, log_value: str) -> int:
     except OSError:
         saved_stderr = None
     try:
-        with log_path.open("ab", buffering=0) as log:
+        with log_path.open("a", encoding="utf-8", buffering=1) as log:
             os.dup2(log.fileno(), 1)
             os.dup2(log.fileno(), 2)
+            windows_handles = _redirect_windows_standard_handles(log.fileno())
             try:
-                profile = node.load_profile(profile_value)
-                if profile.log_path != log_path:
-                    raise node.NodeError(
-                        "task reconcile log path drifted from the installed profile"
-                    )
-                return node.reconcile(profile)
-            except (node.NodeError, NodeServiceError, OSError) as exc:
-                message = f"ERROR: task reconcile failed: {exc}\n".encode(
-                    "utf-8", errors="replace"
-                )
-                log.write(message)
-                return 1
+                with redirect_stdout(log), redirect_stderr(log):
+                    try:
+                        profile = node.load_profile(profile_value)
+                        if profile.log_path != log_path:
+                            raise node.NodeError(
+                                "task reconcile log path drifted from the installed profile"
+                            )
+                        return node.reconcile(profile)
+                    except (node.NodeError, NodeServiceError, OSError) as exc:
+                        log.write(f"ERROR: task reconcile failed: {exc}\n")
+                        return 1
+            finally:
+                _restore_windows_standard_handles(windows_handles)
     finally:
         if saved_stdout is not None:
             os.dup2(saved_stdout, 1)
@@ -914,6 +917,35 @@ def _task_reconcile(profile_value: str, log_value: str) -> int:
         if saved_stderr is not None:
             os.dup2(saved_stderr, 2)
             os.close(saved_stderr)
+
+
+def _redirect_windows_standard_handles(file_descriptor: int):
+    if os.name != "nt":
+        return None
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+    kernel32.GetStdHandle.restype = wintypes.HANDLE
+    kernel32.SetStdHandle.argtypes = [wintypes.DWORD, wintypes.HANDLE]
+    kernel32.SetStdHandle.restype = wintypes.BOOL
+    identifiers = (-11, -12)
+    previous = tuple(kernel32.GetStdHandle(identifier) for identifier in identifiers)
+    native_handle = wintypes.HANDLE(msvcrt.get_osfhandle(file_descriptor))
+    for identifier in identifiers:
+        if not kernel32.SetStdHandle(identifier, native_handle):
+            raise NodeServiceError("cannot bind Windows scheduler standard handles")
+    return kernel32, identifiers, previous
+
+
+def _restore_windows_standard_handles(binding) -> None:
+    if binding is None:
+        return
+    kernel32, identifiers, previous = binding
+    for identifier, handle in zip(identifiers, previous, strict=True):
+        kernel32.SetStdHandle(identifier, handle)
 
 
 def _main(argv: list[str] | None = None) -> int:
