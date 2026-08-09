@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.6] — 2026-08-09
+
+### Fixed
+
+- Recover an exact Deep preflight result that arrives after its bounded initiating process exits.
+  The installed `awf preflight resume-deep` command reruns Fast, binds the canonical same-probe
+  result to the current runtime fingerprint and roles, requires successful children and zero
+  queues, and signs the normal cache without sending, reading, ACKing, requeueing, or redispatching
+  an Agent Bus delivery.
+
 ## [0.3.0-rc.5] — 2026-08-09
 
 ### Added
@@ -178,7 +188,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.5...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.6...HEAD
+[0.3.0-rc.6]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.5...v0.3.0-rc.6
 [0.3.0-rc.5]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.4...v0.3.0-rc.5
 [0.3.0-rc.4]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.3...v0.3.0-rc.4
 [0.3.0-rc.3]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.2...v0.3.0-rc.3
