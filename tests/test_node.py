@@ -330,6 +330,66 @@ def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatc
     assert observed["stdin"] is node.subprocess.DEVNULL
 
 
+def test_listener_start_waits_for_a_slow_windows_lease(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    elapsed = 0.0
+
+    class Process:
+        pid = 4321
+
+        @staticmethod
+        def poll():
+            return None
+
+    def monotonic():
+        return elapsed
+
+    def sleep(seconds: float):
+        nonlocal elapsed
+        elapsed += seconds
+
+    def listener_lease(_profile):
+        if elapsed < 4:
+            return None
+        return {"pid": 4321, "role": profile.role, "repo": str(profile.repo)}
+
+    monkeypatch.setattr(node.time, "monotonic", monotonic)
+    monkeypatch.setattr(node.time, "sleep", sleep)
+    monkeypatch.setattr(node, "_listener_lease", listener_lease)
+
+    node._wait_for_listener_lease(profile, Process())
+
+    assert elapsed >= 4
+
+
+def test_listener_start_timeout_remains_bounded_and_fail_closed(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    elapsed = 0.0
+
+    class Process:
+        pid = 4321
+
+        @staticmethod
+        def poll():
+            return None
+
+    def monotonic():
+        return elapsed
+
+    def sleep(seconds: float):
+        nonlocal elapsed
+        elapsed += seconds
+
+    monkeypatch.setattr(node.time, "monotonic", monotonic)
+    monkeypatch.setattr(node.time, "sleep", sleep)
+    monkeypatch.setattr(node, "_listener_lease", lambda _profile: None)
+
+    with pytest.raises(node.NodeError, match="listener readiness timed out"):
+        node._wait_for_listener_lease(profile, Process())
+
+    assert elapsed >= node.LISTENER_START_TIMEOUT_SECONDS
+
+
 def test_start_fails_before_spawn_when_readiness_fails(monkeypatch, tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
 
