@@ -2,12 +2,22 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.2] — 2026-08-09
+
 ### Added
 
 - Add a reviewer-only Pi adapter with explicit text-mode non-interactive argv, read-only tools,
   trusted stdout-to-ReviewReport persistence after exit zero, `AWF_PI_BIN` configuration, and the
   existing selection-integrity, isolated-workspace, checkpoint/recovery, schema, outbox, and ACK
   gates. Coder support and a generic provider registry remain out of scope.
+- Package the production operations modules, adapters, model Git guards, service assets, schemas,
+  and artifact templates in the wheel so an installed `awf` does not depend on an Agent Workflow
+  source checkout.
+- Add the cross-platform `awf node doctor/start/status/stop/logs` local user-process surface with
+  one credential-free role-profile schema and pre-model readiness checks.
+- Add factual, read-only node status for listener, workspace, checkpoint, queue, artifact, PR, and
+  CI observations, including separate `file_sha256` and `canonical_report_sha256` fields for a
+  ReviewReport.
 
 ### Fixed
 
@@ -35,8 +45,16 @@
   credential-free proxy connectivity. Force-include configured report artifacts from ignored
   directories and reject reviewer evidence absent from the dispatched commit. Same-user
   hostile-code isolation remains an explicit operating boundary.
+- Verify architect terminal events in event-scoped trusted workspaces without fetching, checking
+  out, stashing, cleaning, or overwriting a shared source checkout. Preserve terminal-ledger,
+  inbox-completion, replay, and ACK ordering when the source checkout is dirty.
+- Reject listener startup before Bus connection when a role workspace is not ready, the role PID
+  is already live, or another role owns the same repository. Local `Ctrl-C` now exits without a
+  traceback and releases only the matching listener lease.
 
 ## [0.3.0-rc.1] — 2026-07-19
+
+This was an internal candidate and was not published as a Git tag or GitHub Release.
 
 ### Core method and contracts
 
@@ -122,7 +140,7 @@
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.1...HEAD
-[0.3.0-rc.1]: https://github.com/atongrun/agent-workflow/compare/v0.2.0...v0.3.0-rc.1
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.2...HEAD
+[0.3.0-rc.2]: https://github.com/atongrun/agent-workflow/compare/v0.2.0...v0.3.0-rc.2
 [0.2.0]: https://github.com/atongrun/agent-workflow/compare/a08664da1640207bd8757609cbf83348249df709...v0.2.0
 [0.1.0]: https://github.com/atongrun/agent-workflow/commit/a08664da1640207bd8757609cbf83348249df709

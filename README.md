@@ -289,6 +289,16 @@ participation than the previous high-value-model-led baseline. See
 
 ## Validation Quick Start
 
+Install the published release candidate without an Agent Workflow source checkout:
+
+```bash
+python -m pip install \
+  https://github.com/atongrun/agent-workflow/releases/download/v0.3.0-rc.2/agent_workflow-0.3.0rc2-py3-none-any.whl
+awf version
+```
+
+For repository development and validation:
+
 ```bash
 pip install -e ".[dev]"
 ruff check .
