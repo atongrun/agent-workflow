@@ -49,15 +49,15 @@ def cmd_version(args: argparse.Namespace) -> int:
 
 
 def cmd_node(args: argparse.Namespace) -> int:
-    return node.run(
-        args.node_command,
-        args.profile,
-        lines=getattr(args, "lines", 100),
-        run_id=getattr(args, "run", ""),
-        json_output=getattr(args, "json", False),
-        ttl_seconds=getattr(args, "ttl_seconds", 3600),
-        allow_session_bound=getattr(args, "allow_session_bound", False),
-    )
+    options = {
+        "lines": getattr(args, "lines", 100),
+        "run_id": getattr(args, "run", ""),
+        "json_output": getattr(args, "json", False),
+        "ttl_seconds": getattr(args, "ttl_seconds", 3600),
+    }
+    if getattr(args, "allow_session_bound", False):
+        options["allow_session_bound"] = True
+    return node.run(args.node_command, args.profile, **options)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
