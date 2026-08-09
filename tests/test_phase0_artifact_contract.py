@@ -67,6 +67,28 @@ def test_dispatch_compiles_one_report_path_used_by_listener_executor_and_postfli
     )
 
 
+def test_owner_report_path_survives_a_distinct_delivery_task_id(tmp_path):
+    owner_task_id = "DOUSANSI-RC2-DOGFOOD-001"
+    delivery_task_id = "dousansi-rc2-dogfood-001-first-bean-20260809"
+    report_path = awf_artifact_contract.compile_implementation_report_path(owner_task_id)
+    card = tmp_path / "task.md"
+    write_card(card, ["src/bean.ts", report_path])
+
+    stage_contract = awf_artifact_contract.compile_stage_artifact_contract(
+        card_path=card,
+        task_id=delivery_task_id,
+        requested_report_path=report_path,
+    )
+    received_contract = awf_artifact_contract.validate_stage_artifact_contract(
+        card_path=card,
+        task_id=delivery_task_id,
+        required_report_path=report_path,
+    )
+
+    assert stage_contract.implementation_report_path == report_path
+    assert received_contract == stage_contract
+
+
 def test_v4_taskcard_and_v5_delivery_fail_before_model_with_explicit_fields(tmp_path):
     v4_path = awf_artifact_contract.compile_implementation_report_path("task-v4")
     v5_path = awf_artifact_contract.compile_implementation_report_path("task-v5")
