@@ -316,6 +316,28 @@ def test_task_scheduler_uninstall_allows_clean_reinstall(tmp_path: Path):
     assert (profile.node_dir / "managed" / "install.json").is_file()
 
 
+def test_task_scheduler_upgrade_replaces_a_drifted_action_record(tmp_path: Path):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    calls: list[list[str]] = []
+    manager = node_service.TaskSchedulerAdapter(
+        profile,
+        run_command=lambda argv, **kwargs: calls.append(argv) or "",
+        current_user=node_service._current_windows_user(),
+    )
+    manager.install()
+    install_path = profile.node_dir / "managed" / "install.json"
+    record = json.loads(install_path.read_text(encoding="utf-8"))
+    record["action_argv"] = ["old-python", "old-entrypoint"]
+    install_path.write_text(json.dumps(record), encoding="utf-8")
+
+    manager.upgrade()
+
+    creates = [argv for argv in calls if "/Create" in argv]
+    assert len(creates) == 2
+    upgraded = json.loads(install_path.read_text(encoding="utf-8"))
+    assert upgraded["action_argv"] == node_service._task_reconcile_argv(profile)
+
+
 def test_launchd_uninstall_allows_clean_reinstall(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

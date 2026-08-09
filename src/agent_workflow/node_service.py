@@ -307,6 +307,18 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
     return record
 
 
+def _require_upgrade_target(profile, manager: str, manager_id: str) -> dict[str, object]:
+    record = _install_record(profile)
+    expected = {
+        "manager": manager,
+        "manager_id": manager_id,
+        "profile": str(Path(profile.path).resolve()),
+    }
+    if any(record.get(key) != value for key, value in expected.items()):
+        raise NodeServiceError("managed lifecycle upgrade target identity drifted")
+    return record
+
+
 def _guard_install(profile, manager: str, *, force: bool) -> bool:
     path = _service_dir(profile) / "install.json"
     if not path.exists() or force:
@@ -322,6 +334,7 @@ class Adapter(Protocol):
     def status(self, run_id: str = "", json_output: bool = False) -> int: ...
     def logs(self, lines: int = 100) -> int: ...
     def stop(self, bound_pid: int | None = None, launch_id: str = "") -> int: ...
+    def stop_for_upgrade(self) -> int: ...
     def restart(self) -> int: ...
     def upgrade(self) -> int: ...
     def uninstall(self) -> int: ...
@@ -390,9 +403,14 @@ class SystemdAdapter:
         return self.start()
 
     def upgrade(self) -> int:
-        self.stop()
+        self.stop_for_upgrade()
         self.install(force=True)
         return self.start()
+
+    def stop_for_upgrade(self) -> int:
+        _require_upgrade_target(self.profile, "systemd", self.unit)
+        _run(["systemctl", "--user", "stop", self.unit])
+        return _after_manager_stop(self.profile)
 
     def uninstall(self) -> int:
         _require_installed(self.profile, "systemd")
@@ -461,9 +479,15 @@ class LaunchdAdapter:
         return self.start()
 
     def upgrade(self) -> int:
-        self.stop()
+        self.stop_for_upgrade()
         self.install(force=True)
         return self.start()
+
+    def stop_for_upgrade(self) -> int:
+        _require_upgrade_target(self.profile, "launchd", self.label)
+        _run(["launchctl", "disable", f"{self.domain}/{self.label}"])
+        _run(["launchctl", "kill", "SIGTERM", f"{self.domain}/{self.label}"], check=False)
+        return _after_manager_stop(self.profile)
 
     def uninstall(self) -> int:
         _require_installed(self.profile, "launchd")
@@ -585,9 +609,19 @@ class TaskSchedulerAdapter:
         return self.start()
 
     def upgrade(self) -> int:
-        self.stop()
+        self.stop_for_upgrade()
         self.install(force=True)
         return self.start()
+
+    def stop_for_upgrade(self) -> int:
+        _require_upgrade_target(self.profile, "task-scheduler", self.task_name)
+        pid = _bound_live_listener_pid(self.profile)
+        if pid is not None:
+            self._call(["taskkill.exe", "/PID", str(pid), "/T", "/F"])
+        self._call(["schtasks.exe", "/End", "/TN", self.task_name], check=False)
+        if self.run_command is None:
+            return _after_manager_stop(self.profile)
+        return 0
 
     def uninstall(self) -> int:
         self.stop()

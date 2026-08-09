@@ -776,7 +776,7 @@ def restart(profile: NodeProfile) -> int:
 
 def upgrade(profile: NodeProfile) -> int:
     write_desired_state(profile, "stopped")
-    _managed_action(profile, "stop")
+    _managed_action(profile, "stop_for_upgrade")
     _managed_action(profile, "install", force=True)
     write_desired_state(profile, "running")
     return _managed_action(profile, "start")
