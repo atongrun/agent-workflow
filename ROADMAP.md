@@ -111,6 +111,8 @@ Remaining Phase 2 work:
   ACK and pending-empty do not depend on a manual handler.
 - [x] Isolate architect terminal verification from shared source checkouts; gate listeners on
   role/repository ownership and readiness before Bus connection; make local interrupt exit cleanly.
+- [x] Package production operations modules, adapters, guards, service assets, and templates in the
+  wheel; verify a fresh installed tree outside the source checkout on all three CI platforms.
 - [x] Replace the production Bash TaskCard dispatcher with a native Python entry point; retain the
   shell file only as a POSIX compatibility shim and remove Git Bash/WSL from Windows dispatch.
 - [ ] Record the capacity-isolation metrics defined in

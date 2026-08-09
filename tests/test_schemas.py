@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_workflow import resources as package_resources
 from agent_workflow import validation
 from agent_workflow.validation import validate_directory, validate_file
 
@@ -70,7 +71,23 @@ class TestSchemaFilesExist:
         force_include = project_metadata["tool"]["hatch"]["build"]["targets"]["wheel"][
             "force-include"
         ]
-        assert force_include == {"schemas": "agent_workflow/schemas"}
+        assert force_include == {
+            "schemas": "agent_workflow/schemas",
+            "scripts": "agent_workflow/operations",
+            "templates": "agent_workflow/templates",
+        }
+
+    def test_packaged_operations_and_templates_are_preferred(self, tmp_path: Path, monkeypatch):
+        package_dir = tmp_path / "agent_workflow"
+        operations = package_dir / "operations"
+        templates = package_dir / "templates"
+        operations.mkdir(parents=True)
+        templates.mkdir()
+        monkeypatch.setattr(package_resources, "PACKAGE_DIR", package_dir)
+        monkeypatch.setattr(package_resources, "SOURCE_ROOT", tmp_path / "missing-source")
+
+        assert package_resources.operations_dir() == operations
+        assert package_resources.templates_dir() == templates
 
     def test_packaged_schema_resource_is_preferred(self, tmp_path: Path, monkeypatch):
         package_dir = tmp_path / "agent_workflow"

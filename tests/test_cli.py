@@ -540,6 +540,20 @@ def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_pat
     assert "run=task-owner-branch" in capsys.readouterr().out
 
 
+def test_authority_manifest_prefers_downstream_override_then_packaged_default(
+    monkeypatch, tmp_path: Path
+):
+    packaged = tmp_path / "package" / "authority.json"
+    monkeypatch.setattr(cli, "authority_manifest_path", lambda: packaged)
+
+    assert cli._authority_manifest_for_repo(tmp_path) == packaged
+
+    downstream = tmp_path / "scripts" / "authority-manifest.example.json"
+    downstream.parent.mkdir()
+    downstream.write_text("{}\n", encoding="utf-8")
+    assert cli._authority_manifest_for_repo(tmp_path) == downstream
+
+
 def test_status_labels_unrecorded_health_and_queue(monkeypatch, capsys):
     monkeypatch.setattr(
         cli,

@@ -51,6 +51,12 @@ jobs:
             python -m zipfile -l "$wheel" | grep -F "agent_workflow/schemas/$schema"
             tar -tzf "$sdist" | grep -E "/schemas/$schema$"
           done
+          python -m zipfile -l "$wheel" | grep -F "agent_workflow/operations/awf_listen.py"
+          python -m zipfile -l "$wheel" | grep -F "agent_workflow/operations/agent_adapters/pi.py"
+          python -m zipfile -l "$wheel" | grep -F "agent_workflow/operations/model-bin/model_git_guard.py"
+          python -m zipfile -l "$wheel" | grep -F "agent_workflow/operations/service/agent-workflow-listener.service.template"
+          python -m zipfile -l "$wheel" | grep -F "agent_workflow/templates/artifacts/review-report.md"
+          ! python -m zipfile -l "$wheel" | grep -E '(__pycache__|\.pyc$)'
 
       - name: Validate from an installed wheel
         shell: bash
@@ -121,3 +127,26 @@ jobs:
         run: |
           SHELL=/bin/zsh AWF_EXPECTED_RUNTIME=macos-zsh \
             python -m pytest -v tests/test_awf_executor.py tests/test_runtime_command_boundary.py
+
+  installed-wheel:
+    name: installed-wheel-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Verify fresh installed tree outside the checkout
+        run: python tests/verify_installed_wheel.py dist
