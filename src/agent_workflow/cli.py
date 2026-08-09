@@ -17,6 +17,7 @@ from agent_workflow.manifest import (
     resolve_manifest_card,
     write_manifest,
 )
+from agent_workflow.resources import authority_manifest_path, operations_dir
 from agent_workflow.validation import (
     load_role_map_from_files,
     parse_all_resources,
@@ -208,13 +209,18 @@ def _manifest_value(values: dict, key: str, default: str = "") -> str:
 
 
 def _ops_module():
-    root = _find_project_root()
-    scripts = root / "scripts"
+    scripts = operations_dir()
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
     import awf_control_plane
 
     return awf_control_plane
+
+
+def _authority_manifest_for_repo(repo: Path) -> Path:
+    """Preserve an explicit downstream manifest, otherwise use the packaged default."""
+    downstream = repo / "scripts" / "authority-manifest.example.json"
+    return downstream if downstream.is_file() else authority_manifest_path()
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -360,7 +366,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 f"--run must be {canonical_run_id!r} to match trusted listener recovery"
             )
         run_id = canonical_run_id
-        authority_path = repo / "scripts" / "authority-manifest.example.json"
+        authority_path = _authority_manifest_for_repo(repo)
         authority = ops.authority_manifest_binding(ops.load_authority_manifest(authority_path))
         base = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
@@ -392,7 +398,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
-    scripts = _find_project_root() / "scripts"
+    scripts = operations_dir()
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
     try:

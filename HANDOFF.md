@@ -30,6 +30,15 @@ reviewer listeners require clean dedicated roots; architect may be dirty. Local 
 130 without a traceback and releases only its exact lease. Terminal ledger-before-inbox ordering,
 same-delivery replay, ACK-on-handler-success, v1-v3 payloads, and Agent Bus remain unchanged.
 
+The installed-tree follow-up packages the complete production operations resource set into the
+wheel and makes `awf` resolve it without cwd or repository-root assumptions. Packaged resources
+include Python entry points, agent adapters, authority/config support, model Git guards/hooks,
+service wrappers/templates, and artifact templates. Source/editable checkouts retain their existing
+fallback. A dedicated three-OS CI matrix builds a real wheel, installs it into a fresh virtual
+environment, changes to an unrelated directory, imports the operations modules, checks required
+assets, and runs the installed CLI. Node lifecycle and status aggregation remain separate follow-up
+PRs; this packaging change does not add a service manager, provider registry, or Agent Bus behavior.
+
 The follow-up closes the mixed-role selection gap without changing the v3 payload schema. The
 owner RunManifest can freeze `reviewer_tool`/`reviewer_model`, and the exact committed TaskCard
 must carry the same coder/reviewer pairs in one `awf-reviewer-selection` JSON comment. Dispatch

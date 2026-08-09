@@ -169,6 +169,13 @@ handoff checks, listeners, dispatch, and native service entry points share the s
 parser. Production wrappers no longer source `dispatch.env`, and the Windows service no longer
 depends on Git Bash. CI exercises the recovery/configuration suite on Linux and Windows; this is
 automated infrastructure evidence, not the separate three-card live dogfood gate.
+Production wheels include this operations surface under the installed `agent_workflow` package:
+listener/role/dispatch/preflight/config/service modules, agent adapters, model Git guards, service
+templates, the default authority manifest, and artifact templates. The `awf` entry point resolves
+those packaged resources first and falls back to the repository directories only in a source or
+editable checkout. An installed `awf` therefore does not need an Agent Workflow source checkout.
+CI builds a wheel and proves the resource/import boundary from a fresh virtual environment and an
+unrelated working directory on Linux, Windows, and macOS.
 The architect listener also consumes validated `PASS` and `BLOCKED` terminal decisions
 deterministically, so a successful route can reach automatic ACK and pending-empty without a manual
 terminal handler. Terminal verification now runs in a fresh event-scoped, no-remote workspace:
