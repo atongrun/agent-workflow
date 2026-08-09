@@ -218,9 +218,7 @@ def test_listener_snapshot_accepts_distinct_pid_with_bound_launch_identity(
     assert node._listener_snapshot(profile)["status"] == "running"
 
 
-def test_listener_snapshot_rejects_dead_listener_behind_live_launcher(
-    monkeypatch, tmp_path: Path
-):
+def test_listener_snapshot_rejects_dead_listener_behind_live_launcher(monkeypatch, tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
     monkeypatch.setattr(
         node,

@@ -419,11 +419,7 @@ def _listener_snapshot(profile: NodeProfile) -> dict[str, object]:
     pid = record.get("pid") if record else None
     digest_matches = bool(record and record.get("profile_sha256") == profile.digest)
     launch_id = record.get("launch_id", "") if record else ""
-    bound = bool(
-        record
-        and digest_matches
-        and _live_lease_matches(profile, lease, pid, launch_id)
-    )
+    bound = bool(record and digest_matches and _live_lease_matches(profile, lease, pid, launch_id))
     return {
         "status": "running" if bound else "stale" if record else "stopped",
         "pid": pid,
