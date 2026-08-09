@@ -1,4 +1,4 @@
-"""Machine-owned implementation artifact contract for production Workflow stages."""
+"""Owner-bound implementation artifact contract for production Workflow stages."""
 
 from __future__ import annotations
 
@@ -80,17 +80,12 @@ def compile_stage_artifact_contract(
     task_id: str,
     requested_report_path: str,
 ) -> StageArtifactContract:
-    """Compile and validate a dispatch-stage artifact contract before side effects."""
+    """Compile or accept the owner-bound report path before dispatch side effects."""
     compiled = compile_implementation_report_path(task_id)
     requested = requested_report_path or compiled
     _validate_repo_relative_artifact_path(requested, field="dispatch --report")
-    if requested != compiled:
-        raise ArtifactContractError(
-            "dispatch --report does not match the machine-compiled implementation report path: "
-            f"requested={requested!r}, compiled={compiled!r}"
-        )
-    _validate_taskcard_binding(Path(card_path), compiled)
-    return StageArtifactContract(task_id=task_id, implementation_report_path=compiled)
+    _validate_taskcard_binding(Path(card_path), requested)
+    return StageArtifactContract(task_id=task_id, implementation_report_path=requested)
 
 
 def validate_stage_artifact_contract(
@@ -99,13 +94,8 @@ def validate_stage_artifact_contract(
     task_id: str,
     required_report_path: str,
 ) -> StageArtifactContract:
-    """Validate a received delivery against the same machine-owned stage contract."""
-    compiled = compile_implementation_report_path(task_id)
+    """Validate a received delivery against the same owner/Card-bound stage contract."""
+    compile_implementation_report_path(task_id)
     _validate_repo_relative_artifact_path(required_report_path, field="delivery.report")
-    if required_report_path != compiled:
-        raise ArtifactContractError(
-            "delivery.report does not match the machine-compiled implementation report path: "
-            f"delivery.report={required_report_path!r}, compiled={compiled!r}"
-        )
     _validate_taskcard_binding(Path(card_path), required_report_path)
-    return StageArtifactContract(task_id=task_id, implementation_report_path=compiled)
+    return StageArtifactContract(task_id=task_id, implementation_report_path=required_report_path)
