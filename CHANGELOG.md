@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0-rc.4] — 2026-08-09
+
 ### Fixed
 
 - Bind listener readiness to a per-start launch identity instead of assuming the spawned launcher
@@ -161,7 +163,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.3...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.4...HEAD
+[0.3.0-rc.4]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.3...v0.3.0-rc.4
 [0.3.0-rc.3]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.2...v0.3.0-rc.3
 [0.3.0-rc.2]: https://github.com/atongrun/agent-workflow/compare/v0.2.0...v0.3.0-rc.2
 [0.2.0]: https://github.com/atongrun/agent-workflow/compare/a08664da1640207bd8757609cbf83348249df709...v0.2.0
