@@ -54,9 +54,7 @@ def test_workspace_reports_role_scope_and_dirty_readiness(monkeypatch, tmp_path:
 def test_architect_workspace_can_report_ready_when_source_is_dirty(monkeypatch, tmp_path: Path):
     profile = make_profile(tmp_path, role="architect")
     profile.repo.mkdir()
-    outputs = iter(
-        [(0, str(profile.repo)), (0, "b" * 40), (0, "main"), (0, " M README.md")]
-    )
+    outputs = iter([(0, str(profile.repo)), (0, "b" * 40), (0, "main"), (0, " M README.md")])
     monkeypatch.setattr(status, "_command", lambda argv: next(outputs))
 
     facts = status._workspace(profile)
@@ -110,9 +108,7 @@ def test_delivery_checkpoint_supplies_the_recorded_review_file_hash(tmp_path: Pa
         encoding="utf-8",
     )
     original_bytes = checkpoint_path.read_bytes()
-    ledger = {
-        "terminal": {"branch": "feature/task", "delivery_id": "review-delivery"}
-    }
+    ledger = {"terminal": {"branch": "feature/task", "delivery_id": "review-delivery"}}
 
     facts, file_sha = status._delivery_checkpoints(profile, ledger)
 

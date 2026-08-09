@@ -334,18 +334,15 @@ def test_cli_routes_all_node_commands(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         node,
         "run",
-        lambda command, profile, lines=100, run_id="", json_output=False: calls.append(
-            (command, profile, lines, run_id, json_output)
-        )
-        or 0,
+        lambda command, profile, lines=100, run_id="", json_output=False: (
+            calls.append((command, profile, lines, run_id, json_output)) or 0
+        ),
     )
 
     assert cli.main(["node", "doctor", "--profile", "reviewer-mac"]) == 0
     assert cli.main(["node", "logs", "--profile", str(tmp_path), "--lines", "12"]) == 0
     assert (
-        cli.main(
-            ["node", "status", "--profile", "reviewer-mac", "--run", "task-1", "--json"]
-        )
+        cli.main(["node", "status", "--profile", "reviewer-mac", "--run", "task-1", "--json"])
         == 0
     )
     assert calls == [

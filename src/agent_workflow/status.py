@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -341,14 +340,20 @@ def _pr_and_ci(profile: NodeProfile, ledger: dict[str, object]) -> tuple[dict, d
         "base_sha": live.get("baseRefOid", ""),
     }
     checks = live.get("statusCheckRollup")
-    conclusions = [
-        str(item.get("conclusion") or item.get("state") or "UNKNOWN")
-        for item in checks
-        if isinstance(item, dict)
-    ] if isinstance(checks, list) else []
-    ci["live"] = {"checks": conclusions, "all_green": bool(conclusions) and all(
-        value in {"SUCCESS", "NEUTRAL", "SKIPPED"} for value in conclusions
-    )}
+    conclusions = (
+        [
+            str(item.get("conclusion") or item.get("state") or "UNKNOWN")
+            for item in checks
+            if isinstance(item, dict)
+        ]
+        if isinstance(checks, list)
+        else []
+    )
+    ci["live"] = {
+        "checks": conclusions,
+        "all_green": bool(conclusions)
+        and all(value in {"SUCCESS", "NEUTRAL", "SKIPPED"} for value in conclusions),
+    }
     return pull_request, ci
 
 
