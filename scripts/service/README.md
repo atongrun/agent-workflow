@@ -10,6 +10,20 @@ This surface is outside the thin `awf` validation core. It supervises dogfood ru
 scripts that use external Agent Bus transport and model CLIs; it does not make those concerns part
 of the core method contract.
 
+For ordinary interactive operation from an installed wheel, prefer the cross-platform local
+user-process surface:
+
+```text
+awf node doctor --profile <name-or-absolute-json>
+awf node start --profile <name-or-absolute-json>
+awf node status --profile <name-or-absolute-json>
+awf node logs --profile <name-or-absolute-json>
+awf node stop --profile <name-or-absolute-json>
+```
+
+The native service templates below remain an explicitly separate, minimally proven integration
+layer. The node commands do not install launchd, systemd, or WinSW services.
+
 ## What's here
 
 | File | OS | Role |

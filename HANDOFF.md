@@ -14,6 +14,14 @@ terminal consumption, and Fast/Deep Preflight. PR #37 proved a fresh disposable 
 route and PR #38 extracted the existing Codex/OpenCode argv renderers without changing provider
 selection, payloads, recovery, stage transitions, or ACK-sensitive lifecycle.
 
+The installed operations wheel now has a thin `awf node doctor/start/status/stop/logs` surface for
+one role profile. The same credential-free JSON schema and commands are used on macOS, Windows,
+and Linux; secrets remain in strict owner-only `dispatch.env`. Startup performs local schema,
+workspace, credential-file, Bus, and model-tool readiness before spawning the listener. PID and
+log files provide only local user-process lifecycle control; platform service templates remain a
+separate unaccepted integration layer. See
+[`docs/tasks/thin-node-operations-implementation-report.md`](docs/tasks/thin-node-operations-implementation-report.md).
+
 The current addition implements the evidence-backed Pi reviewer need without introducing a generic
 provider interface. Pi uses a pure argv renderer, read-only tools, explicit text-mode
 non-interactive execution, trusted stdout persistence, and the existing isolated reviewer,

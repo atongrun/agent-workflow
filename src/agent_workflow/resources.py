@@ -28,6 +28,11 @@ def templates_dir() -> Path:
     return _resource_directory("templates", "templates")
 
 
+def schemas_dir() -> Path:
+    """Return the canonical JSON schema directory."""
+    return _resource_directory("schemas", "schemas")
+
+
 def authority_manifest_path() -> Path:
     """Return the packaged default operations authority manifest."""
     path = operations_dir() / "authority-manifest.example.json"

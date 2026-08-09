@@ -57,6 +57,7 @@ class TestSchemaFilesExist:
         "role.schema.json",
         "workflow.schema.json",
         "artifact.schema.json",
+        "node-profile.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", REQUIRED_SCHEMAS)
