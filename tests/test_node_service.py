@@ -239,6 +239,7 @@ def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
     assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in rendered
     assert current_user in rendered
     assert "reconcile" in rendered
+    assert str(profile.log_path) in rendered
     assert "foreground" not in rendered
     assert not any("powershell" in part.lower() for part in argv)
     assert "powershell" not in rendered.lower()

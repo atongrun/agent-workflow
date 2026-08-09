@@ -90,6 +90,7 @@ def _task_reconcile_argv(profile) -> list[str]:
         "agent_workflow.node_service",
         "task-reconcile",
         str(Path(profile.path).resolve()),
+        str(Path(profile.log_path).resolve()),
     ]
 
 
@@ -841,16 +842,12 @@ def run_action(profile, action: str, **kwargs) -> int:
     return int(handler(**kwargs))
 
 
-def _task_reconcile(profile_value: str) -> int:
+def _task_reconcile(profile_value: str, log_value: str) -> int:
     """Task Scheduler entry point with shell-free append-only file logging."""
     from agent_workflow import node
 
-    try:
-        profile = node.load_profile(profile_value)
-    except (node.NodeError, OSError) as exc:
-        print(f"ERROR: task reconcile failed: {exc}", file=sys.stderr)
-        return 1
-    profile.log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path = Path(log_value).expanduser().resolve()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         saved_stdout = os.dup(1)
     except OSError:
@@ -860,10 +857,15 @@ def _task_reconcile(profile_value: str) -> int:
     except OSError:
         saved_stderr = None
     try:
-        with profile.log_path.open("ab", buffering=0) as log:
+        with log_path.open("ab", buffering=0) as log:
             os.dup2(log.fileno(), 1)
             os.dup2(log.fileno(), 2)
             try:
+                profile = node.load_profile(profile_value)
+                if profile.log_path != log_path:
+                    raise node.NodeError(
+                        "task reconcile log path drifted from the installed profile"
+                    )
                 return node.reconcile(profile)
             except (node.NodeError, NodeServiceError, OSError) as exc:
                 print(f"ERROR: task reconcile failed: {exc}", file=sys.stderr)
@@ -879,9 +881,9 @@ def _task_reconcile(profile_value: str) -> int:
 
 def _main(argv: list[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
-    if len(values) == 2 and values[0] == "task-reconcile":
-        return _task_reconcile(values[1])
-    raise NodeServiceError("expected task-reconcile <absolute-profile.json>")
+    if len(values) == 3 and values[0] == "task-reconcile":
+        return _task_reconcile(values[1], values[2])
+    raise NodeServiceError("expected task-reconcile <absolute-profile.json> <absolute-log-path>")
 
 
 if __name__ == "__main__":
