@@ -1,0 +1,216 @@
+"""Tests for the read-only factual node status surface."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+from agent_workflow import node, status
+
+
+def make_profile(tmp_path: Path, *, role: str = "reviewer") -> node.NodeProfile:
+    values: dict[str, object] = {
+        "format": "awf.node-profile.v1",
+        "name": f"{role}-node",
+        "role": role,
+        "repo": str((tmp_path / "repo").resolve()),
+        "tool": "none" if role == "architect" else "pi",
+        "upstream_repo": "owner/project",
+        "head_repo": "contributor/project",
+        "config": str((tmp_path / "dispatch.env").resolve()),
+        "state_root": str((tmp_path / "state").resolve()),
+    }
+    return node.NodeProfile(tmp_path / "profile.json", values)
+
+
+def test_workspace_reports_role_scope_and_dirty_readiness(monkeypatch, tmp_path: Path):
+    profile = make_profile(tmp_path)
+    profile.repo.mkdir()
+    outputs = iter(
+        [
+            (0, str(profile.repo)),
+            (0, "a" * 40),
+            (0, "feature/task"),
+            (0, "?? operator-note.txt"),
+        ]
+    )
+    commands = []
+
+    def command(argv):
+        commands.append(argv)
+        return next(outputs)
+
+    monkeypatch.setattr(status, "_command", command)
+
+    facts = status._workspace(profile)
+
+    assert facts["scope"] == "dedicated_role"
+    assert facts["status"] == "not_ready"
+    assert facts["dirty"] is True
+    assert all("--no-optional-locks" in argv for argv in commands)
+
+
+def test_architect_workspace_can_report_ready_when_source_is_dirty(monkeypatch, tmp_path: Path):
+    profile = make_profile(tmp_path, role="architect")
+    profile.repo.mkdir()
+    outputs = iter([(0, str(profile.repo)), (0, "b" * 40), (0, "main"), (0, " M README.md")])
+    monkeypatch.setattr(status, "_command", lambda argv: next(outputs))
+
+    facts = status._workspace(profile)
+
+    assert facts["scope"] == "source"
+    assert facts["status"] == "ready"
+    assert facts["dirty"] is True
+
+
+def test_review_artifact_distinguishes_file_and_canonical_hashes(tmp_path: Path):
+    profile = make_profile(tmp_path)
+    report = profile.repo / ".awf/artifacts/review.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("review markdown\n", encoding="utf-8")
+    file_sha = "sha256:" + hashlib.sha256(report.read_bytes()).hexdigest()
+    canonical_sha = "sha256:" + "c" * 64
+    ledger = {
+        "terminal": {
+            "artifacts": {
+                "implementation": {"path": "implementation.md", "sha256": "sha256:impl"},
+                "review": {"path": ".awf/artifacts/review.md", "sha256": canonical_sha},
+            }
+        }
+    }
+
+    facts = status._artifacts(profile, ledger, file_sha)
+
+    assert facts["review"]["file_sha256"] == file_sha
+    assert facts["review"]["file_sha256_source"] == "delivery_checkpoint"
+    assert facts["review"]["live_file_sha256"] == file_sha
+    assert facts["review"]["canonical_report_sha256"] == canonical_sha
+    assert facts["review"]["canonical_report_sha256_source"] == "terminal_ledger"
+
+
+def test_delivery_checkpoint_supplies_the_recorded_review_file_hash(tmp_path: Path):
+    profile = make_profile(tmp_path)
+    directory = profile.state_root / "checkpoint" / profile.role
+    directory.mkdir(parents=True)
+    checkpoint_path = directory / "delivery.json"
+    checkpoint_path.write_text(
+        json.dumps(
+            {
+                "branch": "feature/task",
+                "phase": "outbox_sent",
+                "facts": {
+                    "review_report_sha256": "d" * 64,
+                    "outbox_delivery_id": "review-delivery",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_bytes = checkpoint_path.read_bytes()
+    ledger = {"terminal": {"branch": "feature/task", "delivery_id": "review-delivery"}}
+
+    facts, file_sha = status._delivery_checkpoints(profile, ledger)
+
+    assert facts == {
+        "source": "delivery_checkpoint_files",
+        "status": "recorded",
+        "count": 1,
+        "unreadable": 0,
+        "latest_phase": "outbox_sent",
+    }
+    assert file_sha == "sha256:" + "d" * 64
+    assert checkpoint_path.read_bytes() == original_bytes
+
+
+def test_live_pr_and_ci_are_separate_from_recorded_facts(monkeypatch, tmp_path: Path):
+    profile = make_profile(tmp_path)
+    ledger = {
+        "terminal": {
+            "pull_request": {"number": 17, "head_sha": "a" * 40},
+            "ci": {"status": "recorded", "conclusion": "success"},
+        }
+    }
+    live = {
+        "state": "OPEN",
+        "headRefOid": "b" * 40,
+        "baseRefOid": "c" * 40,
+        "statusCheckRollup": [{"conclusion": "SUCCESS"}, {"conclusion": "FAILURE"}],
+    }
+    monkeypatch.setattr(status, "_command", lambda argv: (0, json.dumps(live)))
+
+    pull_request, ci = status._pr_and_ci(profile, ledger)
+
+    assert pull_request["recorded"]["head_sha"] == "a" * 40
+    assert pull_request["live"]["head_sha"] == "b" * 40
+    assert ci["recorded"]["conclusion"] == "success"
+    assert ci["live"]["all_green"] is False
+
+
+def test_snapshot_labels_unavailable_queue_without_failing(monkeypatch, tmp_path: Path):
+    profile = make_profile(tmp_path)
+    monkeypatch.setattr(status, "_listener", lambda value: {"status": "stopped"})
+    monkeypatch.setattr(status, "_workspace", lambda value: {"status": "unknown"})
+    monkeypatch.setattr(
+        status,
+        "_ledger",
+        lambda value, run_id: ({"source": "run_ledger", "status": "not_requested"}, {}),
+    )
+    monkeypatch.setattr(
+        status,
+        "_delivery_checkpoints",
+        lambda value, ledger: ({"status": "not_recorded"}, ""),
+    )
+    monkeypatch.setattr(
+        status,
+        "_queue",
+        lambda value: {"source": "agent_bus_pending_read_only", "status": "unknown"},
+    )
+    monkeypatch.setattr(status, "_artifacts", lambda *args: {"status": "not_recorded"})
+    monkeypatch.setattr(
+        status,
+        "_pr_and_ci",
+        lambda *args: (
+            {"recorded": "not_recorded", "live": "not_requested"},
+            {"recorded": "not_recorded", "live": "not_requested"},
+        ),
+    )
+
+    value = status.snapshot(profile)
+
+    assert value["format"] == "awf.node-status.v1"
+    assert value["queue"]["status"] == "unknown"
+    assert value["checkpoint"]["ledger"]["status"] == "not_requested"
+
+
+def test_human_status_names_both_review_hash_semantics(capsys):
+    value = {
+        "profile": {"name": "reviewer", "role": "reviewer"},
+        "listener": {"status": "running"},
+        "workspace": {
+            "status": "ready",
+            "scope": "dedicated_role",
+            "branch": "main",
+            "head_sha": "a" * 40,
+            "dirty": False,
+        },
+        "checkpoint": {
+            "ledger": {"status": "recorded", "phase": "review"},
+            "delivery": {"status": "recorded", "latest_phase": "outbox_sent"},
+        },
+        "queue": {"status": "observed", "pending": 0, "source": "bus"},
+        "artifacts": {
+            "review": {
+                "file_sha256": "sha256:file",
+                "canonical_report_sha256": "sha256:canonical",
+            }
+        },
+        "pull_request": {"recorded": {"number": 1}, "live": {"state": "OPEN"}},
+        "ci": {"recorded": {"status": "recorded"}, "live": {"all_green": True}},
+    }
+
+    status.print_human(value)
+
+    output = capsys.readouterr().out
+    assert "file_sha256=sha256:file" in output
+    assert "canonical_report_sha256=sha256:canonical" in output

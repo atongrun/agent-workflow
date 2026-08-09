@@ -244,6 +244,7 @@ An installed wheel also exposes the same thin local listener lifecycle on every 
 awf node doctor --profile reviewer-mac
 awf node start --profile reviewer-mac
 awf node status --profile reviewer-mac
+awf node status --profile reviewer-mac --run task-DOGFOOD-001 --json
 awf node logs --profile reviewer-mac --lines 100
 awf node stop --profile reviewer-mac
 ```
@@ -268,6 +269,14 @@ in owner-only `dispatch.env`. `doctor` checks the schema, role/tool boundary, st
 file, role-aware Git workspace, Bus health, and model executable before `start`; it does not replace
 the existing Fast/Deep remote-dispatch proof. This is a local user-process surface, not a scheduler
 or a claim that native service installation has been accepted on every platform.
+
+Node status is read-only. It labels the source of listener/PID/lease, Git workspace, run-ledger,
+delivery-checkpoint, Agent Bus pending, artifact, pull-request, and CI observations; unavailable
+live facts remain `unknown`, `not_recorded`, or `not_requested`. Recorded and live PR/CI facts are
+shown separately so drift stays visible. ReviewReport integrity also uses two explicit names:
+`file_sha256` is the raw Markdown byte hash from a delivery checkpoint or live file, while
+`canonical_report_sha256` is the normalized ReviewReport object hash recorded by the terminal
+ledger. Status never ACKs, requeues, resumes, redispatches, or rewrites a ledger.
 
 ## Product Gate
 

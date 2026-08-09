@@ -49,7 +49,13 @@ def cmd_version(args: argparse.Namespace) -> int:
 
 
 def cmd_node(args: argparse.Namespace) -> int:
-    return node.run(args.node_command, args.profile, lines=getattr(args, "lines", 100))
+    return node.run(
+        args.node_command,
+        args.profile,
+        lines=getattr(args, "lines", 100),
+        run_id=getattr(args, "run", ""),
+        json_output=getattr(args, "json", False),
+    )
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -561,6 +567,9 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--profile", required=True)
         if name == "logs":
             command.add_argument("--lines", type=int, default=100)
+        if name == "status":
+            command.add_argument("--run", default="")
+            command.add_argument("--json", action="store_true")
         command.set_defaults(func=cmd_node)
 
     args = parser.parse_args(argv)
