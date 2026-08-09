@@ -567,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in (
         "doctor",
         "foreground",
+        "reconcile",
         "install",
         "start",
         "status",

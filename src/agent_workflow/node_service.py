@@ -1,36 +1,48 @@
-"""Native service-manager adapters for one foreground role listener."""
+"""Native managed-lifecycle adapters for one foreground role listener."""
 
 from __future__ import annotations
 
 import getpass
 import hashlib
-import html
 import json
 import os
 import plistlib
-import shutil
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
 
 class NodeServiceError(RuntimeError):
-    """A credential-safe native service lifecycle failure."""
+    """A credential-safe native managed lifecycle failure."""
+
+
+SUPPORTED_MANAGERS = {"launchd", "systemd", "task-scheduler"}
 
 
 def resolve_manager(manager: str, *, platform: str = sys.platform, os_name: str = os.name) -> str:
-    if manager != "auto":
-        return manager
+    native = _native_manager(platform=platform, os_name=os_name)
+    if manager == "auto":
+        return native
+    if manager not in SUPPORTED_MANAGERS:
+        raise NodeServiceError(f"unsupported managed lifecycle manager: {manager}")
+    if manager != native:
+        raise NodeServiceError(f"{manager} is not native on {platform}")
+    return manager
+
+
+def _native_manager(*, platform: str = sys.platform, os_name: str = os.name) -> str:
     if os_name == "nt" or platform == "win32":
-        return "winsw"
+        return "task-scheduler"
     if platform == "darwin":
         return "launchd"
     if platform.startswith("linux"):
         return "systemd"
-    raise NodeServiceError(f"no native service manager is supported on {platform}")
+    raise NodeServiceError(f"no native managed lifecycle manager is supported on {platform}")
 
 
 def service_health(
@@ -54,49 +66,88 @@ def service_health(
     return "degraded"
 
 
-def _foreground_arguments(profile) -> list[str]:
+def _reconcile_arguments(profile) -> list[str]:
     return [
         "-m",
         "agent_workflow.cli",
         "node",
-        "foreground",
+        "reconcile",
         "--profile",
-        str(profile.path),
+        str(Path(profile.path).resolve()),
     ]
 
 
-def _quoted_arguments(arguments: list[str]) -> str:
-    return subprocess.list2cmdline(arguments)
+def _reconcile_argv(profile) -> list[str]:
+    return [str(Path(sys.executable).resolve()), *_reconcile_arguments(profile)]
 
 
-def render_winsw(profile, *, service_id: str) -> str:
-    executable = html.escape(str(Path(sys.executable).resolve()), quote=True)
-    arguments = html.escape(_quoted_arguments(_foreground_arguments(profile)), quote=True)
-    working = html.escape(str(profile.repo), quote=True)
-    log_path = html.escape(str(profile.log_path.parent / "winsw"), quote=True)
-    escaped_id = html.escape(service_id, quote=True)
-    return f"""<service>
-  <id>{escaped_id}</id>
-  <name>Agent Workflow Node ({html.escape(profile.name)})</name>
-  <description>Supervises one foreground Agent Workflow role listener.</description>
-  <executable>{executable}</executable>
-  <arguments>{arguments}</arguments>
-  <workingdirectory>{working}</workingdirectory>
-  <stoptimeout>15 sec</stoptimeout>
-  <onfailure action="restart" delay="10 sec"/>
-  <resetfailure>1 hour</resetfailure>
-  <logpath>{log_path}</logpath>
-  <log mode="roll-by-size">
-    <sizeThreshold>10240</sizeThreshold>
-    <keepFiles>4</keepFiles>
-  </log>
-</service>
-"""
+def _task_reconcile_argv(profile) -> list[str]:
+    return [
+        str(Path(sys.executable).resolve()),
+        "-m",
+        "agent_workflow.node_service",
+        "task-reconcile",
+        str(Path(profile.path).resolve()),
+    ]
+
+
+def _manager_action_argv(profile, manager: str) -> list[str]:
+    return _task_reconcile_argv(profile) if manager == "task-scheduler" else _reconcile_argv(profile)
+
+
+def _service_dir(profile) -> Path:
+    return profile.node_dir / "managed"
+
+
+def _safe_name(name: str) -> str:
+    return "".join(char if char.isalnum() or char in "._-" else "-" for char in name)
+
+
+def _render_task_scheduler(profile, user: str) -> bytes:
+    namespace = "http://schemas.microsoft.com/windows/2004/02/mit/task"
+    ET.register_namespace("", namespace)
+    task = ET.Element("Task", {"version": "1.3", "xmlns": namespace})
+    registration = ET.SubElement(task, "RegistrationInfo")
+    ET.SubElement(registration, "Description").text = (
+        "Reconciles one Agent Workflow role listener."
+    )
+    triggers = ET.SubElement(task, "Triggers")
+    logon = ET.SubElement(triggers, "LogonTrigger")
+    ET.SubElement(logon, "Enabled").text = "true"
+    ET.SubElement(logon, "UserId").text = user
+    calendar = ET.SubElement(triggers, "CalendarTrigger")
+    ET.SubElement(calendar, "Enabled").text = "true"
+    ET.SubElement(calendar, "StartBoundary").text = datetime.now().isoformat(timespec="seconds")
+    repetition = ET.SubElement(calendar, "Repetition")
+    ET.SubElement(repetition, "Interval").text = "PT1M"
+    ET.SubElement(repetition, "Duration").text = "P1D"
+    ET.SubElement(repetition, "StopAtDurationEnd").text = "false"
+    schedule = ET.SubElement(calendar, "ScheduleByDay")
+    ET.SubElement(schedule, "DaysInterval").text = "1"
+    principals = ET.SubElement(task, "Principals")
+    principal = ET.SubElement(principals, "Principal", {"id": "CurrentUser"})
+    ET.SubElement(principal, "UserId").text = user
+    ET.SubElement(principal, "LogonType").text = "InteractiveToken"
+    ET.SubElement(principal, "RunLevel").text = "LeastPrivilege"
+    settings = ET.SubElement(task, "Settings")
+    ET.SubElement(settings, "MultipleInstancesPolicy").text = "IgnoreNew"
+    ET.SubElement(settings, "DisallowStartIfOnBatteries").text = "false"
+    ET.SubElement(settings, "StopIfGoingOnBatteries").text = "false"
+    ET.SubElement(settings, "AllowHardTerminate").text = "true"
+    ET.SubElement(settings, "StartWhenAvailable").text = "true"
+    ET.SubElement(settings, "RunOnlyIfNetworkAvailable").text = "false"
+    ET.SubElement(settings, "ExecutionTimeLimit").text = "PT0S"
+    actions = ET.SubElement(task, "Actions", {"Context": "CurrentUser"})
+    action = ET.SubElement(actions, "Exec")
+    argv = _task_reconcile_argv(profile)
+    ET.SubElement(action, "Command").text = argv[0]
+    ET.SubElement(action, "Arguments").text = subprocess.list2cmdline(argv[1:])
+    ET.SubElement(action, "WorkingDirectory").text = str(profile.repo)
+    return ET.tostring(task, encoding="utf-8", xml_declaration=False)
 
 
 def _render_systemd(profile, unit: str) -> str:
-    values = [sys.executable, *_foreground_arguments(profile)]
-    command = " ".join(_systemd_quote(value) for value in values)
+    command = " ".join(_systemd_quote(value) for value in _reconcile_argv(profile))
     return f"""[Unit]
 Description=Agent Workflow Node ({profile.name})
 After=network-online.target
@@ -125,9 +176,9 @@ def _render_launchd(profile, label: str) -> bytes:
     return plistlib.dumps(
         {
             "Label": label,
-            "ProgramArguments": [sys.executable, *_foreground_arguments(profile)],
+            "ProgramArguments": _reconcile_argv(profile),
             "WorkingDirectory": str(profile.repo),
-            "RunAtLoad": False,
+            "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False},
             "ThrottleInterval": 10,
             "StandardOutPath": str(profile.log_path),
@@ -137,9 +188,27 @@ def _render_launchd(profile, label: str) -> bytes:
     )
 
 
-def _run(argv: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def render_definition(profile, *, manager: str) -> str:
+    if manager == "systemd":
+        return _render_systemd(profile, f"awf-node-{_safe_name(profile.name)}.service")
+    if manager == "launchd":
+        label = f"com.agentworkflow.node.{_safe_name(profile.name)}"
+        return _render_launchd(profile, label).decode("utf-8")
+    if manager == "task-scheduler":
+        return _render_task_scheduler(profile, "CURRENT-CONSOLE-USER").decode("utf-8")
+    raise NodeServiceError(f"unsupported managed lifecycle manager: {manager}")
+
+
+def _run(
+    argv: list[str],
+    *,
+    check: bool = True,
+    timeout: float = 30,
+) -> subprocess.CompletedProcess[str]:
+    if not argv or any(not isinstance(item, str) or not item for item in argv):
+        raise NodeServiceError("service manager argv must be explicit non-empty strings")
     try:
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise NodeServiceError(f"service manager command failed: {argv[0]}") from exc
     if check and result.returncode != 0:
@@ -156,13 +225,13 @@ def _sha256(path: Path) -> str:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
     except OSError as exc:
-        raise NodeServiceError(f"service manager binary is unavailable: {path}") from exc
+        raise NodeServiceError(f"managed lifecycle artifact is unavailable: {path}") from exc
     return "sha256:" + digest.hexdigest()
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
     try:
         with temporary.open("xb") as handle:
             handle.write(data)
@@ -180,31 +249,32 @@ def _write_install_record(
 
     body = definition.read_bytes()
     record = {
-        "format": "awf.node-service-install.v1",
+        "format": "awf.node-managed-install.v1",
         "manager": manager,
-        "profile": str(profile.path),
+        "profile": str(Path(profile.path).resolve()),
         "profile_sha256": profile.digest,
         "definition": str(definition),
         "definition_sha256": "sha256:" + hashlib.sha256(body).hexdigest(),
         "python": str(Path(sys.executable).resolve()),
         "python_sha256": _sha256(Path(sys.executable).resolve()),
         "awf_version": __version__,
+        "action_argv": _manager_action_argv(profile, manager),
         **extra,
     }
     _atomic_write(
-        profile.node_dir / "service" / "install.json",
+        _service_dir(profile) / "install.json",
         (json.dumps(record, indent=2, sort_keys=True) + "\n").encode(),
     )
 
 
 def _install_record(profile) -> dict[str, object]:
-    path = profile.node_dir / "service" / "install.json"
+    path = _service_dir(profile) / "install.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise NodeServiceError(f"service install record is unavailable: {path}") from exc
-    if not isinstance(value, dict) or value.get("format") != "awf.node-service-install.v1":
-        raise NodeServiceError(f"service install record is invalid: {path}")
+        raise NodeServiceError(f"managed lifecycle install record is unavailable: {path}") from exc
+    if not isinstance(value, dict) or value.get("format") != "awf.node-managed-install.v1":
+        raise NodeServiceError(f"managed lifecycle install record is invalid: {path}")
     return value
 
 
@@ -214,34 +284,37 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
     record = _install_record(profile)
     expected = {
         "manager": manager,
-        "profile": str(profile.path),
+        "profile": str(Path(profile.path).resolve()),
         "profile_sha256": profile.digest,
         "python": str(Path(sys.executable).resolve()),
         "awf_version": __version__,
+        "action_argv": _manager_action_argv(profile, manager),
     }
     if any(record.get(key) != value for key, value in expected.items()):
-        raise NodeServiceError("service installation drifted; restore the profile or run upgrade")
+        raise NodeServiceError("managed lifecycle installation drifted; run upgrade")
     definition = Path(str(record.get("definition", "")))
     if not definition.is_file() or _sha256(definition) != record.get("definition_sha256"):
-        raise NodeServiceError("installed service definition digest does not match its record")
+        raise NodeServiceError("managed lifecycle definition digest does not match its record")
     if _sha256(Path(sys.executable).resolve()) != record.get("python_sha256"):
         raise NodeServiceError("installed Python digest does not match its record; run upgrade")
     return record
 
 
-def _guard_install(profile, manager: str, *, force: bool) -> None:
-    path = profile.node_dir / "service" / "install.json"
+def _guard_install(profile, manager: str, *, force: bool) -> bool:
+    path = _service_dir(profile) / "install.json"
     if not path.exists() or force:
-        return
+        return False
     _require_installed(profile, manager)
+    return True
 
 
 class Adapter(Protocol):
+    def doctor(self) -> int: ...
     def install(self, *, force: bool = False) -> int: ...
     def start(self) -> int: ...
-    def status(self) -> int: ...
-    def logs(self, *, lines: int = 100) -> int: ...
-    def stop(self) -> int: ...
+    def status(self, run_id: str = "", json_output: bool = False) -> int: ...
+    def logs(self, lines: int = 100) -> int: ...
+    def stop(self, bound_pid: int | None = None, launch_id: str = "") -> int: ...
     def restart(self) -> int: ...
     def upgrade(self) -> int: ...
     def uninstall(self) -> int: ...
@@ -253,7 +326,7 @@ class SystemdAdapter:
 
     @property
     def unit(self) -> str:
-        return f"awf-node-{self.profile.name}.service"
+        return f"awf-node-{_safe_name(self.profile.name)}.service"
 
     @property
     def definition(self) -> Path:
@@ -267,8 +340,13 @@ class SystemdAdapter:
                 f"loginctl enable-linger {getpass.getuser()}"
             )
 
+    def doctor(self) -> int:
+        self._require_linger()
+        return 0
+
     def install(self, *, force: bool = False) -> int:
-        _guard_install(self.profile, "systemd", force=force)
+        if _guard_install(self.profile, "systemd", force=force):
+            return 0
         self._require_linger()
         _atomic_write(self.definition, _render_systemd(self.profile, self.unit).encode())
         _run(["systemctl", "--user", "daemon-reload"])
@@ -283,25 +361,26 @@ class SystemdAdapter:
         _wait_bound(self.profile)
         return self.status()
 
-    def status(self) -> int:
+    def status(self, run_id: str = "", json_output: bool = False) -> int:
         _require_installed(self.profile, "systemd")
         result = _run(["systemctl", "--user", "is-active", self.unit], check=False)
-        if result.returncode != 0 or result.stdout.strip() != "active":
-            raise NodeServiceError(f"systemd unit is not active: {self.unit}")
-        return _bound_listener_status(self.profile)
+        if result.returncode == 0 and result.stdout.strip() == "active":
+            return _bound_listener_status(self.profile)
+        return _inactive_manager_status(self.profile, "systemd")
 
-    def logs(self, *, lines: int = 100) -> int:
+    def logs(self, lines: int = 100) -> int:
         result = _run(["journalctl", "--user", "-u", self.unit, "-n", str(lines), "--no-pager"])
         print(result.stdout, end="")
         return 0
 
-    def stop(self) -> int:
+    def stop(self, bound_pid: int | None = None) -> int:
+        _require_installed(self.profile, "systemd")
         _run(["systemctl", "--user", "stop", self.unit])
-        return _wait_stopped(self.profile)
+        return _after_manager_stop(self.profile)
 
     def restart(self) -> int:
-        _run(["systemctl", "--user", "restart", self.unit])
-        return self.status()
+        self.stop()
+        return self.start()
 
     def upgrade(self) -> int:
         self.stop()
@@ -309,8 +388,9 @@ class SystemdAdapter:
         return self.start()
 
     def uninstall(self) -> int:
+        _require_installed(self.profile, "systemd")
         _run(["systemctl", "--user", "disable", "--now", self.unit], check=False)
-        _wait_stopped(self.profile)
+        _after_manager_stop(self.profile)
         self.definition.unlink(missing_ok=True)
         _run(["systemctl", "--user", "daemon-reload"])
         return 0
@@ -322,7 +402,7 @@ class LaunchdAdapter:
 
     @property
     def label(self) -> str:
-        return f"com.agentworkflow.node.{self.profile.name}"
+        return f"com.agentworkflow.node.{_safe_name(self.profile.name)}"
 
     @property
     def definition(self) -> Path:
@@ -332,8 +412,12 @@ class LaunchdAdapter:
     def domain(self) -> str:
         return f"gui/{os.getuid()}"
 
+    def doctor(self) -> int:
+        return 0
+
     def install(self, *, force: bool = False) -> int:
-        _guard_install(self.profile, "launchd", force=force)
+        if _guard_install(self.profile, "launchd", force=force):
+            return 0
         _atomic_write(self.definition, _render_launchd(self.profile, self.label))
         _run(["launchctl", "bootout", self.domain, str(self.definition)], check=False)
         _run(["launchctl", "bootstrap", self.domain, str(self.definition)])
@@ -348,18 +432,21 @@ class LaunchdAdapter:
         _wait_bound(self.profile)
         return self.status()
 
-    def status(self) -> int:
+    def status(self, run_id: str = "", json_output: bool = False) -> int:
         _require_installed(self.profile, "launchd")
-        _run(["launchctl", "print", f"{self.domain}/{self.label}"])
-        return _bound_listener_status(self.profile)
+        result = _run(["launchctl", "print", f"{self.domain}/{self.label}"], check=False)
+        if result.returncode == 0:
+            return _listener_status_code(self.profile)
+        return _inactive_manager_status(self.profile, "launchd")
 
-    def logs(self, *, lines: int = 100) -> int:
+    def logs(self, lines: int = 100) -> int:
         return _tail_file(self.profile.log_path, lines)
 
-    def stop(self) -> int:
+    def stop(self, bound_pid: int | None = None, launch_id: str = "") -> int:
+        _require_installed(self.profile, "launchd")
         _run(["launchctl", "disable", f"{self.domain}/{self.label}"])
         _run(["launchctl", "kill", "SIGTERM", f"{self.domain}/{self.label}"], check=False)
-        return _wait_stopped(self.profile)
+        return _after_manager_stop(self.profile)
 
     def restart(self) -> int:
         self.stop()
@@ -371,131 +458,118 @@ class LaunchdAdapter:
         return self.start()
 
     def uninstall(self) -> int:
+        _require_installed(self.profile, "launchd")
         _run(["launchctl", "bootout", self.domain, str(self.definition)], check=False)
-        _wait_stopped(self.profile)
+        _after_manager_stop(self.profile)
         self.definition.unlink(missing_ok=True)
         return 0
 
 
 @dataclass
-class WinSWAdapter:
+class TaskSchedulerAdapter:
     profile: object
+    run_command: object | None = None
+    current_user: str | None = None
 
     @property
-    def service_id(self) -> str:
-        return f"awf-node-{self.profile.name}"
-
-    @property
-    def directory(self) -> Path:
-        return self.profile.node_dir / "service" / "winsw"
-
-    @property
-    def executable(self) -> Path:
-        return self.directory / f"{self.service_id}.exe"
+    def task_name(self) -> str:
+        return rf"\AgentWorkflow-awf-node-{_safe_name(self.profile.name)}"
 
     @property
     def definition(self) -> Path:
-        return self.directory / f"{self.service_id}.xml"
+        return _service_dir(self.profile) / "task.xml"
 
-    @property
-    def expected_account(self) -> str:
-        return str(self.profile.lifecycle["service_account"])
-
-    def _source_binary(self) -> Path:
-        source = Path(str(self.profile.lifecycle["winsw_executable"])).expanduser().resolve()
-        expected = str(self.profile.lifecycle["winsw_sha256"])
-        actual = _sha256(source)
-        if actual != expected:
-            raise NodeServiceError("WinSW SHA-256 does not match the profile")
-        return source
-
-    def _require_account(self) -> None:
-        result = _run(["sc.exe", "qc", self.service_id])
-        line = next(
-            (item for item in result.stdout.splitlines() if "SERVICE_START_NAME" in item), ""
-        )
-        actual = line.split(":", 1)[1].strip() if ":" in line else ""
-        if not _account_matches(self.expected_account, actual):
+    def _require_interactive_user(self) -> str:
+        user = self.current_user or _interactive_console_user()
+        if not user:
             raise NodeServiceError(
-                "WinSW service account is not bound; an administrator must run: "
-                f"sc.exe config {self.service_id} obj= {self.expected_account} "
-                "password= <prompted-secret>"
+                "Task Scheduler managed lifecycle requires an interactive console user"
             )
+        if os.name == "nt" and not _same_windows_user(user, _current_windows_user()):
+            raise NodeServiceError(
+                "Task Scheduler managed lifecycle requires the installer identity "
+                "to match the active console user"
+            )
+        return user
 
-    def _require_installed(self) -> dict[str, object]:
-        record = _require_installed(self.profile, "winsw")
-        if record.get("winsw_sha256") != _sha256(self.executable):
-            raise NodeServiceError("installed WinSW digest does not match its record")
-        return record
+    def _call(self, argv: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+        if self.run_command is None:
+            return _run(argv, check=check)
+        output = self.run_command(argv, check=check)
+        if isinstance(output, subprocess.CompletedProcess):
+            return output
+        return subprocess.CompletedProcess(argv, 0, str(output or ""), "")
+
+    def doctor(self) -> int:
+        self._require_interactive_user()
+        return 0
 
     def install(self, *, force: bool = False) -> int:
-        _guard_install(self.profile, "winsw", force=force)
-        source = self._source_binary()
-        self.directory.mkdir(parents=True, exist_ok=True)
-        if source != self.executable:
-            shutil.copy2(source, self.executable)
-        _atomic_write(
-            self.definition,
-            render_winsw(self.profile, service_id=self.service_id).encode("utf-8"),
-        )
-        _run([str(self.executable), "install"], check=False)
-        self._require_account()
+        if _guard_install(self.profile, "task-scheduler", force=force):
+            return 0
+        user = self._require_interactive_user()
+        _atomic_write(self.definition, _render_task_scheduler(self.profile, user))
+        create_argv = [
+            "schtasks.exe",
+            "/Create",
+            "/TN",
+            self.task_name,
+            "/XML",
+            str(self.definition),
+            "/F",
+        ]
+        self._call(create_argv)
         _write_install_record(
             self.profile,
-            "winsw",
+            "task-scheduler",
             self.definition,
-            {
-                "manager_id": self.service_id,
-                "service_account": self.expected_account,
-                "winsw_sha256": _sha256(self.executable),
-            },
+            {"manager_id": self.task_name, "interactive_user": user},
         )
         return 0
 
     def start(self) -> int:
-        self._require_installed()
-        self._source_binary()
-        self._require_account()
-        _run([str(self.executable), "start"])
+        _require_installed(self.profile, "task-scheduler")
+        self._require_interactive_user()
+        self._call(["schtasks.exe", "/Run", "/TN", self.task_name])
+        if self.run_command is not None:
+            return 0
         _wait_bound(self.profile)
         return self.status()
 
-    def status(self) -> int:
-        self._require_installed()
-        self._require_account()
-        result = _run([str(self.executable), "status"], check=False)
-        if result.returncode != 0 or "active" not in result.stdout.lower():
-            raise NodeServiceError(f"WinSW service is not active: {self.service_id}")
-        _require_windows_process_account(self.profile, self.expected_account)
-        return _bound_listener_status(self.profile)
+    def status(self, run_id: str = "", json_output: bool = False) -> dict[str, object]:
+        if self.run_command is None:
+            _require_installed(self.profile, "task-scheduler")
+        result = self._call(
+            ["schtasks.exe", "/Query", "/TN", self.task_name],
+            check=False,
+        )
+        if self.run_command is not None:
+            return {"manager": "task-scheduler", "localized_output_ignored": True}
+        if result.returncode != 0:
+            raise NodeServiceError(f"Task Scheduler task is unavailable: {self.task_name}")
+        code = _listener_status_code(self.profile)
+        return {
+            "manager": "task-scheduler",
+            "localized_output_ignored": True,
+            "exit_code": code,
+        }
 
-    def logs(self, *, lines: int = 100) -> int:
-        candidates = [
-            self.directory / f"{self.service_id}.out.log",
-            self.directory / f"{self.service_id}.err.log",
-            self.directory / f"{self.service_id}.wrapper.log",
-        ]
-        available = [path for path in candidates if path.is_file()]
-        if not available:
-            raise NodeServiceError(f"WinSW logs are unavailable under {self.directory}")
-        for path in available:
-            print(f"== {path.name} ==")
-            _tail_file(path, lines)
-        return 0
+    def logs(self, lines: int = 100) -> int:
+        if self.run_command is not None:
+            self._call(["schtasks.exe", "/Query", "/TN", self.task_name])
+            return 0
+        return _tail_file(self.profile.log_path, lines)
 
-    def stop(self) -> int:
-        from agent_workflow import node
-
-        record = node._process_record(self.profile)
-        identities = _windows_process_tree(record.get("pid")) if record else []
-        _run([str(self.executable), "stop"])
-        _wait_stopped(self.profile)
-        survivors = [identity[0] for identity in identities if _windows_identity_alive(identity)]
-        if survivors:
-            raise NodeServiceError(
-                f"WinSW stopped but bound process-tree members remain: {survivors}"
-            )
-        return 0
+    def stop(self, bound_pid: int | None = None, launch_id: str = "") -> int:
+        if self.run_command is None:
+            _require_installed(self.profile, "task-scheduler")
+        pid = bound_pid if bound_pid is not None else _bound_live_listener_pid(self.profile)
+        if pid is not None:
+            self._call(["taskkill.exe", "/PID", str(pid), "/T", "/F"])
+        self._call(["schtasks.exe", "/End", "/TN", self.task_name], check=False)
+        if self.run_command is not None:
+            return 0
+        return _after_manager_stop(self.profile)
 
     def restart(self) -> int:
         self.stop()
@@ -503,206 +577,93 @@ class WinSWAdapter:
 
     def upgrade(self) -> int:
         self.stop()
-        self.uninstall()
         self.install(force=True)
         return self.start()
 
     def uninstall(self) -> int:
-        _run([str(self.executable), "stop"], check=False)
-        _wait_stopped(self.profile)
-        _run([str(self.executable), "uninstall"], check=False)
+        self.stop()
+        self._call(["schtasks.exe", "/Delete", "/TN", self.task_name, "/F"])
         return 0
 
 
-def _account_matches(expected: str, actual: str) -> bool:
-    expected_folded = expected.strip().casefold()
-    actual_folded = actual.strip().casefold()
-    if expected_folded.startswith(".\\"):
-        return actual_folded.rsplit("\\", 1)[-1] == expected_folded[2:]
-    return actual_folded == expected_folded
-
-
-def _require_windows_process_account(profile, expected: str) -> None:
-    from agent_workflow import node
-
-    record = node._process_record(profile)
-    if not record or not isinstance(record.get("pid"), int):
-        raise NodeServiceError(
-            "service manager is active but the listener process record is missing"
-        )
-    actual = _windows_process_account(int(record["pid"]))
-    if not actual or not _account_matches(expected, actual):
-        raise NodeServiceError("listener process account does not match the service profile")
-
-
-def _windows_process_account(pid: int) -> str:
+def _interactive_console_user() -> str:
+    override = os.environ.get("AWF_INTERACTIVE_CONSOLE_USER")
+    if override:
+        return override
     if os.name != "nt":
-        return ""
+        return getpass.getuser()
+    try:
+        return _windows_interactive_console_user()
+    except NodeServiceError:
+        raise
+    except Exception as exc:
+        raise NodeServiceError("cannot resolve the interactive Windows console user") from exc
+
+
+def _windows_interactive_console_user() -> str:
     import ctypes
     from ctypes import wintypes
 
+    wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    advapi32.OpenProcessToken.argtypes = [
+    kernel32.WTSGetActiveConsoleSessionId.argtypes = []
+    kernel32.WTSGetActiveConsoleSessionId.restype = wintypes.DWORD
+    wtsapi32.WTSQuerySessionInformationW.argtypes = [
         wintypes.HANDLE,
         wintypes.DWORD,
-        ctypes.POINTER(wintypes.HANDLE),
-    ]
-    advapi32.OpenProcessToken.restype = wintypes.BOOL
-    advapi32.GetTokenInformation.argtypes = [
-        wintypes.HANDLE,
-        ctypes.c_int,
-        ctypes.c_void_p,
         wintypes.DWORD,
+        ctypes.POINTER(wintypes.LPWSTR),
         ctypes.POINTER(wintypes.DWORD),
     ]
-    advapi32.GetTokenInformation.restype = wintypes.BOOL
-    advapi32.LookupAccountSidW.argtypes = [
-        wintypes.LPCWSTR,
-        ctypes.c_void_p,
-        wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD),
-        wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD),
-        ctypes.POINTER(wintypes.DWORD),
-    ]
-    advapi32.LookupAccountSidW.restype = wintypes.BOOL
-    process = kernel32.OpenProcess(0x1000, False, pid)
-    if not process:
+    wtsapi32.WTSQuerySessionInformationW.restype = wintypes.BOOL
+    wtsapi32.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+    wtsapi32.WTSFreeMemory.restype = None
+    session_id = kernel32.WTSGetActiveConsoleSessionId()
+    if session_id == 0xFFFFFFFF:
         return ""
-    token = wintypes.HANDLE()
-    try:
-        if not advapi32.OpenProcessToken(process, 0x0008, ctypes.byref(token)):
-            return ""
-        size = wintypes.DWORD()
-        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
-        buffer = ctypes.create_string_buffer(size.value)
-        if not advapi32.GetTokenInformation(token, 1, buffer, size, ctypes.byref(size)):
-            return ""
-        sid = ctypes.c_void_p(ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0])
-        name_size = wintypes.DWORD(256)
-        domain_size = wintypes.DWORD(256)
-        name = ctypes.create_unicode_buffer(name_size.value)
-        domain = ctypes.create_unicode_buffer(domain_size.value)
-        sid_type = wintypes.DWORD()
-        if not advapi32.LookupAccountSidW(
-            None,
-            sid,
-            name,
-            ctypes.byref(name_size),
-            domain,
-            ctypes.byref(domain_size),
-            ctypes.byref(sid_type),
-        ):
-            return ""
-        return f"{domain.value}\\{name.value}" if domain.value else name.value
-    finally:
-        if token:
-            kernel32.CloseHandle(token)
-        kernel32.CloseHandle(process)
+    user = _wts_query_string(wtsapi32, session_id, 5)
+    if not user:
+        return ""
+    domain = _wts_query_string(wtsapi32, session_id, 7)
+    return f"{domain}\\{user}" if domain else user
 
 
-def _windows_process_identity(pid: object) -> tuple[int, float] | None:
-    if not isinstance(pid, int) or pid < 1:
-        return None
-    if os.name != "nt":
-        return (pid, 0.0)
+def _wts_query_string(wtsapi32, session_id: int, info_class: int) -> str:
     import ctypes
     from ctypes import wintypes
 
-    class FILETIME(ctypes.Structure):
-        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    process = kernel32.OpenProcess(0x1000, False, pid)
-    if not process:
-        return None
+    buffer = wintypes.LPWSTR()
+    size = wintypes.DWORD()
+    ok = wtsapi32.WTSQuerySessionInformationW(
+        None,
+        wintypes.DWORD(session_id),
+        info_class,
+        ctypes.byref(buffer),
+        ctypes.byref(size),
+    )
+    if not ok:
+        return ""
     try:
-        creation = FILETIME()
-        exit_time = FILETIME()
-        kernel = FILETIME()
-        user = FILETIME()
-        if not kernel32.GetProcessTimes(
-            process,
-            ctypes.byref(creation),
-            ctypes.byref(exit_time),
-            ctypes.byref(kernel),
-            ctypes.byref(user),
-        ):
-            return None
-        created = float((creation.high << 32) | creation.low)
-        return (pid, created)
+        return buffer.value or ""
     finally:
-        kernel32.CloseHandle(process)
+        if buffer:
+            wtsapi32.WTSFreeMemory(buffer)
 
 
-def _windows_identity_alive(identity: tuple[int, float]) -> bool:
-    current = _windows_process_identity(identity[0])
-    return current == identity
+def _current_windows_user() -> str:
+    domain = os.environ.get("USERDOMAIN", "")
+    name = os.environ.get("USERNAME", "") or getpass.getuser()
+    return f"{domain}\\{name}" if domain else name
 
 
-def _windows_process_tree(root_pid: object) -> list[tuple[int, float]]:
-    if not isinstance(root_pid, int) or root_pid < 1:
-        return []
-    if os.name != "nt":
-        identity = _windows_process_identity(root_pid)
-        return [identity] if identity else []
-    import ctypes
-    from ctypes import wintypes
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD),
-            ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.c_size_t),
-            ("th32ModuleID", wintypes.DWORD),
-            ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD),
-            ("pcPriClassBase", wintypes.LONG),
-            ("dwFlags", wintypes.DWORD),
-            ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
-    invalid = ctypes.c_void_p(-1).value
-    if snapshot == invalid:
-        raise NodeServiceError("cannot snapshot the Windows service process tree")
-    parents: dict[int, int] = {}
-    entry = PROCESSENTRY32W()
-    entry.dwSize = ctypes.sizeof(entry)
-    try:
-        present = bool(kernel32.Process32FirstW(snapshot, ctypes.byref(entry)))
-        while present:
-            parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
-            present = bool(kernel32.Process32NextW(snapshot, ctypes.byref(entry)))
-    finally:
-        kernel32.CloseHandle(snapshot)
-    selected = {root_pid}
-    changed = True
-    while changed:
-        changed = False
-        for pid, parent in parents.items():
-            if parent in selected and pid not in selected:
-                selected.add(pid)
-                changed = True
-    identities = [_windows_process_identity(pid) for pid in sorted(selected)]
-    if any(identity is None for identity in identities):
-        raise NodeServiceError("cannot bind every Windows service process-tree identity")
-    return [identity for identity in identities if identity is not None]
+def _same_windows_user(left: str, right: str) -> bool:
+    left_folded = left.strip().casefold()
+    right_folded = right.strip().casefold()
+    if not left_folded or not right_folded:
+        return False
+    if left_folded == right_folded:
+        return True
+    return left_folded.rsplit("\\", 1)[-1] == right_folded.rsplit("\\", 1)[-1]
 
 
 def _bound_listener_status(profile) -> int:
@@ -710,8 +671,79 @@ def _bound_listener_status(profile) -> int:
 
     snapshot = node._listener_snapshot(profile)
     if snapshot.get("status") != "running":
-        raise NodeServiceError("service manager is active but listener identity/lease is not bound")
+        raise NodeServiceError("manager is active but listener identity/lease is not bound")
     return 0
+
+
+def _listener_status_code(profile) -> int:
+    from agent_workflow import node
+
+    snapshot = node._listener_snapshot(profile)
+    status = snapshot.get("status")
+    if status == "running":
+        return 0
+    if status == "stopped":
+        print(f"profile={profile.name} managed=stopped")
+        return 3
+    raise NodeServiceError(f"managed listener is degraded: {status}")
+
+
+def _inactive_manager_status(profile, manager: str) -> int:
+    from agent_workflow import node
+
+    snapshot = node._listener_snapshot(profile)
+    if snapshot.get("status") == "stopped":
+        print(f"profile={profile.name} managed=stopped")
+        return 3
+    raise NodeServiceError(f"{manager} is inactive while listener state is not stopped")
+
+
+def _bound_live_listener_pid(profile) -> int | None:
+    """Return the exact bound root PID that a local managed stop may terminate."""
+    from agent_workflow import node
+
+    record = node._process_record(profile)
+    lease = node._listener_lease(profile)
+    if not record and not lease:
+        return None
+    if not record or not lease:
+        raise NodeServiceError("managed stop refused incomplete listener state")
+    expected = {
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+    if any(record.get(key) != value for key, value in expected.items()):
+        raise NodeServiceError("managed stop refused profile identity drift")
+    pid = record.get("pid")
+    launch_id = record.get("launch_id", "")
+    if not isinstance(pid, int) or pid < 1 or not isinstance(launch_id, str) or not launch_id:
+        raise NodeServiceError("managed stop refused invalid process identity")
+    if not node._live_lease_matches(profile, lease, pid, launch_id):
+        raise NodeServiceError("managed stop refused an unbound live listener")
+    if not _process_creation_identity_matches(record, pid):
+        raise NodeServiceError("managed stop refused Windows process creation identity drift")
+    return pid
+
+
+def _process_creation_identity_matches(
+    record: dict[str, object],
+    pid: int,
+    *,
+    required: bool = os.name == "nt",
+) -> bool:
+    if not required:
+        return True
+    from agent_workflow import node
+
+    recorded_creation = record.get("process_creation_filetime")
+    live_creation = node._windows_process_creation_filetime(pid)
+    return bool(
+        isinstance(recorded_creation, int)
+        and live_creation is not None
+        and recorded_creation == live_creation
+    )
 
 
 def _wait_bound(profile, timeout: float = 15.0) -> None:
@@ -722,31 +754,55 @@ def _wait_bound(profile, timeout: float = 15.0) -> None:
             return
         except NodeServiceError:
             time.sleep(0.05)
-    raise NodeServiceError("service started but listener identity/lease readiness timed out")
+    raise NodeServiceError("manager started but listener identity/lease readiness timed out")
 
 
-def _require_stopped(profile) -> int:
-    from agent_workflow import node
-
-    snapshot = node._listener_snapshot(profile)
-    lease = node._listener_lease(profile)
-    record = node._process_record(profile)
-    if snapshot.get("status") != "stopped" or lease or record:
-        raise NodeServiceError("service manager stopped but a listener process or lease remains")
-    return 0
-
-
-def _wait_stopped(profile, timeout: float = 20.0) -> int:
+def _after_manager_stop(profile, timeout: float = 20.0) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            return _require_stopped(profile)
-        except NodeServiceError:
-            time.sleep(0.05)
-    return _require_stopped(profile)
+        if _clear_exact_dead_stale_state(profile):
+            return 0
+        time.sleep(0.05)
+    if _clear_exact_dead_stale_state(profile):
+        return 0
+    raise NodeServiceError(
+        "manager stop did not converge to an exact dead listener record and lease"
+    )
+
+
+def _clear_exact_dead_stale_state(profile) -> bool:
+    from agent_workflow import node
+
+    record = node._process_record(profile)
+    lease = node._listener_lease(profile)
+    if not record and not lease:
+        return True
+    if not record or not lease:
+        return False
+    launch_id = record.get("launch_id", "")
+    expected = {
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+    if any(record.get(key) != value for key, value in expected.items()):
+        return False
+    if not isinstance(launch_id, str) or not launch_id:
+        return False
+    if not node._lease_matches(profile, lease, record.get("pid"), launch_id):
+        return False
+    related_pids = [record.get("pid"), lease.get("pid")]
+    if any(node._pid_alive(pid) for pid in related_pids):
+        return False
+    profile.process_path.unlink(missing_ok=True)
+    (profile.state_root / "listeners" / f"{profile.role}.json").unlink(missing_ok=True)
+    return True
 
 
 def _tail_file(path: Path, lines: int) -> int:
+    if lines < 1 or lines > 10000:
+        raise NodeServiceError("--lines must be between 1 and 10000")
     try:
         content = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
@@ -758,18 +814,65 @@ def _tail_file(path: Path, lines: int) -> int:
 
 def adapter_for(profile) -> Adapter:
     manager = resolve_manager(str(profile.lifecycle.get("manager", "auto")))
-    if manager == "winsw":
-        return WinSWAdapter(profile)
+    if manager == "task-scheduler":
+        return TaskSchedulerAdapter(profile)
     if manager == "launchd":
         return LaunchdAdapter(profile)
     if manager == "systemd":
         return SystemdAdapter(profile)
-    raise NodeServiceError(f"unsupported service manager: {manager}")
+    raise NodeServiceError(f"unsupported managed lifecycle manager: {manager}")
 
 
 def run_action(profile, action: str, **kwargs) -> int:
     adapter = adapter_for(profile)
     handler = getattr(adapter, action, None)
     if handler is None:
-        raise NodeServiceError(f"unsupported service action: {action}")
+        raise NodeServiceError(f"unsupported managed lifecycle action: {action}")
     return int(handler(**kwargs))
+
+
+def _task_reconcile(profile_value: str) -> int:
+    """Task Scheduler entry point with shell-free append-only file logging."""
+    from agent_workflow import node
+
+    try:
+        profile = node.load_profile(profile_value)
+    except (node.NodeError, OSError) as exc:
+        print(f"ERROR: task reconcile failed: {exc}", file=sys.stderr)
+        return 1
+    profile.log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        saved_stdout = os.dup(1)
+    except OSError:
+        saved_stdout = None
+    try:
+        saved_stderr = os.dup(2)
+    except OSError:
+        saved_stderr = None
+    try:
+        with profile.log_path.open("ab", buffering=0) as log:
+            os.dup2(log.fileno(), 1)
+            os.dup2(log.fileno(), 2)
+            try:
+                return node.reconcile(profile)
+            except (node.NodeError, NodeServiceError, OSError) as exc:
+                print(f"ERROR: task reconcile failed: {exc}", file=sys.stderr)
+                return 1
+    finally:
+        if saved_stdout is not None:
+            os.dup2(saved_stdout, 1)
+            os.close(saved_stdout)
+        if saved_stderr is not None:
+            os.dup2(saved_stderr, 2)
+            os.close(saved_stderr)
+
+
+def _main(argv: list[str] | None = None) -> int:
+    values = list(sys.argv[1:] if argv is None else argv)
+    if len(values) == 2 and values[0] == "task-reconcile":
+        return _task_reconcile(values[1])
+    raise NodeServiceError("expected task-reconcile <absolute-profile.json>")
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

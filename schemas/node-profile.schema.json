@@ -30,12 +30,9 @@
       "additionalProperties": false,
       "required": ["mode"],
       "properties": {
-        "mode": {"enum": ["session", "service"]},
-        "manager": {"enum": ["auto", "launchd", "systemd", "winsw"]},
-        "scope": {"enum": ["user", "system"]},
-        "service_account": {"type": "string", "minLength": 1},
-        "winsw_executable": {"type": "string", "minLength": 1},
-        "winsw_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        "mode": {"enum": ["session", "managed"]},
+        "manager": {"enum": ["auto", "launchd", "systemd", "task-scheduler"]},
+        "scope": {"const": "user"}
       }
     }
   }

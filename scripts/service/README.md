@@ -13,33 +13,33 @@ awf node upgrade --profile <absolute-profile.json>
 awf node uninstall --profile <absolute-profile.json>
 ```
 
-The files in this directory are compatibility examples only. They now accept one secret-free
-`AWF_PROFILE` path and invoke the same foreground contract; they must not assemble role, route,
+The files in this directory are compatibility examples only. They accept one secret-free
+`AWF_PROFILE` path and invoke the foreground listener contract; they must not assemble role, route,
 tool, state, or remote arguments independently. New installations should use `awf node install`,
-which renders a native launchd user agent, lingering systemd user unit, or WinSW definition from
-the complete profile.
+which renders a native launchd user agent, lingering systemd user unit, or Windows Task Scheduler
+user task from the complete profile.
 
 Tokens and other credentials remain in the profile-selected strict `dispatch.env`; no generated
 unit, XML, command line, profile, or install record contains them.
 
 ## Windows prerequisites
 
-The profile must select `lifecycle.mode=service`, include the absolute WinSW v2.12.0 binary path
-and SHA-256, and name a pre-provisioned least-privileged `service_account`. Agent Workflow never
-downloads WinSW, accepts a password, or falls back to `LocalSystem`.
-
-The first install renders and registers a password-free service, then fails closed until an
-administrator binds the account directly in SCM. Follow the exact `sc.exe config ...` instruction
-printed by the CLI, rerun `install`, then use `start`. Grant only Log on as a service plus access to
-the fixed wheel, profile, dispatch config, dedicated checkout, state, logs, and selected model CLI.
+The profile selects `lifecycle.mode=managed`, user scope, and `manager=auto` or
+`task-scheduler`. The installing user must also own the active local Windows console session; an
+RDP-only login is not in the current contract. The
+generated task uses that user's existing `InteractiveToken` and a one-minute periodic reconcile
+trigger. Its native definition explicitly selects `IgnoreNew` and unlimited action runtime. A non-zero listener exit
+leaves desired state running so the next trigger recovers it; a clean Agent Bus shutdown records
+stopped. It accepts no password, requires no operator-authored XML, and invokes no PowerShell.
 
 ## Persistence claims
 
 - `lifecycle.mode=session` is an interactive local process. `awf node start` refuses to claim SSH
   durability and requires `--allow-session-bound` for an explicit temporary remote session.
-- `lifecycle.mode=service` is supervised by the native manager. Agent Bus remains transport only;
+- `lifecycle.mode=managed` is supervised by the native user manager. Agent Bus remains transport only;
   lifecycle commands never inspect, ACK, requeue, resend, or dispatch deliveries.
 - Windows post-SSH durability is accepted only after the session A/B matrix in
   `docs/runtime-node-lifecycle-architecture.md`. CI or a same-session smoke is not that proof.
 
-Local stop is always a manager/process action. It does not require `control:shutdown`.
+Agent Bus `control:shutdown` is the normal graceful remote stop. Local `awf node stop` remains an
+independent exact-bound manager/process-tree action and does not require that control event.

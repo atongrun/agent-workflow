@@ -17,8 +17,8 @@ selection, payloads, recovery, stage transitions, or ACK-sensitive lifecycle.
 The installed operations wheel has an explicit node lifecycle contract. Existing profiles default
 to `session`: local process-group control remains compatible, but `start` fails closed inside SSH
 unless the operator explicitly accepts temporary session binding. A profile may instead select
-`service`, in which case one adapter supervises the same in-process foreground listener through a
-launchd user agent, lingering systemd user unit, or password-free WinSW definition. Secrets remain
+`managed`, in which case one adapter supervises the same in-process foreground listener through a
+launchd user agent, lingering systemd user unit, or Windows Task Scheduler user task. Secrets remain
 in strict owner-only `dispatch.env`; the service profile, definition, argv, and install record are
 credential-free. Agent Bus stays transport-only and no lifecycle command can read, ACK, requeue,
 resend, or dispatch an event. See [`docs/runtime-node-lifecycle-architecture.md`](docs/runtime-node-lifecycle-architecture.md).
@@ -26,9 +26,12 @@ resend, or dispatch an event. See [`docs/runtime-node-lifecycle-architecture.md`
 The Windows implementation deliberately does not use `DETACHED_PROCESS` or
 `CREATE_BREAKAWAY_FROM_JOB`. Current-host OpenSSH Job probes proved that a new process group remains
 session-bound, while breakaway survival loses the existing cross-session Ctrl-Break stop primitive.
-WinSW installation verifies an operator-supplied binary digest, rejects LocalSystem, and requires a
-pre-provisioned least-privileged SCM account. CI is implementation evidence only; the architecture
-document's fresh session A/B post-SSH matrix remains the acceptance gate.
+The Windows task reuses the active local console user's `InteractiveToken`, reconciles every minute
+while that console session is logged in, and needs no
+service account, WinSW binary, password, or PowerShell setup. Agent Bus shutdown is the graceful
+remote stop; exact-bound `taskkill /T` plus Task Scheduler End provides an independent local tree
+stop. CI is implementation evidence only; the architecture document's fresh session A/B post-SSH
+matrix remains the acceptance gate.
 
 The node doctor also has a bounded machine-readable operator snapshot:
 `awf node doctor --profile <profile> --json --ttl-seconds <seconds>`. It lets an architect replace
