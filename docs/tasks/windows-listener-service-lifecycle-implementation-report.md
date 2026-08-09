@@ -56,14 +56,39 @@ code changed.
 
 ## Verification status
 
-- Static Python/JSON parsing: pass.
-- `git diff --check`: pass.
+- Static Python/JSON parsing and `git diff --check`: pass.
 - Local pytest/Ruff: not run, per repository Mac policy.
-- Three-platform GitHub CI: pending.
-- Independent code review: pending after CI.
+- GitHub CI at `aa0f943`: all six Linux, Windows, macOS runtime, and installed-wheel jobs passed.
+- Independent architecture review: GO before implementation. Independent code review found one
+  blocking uninstall/reinstall defect; the fix removes only the exact install record after native
+  uninstall and adds reinstall regressions. Review of the final live-acceptance delta is required
+  before merge.
 - Payload-free Windows probes: Task Scheduler work survived its creating SSH session; Scheduler End
   alone orphaned a child and was rejected; exact-bound `taskkill /T /F` followed by End removed the
   complete observed tree. The nominal `RestartOnFailure` setting did not restart a failing action
   and was rejected in favor of periodic reconcile. All probe tasks and files were deleted.
-- Real Windows listener post-SSH, crash-restart, clean Agent Bus shutdown, and fresh disposable
-  consumption acceptance: pending. Until it passes, this implementation is not proven durable.
+
+### Real Windows post-SSH acceptance
+
+The test used a separate clone, venv, state root, JSON profile, task name, and an `architect` route
+with `tool=none`; it could not invoke a model or process a business TaskCard.
+
+| Check | Result | Evidence |
+|---|---|---|
+| session A exits completely | pass | `schtasks /Run` returned and the SSH connection closed |
+| fresh session B after bounded wait | pass | task result `267009` (running); PID `27900`; launch ID `c64e96b790a04b8b9b9d1e85a8421bc3`; exact lease/profile digest |
+| crash recovery within 60 seconds | pass | exact process tree killed; next periodic trigger produced PID `8064` and launch ID `b6ad304c99504e4c94ecf99ccd0bb6e5` with a new exact lease |
+| local stop independent of Agent Bus | pass | desired stopped; PID absent; no process record, lease, orphan, or traceback |
+| fresh Agent Bus consumption | pass | new empty `control:shutdown` event `149` logged `received`, graceful shutdown, then `ACKed`; pending returned to zero |
+| clean uninstall | pass | exact scheduled task, generated XML, and install record absent; desired state and log retained |
+| logout/login or reboot recovery | not run | the accepted Windows contract is logged-in local-console scope; this remains an operator acceptance item |
+
+The live task initially exposed `[WinError 6]` only inside Task Scheduler. Direct SSH execution of
+the same reconciler worked. Binding both Python streams and native Win32 standard handles to the
+profile log fixed the scheduler environment; the successful listener and Agent Bus subprocess then
+ran under the task after SSH exit. This is direct evidence for the final fix, not an assumed console
+behavior.
+
+The historical retained Deep request was never inspected, ACKed, requeued, resent, or dispatched
+again. One earlier custom coder probe saw only redacted event metadata and left the unmatched event
+unacknowledged. No model was invoked and no TaskCard attempt was created.

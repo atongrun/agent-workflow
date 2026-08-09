@@ -1,6 +1,6 @@
 # Runtime node lifecycle architecture
 
-Status: accepted for implementation, pending real post-SSH acceptance (2026-08-09)
+Status: accepted; real post-SSH lifecycle acceptance passed (2026-08-09)
 
 ## Decision
 
@@ -32,10 +32,13 @@ showed `CREATE_NEW_PROCESS_GROUP` did not escape it. Breakaway survived but coul
 the existing session-B `CTRL_BREAK` contract. Detach/breakaway is therefore not an accepted daemon
 mechanism.
 
-On 2026-08-09 a separate payload-free Task Scheduler probe was created with `schtasks.exe`, started
-from SSH session A, and completed successfully after session A exited. Session B then precisely
-ended and deleted it. This proves scheduler ownership across that SSH boundary, not full listener
-acceptance.
+On 2026-08-09 a separate no-model listener was started by Task Scheduler from SSH session A. After
+that session exited, session B proved the task, real interpreter PID, process creation identity,
+profile digest, launch ID, lease, and read-only Agent Bus connectivity. A forced process-tree crash
+recovered with a new exact launch identity on the next one-minute trigger. Local stop removed the
+tree and lease without a control event; a later fresh empty `control:shutdown` event was consumed,
+ACKed, and changed desired state to stopped. The exact task definition and install record were then
+uninstalled while logs remained.
 
 ### Root cause
 
@@ -164,5 +167,8 @@ Windows support is not accepted from CI or a same-SSH smoke. It requires:
 6. Logout ends the Windows guarantee; next login proves automatic recovery.
 7. macOS and Linux retain the common schema and CLI in CI.
 
-The historical pending Deep request remains untouched until this gate restores a reliable listener.
-Lifecycle work must not inspect, ACK, requeue, resend, or dispatch it again.
+Items 1-5 passed on 2026-08-09 with a separate `architect`/`tool=none` profile; the disposable event
+was empty `control:shutdown` event 149. Item 6 remains an explicit operator check because the
+Windows guarantee begins only after local-console login. Item 7 passed in the six-job GitHub CI
+matrix. The historical pending Deep request remained untouched: lifecycle work did not inspect,
+ACK, requeue, resend, or dispatch it again.
