@@ -319,9 +319,7 @@ def test_mac_and_systemd_definitions_target_reconcile_not_foreground(
     assert "reconcile" in rendered
     assert "foreground" not in rendered
     expected_profile = (
-        str(profile.path).replace("\\", "\\\\")
-        if manager_name == "systemd"
-        else str(profile.path)
+        str(profile.path).replace("\\", "\\\\") if manager_name == "systemd" else str(profile.path)
     )
     assert expected_profile in rendered
     assert "AGENT_BUS_TOKEN" not in rendered
