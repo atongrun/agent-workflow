@@ -213,10 +213,11 @@ def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
 ):
     profile = load_managed_profile(tmp_path, manager="task-scheduler")
     calls: list[list[str]] = []
+    current_user = node_service._current_windows_user()
     manager = node_service.TaskSchedulerAdapter(
         profile,
         run_command=lambda argv, **kwargs: calls.append(argv) or "",
-        current_user=r"DESKTOP\alice",
+        current_user=current_user,
     )
 
     manager.install()
@@ -235,7 +236,7 @@ def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
     assert "PT1M" in rendered
     assert "P1D" in rendered
     assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in rendered
-    assert r"DESKTOP\alice" in rendered
+    assert current_user in rendered
     assert "reconcile" in rendered
     assert "foreground" not in rendered
     assert not any("powershell" in part.lower() for part in argv)
@@ -317,6 +318,11 @@ def test_mac_and_systemd_definitions_target_reconcile_not_foreground(
 
     assert "reconcile" in rendered
     assert "foreground" not in rendered
-    assert str(profile.path) in rendered
+    expected_profile = (
+        str(profile.path).replace("\\", "\\\\")
+        if manager_name == "systemd"
+        else str(profile.path)
+    )
+    assert expected_profile in rendered
     assert "AGENT_BUS_TOKEN" not in rendered
     assert "password" not in rendered.lower()

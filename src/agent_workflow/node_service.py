@@ -36,12 +36,14 @@ def resolve_manager(manager: str, *, platform: str = sys.platform, os_name: str 
 
 
 def _native_manager(*, platform: str = sys.platform, os_name: str = os.name) -> str:
-    if os_name == "nt" or platform == "win32":
+    if platform == "win32":
         return "task-scheduler"
     if platform == "darwin":
         return "launchd"
     if platform.startswith("linux"):
         return "systemd"
+    if os_name == "nt":
+        return "task-scheduler"
     raise NodeServiceError(f"no native managed lifecycle manager is supported on {platform}")
 
 
