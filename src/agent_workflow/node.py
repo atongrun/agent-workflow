@@ -32,6 +32,7 @@ TOOL_CONFIG = {
 }
 READINESS_FORMAT = "awf.node-readiness.v1"
 MAX_READINESS_TTL_SECONDS = 86400
+LISTENER_START_TIMEOUT_SECONDS = 15
 
 
 class NodeError(RuntimeError):
@@ -228,7 +229,11 @@ def _lease_matches(profile: NodeProfile, lease: dict[str, object] | None, pid: o
     )
 
 
-def _wait_for_listener_lease(profile: NodeProfile, process, timeout: float = 3) -> None:
+def _wait_for_listener_lease(
+    profile: NodeProfile,
+    process,
+    timeout: float = LISTENER_START_TIMEOUT_SECONDS,
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:

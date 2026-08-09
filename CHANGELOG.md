@@ -8,6 +8,12 @@
   discovery snapshot that can replace repeated SSH probes during a short serial run while keeping
   Fast/Deep Preflight as the only remote-dispatch authority.
 
+### Fixed
+
+- Allow a listener up to 15 seconds to publish its matching role/repository/PID lease after a
+  successful local readiness gate. This accommodates slower Windows Python and workspace startup
+  while preserving bounded fail-closed termination when no trusted lease appears.
+
 ## [0.3.0-rc.2] — 2026-08-09
 
 ### Added
