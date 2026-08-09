@@ -408,9 +408,7 @@ def doctor_report(
     observed_at: datetime,
 ) -> dict[str, object]:
     if ttl_seconds < 1 or ttl_seconds > MAX_READINESS_TTL_SECONDS:
-        raise NodeError(
-            f"--ttl-seconds must be between 1 and {MAX_READINESS_TTL_SECONDS}"
-        )
+        raise NodeError(f"--ttl-seconds must be between 1 and {MAX_READINESS_TTL_SECONDS}")
     listener = _listener_snapshot(profile)
     tool_status = "not_applicable" if profile.role == "architect" else "pass"
     return {
@@ -672,9 +670,7 @@ def run(
     try:
         profile = load_profile(profile_value)
         handlers = {
-            "doctor": lambda: doctor(
-                profile, json_output=json_output, ttl_seconds=ttl_seconds
-            ),
+            "doctor": lambda: doctor(profile, json_output=json_output, ttl_seconds=ttl_seconds),
             "start": lambda: start(profile),
             "status": lambda: status(profile, run_id, json_output=json_output),
             "stop": lambda: stop(profile),
