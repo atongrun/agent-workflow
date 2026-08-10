@@ -114,10 +114,12 @@ reviewer → architect `PASS` route with trusted postflight, commit/push, remote
 and ACK evidence. Windows Python 3.12 default-locale portability is also closed with a trusted full
 suite. These capabilities remain outside the stable core.
 
-The remaining gaps are recorded capacity-isolation metrics from that run, automatic continuation
-into a next TaskCard, and the first non-infrastructure downstream dogfood. See
+The first non-infrastructure downstream dogfood later completed three serial TaskCards. The
+remaining measurement gap is a prospectively instrumented high-value-model-led baseline; automatic
+continuation into a next TaskCard also remains outside the accepted operator contract. See
 the [reviewer-routing implementation report](docs/tasks/reviewer-verdict-routing-implementation-report.md),
 the [live semantic-loop report](docs/tasks/live-semantic-loop-acceptance-2026-07-26-v5-implementation-report.md),
+the [three-card acceptance report](docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md),
 the [Windows portability report](docs/tasks/windows-python312-utf8-closeout-v7-implementation-report.md),
 the [executor Git-boundary report](docs/tasks/executor-git-write-guard-implementation-report.md),
 and the current [repository handoff](HANDOFF.md).
@@ -167,8 +169,11 @@ The operations surface also has one strict, cross-platform Python
 [configuration loader](docs/tasks/config-recovery-maturity-implementation-report.md). Bootstrap,
 handoff checks, listeners, dispatch, and native service entry points share the same data-only
 parser. Production wrappers no longer source `dispatch.env`, and the Windows service no longer
-depends on Git Bash. CI exercises the recovery/configuration suite on Linux and Windows; this is
-automated infrastructure evidence, not the separate three-card live dogfood gate.
+depends on Git Bash. CI exercises the recovery/configuration suite on Linux and Windows. The
+separate live product gate also completed on 2026-08-09: three serial Dousansi TaskCards reached
+trusted implementation, structured Pi review, PR, green CI, architect terminal ACK, merge, and
+empty queues. See the
+[three-card acceptance report](docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md).
 Production wheels include this operations surface under the installed `agent_workflow` package:
 listener/role/dispatch/preflight/config/service modules, agent adapters, model Git guards, service
 templates, the default authority manifest, and artifact templates. The `awf` entry point resolves
@@ -320,20 +325,22 @@ ledger. Status never ACKs, requeues, resumes, redispatches, or rewrites a ledger
 
 ## Product Gate
 
-**Use first, abstract second.** Technical transport success proves feasibility, not downstream
-product value. Before expanding the core or building Agent Host integration, a real downstream
-project must show that multiple bounded TaskCards can close with less frequent high-value-model
-participation than the previous high-value-model-led baseline. See
+**Use first, abstract second.** The first downstream product gate is complete: three bounded product
+TaskCards closed across the managed Windows coder and Mac Pi reviewer without high-value model calls
+inside their business delivery handlers. Exact surrounding planning/acceptance call counts and a
+comparable prior baseline were not instrumented, so the project does not claim precise token or cost
+savings. The next evidence gate is a second downstream phase and an honest baseline comparison, not
+a generic engine or Agent Host abstraction. See
 [`docs/product-metrics.md`](docs/product-metrics.md) and
-[`docs/development-workflow-mvp.md`](docs/development-workflow-mvp.md).
+[`docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md`](docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md).
 
 ## Validation Quick Start
 
-Install the published release candidate without an Agent Workflow source checkout:
+Install the published release without an Agent Workflow source checkout:
 
 ```bash
 python -m pip install \
-  https://github.com/atongrun/agent-workflow/releases/download/v0.3.0-rc.7/agent_workflow-0.3.0rc7-py3-none-any.whl
+  https://github.com/atongrun/agent-workflow/releases/download/v0.3.0/agent_workflow-0.3.0-py3-none-any.whl
 awf version
 ```
 
@@ -373,9 +380,10 @@ tests/                validation and operations regression tests
 |---|---|---|
 | 0 | Method contract and validation CLI | Complete |
 | 1 | Product-positioning and repository-truth convergence | Complete on `main` |
-| 2 | Semantic reviewer routing and live operations proof | Live `PASS` route complete; metrics pending |
-| 3 | First downstream capacity-isolation dogfood | Next product gate |
-| Later | Evidence-driven helpers and possible external runtime integration | Deferred |
+| 2 | Semantic reviewer routing and live operations proof | Complete |
+| 3 | First downstream capacity-isolation dogfood | Three-card operational gate complete; baseline comparison pending |
+| 4 | Evidence-driven hardening and second downstream phase | Next product gate |
+| Later | Possible external runtime integration | Deferred |
 
 See [`ROADMAP.md`](ROADMAP.md) for acceptance details.
 

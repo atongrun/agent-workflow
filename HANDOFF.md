@@ -1,11 +1,21 @@
 # Repository Handoff
 
-> Current through the 2026-08-09 dogfood operations UX repair. The minimum
+> Current through the accepted 2026-08-09 three-TaskCard downstream dogfood and the 2026-08-10
+> `v0.3.0` release documentation. The minimum
 > dispatch floor is the merge containing this handoff; repository files and live Git refs are
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-09
+## Current Handoff State: 2026-08-10
+
+The first non-infrastructure product gate is complete. Three serial Dousansi TaskCards ran through
+the managed Windows OpenCode coder, Mac Pi reviewer, deterministic architect terminal consumer,
+trusted commit, pull request, green CI, terminal ACK, merge, and empty queues. Each business card
+used one coder and one reviewer model invocation; there was no rework, escalation, manual
+ACK/requeue/redispatch, or high-value model call inside a delivery handler. Exact surrounding
+planning and milestone-acceptance call counts were not instrumented, so no precise token/cost claim
+is made. The durable evidence and limitation are recorded in
+[`docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md`](docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md).
 
 The operations P0 prerequisites exposed by the stopped downstream run are merged: durable
 run-ledger and context-packet gates, same-delivery checkpoint/outbox recovery, strict Python
@@ -295,55 +305,45 @@ cross-platform CI. Same-delivery coder/reviewer recovery is proven without repea
 completed model subprocess. Fast Preflight is read-only; Deep Preflight is a disposable no-model
 transport proof and cannot authorize a historical delivery.
 
-The downstream terminal decision, current v3 PhasePlan, first frozen TaskCard, and metrics template
-are merged on Dousansi `main@6fd5293`. The remaining product gate is the first completed
-non-infrastructure three-TaskCard dogfood with capacity-isolation metrics.
+The original downstream stop is closed by a wholly fresh run. The accepted three-card evidence is
+versioned in the acceptance report; downstream TaskCards, reports, ledgers, and product assertions
+remain owned by the Dousansi repository. A comparable high-value-model-led baseline is still
+missing and must not be reconstructed from estimates.
 
-## Dousansi Dogfood Restart Boundary
+## Dousansi Dogfood Closeout Boundary
 
-The first real downstream run was intentionally stopped before product completion. Its artifacts and
-safe event metadata are preserved in the downstream project's `docs/HANDOFF.md`; do not inspect,
-ACK, requeue, or redispatch preserved historical events to recreate the run.
+The earlier stopped run remains historical evidence. Do not inspect, ACK, requeue, or redispatch its
+preserved events. Its replacement was a fresh v3 run; that run is now terminal and must not be used
+as a source of new work.
 
-The Workflow-owned infrastructure gaps and downstream repository-truth gates are now implemented
-and verified. Dousansi `main@6fd5293` records the preserved run as terminal, replaces stale v2
-authority with a fresh v3 PhasePlan/TaskCard contract, assigns lower-cost normal-path coder and
-reviewer roles, and carries the required metrics fields. The contribution fork exists and the
-upstream-read-only/fork-write dry run passes. Current Mac and Windows Fast checks pass, and the
-persistent Mac dogfood checkout has a current bound Deep proof.
-
-Restart is therefore authorized only as a wholly fresh v3 run from refreshed downstream `main`:
-new v4 task branch, frozen TaskCard commit, run ledger, context packet, delivery, and event. The
-selected listener `tool` and `model` must match the hashed delivery identity exactly. Switching
-agent tools requires a new version-only Fast check; `AWF_PI_BIN` can be supplied by the existing
-owner-only `dispatch.env` when Pi is selected. Rerun Deep if the report requests it or if the
-runtime/transport facts materially changed.
+The accepted run also closes the former Windows session-loss blocker. The managed coder listener
+survived a complete SSH session A exit and was verified from a fresh session B with exact manager,
+PID, launch identity, lease, queue connection, consumption, crash recovery, and clean local stop.
+No PowerShell, WinSW, service password, or Agent Bus supervisor behavior was introduced.
 
 These are downstream readiness and operations gates. They do not justify an Agent Host, generic
 engine, Agent Bus protocol change, or provider-contract migration before dogfood.
 
 ## Next Gates (in order)
 
-1. **Refresh the two exact baselines.** Require Agent Workflow to contain dispatch floor `e118463`
-   and Dousansi to contain readiness floor `6fd5293`; when live refs advance, review the diff and
-   record the actual exact dispatch SHAs.
-2. **Recheck the selected agent tool.** Run Fast on every participating host with the actual CLI
-   selected for that host; a tool change is version-only during Fast and must not invoke a model.
-3. **Dispatch only a fresh v3 run.** Create a new branch, run ledger, delivery, and event from the
-   refreshed downstream `origin/main`. Never resume or mutate preserved historical events.
-4. **Complete three bounded downstream TaskCards.** Keep at least two normal paths free of
-   high-value-model calls and record every escalation with a stable reason code.
-5. **Reassess provider abstraction from evidence.** Start any broader adapter phase only if the run
-   exposes repeated provider-bound lifecycle friction or requires another unsupported provider.
+1. **Keep `v0.3.0` boring.** Fix only evidence-backed reliability or compatibility failures; do not
+   reopen the core/runtime boundary because the first product gate passed.
+2. **Run a second downstream phase.** Use another bounded multi-card phase before generalizing
+   scheduler, provider, or continuation behavior.
+3. **Instrument the comparison.** Record phase-level planning/milestone high-value calls and a
+   comparable prior baseline prospectively; do not estimate the missing first-run counts.
+4. **Exercise one deterministic rework path.** The first phase needed no `REQUEST_CHANGES`; a future
+   live phase should prove that path without forcing a product change merely to create evidence.
+5. **Reassess abstraction only from repetition.** Broaden adapters only when another supported host,
+   provider, or repeated operator burden supplies concrete evidence.
 
 ## Next-Agent Start Sequence
 
 Begin with `git status --short --branch`, a fresh fetch, and a live check of both repositories'
-default branches and CI. Read this handoff, `ROADMAP.md`, `docs/runtime-preflight-architecture.md`,
-the downstream terminal decision, and the current downstream PhasePlan/TaskCard. Run no historical
-event command. Keep changes on feature branches with Lore-formatted commits. The next authorized
-live action is a version-only Fast recheck for the agent tool actually selected tonight, followed
-by the fresh v3 `DOUSANSI-DOGFOOD-001` run if the bound Deep proof remains current.
+default branches and CI. Read this handoff, `ROADMAP.md`, the three-card acceptance report, and the
+runtime lifecycle/Preflight architecture documents. Run no historical event command. Keep changes
+on feature branches with Lore-formatted commits. There is no retained business delivery to resume;
+the next product action requires a newly approved downstream phase and fresh repository truth.
 
 ## Standing Rules
 

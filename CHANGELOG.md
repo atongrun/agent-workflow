@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-10
+
+### Milestone
+
+- Accept the first real non-infrastructure three-TaskCard downstream phase. Windows OpenCode coder,
+  Mac Pi reviewer, and the deterministic architect terminal consumer completed three serial product
+  changes through trusted commit, structured `PASS`, pull request, green CI, terminal ACK, merge,
+  and empty queues. The business handlers used three coder and three reviewer model invocations,
+  with no rework, escalation, manual ACK/requeue/redispatch, or high-value model call inside a
+  delivery handler. See the
+  [acceptance report](docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md).
+- Promote the installed operations surface from release candidate to `0.3.0` after real post-SSH
+  managed-listener survival and the rc.6/rc.7 recovery fixes completed the same downstream run.
+  This release does not promote operations into the stable core or add Agent Host/Agent Bus runtime
+  responsibilities.
+
 ## [0.3.0-rc.7] — 2026-08-09
 
 ### Fixed
@@ -197,7 +213,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.7...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.7...v0.3.0
 [0.3.0-rc.7]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.6...v0.3.0-rc.7
 [0.3.0-rc.6]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.5...v0.3.0-rc.6
 [0.3.0-rc.5]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.4...v0.3.0-rc.5
