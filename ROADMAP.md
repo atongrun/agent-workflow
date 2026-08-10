@@ -127,16 +127,16 @@ Remaining Phase 2 work:
   second authority cache or adding Agent Bus runtime semantics.
 - [x] Replace the production Bash TaskCard dispatcher with a native Python entry point; retain the
   shell file only as a POSIX compatibility shim and remove Git Bash/WSL from Windows dispatch.
-- [ ] Record the capacity-isolation metrics defined in
-  [`docs/product-metrics.md`](docs/product-metrics.md) for the accepted live run.
-- [ ] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
+- [x] Record the delivery-scope capacity-isolation metrics available for the accepted live run,
+  using the definitions in [`docs/product-metrics.md`](docs/product-metrics.md).
+- [x] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
 - [x] Complete the Agent Bus portion of the fresh disposable proof through coder, reviewer, PASS
   decision, and architect ACK without creating a replacement proof event.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
 the stable core or modify Agent Bus protocol.
 
-## Phase 3: First Downstream Capacity-Isolation Dogfood 📋 Product Gate
+## Phase 3: First Downstream Capacity-Isolation Dogfood ✅ Operational Gate
 
 Select a real downstream software project, not Agent Workflow or its supporting infrastructure.
 Create one PhasePlan that can drive multiple bounded TaskCards and compare it with the project's
@@ -144,15 +144,26 @@ previous high-value-model-led baseline.
 
 First-run suggestions (adjustable evidence targets, not permanent product contracts):
 
-- [ ] Complete at least three real TaskCards.
-- [ ] Complete at least two without a high-value-model invocation.
-- [ ] Keep normal `PASS` and deterministic `REQUEST_CHANGES` chains high-value-model-free.
-- [ ] Record every high-value-model invocation with project, TaskCard, role, path class, and reason
+- [x] Complete at least three real TaskCards.
+- [x] Complete at least two without a high-value-model invocation inside their business delivery
+  handlers.
+- [x] Keep the observed normal `PASS` chains high-value-model-free inside the business delivery
+  handlers. No `REQUEST_CHANGES` path was needed in this phase.
+- [x] Record every high-value-model invocation inside the business delivery handlers with project,
+  TaskCard, role, path class, and reason
   code.
-- [ ] Allow high-value escalation for genuine `BLOCKED`, architecture reopen, predefined high risk,
+- [x] Allow high-value escalation for genuine `BLOCKED`, architecture reopen, predefined high risk,
   insufficient evidence, or Milestone acceptance.
 - [ ] Compare high-value invocations per completed TaskCard and human intervention with the prior
   baseline.
+
+The 2026-08-09 Dousansi phase completed three serial cards with three OpenCode coder calls, three Pi
+reviewer calls, zero deterministic rework, zero business-delivery escalation, and zero manual
+ACK/requeue/redispatch. The deterministic architect terminal consumer made no model call. Planning,
+infrastructure diagnosis, and milestone acceptance outside the delivery handlers were not
+instrumented as a comparable call count, so exact token/cost savings and the prior-baseline ratio
+remain unclaimed. See the
+[acceptance report](docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md).
 
 Do not claim success from total-token reduction alone, and do not require precise provider token,
 price, or quota APIs. See [`docs/product-metrics.md`](docs/product-metrics.md).
