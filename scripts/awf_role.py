@@ -4138,15 +4138,6 @@ def role_coder(a: argparse.Namespace) -> int:
             contract = parse_postflight_contract(card_file)
             validate_implementation_report_contract(card_file, a, evidence)
 
-        model_report = resolve_repo_file(model_repo, a.report, "ImplementationReport")
-        capture_dogfood_finding(
-            model_report,
-            input_context=input_context,
-            source_role="coder",
-            source_tool=tool,
-            evidence=evidence,
-        )
-
         if checkpoint is not None and checkpoint_path is not None:
             checkpoint = increment_postflight_attempt(evidence, checkpoint_path, checkpoint)
         record(
@@ -4156,6 +4147,14 @@ def role_coder(a: argparse.Namespace) -> int:
             postflight_status="running",
         )
         try:
+            model_report = resolve_repo_file(model_repo, a.report, "ImplementationReport")
+            capture_dogfood_finding(
+                model_report,
+                input_context=input_context,
+                source_role="coder",
+                source_tool=tool,
+                evidence=evidence,
+            )
             # 4. ImplementationReport gate — fail before any write or downstream event
             check_report(str(model_report))
 
@@ -4665,13 +4664,17 @@ def role_reviewer(a: argparse.Namespace) -> int:
             a.review_report,
             a.report,
         )
-        capture_dogfood_finding(
-            model_review_report_path,
-            input_context=input_context,
-            source_role="reviewer",
-            source_tool=tool,
-            evidence=evidence,
-        )
+        # The real importer rejects a missing model-side report. Keep the capture hook
+        # conditional so recovery tests can replace the importer without changing its
+        # established three-argument contract.
+        if model_review_report_path.is_file():
+            capture_dogfood_finding(
+                model_review_report_path,
+                input_context=input_context,
+                source_role="reviewer",
+                source_tool=tool,
+                evidence=evidence,
+            )
         review_report_path = import_model_report(model_repo, repo, a.review_report)
         try:
             review_report = parse_review_report(review_report_path)
