@@ -41,9 +41,12 @@ REJECTION_FORMAT = "awf.feedback-rejection.v1"
 EVENT_TYPE = "feedback:awf-finding-v1"
 REPORTER_IDENTITY = "awf-reporter"
 
-MARKER = b"<!-- awf-dogfood-finding-v1\n"
+MARKER_STEM = b"<!-- awf-dogfood-finding-v1"
+MARKER = MARKER_STEM + b"\n"
 ENVELOPE_PREFIX = b"\n" + MARKER
 ENVELOPE_SUFFIX = b"\n-->\n"
+CRLF_ENVELOPE_PREFIX = b"\r\n" + MARKER_STEM + b"\r\n"
+CRLF_ENVELOPE_SUFFIX = b"\r\n-->\r\n"
 MAX_ENVELOPE_BYTES = 4096
 MAX_FINAL_REPORT_BYTES = 16 * 1024
 MAX_COMBINED_REPORT_BYTES = MAX_FINAL_REPORT_BYTES + MAX_ENVELOPE_BYTES
@@ -203,18 +206,30 @@ def normalize_candidate(value: Mapping[str, object]) -> dict[str, str]:
 
 def extract_finding(raw: bytes) -> FindingExtraction:
     """Recognize exactly one complete EOF-anchored envelope and preserve its prefix."""
-    marker_count = raw.count(MARKER)
+    marker_count = raw.count(MARKER_STEM)
     if marker_count == 0:
         return FindingExtraction(raw, None, None)
     if marker_count != 1:
         raise FindingContractError("Report contains more than one reserved Finding marker")
-    start = raw.find(ENVELOPE_PREFIX)
-    if start < 0 or not raw.endswith(ENVELOPE_SUFFIX):
+    envelope_parts = next(
+        (
+            (prefix, suffix)
+            for prefix, suffix in (
+                (ENVELOPE_PREFIX, ENVELOPE_SUFFIX),
+                (CRLF_ENVELOPE_PREFIX, CRLF_ENVELOPE_SUFFIX),
+            )
+            if raw.find(prefix) >= 0 and raw.endswith(suffix)
+        ),
+        None,
+    )
+    if envelope_parts is None:
         raise FindingContractError("reserved Finding marker is not a complete EOF envelope")
+    prefix, suffix = envelope_parts
+    start = raw.find(prefix)
     envelope = raw[start:]
     if len(envelope) > MAX_ENVELOPE_BYTES:
         raise FindingContractError("Finding envelope exceeds 4096 bytes")
-    json_bytes = raw[start + len(ENVELOPE_PREFIX) : -len(ENVELOPE_SUFFIX)]
+    json_bytes = raw[start + len(prefix) : -len(suffix)]
     try:
         json_text = json_bytes.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:

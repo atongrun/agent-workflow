@@ -83,6 +83,23 @@ def test_valid_finding_is_strictly_extracted_from_eof():
     assert result.candidate_sha256.startswith("sha256:")
 
 
+def test_valid_crlf_finding_is_strictly_extracted_from_eof():
+    final_report = b"# ReviewReport\r\n\r\nVerdict: PASS\r\n"
+    payload = json.dumps(candidate(), separators=(",", ":")).encode("utf-8")
+    raw = (
+        final_report
+        + awf_feedback.CRLF_ENVELOPE_PREFIX
+        + payload
+        + awf_feedback.CRLF_ENVELOPE_SUFFIX
+    )
+
+    result = awf_feedback.extract_finding(raw)
+
+    assert result.report_bytes == final_report
+    assert result.candidate == candidate()
+    assert result.candidate_sha256.startswith("sha256:")
+
+
 def test_finding_does_not_consume_the_final_report_16_kib_capacity():
     final_report = b"R" * awf_feedback.MAX_FINAL_REPORT_BYTES
     payload = json.dumps(candidate(), separators=(",", ":")).encode("utf-8")
