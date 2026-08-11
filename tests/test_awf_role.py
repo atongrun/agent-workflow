@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from scripts import awf_executor
+from scripts.agent_adapters.opencode import _FINDING_INSTRUCTIONS as OPENCODE_FINDING_INSTRUCTIONS
 
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
@@ -1710,7 +1711,8 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
         "provider/model",
         "--",
         "instructions\n\nWrite the complete ImplementationReport to exactly: "
-        ".awf/artifacts/impl-report-task.md\n",
+        ".awf/artifacts/impl-report-task.md\n"
+        + OPENCODE_FINDING_INSTRUCTIONS,
     ]
 
 
@@ -1840,7 +1842,8 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
         "-m",
         "provider/model",
         "--",
-        "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n",
+        "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n"
+        + OPENCODE_FINDING_INSTRUCTIONS,
     ]
 
 
@@ -1879,6 +1882,7 @@ def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
     assert captured["kwargs"]["evidence"] is evidence
     assert captured["kwargs"]["tracked_phase"] == "pi"
     assert captured["kwargs"]["stdout_path"] == report_path
+    assert captured["kwargs"]["stdout_max_bytes"] == 20 * 1024
     assert captured["argv"][:-2] == [
         "pi-test",
         "--print",
@@ -2009,9 +2013,10 @@ def test_tool_opencode_card_prompt_boundary_without_model(monkeypatch, tmp_path,
 
     expected_instructions = (
         "instructions\n\nWrite the complete ImplementationReport to exactly: "
-        ".awf/artifacts/impl-report-task.md\n"
+        ".awf/artifacts/impl-report-task.md\n" + OPENCODE_FINDING_INSTRUCTIONS
         if adapter == "executor"
         else "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n"
+        + OPENCODE_FINDING_INSTRUCTIONS
     )
     assert captured["argv"] == [
         "opencode-test",
@@ -2058,6 +2063,114 @@ def test_spawn_stdin_when_provided(monkeypatch):
 
     assert captured.get("input") == "prompt text"
     assert captured.get("stdin") is not subprocess.DEVNULL
+
+
+def test_capture_dogfood_finding_uses_run_state_and_strips_before_business(tmp_path):
+    report = tmp_path / "model" / "review.md"
+    report.parent.mkdir()
+    finding = {
+        "kind": "reliability",
+        "component": "recovery",
+        "summary": "Replay loses a completed report",
+        "observed": "The completed report was unavailable after restart",
+        "expected": "The completed report remains available after restart",
+    }
+    report.write_text(
+        "# ReviewReport\n\nVerdict: PASS\n\n"
+        "<!-- awf-dogfood-finding-v1\n"
+        + json.dumps(finding, separators=(",", ":"))
+        + "\n-->\n",
+        encoding="utf-8",
+    )
+    evidence = awf_role.RunEvidence(70, "reviewer", state_root=tmp_path / "state")
+
+    awf_role.capture_dogfood_finding(
+        report,
+        input_context={"delivery_id": "delivery-70"},
+        source_role="reviewer",
+        source_tool="pi",
+        evidence=evidence,
+    )
+
+    assert report.read_text(encoding="utf-8") == "# ReviewReport\n\nVerdict: PASS\n"
+    assert len(list((evidence.state_dir / "feedback/outbox").glob("*.json"))) == 1
+    result = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    assert result["finding_status"] == "queued"
+
+
+def test_finding_evidence_failure_does_not_change_business_result(tmp_path, capsys):
+    report = tmp_path / "review.md"
+    finding = {
+        "kind": "reliability",
+        "component": "recovery",
+        "summary": "Evidence write is unavailable",
+        "observed": "The optional Finding evidence cannot be written",
+        "expected": "The formal Report still proceeds",
+    }
+    report.write_text(
+        "# ReviewReport\n\nVerdict: PASS\n\n"
+        "<!-- awf-dogfood-finding-v1\n"
+        + json.dumps(finding, separators=(",", ":"))
+        + "\n-->\n",
+        encoding="utf-8",
+    )
+
+    class FailingEvidence:
+        state_dir = tmp_path / "state"
+
+        def record(self, _phase, **_fields):
+            raise OSError("evidence disk unavailable")
+
+    awf_role.capture_dogfood_finding(
+        report,
+        input_context={"delivery_id": "delivery-71"},
+        source_role="reviewer",
+        source_tool="pi",
+        evidence=FailingEvidence(),
+    )
+
+    assert report.read_text(encoding="utf-8") == "# ReviewReport\n\nVerdict: PASS\n"
+    assert "Finding evidence was not persisted" in capsys.readouterr().out
+
+
+def test_missing_feedback_state_strips_finding_without_business_failure(
+    monkeypatch, tmp_path, capsys
+):
+    report = tmp_path / "review.md"
+    finding = {
+        "kind": "reliability",
+        "component": "recovery",
+        "summary": "Feedback state is unavailable",
+        "observed": "The optional queue cannot be opened",
+        "expected": "The business report still proceeds",
+    }
+    report.write_text(
+        "# ReviewReport\n\nVerdict: PASS\n\n"
+        "<!-- awf-dogfood-finding-v1\n"
+        + json.dumps(finding, separators=(",", ":"))
+        + "\n-->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "feedback_state_root",
+        lambda: (_ for _ in ()).throw(
+            sys.modules["awf_feedback"].FeedbackStateError("unavailable")
+        ),
+    )
+
+    awf_role.capture_dogfood_finding(
+        report,
+        input_context={"delivery_id": "delivery-72"},
+        source_role="reviewer",
+        source_tool="pi",
+        evidence=None,
+    )
+
+    assert report.read_text(encoding="utf-8") == "# ReviewReport\n\nVerdict: PASS\n"
+    output = capsys.readouterr().out
+    assert "Finding state is unavailable" in output
+    assert "Finding was stripped but not queued" in output
 
 
 @pytest.mark.parametrize(("returncode", "should_write"), [(0, True), (3, False)])

@@ -3,6 +3,20 @@
 from __future__ import annotations
 
 
+_FINDING_INSTRUCTIONS = """
+
+Optional Dogfood Finding: after the complete Report, you may append at most one exact EOF block:
+<!-- awf-dogfood-finding-v1
+{"kind":"reliability","component":"recovery","summary":"...","observed":"...","expected":"..."}
+-->
+Use strict JSON with exactly those five keys. kind is bug, reliability, diagnostic, or
+usability. component is adapter, artifact, configuration, control_plane, dispatch, node,
+postflight, preflight, recovery, routing, or transport. Keep every text value short and
+single-line. Never include credentials, URLs, local paths, prompts, environment values,
+logs, diffs, or source code. Omit the whole block when there is no safe concrete finding.
+"""
+
+
 def render_executor_argv(
     *,
     binary: str,
@@ -21,6 +35,7 @@ def render_executor_argv(
     instructions += (
         f"\n\nWrite the complete ImplementationReport to exactly: {implementation_report_path}\n"
     )
+    instructions += _FINDING_INSTRUCTIONS
     if normalized_review_feedback:
         instructions += "\n\n--- Structured reviewer feedback to correct ---\n\n"
         instructions += normalized_review_feedback
@@ -45,5 +60,6 @@ def render_reviewer_argv(
         argv += ["-m", model]
     instructions = prompt
     instructions += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
+    instructions += _FINDING_INSTRUCTIONS
     argv += ["--", instructions]
     return argv

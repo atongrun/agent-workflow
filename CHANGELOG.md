@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add Phase A of the bounded Dogfood Finding pipeline to the operations surface. Existing
+  OpenCode coder/reviewer, Codex reviewer, and Pi reviewer Reports may carry one strict safe EOF
+  Finding that trusted code strips before business validation/import, places in an independent
+  deterministic Feedback Outbox, explicitly flushes through Agent Bus, and durably deduplicates
+  in `awf-reporter` before handler success permits Bus ACK. Agent Bus Core, Workflow roles/stages,
+  business outbox/checkpoint semantics, triage, grouping, and publication remain unchanged.
+
 ## [0.3.0] — 2026-08-10
 
 ### Milestone
