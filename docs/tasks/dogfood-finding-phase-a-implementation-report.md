@@ -55,8 +55,20 @@ Completed locally on macOS without installing dependencies or running Pytest/Ruf
 
 The source environment does not currently provide the package dependency `jsonschema`, so direct
 source CLI import stopped before command parsing. No dependency was installed on the architecture
-Mac. GitHub CI remains required for Ruff, full Pytest, resource validation, wheel installation,
-and installed CLI verification.
+Mac.
+
+GitHub Actions run
+[`31516238980`](https://github.com/atongrun/agent-workflow/actions/runs/31516238980) passed all
+six jobs:
+
+- Linux Ruff, full Pytest, and repository/resource validation — pass.
+- Windows recovery and configuration suite — pass.
+- installed-wheel CLI verification on Ubuntu, macOS, and Windows — pass.
+- macOS runtime verification — pass.
+
+After the Windows run exposed native CRLF report bytes, the Finding parser was tightened to accept
+either a complete LF or complete CRLF EOF envelope while still rejecting mixed or partial markers.
+The explicit CRLF regression test is included in the passing run above.
 
 ## Remaining operational work
 
