@@ -95,9 +95,7 @@ _SAFETY_DETECTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "environment_value",
-        re.compile(
-            r"(?i)(?:^|\s)(?:[A-Z][A-Z0-9_]{2,}|token|secret|password|api[_-]?key)=[^\s]+"
-        ),
+        re.compile(r"(?i)(?:^|\s)(?:[A-Z][A-Z0-9_]{2,}|token|secret|password|api[_-]?key)=[^\s]+"),
     ),
     ("raw_prompt", re.compile(r"(?i)(?:system|developer|user)\s+prompt\s*:|<system>|<developer>")),
     (

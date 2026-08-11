@@ -39,7 +39,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from agent_workflow import __version__ as AWF_VERSION
 from agent_adapters.codex import (
     render_reviewer_invocation as render_codex_reviewer_invocation,
 )
@@ -78,6 +77,8 @@ from awf_feedback import (
     MAX_COMBINED_REPORT_BYTES,
     FindingContractError,
     capture_report_finding,
+)
+from awf_feedback import (
     default_state_root as feedback_state_root,
 )
 from awf_taskcard import (
@@ -85,6 +86,8 @@ from awf_taskcard import (
     TaskCardContractError,
     reviewer_selection_contract,
 )
+
+from agent_workflow import __version__ as AWF_VERSION
 
 
 def log(msg: str) -> None:

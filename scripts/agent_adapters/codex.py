@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 _FINDING_INSTRUCTIONS = """
 
 Optional Dogfood Finding: after the complete Report, you may append at most one exact EOF block:

@@ -1711,8 +1711,7 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
         "provider/model",
         "--",
         "instructions\n\nWrite the complete ImplementationReport to exactly: "
-        ".awf/artifacts/impl-report-task.md\n"
-        + OPENCODE_FINDING_INSTRUCTIONS,
+        ".awf/artifacts/impl-report-task.md\n" + OPENCODE_FINDING_INSTRUCTIONS,
     ]
 
 
@@ -2077,9 +2076,7 @@ def test_capture_dogfood_finding_uses_run_state_and_strips_before_business(tmp_p
     }
     report.write_text(
         "# ReviewReport\n\nVerdict: PASS\n\n"
-        "<!-- awf-dogfood-finding-v1\n"
-        + json.dumps(finding, separators=(",", ":"))
-        + "\n-->\n",
+        "<!-- awf-dogfood-finding-v1\n" + json.dumps(finding, separators=(",", ":")) + "\n-->\n",
         encoding="utf-8",
     )
     evidence = awf_role.RunEvidence(70, "reviewer", state_root=tmp_path / "state")
@@ -2109,9 +2106,7 @@ def test_finding_evidence_failure_does_not_change_business_result(tmp_path, caps
     }
     report.write_text(
         "# ReviewReport\n\nVerdict: PASS\n\n"
-        "<!-- awf-dogfood-finding-v1\n"
-        + json.dumps(finding, separators=(",", ":"))
-        + "\n-->\n",
+        "<!-- awf-dogfood-finding-v1\n" + json.dumps(finding, separators=(",", ":")) + "\n-->\n",
         encoding="utf-8",
     )
 
@@ -2146,9 +2141,7 @@ def test_missing_feedback_state_strips_finding_without_business_failure(
     }
     report.write_text(
         "# ReviewReport\n\nVerdict: PASS\n\n"
-        "<!-- awf-dogfood-finding-v1\n"
-        + json.dumps(finding, separators=(",", ":"))
-        + "\n-->\n",
+        "<!-- awf-dogfood-finding-v1\n" + json.dumps(finding, separators=(",", ":")) + "\n-->\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(

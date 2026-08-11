@@ -164,8 +164,7 @@ def test_render_pi_reviewer_argv_is_exact(model):
         "Use only read-only repository inspection tools. "
         "Return the complete filled-in Markdown ReviewReport as stdout. "
         "The trusted runner will persist stdout to the exact ReviewReport path; do not "
-        "claim you wrote a file. ReviewReport output path: .awf/review.md"
-        + PI_FINDING_INSTRUCTIONS
+        "claim you wrote a file. ReviewReport output path: .awf/review.md" + PI_FINDING_INSTRUCTIONS
     )
     expected = [
         "pi-test",

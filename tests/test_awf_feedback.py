@@ -86,12 +86,7 @@ def test_valid_finding_is_strictly_extracted_from_eof():
 def test_finding_does_not_consume_the_final_report_16_kib_capacity():
     final_report = b"R" * awf_feedback.MAX_FINAL_REPORT_BYTES
     payload = json.dumps(candidate(), separators=(",", ":")).encode("utf-8")
-    combined = (
-        final_report
-        + awf_feedback.ENVELOPE_PREFIX
-        + payload
-        + awf_feedback.ENVELOPE_SUFFIX
-    )
+    combined = final_report + awf_feedback.ENVELOPE_PREFIX + payload + awf_feedback.ENVELOPE_SUFFIX
 
     result = awf_feedback.extract_finding(combined)
 
@@ -177,9 +172,9 @@ def test_occurrence_identity_is_deterministic_across_candidate_key_order():
 
 
 def test_occurrence_identity_changes_with_delivery():
-    assert occurrence()["occurrence_id"] != occurrence(input_delivery_id="delivery-2")[
-        "occurrence_id"
-    ]
+    assert (
+        occurrence()["occurrence_id"] != occurrence(input_delivery_id="delivery-2")["occurrence_id"]
+    )
 
 
 def test_capture_queues_once_and_strips_exact_report(tmp_path: Path):

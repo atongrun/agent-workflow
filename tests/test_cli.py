@@ -75,9 +75,7 @@ def test_feedback_status_forwards_to_packaged_operation(monkeypatch, tmp_path):
     operation = SimpleNamespace(main=lambda argv: received.append(argv) or 0)
     monkeypatch.setitem(sys.modules, "awf_feedback", operation)
 
-    result = cli.main(
-        ["feedback", "status", "--state-root", str(tmp_path), "--json"]
-    )
+    result = cli.main(["feedback", "status", "--state-root", str(tmp_path), "--json"])
 
     assert result == 0
     assert received == [["status", "--state-root", str(tmp_path), "--json"]]
@@ -134,9 +132,7 @@ def test_feedback_ingest_forwards_payload_as_one_argument(monkeypatch, tmp_path)
     )
 
     assert result == 0
-    assert received == [
-        ["ingest", "--state-root", str(tmp_path), "--payload-json", payload]
-    ]
+    assert received == [["ingest", "--state-root", str(tmp_path), "--payload-json", payload]]
 
 
 class TestCLIValidate:

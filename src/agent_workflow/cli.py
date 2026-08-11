@@ -581,9 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     feedback_parser = subparsers.add_parser(
         "feedback", help="Operate the independent Dogfood Finding pipeline"
     )
-    feedback_commands = feedback_parser.add_subparsers(
-        dest="feedback_command", required=True
-    )
+    feedback_commands = feedback_parser.add_subparsers(dest="feedback_command", required=True)
     feedback_status_parser = feedback_commands.add_parser(
         "status", help="Inspect local Feedback Outbox state"
     )
