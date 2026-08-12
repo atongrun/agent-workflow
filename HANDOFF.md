@@ -14,8 +14,11 @@ source-gated Finding may be stripped from existing OpenCode coder/reviewer, Code
 reviewer Reports before formal validation/import, queued under a separate Feedback Outbox, sent
 only by `awf feedback flush`, and durably deduplicated by `awf feedback ingest` before Agent Bus
 handler success permits ACK. Agent Bus Core, Workflow roles/stages, business checkpoint/outbox/ACK
-semantics, triage, grouping, publication, automatic flush, and deployment remain unchanged. The
-bounded contract and current verification are in
+semantics, triage, grouping, publication, and automatic flush remain unchanged. The explicitly
+authorized reporter deployment is live as a dedicated identity and hardened system service. One
+fresh disposable event proved durable ingest before handler-success ACK, empty reporter pending/
+failed queues, and restart recovery; credentials remain outside Git in protected files. The bounded
+contract and current verification are in
 [`docs/tasks/dogfood-finding-phase-a.md`](docs/tasks/dogfood-finding-phase-a.md) and its
 [implementation report](docs/tasks/dogfood-finding-phase-a-implementation-report.md).
 

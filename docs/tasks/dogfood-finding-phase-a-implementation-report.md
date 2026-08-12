@@ -72,8 +72,14 @@ The explicit CRLF regression test is included in the passing run above.
 
 ## Remaining operational work
 
-- Create the `awf-reporter` Agent Bus identity/context and service only in an explicitly authorized
-  deployment task.
+- The explicitly authorized reporter deployment is complete. A dedicated `awf-reporter` Agent Bus
+  identity and hardened system service run an isolated AWF checkout at this PR's exact SHA and the
+  latest default-branch Agent Bus client checkout. Credentials remain in root-owned mode-`0600`
+  files and reporter state is writable only by the dedicated service identity.
+- Live acceptance used one fresh disposable event. The reporter durably committed the exact
+  occurrence before handler success permitted ACK; the recipient's pending and failed queues were
+  empty afterward. A service restart changed the PID and returned to `active`/`enabled` with zero
+  restart failures while preserving the single ingest record.
 - Do not claim Codex reviewer completed-output recovery; Phase A only captures its successful
   fresh-run Report.
 - Triage, grouping, publication safety, GitHub publication, and automatic flushing remain out of
