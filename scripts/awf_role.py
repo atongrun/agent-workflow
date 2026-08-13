@@ -73,11 +73,21 @@ from awf_executor import (
 from awf_executor import (
     start as start_command,
 )
+from awf_feedback import (
+    MAX_COMBINED_REPORT_BYTES,
+    FindingContractError,
+    capture_report_finding,
+)
+from awf_feedback import (
+    default_state_root as feedback_state_root,
+)
 from awf_taskcard import (
     ReviewerSelectionContract,
     TaskCardContractError,
     reviewer_selection_contract,
 )
+
+from agent_workflow import __version__ as AWF_VERSION
 
 
 def log(msg: str) -> None:
@@ -1427,6 +1437,7 @@ def spawn(
     evidence: RunEvidence | None = None,
     tracked_phase: str | None = None,
     stdout_path: str | None = None,
+    stdout_max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES,
 ) -> int:
     """Run a command as a real argv (no shell). Handles Windows .cmd/.bat shims.
 
@@ -1477,7 +1488,7 @@ def spawn(
         )
         try:
             if stdout_path is not None:
-                stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc)
+                stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc, stdout_max_bytes)
             else:
                 proc.communicate(stdin)
                 stdout_text = ""
@@ -1510,7 +1521,7 @@ def spawn(
             },
         )
         if stdout_limit_exceeded:
-            die("captured model stdout exceeds 16 KiB")
+            die(f"captured model stdout exceeds {stdout_max_bytes // 1024} KiB")
         if stdout_path is not None and proc.returncode == 0:
             atomic_write_text(Path(stdout_path), stdout_text or "")
         return proc.returncode
@@ -1526,9 +1537,9 @@ def spawn(
             env=env or child_env(),
             allow_shell_wrapper=True,
         )
-        stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc)
+        stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc, stdout_max_bytes)
         if stdout_limit_exceeded:
-            die("captured model stdout exceeds 16 KiB")
+            die(f"captured model stdout exceeds {stdout_max_bytes // 1024} KiB")
         if proc.returncode == 0:
             atomic_write_text(Path(stdout_path), stdout_text)
         return proc.returncode
@@ -1563,6 +1574,55 @@ def atomic_write_text(path: Path, text: str) -> None:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
+
+
+def capture_dogfood_finding(
+    report_path: Path,
+    *,
+    input_context: dict[str, object],
+    source_role: str,
+    source_tool: str,
+    evidence: RunEvidence | None,
+) -> None:
+    """Strip one optional Finding before existing report validation/import.
+
+    Feedback persistence is best-effort and cannot affect business success.
+    Reserved-envelope contract errors and strip failures remain artifact
+    failures because continuing would contaminate the formal report.
+    """
+    state_root = evidence.state_dir if evidence is not None else feedback_state_root
+    delivery_identity = str(input_context.get("delivery_id") or input_context["key"])
+
+    def record_best_effort(**fields: object) -> None:
+        try:
+            record(evidence, "finding_capture", **fields)
+        except OSError as exc:
+            log(f"WARN: Finding evidence was not persisted ({type(exc).__name__})")
+
+    try:
+        result = capture_report_finding(
+            report_path,
+            state_root,
+            input_delivery_id=delivery_identity,
+            source_role=source_role,
+            source_tool=source_tool,
+            awf_version=AWF_VERSION,
+            warn=lambda message: log(f"WARN: {message}"),
+        )
+    except FindingContractError as exc:
+        record_best_effort(finding_status="artifact_invalid")
+        die(f"artifact_invalid: {exc}")
+    except OSError as exc:
+        record_best_effort(finding_status="strip_failed")
+        die(f"artifact_invalid: Finding strip failed ({type(exc).__name__})")
+    if result.status == "absent":
+        return
+    fields: dict[str, object] = {"finding_status": result.status}
+    if result.occurrence_id:
+        fields["finding_occurrence_id"] = result.occurrence_id
+    if result.reason:
+        fields["finding_rejection_reason"] = result.reason
+    record_best_effort(**fields)
 
 
 def git(repo: str, *args: str) -> int:
@@ -3480,6 +3540,7 @@ def tool_pi_review(
             evidence=evidence,
             tracked_phase="pi" if evidence is not None else None,
             stdout_path=review_report_path,
+            stdout_max_bytes=MAX_COMBINED_REPORT_BYTES,
         )
 
     if evidence is not None:
@@ -4086,8 +4147,15 @@ def role_coder(a: argparse.Namespace) -> int:
             postflight_status="running",
         )
         try:
-            # 4. ImplementationReport gate — fail before any write or downstream event
             model_report = resolve_repo_file(model_repo, a.report, "ImplementationReport")
+            capture_dogfood_finding(
+                model_report,
+                input_context=input_context,
+                source_role="coder",
+                source_tool=tool,
+                evidence=evidence,
+            )
+            # 4. ImplementationReport gate — fail before any write or downstream event
             check_report(str(model_report))
 
             # 5. Rerun every verification command from the frozen contract
@@ -4591,6 +4659,22 @@ def role_reviewer(a: argparse.Namespace) -> int:
             assert_model_pr_git_state(repo, provenance)
         else:
             assert_model_git_state(repo, a.branch, a.commit)
+        model_review_report_path = resolve_review_report_path(
+            model_repo,
+            a.review_report,
+            a.report,
+        )
+        # The real importer rejects a missing model-side report. Keep the capture hook
+        # conditional so recovery tests can replace the importer without changing its
+        # established three-argument contract.
+        if model_review_report_path.is_file():
+            capture_dogfood_finding(
+                model_review_report_path,
+                input_context=input_context,
+                source_role="reviewer",
+                source_tool=tool,
+                evidence=evidence,
+            )
         review_report_path = import_model_report(model_repo, repo, a.review_report)
         try:
             review_report = parse_review_report(review_report_path)
@@ -4632,6 +4716,14 @@ def role_reviewer(a: argparse.Namespace) -> int:
             or hashlib.sha256(review_report_path.read_bytes()).hexdigest() != report_sha256
         ):
             die("trusted ReviewReport does not match its recovery checkpoint")
+    else:
+        capture_dogfood_finding(
+            review_report_path,
+            input_context=input_context,
+            source_role="reviewer",
+            source_tool=tool,
+            evidence=evidence,
+        )
     if checkpoint is not None and checkpoint_path is not None and provenance is not None:
         if recovery_phase in {"model_imported", "pr_tuple_verified"}:
             try:

@@ -115,6 +115,7 @@ operations = operations_dir()
 schemas = schemas_dir()
 templates = templates_dir()
 required = [
+    operations / "awf_feedback.py",
     operations / "awf_listen.py",
     operations / "awf_role.py",
     operations / "awf_dispatch.py",
@@ -138,12 +139,14 @@ if os.name != "nt":
 sys.path.insert(0, str(operations))
 import awf_control_plane
 import awf_dispatch
+import awf_feedback
 import awf_listen
 import awf_role
 assert Path(awf_listen.__file__).resolve().is_relative_to(operations)
 assert Path(awf_role.__file__).resolve().is_relative_to(operations)
 assert awf_control_plane.DEFAULT_ROUTES
 assert callable(awf_dispatch.main)
+assert awf_feedback.EVENT_TYPE == "feedback:awf-finding-v1"
 assert status.STATUS_FORMAT == "awf.node-status.v1"
 assert node.READINESS_FORMAT == "awf.node-readiness.v1"
 assert Path(cli._ops_module().__file__).resolve().is_relative_to(operations)
@@ -178,6 +181,17 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
             text=True,
         )
         assert "--probe-id" in resume_help.stdout
+        feedback_help = subprocess.run(
+            [str(awf), "feedback", "--help"],
+            check=True,
+            cwd=outside,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+        )
+        assert "status" in feedback_help.stdout
+        assert "flush" in feedback_help.stdout
+        assert "ingest" in feedback_help.stdout
         missing_profile = subprocess.run(
             [str(awf), "node", "status", "--profile", "missing-profile"],
             cwd=outside,

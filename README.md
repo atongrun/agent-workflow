@@ -246,6 +246,23 @@ trusted listener recovery. Status labels unrecorded health/checkpoint/queue valu
 explicitly, and resume is fail-closed: it cannot replay a model, ACK, requeue,
 or historical delivery.
 
+Dogfood Findings use a separate best-effort operations path. A trusted coder/reviewer may extract
+one bounded safe EOF Finding from its model Report and strip it before formal Report validation,
+hashing, import, verdict, or business handoff. Operators inspect and explicitly flush this queue:
+
+```bash
+awf feedback status
+awf feedback status --json
+awf feedback flush --config ~/.config/awf/dispatch.env
+```
+
+The flush sends `feedback:awf-finding-v1` to the independent `awf-reporter` identity. Reporter
+handlers invoke `awf feedback ingest --payload-json <payload>` and return success only after exact
+occurrence dedupe and durable local commit. Feedback failures never delay or change the business
+handler ACK. This Phase A path does not triage, group, publish, create GitHub issues, run a daemon,
+or change Agent Bus Core. The bounded contract is in
+[`docs/tasks/dogfood-finding-phase-a.md`](docs/tasks/dogfood-finding-phase-a.md).
+
 An installed wheel exposes explicit session-bound and user-managed listener lifecycles:
 
 ```bash

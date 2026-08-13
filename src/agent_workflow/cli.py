@@ -437,6 +437,27 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return awf_preflight.main(args.preflight_args)
 
 
+def cmd_feedback(args: argparse.Namespace) -> int:
+    """Run the packaged, business-independent feedback operations CLI."""
+    scripts = operations_dir()
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import awf_feedback
+
+    forwarded = [args.feedback_command]
+    if args.state_root is not None:
+        forwarded += ["--state-root", str(args.state_root)]
+    if args.feedback_command == "status" and args.json:
+        forwarded.append("--json")
+    elif args.feedback_command == "flush":
+        if args.config is not None:
+            forwarded += ["--config", str(args.config)]
+        forwarded += ["--limit", str(args.limit)]
+    elif args.feedback_command == "ingest":
+        forwarded += ["--payload-json", args.payload_json]
+    return awf_feedback.main(forwarded)
+
+
 def _print_resource(resource) -> None:
     meta = resource.metadata
     print(f"apiVersion: {resource.apiVersion}")
@@ -556,6 +577,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     preflight_parser.add_argument("preflight_args", nargs=argparse.REMAINDER)
     preflight_parser.set_defaults(func=cmd_preflight)
+
+    feedback_parser = subparsers.add_parser(
+        "feedback", help="Operate the independent Dogfood Finding pipeline"
+    )
+    feedback_commands = feedback_parser.add_subparsers(dest="feedback_command", required=True)
+    feedback_status_parser = feedback_commands.add_parser(
+        "status", help="Inspect local Feedback Outbox state"
+    )
+    feedback_status_parser.add_argument("--state-root", type=Path, default=None)
+    feedback_status_parser.add_argument("--json", action="store_true")
+    feedback_status_parser.set_defaults(func=cmd_feedback)
+    feedback_flush_parser = feedback_commands.add_parser(
+        "flush", help="Send pending occurrences to Agent Bus"
+    )
+    feedback_flush_parser.add_argument("--state-root", type=Path, default=None)
+    feedback_flush_parser.add_argument("--config", type=Path, default=None)
+    feedback_flush_parser.add_argument("--limit", type=int, default=20)
+    feedback_flush_parser.set_defaults(func=cmd_feedback)
+    feedback_ingest_parser = feedback_commands.add_parser(
+        "ingest", help="Durably ingest one occurrence before Bus ACK"
+    )
+    feedback_ingest_parser.add_argument("--state-root", type=Path, default=None)
+    feedback_ingest_parser.add_argument("--payload-json", required=True)
+    feedback_ingest_parser.set_defaults(func=cmd_feedback)
 
     run_parser = subparsers.add_parser("run", help="Initialize the bounded serial operator run")
     run_parser.add_argument("--repo", default=".")

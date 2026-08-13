@@ -2,6 +2,19 @@
 
 from __future__ import annotations
 
+_FINDING_INSTRUCTIONS = """
+
+Optional Dogfood Finding: after the complete Report, you may append at most one exact EOF block:
+<!-- awf-dogfood-finding-v1
+{"kind":"reliability","component":"recovery","summary":"...","observed":"...","expected":"..."}
+-->
+Use strict JSON with exactly those five keys. kind is bug, reliability, diagnostic, or
+usability. component is adapter, artifact, configuration, control_plane, dispatch, node,
+postflight, preflight, recovery, routing, or transport. Keep every text value short and
+single-line. Never include credentials, URLs, local paths, prompts, environment values,
+logs, diffs, or source code. Omit the whole block when there is no safe concrete finding.
+"""
+
 
 def render_reviewer_invocation(
     *,
@@ -41,6 +54,7 @@ def render_reviewer_invocation(
         f"\n\nReviewReport output path: {review_report_path}\n"
         "\n--- Required ReviewReport template ---\n\n" + review_report_template
     )
+    stdin += _FINDING_INSTRUCTIONS
     if card_text:
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + card_text
     return argv, stdin

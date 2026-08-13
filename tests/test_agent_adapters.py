@@ -4,8 +4,11 @@ import itertools
 
 import pytest
 
+from scripts.agent_adapters.codex import _FINDING_INSTRUCTIONS as CODEX_FINDING_INSTRUCTIONS
 from scripts.agent_adapters.codex import render_reviewer_invocation
+from scripts.agent_adapters.opencode import _FINDING_INSTRUCTIONS as OPENCODE_FINDING_INSTRUCTIONS
 from scripts.agent_adapters.opencode import render_executor_argv, render_reviewer_argv
+from scripts.agent_adapters.pi import _FINDING_INSTRUCTIONS as PI_FINDING_INSTRUCTIONS
 from scripts.agent_adapters.pi import render_reviewer_argv as render_pi_reviewer_argv
 
 
@@ -39,6 +42,7 @@ def test_render_opencode_executor_argv_is_exact(model, normalized_feedback):
         "executor instructions"
         f"\n\nWrite the complete ImplementationReport to exactly: {report_path}\n"
     )
+    instructions += OPENCODE_FINDING_INSTRUCTIONS
     if normalized_feedback:
         instructions += (
             "\n\n--- Structured reviewer feedback to correct ---\n\n" + normalized_feedback
@@ -65,7 +69,8 @@ def test_render_opencode_executor_preserves_windows_workspace_and_report_path():
     assert argv[argv.index("--dir") + 1] == workspace
     assert len(argv) == 10
     assert argv[-2] == "--"
-    assert argv[-1].endswith(f"Write the complete ImplementationReport to exactly: {report_path}\n")
+    assert f"Write the complete ImplementationReport to exactly: {report_path}\n" in argv[-1]
+    assert "<!-- awf-dogfood-finding-v1" in argv[-1]
     assert " " in argv[0] and " " in argv[argv.index("--dir") + 1]
 
 
@@ -90,7 +95,8 @@ def test_render_opencode_reviewer_argv_is_exact(model, card_file):
         expected += ["-m", model]
     expected += [
         "--",
-        "review instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n",
+        "review instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n"
+        + OPENCODE_FINDING_INSTRUCTIONS,
     ]
 
     assert argv == expected
@@ -135,6 +141,7 @@ def test_render_codex_reviewer_invocation_is_exact(model, card_text):
         "\n\nReviewReport output path: .awf/review.md\n"
         "\n--- Required ReviewReport template ---\n\n# ReviewReport template\n"
     )
+    expected_stdin += CODEX_FINDING_INSTRUCTIONS
     if card_text:
         expected_stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + card_text
 
@@ -157,7 +164,7 @@ def test_render_pi_reviewer_argv_is_exact(model):
         "Use only read-only repository inspection tools. "
         "Return the complete filled-in Markdown ReviewReport as stdout. "
         "The trusted runner will persist stdout to the exact ReviewReport path; do not "
-        "claim you wrote a file. ReviewReport output path: .awf/review.md"
+        "claim you wrote a file. ReviewReport output path: .awf/review.md" + PI_FINDING_INSTRUCTIONS
     )
     expected = [
         "pi-test",

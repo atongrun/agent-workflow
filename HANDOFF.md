@@ -1,12 +1,26 @@
 # Repository Handoff
 
-> Current through the accepted 2026-08-09 three-TaskCard downstream dogfood and the 2026-08-10
-> `v0.3.0` release documentation. The minimum
+> Current through the 2026-08-12 Dogfood Finding Phase A implementation follow-up, the accepted
+> 2026-08-09 three-TaskCard downstream dogfood, and the 2026-08-10 `v0.3.0` release documentation.
+> The minimum
 > dispatch floor is the merge containing this handoff; repository files and live Git refs are
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-10
+## Current Handoff State: 2026-08-12
+
+The current Phase A follow-up adds an independent Dogfood Finding operations path: one strict,
+source-gated Finding may be stripped from existing OpenCode coder/reviewer, Codex reviewer, or Pi
+reviewer Reports before formal validation/import, queued under a separate Feedback Outbox, sent
+only by `awf feedback flush`, and durably deduplicated by `awf feedback ingest` before Agent Bus
+handler success permits ACK. Agent Bus Core, Workflow roles/stages, business checkpoint/outbox/ACK
+semantics, triage, grouping, publication, and automatic flush remain unchanged. The explicitly
+authorized reporter deployment is live as a dedicated identity and hardened system service. One
+fresh disposable event proved durable ingest before handler-success ACK, empty reporter pending/
+failed queues, and restart recovery; credentials remain outside Git in protected files. The bounded
+contract and current verification are in
+[`docs/tasks/dogfood-finding-phase-a.md`](docs/tasks/dogfood-finding-phase-a.md) and its
+[implementation report](docs/tasks/dogfood-finding-phase-a-implementation-report.md).
 
 The first non-infrastructure product gate is complete. Three serial Dousansi TaskCards ran through
 the managed Windows OpenCode coder, Mac Pi reviewer, deterministic architect terminal consumer,

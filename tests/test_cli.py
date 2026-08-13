@@ -70,6 +70,71 @@ def test_preflight_does_not_expose_internal_handler_commands(monkeypatch, capsys
     assert capsys.readouterr().err == "ERROR: awf preflight supports only resume-deep\n"
 
 
+def test_feedback_status_forwards_to_packaged_operation(monkeypatch, tmp_path):
+    received = []
+    operation = SimpleNamespace(main=lambda argv: received.append(argv) or 0)
+    monkeypatch.setitem(sys.modules, "awf_feedback", operation)
+
+    result = cli.main(["feedback", "status", "--state-root", str(tmp_path), "--json"])
+
+    assert result == 0
+    assert received == [["status", "--state-root", str(tmp_path), "--json"]]
+
+
+def test_feedback_flush_forwards_bounded_operator_options(monkeypatch, tmp_path):
+    received = []
+    operation = SimpleNamespace(main=lambda argv: received.append(argv) or 0)
+    monkeypatch.setitem(sys.modules, "awf_feedback", operation)
+    config = tmp_path / "dispatch.env"
+
+    result = cli.main(
+        [
+            "feedback",
+            "flush",
+            "--state-root",
+            str(tmp_path),
+            "--config",
+            str(config),
+            "--limit",
+            "3",
+        ]
+    )
+
+    assert result == 0
+    assert received == [
+        [
+            "flush",
+            "--state-root",
+            str(tmp_path),
+            "--config",
+            str(config),
+            "--limit",
+            "3",
+        ]
+    ]
+
+
+def test_feedback_ingest_forwards_payload_as_one_argument(monkeypatch, tmp_path):
+    received = []
+    operation = SimpleNamespace(main=lambda argv: received.append(argv) or 0)
+    monkeypatch.setitem(sys.modules, "awf_feedback", operation)
+    payload = '{"format":"awf.finding-occurrence.v1"}'
+
+    result = cli.main(
+        [
+            "feedback",
+            "ingest",
+            "--state-root",
+            str(tmp_path),
+            "--payload-json",
+            payload,
+        ]
+    )
+
+    assert result == 0
+    assert received == [["ingest", "--state-root", str(tmp_path), "--payload-json", payload]]
+
+
 class TestCLIValidate:
     def test_validate_role_passes(self):
         result = run_awf("validate", "roles/planner.yaml")
