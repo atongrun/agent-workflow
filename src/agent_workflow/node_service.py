@@ -256,6 +256,7 @@ def _write_install_record(
         "format": "awf.node-managed-install.v1",
         "manager": manager,
         "profile": str(Path(profile.path).resolve()),
+        "profile_source": str(Path(profile.authoring_path).resolve()),
         "profile_sha256": profile.digest,
         "definition": str(definition),
         "definition_sha256": "sha256:" + hashlib.sha256(body).hexdigest(),
@@ -293,6 +294,7 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
     expected = {
         "manager": manager,
         "profile": str(Path(profile.path).resolve()),
+        "profile_source": str(Path(profile.authoring_path).resolve()),
         "profile_sha256": profile.digest,
         "python": str(Path(sys.executable).resolve()),
         "awf_version": __version__,

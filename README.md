@@ -327,6 +327,16 @@ proved the manager, listener PID, launch identity, lease, queue consumption, cra
 clean local stop. The evidence matrix is recorded in the
 [lifecycle implementation report](docs/tasks/windows-listener-service-lifecycle-implementation-report.md).
 
+For `lifecycle.mode=managed`, `awf node install` validates the authoring profile and writes a
+credential-free content-addressed snapshot under the platform AWF configuration directory.
+Generated native definitions and the install record reference only that durable snapshot; the
+authoring file is provenance and optional upgrade input, not runtime identity. `start`, `status`,
+`logs`, `stop`, `restart`, `upgrade`, `uninstall`, and supervisor reconcile resolve the exact
+installed binding after the source moves or disappears. Missing, malformed, ambiguous, or
+digest-drifted bindings fail closed instead of scanning for a replacement. Changing name, role,
+repository, state root, or lifecycle ownership requires uninstall/install rather than disguising a
+new node identity as an upgrade.
+
 `doctor --json` emits one credential-free `awf.node-readiness.v2` snapshot for operator discovery.
 It binds the installed `awf`, profile, strict configuration, workspace, selected tool version, and
 listener observation into a SHA-256 fingerprint and gives the observation a bounded reuse window.

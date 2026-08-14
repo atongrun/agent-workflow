@@ -79,9 +79,13 @@ cost of a Windows Service: provisioning those resources for a different identity
    root. An argv/environment/durable-record disagreement fails before Bus connection or provider
    invocation. Direct script entry retains only the explicit compatibility order
    `--state-root` -> `AWF_STATE_ROOT` -> platform default.
-3. Every supervisor runs exactly `awf node reconcile --profile <absolute-path>`. Reconcile reads one
-   atomic JSON desired-state record and either exits stopped or runs the unchanged foreground
-   listener; neither layer detaches.
+3. Managed install atomically creates or verifies one credential-free content-addressed profile
+   snapshot beneath the platform AWF configuration directory. Every supervisor runs exactly
+   `awf node reconcile --profile <durable-installed-snapshot>`, never the authoring profile path.
+   Reconcile reads one atomic JSON desired-state record and either exits stopped or runs the
+   unchanged foreground listener; neither layer detaches. Exact source/name registry bindings let
+   lifecycle commands find that snapshot after the authoring file moves or disappears; registry or
+   snapshot drift fails closed and is never repaired by directory scanning.
 4. Installation and running are orthogonal. Managed installation is current only when the native
    manager install record, profile/Python/action bindings, definition, and digests agree. Running
    requires agreement among process record, profile digest, live PID, exact `launch_id`, role/repo,
@@ -96,8 +100,12 @@ cost of a Windows Service: provisioning those resources for a different identity
 7. Crash reconcile uses the same foreground command. Existing checkpoint/outbox/inbox and success-gated ACK
    semantics remain authoritative.
 8. Definitions, profiles, argv, install records, and logs contain no password or token.
-9. Install, upgrade, and uninstall are profile-bound and idempotent. Uninstall touches only its exact
-   recorded manager identifier and preserves business state and logs.
+9. Install, upgrade, and uninstall are installed-snapshot-bound and idempotent. The install record
+   preserves original-source provenance, snapshot/digest, native definition/digest, interpreter,
+   manager action, and manager identifier. Upgrade cannot change name, role, repository,
+   state-root, or lifecycle ownership; such a new identity requires uninstall/install. Uninstall
+   touches only its exact recorded manager identifier, removes only explicitly bound profile
+   registry aliases, and preserves business state and logs.
 
 ## Decision matrix
 
@@ -150,6 +158,10 @@ portable JSON. Operators do not write XML, and PowerShell is neither generated n
 writing desired state and names the exact `awf node install --profile <resolved-profile>` action;
 it never installs implicitly. Drift names `upgrade` instead of silently repairing evidence. This
 ordering and behavior are identical across launchd, systemd, and Task Scheduler.
+The source profile may be edited as an explicit upgrade input, but it is not referenced by a
+running service. Status and stop therefore remain available if that file is temporary, renamed, or
+deleted. Fixed-role contention reports the incumbent credential-free installed profile path and
+the exact local stop action; it never falls back to a role-wide or process-name kill.
 The already supported Agent Bus `control:shutdown` may stop it gracefully from another node;
 `awf node start` asks the local supervisor to resume it.
 
