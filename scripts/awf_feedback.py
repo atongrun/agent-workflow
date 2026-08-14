@@ -545,7 +545,9 @@ def feedback_status(state_root: Path) -> dict[str, int]:
             _validate_occurrence_path(path, occurrence)
             root_binding = record.get("state_root_sha256", "")
             if root_binding and root_binding != state_root_binding(state_root):
-                raise FeedbackStateError("Feedback Outbox state-root binding conflicts with location")
+                raise FeedbackStateError(
+                    "Feedback Outbox state-root binding conflicts with location"
+                )
             counts[str(record["status"])] += 1
         except (FeedbackStateError, FindingContractError):
             counts["corrupt"] += 1

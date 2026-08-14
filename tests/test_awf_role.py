@@ -209,19 +209,22 @@ def test_custom_state_root_propagates_to_run_and_feedback_records(monkeypatch, t
     monkeypatch.setenv("AWF_STATE_ROOT", str(state_root))
     monkeypatch.setenv("AWF_STATE_ROOT_SHA256", binding)
 
-    assert awf_role.main(
-        [
-            "reviewer",
-            "--event-id",
-            "901",
-            "--branch",
-            "codex/root-propagation",
-            "--state-root",
-            str(state_root),
-            "--state-root-sha256",
-            binding,
-        ]
-    ) == 0
+    assert (
+        awf_role.main(
+            [
+                "reviewer",
+                "--event-id",
+                "901",
+                "--branch",
+                "codex/root-propagation",
+                "--state-root",
+                str(state_root),
+                "--state-root-sha256",
+                binding,
+            ]
+        )
+        == 0
+    )
 
     evidence = observed["evidence"]
     assert evidence.state_dir == state_root

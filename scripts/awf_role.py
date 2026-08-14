@@ -515,11 +515,7 @@ def pre_invocation_gate(
         or os.environ.get("AWF_STAGE")
         or ("review" if role == "reviewer" else "rework" if "rework" in event_type else "implement")
     )
-    state_root = (
-        evidence.state_dir
-        if evidence is not None
-        else direct_entry_state_root()
-    )
+    state_root = evidence.state_dir if evidence is not None else direct_entry_state_root()
     ledger = RunLedger(state_root, run_id)
     frozen_base = a.commit
     if ledger.ledger_path.exists():
@@ -4915,11 +4911,7 @@ def role_architect(a: argparse.Namespace) -> int:
     if _control_plane_enabled():
         task_id = a.branch.rsplit("/", 1)[-1]
         run_id = getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
-        state_root = (
-            evidence.state_dir
-            if evidence is not None
-            else direct_entry_state_root()
-        )
+        state_root = evidence.state_dir if evidence is not None else direct_entry_state_root()
         pull_request = {
             "number": int(provenance["pull_request"]) if provenance is not None else 0,
             "base_sha": str(provenance["base_sha"]) if provenance is not None else "",
