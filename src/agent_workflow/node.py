@@ -20,6 +20,7 @@ from jsonschema import Draft202012Validator
 from agent_workflow import __version__
 from agent_workflow.node_service import NodeServiceError
 from agent_workflow.resources import authority_manifest_path, operations_dir, schemas_dir
+from agent_workflow.state_root import resolve_state_root, state_root_binding
 
 PROFILE_FORMAT = "awf.node-profile.v1"
 ROLE_TOKEN = {
@@ -60,8 +61,7 @@ class NodeProfile:
 
     @property
     def state_root(self) -> Path:
-        configured = self.values.get("state_root")
-        return Path(str(configured)).expanduser().resolve() if configured else default_state_root()
+        return resolve_state_root(str(self.values["state_root"]))
 
     @property
     def node_dir(self) -> Path:
@@ -316,6 +316,15 @@ def _lease_matches(
     pid: object,
     launch_id: object = "",
 ) -> bool:
+    recorded_root = lease.get("state_root") if lease else None
+    recorded_binding = lease.get("state_root_sha256") if lease else None
+    root_matches = bool(
+        (recorded_root is None and recorded_binding is None)
+        or (
+            recorded_root == str(profile.state_root)
+            and recorded_binding == state_root_binding(profile.state_root)
+        )
+    )
     identity_matches = bool(
         lease
         and (
@@ -329,6 +338,27 @@ def _lease_matches(
         and identity_matches
         and lease.get("role") == profile.role
         and os.path.normcase(str(lease.get("repo", ""))) == os.path.normcase(str(profile.repo))
+        and root_matches
+    )
+
+
+def _record_matches_profile(profile: NodeProfile, record: dict[str, object]) -> bool:
+    expected = {
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+    if any(record.get(key) != value for key, value in expected.items()):
+        return False
+    recorded_root = record.get("state_root")
+    recorded_binding = record.get("state_root_sha256")
+    return bool(
+        (recorded_root is None and recorded_binding is None)
+        or (
+            recorded_root == str(profile.state_root)
+            and recorded_binding == state_root_binding(profile.state_root)
+        )
     )
 
 
@@ -462,6 +492,14 @@ def _resolved_executable(value: str) -> str:
 
 
 def _local_readiness(profile: NodeProfile) -> LocalReadiness:
+    inherited_root = os.environ.get("AWF_STATE_ROOT")
+    if inherited_root and resolve_state_root(inherited_root) != profile.state_root:
+        raise NodeError("local readiness failed; profile state root conflicts with environment")
+    inherited_binding = os.environ.get("AWF_STATE_ROOT_SHA256", "")
+    if inherited_binding and inherited_binding != state_root_binding(profile.state_root):
+        raise NodeError(
+            "local readiness failed; profile state-root binding conflicts with environment"
+        )
     awf_config, awf_listen = _operations_modules()
     try:
         config = awf_config.load_config(profile.config_path)
@@ -547,13 +585,14 @@ def _listener_snapshot(profile: NodeProfile) -> dict[str, object]:
             "lease_bound": False,
         }
     pid = record.get("pid") if record else None
-    digest_matches = bool(record and record.get("profile_sha256") == profile.digest)
+    digest_matches = bool(record and _record_matches_profile(profile, record))
     launch_id = record.get("launch_id", "") if record else ""
     bound = bool(record and digest_matches and _live_lease_matches(profile, lease, pid, launch_id))
     return {
         "status": "running" if bound else "stale" if record else "stopped",
         "pid": pid,
         "profile_sha256": record.get("profile_sha256", "") if record else "",
+        "state_root_sha256": state_root_binding(profile.state_root),
         "lease_bound": bound,
     }
 
@@ -573,6 +612,10 @@ def _readiness_fingerprint(
         },
         "operations_dir": str(operations_dir().resolve()),
         "profile_sha256": profile.digest,
+        "state_root": {
+            "source": "node_profile",
+            "sha256": state_root_binding(profile.state_root),
+        },
         "config_sha256": config_sha256,
         "repo": str(readiness.repo),
         "bus_executable": readiness.bus_executable,
@@ -613,6 +656,10 @@ def doctor_report(
             "model": str(profile.values.get("model", "")),
         },
         "profile_sha256": profile.digest,
+        "state_root": {
+            "source": "node_profile",
+            "sha256": state_root_binding(profile.state_root),
+        },
         "fingerprint": _readiness_fingerprint(profile, readiness, listener),
         "listener": listener,
         "layers": [
@@ -832,6 +879,8 @@ def _start_locked(profile: NodeProfile) -> int:
         "launch_id": launch_id,
         "profile": str(profile.path),
         "profile_sha256": profile.digest,
+        "state_root": str(profile.state_root),
+        "state_root_sha256": state_root_binding(profile.state_root),
         "role": profile.role,
         "repo": str(profile.repo),
         "started_at": utc_now(),
@@ -862,6 +911,8 @@ def _foreground_record(profile: NodeProfile, launch_id: str) -> None:
         "launch_id": launch_id,
         "profile": str(profile.path),
         "profile_sha256": profile.digest,
+        "state_root": str(profile.state_root),
+        "state_root_sha256": state_root_binding(profile.state_root),
         "role": profile.role,
         "repo": str(profile.repo),
         "started_at": utc_now(),
@@ -928,7 +979,7 @@ def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False)
         record = _process_record(profile)
     except NodeError:
         record = None
-    if record and record.get("profile_sha256") != profile.digest:
+    if record and not _record_matches_profile(profile, record):
         raise NodeError("profile changed after listener start; stop using the original profile")
     from agent_workflow import status as factual_status
 
@@ -958,13 +1009,7 @@ def _stop_locked(profile: NodeProfile) -> int:
     if not record:
         print(f"profile={profile.name} listener=stopped")
         return 0
-    expected = {
-        "profile": str(profile.path),
-        "profile_sha256": profile.digest,
-        "role": profile.role,
-        "repo": str(profile.repo),
-    }
-    if any(record.get(key) != value for key, value in expected.items()):
+    if not _record_matches_profile(profile, record):
         raise NodeError("process record does not match this profile; refusing to signal")
     pid = record.get("pid")
     if not isinstance(pid, int) or pid < 1:
@@ -1075,13 +1120,7 @@ def _clear_managed_stale_stop(profile: NodeProfile, snapshot: dict[str, object])
     if not record or not lease:
         raise NodeError("managed stop degraded; fail closed on incomplete listener state")
     launch_id = record.get("launch_id", "")
-    expected = {
-        "profile": str(profile.path),
-        "profile_sha256": profile.digest,
-        "role": profile.role,
-        "repo": str(profile.repo),
-    }
-    if any(record.get(key) != value for key, value in expected.items()):
+    if not _record_matches_profile(profile, record):
         raise NodeError("managed stop degraded; fail closed on profile drift")
     if snapshot.get("pid") != record.get("pid") or snapshot.get("launch_id") != launch_id:
         raise NodeError("managed stop degraded; fail closed on launch identity mismatch")

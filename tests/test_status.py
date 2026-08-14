@@ -122,6 +122,16 @@ def test_delivery_checkpoint_supplies_the_recorded_review_file_hash(tmp_path: Pa
     assert file_sha == "sha256:" + "d" * 64
     assert checkpoint_path.read_bytes() == original_bytes
 
+    mismatched = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    mismatched["state_root_sha256"] = "sha256:" + "f" * 64
+    checkpoint_path.write_text(json.dumps(mismatched), encoding="utf-8")
+    facts, file_sha = status._delivery_checkpoints(profile, ledger)
+
+    assert facts["status"] == "partial"
+    assert facts["count"] == 0
+    assert facts["unreadable"] == 1
+    assert file_sha == ""
+
 
 def test_live_pr_and_ci_are_separate_from_recorded_facts(monkeypatch, tmp_path: Path):
     profile = make_profile(tmp_path)

@@ -4,7 +4,7 @@
   "title": "Agent Workflow node profile",
   "type": "object",
   "additionalProperties": false,
-  "required": ["format", "name", "role", "repo", "tool"],
+  "required": ["format", "name", "role", "repo", "tool", "state_root"],
   "properties": {
     "format": {"const": "awf.node-profile.v1"},
     "name": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"},

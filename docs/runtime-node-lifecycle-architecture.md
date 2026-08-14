@@ -72,22 +72,29 @@ cost of a Windows Service: provisioning those resources for a different identity
 ## Invariants
 
 1. Lifecycle code never reads, ACKs, requeues, resends, or dispatches an Agent Bus delivery.
-2. Every supervisor runs exactly `awf node reconcile --profile <absolute-path>`. Reconcile reads one
+2. A node profile must declare one absolute `state_root`. Node start resolves it once, records its
+   credential-free binding, and passes the exact path through listener argv and every generated
+   business/preflight handler. Process record, listener lease, RunEvidence, RunLedger context,
+   delivery checkpoint, business outbox, Feedback Outbox, readiness, and status all bind that same
+   root. An argv/environment/durable-record disagreement fails before Bus connection or provider
+   invocation. Direct script entry retains only the explicit compatibility order
+   `--state-root` -> `AWF_STATE_ROOT` -> platform default.
+3. Every supervisor runs exactly `awf node reconcile --profile <absolute-path>`. Reconcile reads one
    atomic JSON desired-state record and either exits stopped or runs the unchanged foreground
    listener; neither layer detaches.
-3. Running requires agreement among installed definition digest, process record, profile digest,
+4. Running requires agreement among installed definition digest, process record, profile digest,
    live PID, exact `launch_id`, role/repo, and lease. PID liveness alone is insufficient.
-4. Only one manager instance is allowed; an existing live listener wins over another start.
-5. Agent Bus `control:shutdown` remains the normal remote graceful-stop path. A successful clean
+5. Only one manager instance is allowed; an existing live listener wins over another start.
+6. Agent Bus `control:shutdown` remains the normal remote graceful-stop path. A successful clean
    listener exit records desired `stopped`; a non-zero exit preserves desired `running`. `awf node
    stop` records stopped before its independent local manager action and never depends on the
    control event. It succeeds only after
    the exact recorded process tree is dead. Stale state is removed only when launch identity matches
    and all bound PIDs are proven dead; live or unknown identity fails closed.
-6. Crash reconcile uses the same foreground command. Existing checkpoint/outbox/inbox and success-gated ACK
+7. Crash reconcile uses the same foreground command. Existing checkpoint/outbox/inbox and success-gated ACK
    semantics remain authoritative.
-7. Definitions, profiles, argv, install records, and logs contain no password or token.
-8. Install, upgrade, and uninstall are profile-bound and idempotent. Uninstall touches only its exact
+8. Definitions, profiles, argv, install records, and logs contain no password or token.
+9. Install, upgrade, and uninstall are profile-bound and idempotent. Uninstall touches only its exact
    recorded manager identifier and preserves business state and logs.
 
 ## Decision matrix

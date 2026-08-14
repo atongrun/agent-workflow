@@ -88,6 +88,7 @@ from awf_taskcard import (
 )
 
 from agent_workflow import __version__ as AWF_VERSION
+from agent_workflow.state_root import state_root_binding
 
 
 def log(msg: str) -> None:
@@ -155,6 +156,12 @@ def event_run_directory(
     )
 
 
+def direct_entry_state_root() -> Path:
+    """Resolve the explicit legacy handler order: environment, then platform default."""
+    configured = os.environ.get("AWF_STATE_ROOT")
+    return Path(configured).expanduser().resolve() if configured else workflow_state_directory()
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -187,6 +194,7 @@ class RunEvidence:
         self.state: dict[str, object] = {
             "event_id": event_id,
             "role": role,
+            "state_root_sha256": state_root_binding(self.state_dir),
             "handler_pid": os.getpid(),
             "postflight_started": False,
             "postflight_status": "not_started",
@@ -507,13 +515,7 @@ def pre_invocation_gate(
         or os.environ.get("AWF_STAGE")
         or ("review" if role == "reviewer" else "rework" if "rework" in event_type else "implement")
     )
-    state_root = (
-        evidence.state_dir
-        if evidence is not None
-        else Path(
-            os.environ.get("AWF_STATE_ROOT", str(Path.home() / ".local/state/agent-workflow"))
-        )
-    )
+    state_root = evidence.state_dir if evidence is not None else direct_entry_state_root()
     ledger = RunLedger(state_root, run_id)
     frozen_base = a.commit
     if ledger.ledger_path.exists():
@@ -548,6 +550,7 @@ def pre_invocation_gate(
         next_action=f"run trusted {role} preflight for {event_type}",
         stage=stage,
         current_stage_evidence_commit=a.commit,
+        state_root_sha256=state_root_binding(state_root),
     )
     try:
         ledger.initialize(
@@ -652,6 +655,9 @@ def _load_delivery_record(path: Path, label: str) -> dict[str, object] | None:
         die(f"{label} state is unreadable or invalid JSON")
     if not isinstance(value, dict):
         die(f"{label} state must be a JSON object")
+    root_binding = value.get("state_root_sha256", "")
+    if root_binding and root_binding != state_root_binding(path.parents[2]):
+        die(f"{label} state-root binding does not match its location")
     return value
 
 
@@ -695,6 +701,7 @@ def _checkpoint_immutable(record_value: dict[str, object]) -> dict[str, object]:
             "branch",
             "source_commit",
             "provenance",
+            "state_root_sha256",
         )
     }
 
@@ -711,6 +718,9 @@ def validate_recovery_checkpoint(record_value: dict[str, object]) -> None:
         die("recovery checkpoint phase is invalid")
     if record_value.get("phase_index") != phases.index(str(phase)):
         die("recovery checkpoint phase index is inconsistent")
+    root_binding = record_value.get("state_root_sha256", "")
+    if root_binding and not re.fullmatch(r"sha256:[0-9a-f]{64}", str(root_binding)):
+        die("recovery checkpoint state-root binding is invalid")
     for field in (
         "input_key",
         "input_delivery_id",
@@ -744,6 +754,7 @@ def begin_recovery_checkpoint(
     path = delivery_state_path(evidence, "checkpoint", str(input_context["key"]))
     record_value: dict[str, object] = {
         "format": "awf.recovery-checkpoint.v1",
+        "state_root_sha256": state_root_binding(evidence.state_dir),
         "role": role,
         "input_key": input_context["key"],
         "input_delivery_id": input_context["delivery_id"],
@@ -761,7 +772,12 @@ def begin_recovery_checkpoint(
     existing = _load_delivery_record(path, "recovery checkpoint")
     if existing is not None:
         validate_recovery_checkpoint(existing)
-        if _checkpoint_immutable(existing) != _checkpoint_immutable(record_value):
+        legacy_record = dict(record_value)
+        legacy_record.pop("state_root_sha256")
+        if _checkpoint_immutable(existing) == _checkpoint_immutable(legacy_record):
+            existing = {**existing, "state_root_sha256": state_root_binding(evidence.state_dir)}
+            _atomic_write_json(path, existing)
+        elif _checkpoint_immutable(existing) != _checkpoint_immutable(record_value):
             die("existing recovery checkpoint does not match the current Workflow input")
         return path, existing
     _atomic_write_json(path, record_value)
@@ -1163,13 +1179,18 @@ def complete_inbox(
     existing = _load_delivery_record(path, "inbox")
     expected = {
         "format": "awf.inbox.v1",
+        "state_root_sha256": state_root_binding(evidence.state_dir),
         "role": evidence.role,
         "delivery_id": delivery_id,
         "payload_sha256": payload_sha256,
         "status": "completed",
     }
-    if existing is not None and existing != expected:
-        die("Workflow delivery ID was already completed with different input")
+    if existing is not None:
+        legacy_expected = {
+            key: value for key, value in expected.items() if key != "state_root_sha256"
+        }
+        if existing != legacy_expected and existing != expected:
+            die("Workflow delivery ID was already completed with different input")
     _atomic_write_json(path, expected)
 
 
@@ -1191,6 +1212,9 @@ def inbox_completed(
         or existing.get("status") != "completed"
     ):
         die("Workflow delivery ID was already used with different input")
+    root_binding = existing.get("state_root_sha256", "")
+    if root_binding and root_binding != state_root_binding(evidence.state_dir):
+        die("Workflow delivery state-root binding does not match its location")
     return True
 
 
@@ -3650,6 +3674,9 @@ def validate_outbox_record(record_value: dict[str, object]) -> None:
     outbox_format = record_value.get("format")
     if outbox_format not in {"awf.outbox.v1", "awf.outbox.v2"}:
         die("outbox format is invalid")
+    root_binding = record_value.get("state_root_sha256", "")
+    if root_binding and not re.fullmatch(r"sha256:[0-9a-f]{64}", str(root_binding)):
+        die("outbox state-root binding is invalid")
     action = record_value.get("action")
     route = _OUTBOX_ROUTES.get(action)
     if route is None:
@@ -3733,6 +3760,7 @@ def prepare_outbox(
         die("outbox payload delivery ID is invalid")
     record_value: dict[str, object] = {
         "format": "awf.outbox.v2" if provenance is not None else "awf.outbox.v1",
+        "state_root_sha256": state_root_binding(evidence.state_dir),
         "source_role": evidence.role,
         "input_key": input_context["key"],
         "input_delivery_id": input_context["delivery_id"],
@@ -3757,7 +3785,12 @@ def prepare_outbox(
     path = delivery_state_path(evidence, "outbox", str(input_context["key"]))
     existing = _load_delivery_record(path, "outbox")
     if existing is not None:
-        if _outbox_immutable(existing) != _outbox_immutable(record_value):
+        legacy_record = dict(record_value)
+        legacy_record.pop("state_root_sha256")
+        if _outbox_immutable(existing) == _outbox_immutable(legacy_record):
+            existing = {**existing, "state_root_sha256": state_root_binding(evidence.state_dir)}
+            _atomic_write_json(path, existing)
+        elif _outbox_immutable(existing) != _outbox_immutable(record_value):
             die("existing outbox does not match the current Workflow input")
         return path, existing
     _atomic_write_json(path, record_value)
@@ -4878,16 +4911,7 @@ def role_architect(a: argparse.Namespace) -> int:
     if _control_plane_enabled():
         task_id = a.branch.rsplit("/", 1)[-1]
         run_id = getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
-        state_root = (
-            evidence.state_dir
-            if evidence is not None
-            else Path(
-                os.environ.get(
-                    "AWF_STATE_ROOT",
-                    str(Path.home() / ".local/state/agent-workflow"),
-                )
-            )
-        )
+        state_root = evidence.state_dir if evidence is not None else direct_entry_state_root()
         pull_request = {
             "number": int(provenance["pull_request"]) if provenance is not None else 0,
             "base_sha": str(provenance["base_sha"]) if provenance is not None else "",
@@ -4979,10 +5003,33 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--head-ref", default="")
     p.add_argument("--head-sha", default="")
     p.add_argument("--pull-request", type=int, default=0)
+    p.add_argument("--state-root", type=Path, default=None)
+    p.add_argument("--state-root-sha256", default="")
     a = p.parse_args(argv)
     if a.event_id < 1:
         p.error("--event-id must be a positive integer")
-    a.evidence = RunEvidence(a.event_id, a.role)
+    inherited_root = os.environ.get("AWF_STATE_ROOT")
+    state_root = (
+        a.state_root.expanduser().resolve()
+        if a.state_root is not None
+        else Path(inherited_root).expanduser().resolve()
+        if inherited_root
+        else direct_entry_state_root()
+    )
+    if inherited_root and Path(inherited_root).expanduser().resolve() != state_root:
+        p.error("state-root mismatch between handler argv and inherited environment")
+    binding = state_root_binding(state_root)
+    inherited_binding = os.environ.get("AWF_STATE_ROOT_SHA256", "")
+    if a.state_root_sha256 and a.state_root_sha256 != binding:
+        p.error("handler state-root binding does not match --state-root")
+    if inherited_binding and inherited_binding != binding:
+        p.error("handler state-root binding does not match inherited environment")
+    explicit_root = a.state_root is not None or bool(inherited_root)
+    a.evidence = RunEvidence(
+        a.event_id,
+        a.role,
+        state_root=state_root if explicit_root else None,
+    )
     a.evidence.record(
         "handler_start",
         handler_pid=os.getpid(),

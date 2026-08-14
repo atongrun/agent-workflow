@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_workflow.resources import operations_dir
+from agent_workflow.state_root import state_root_binding
 
 if TYPE_CHECKING:
     from agent_workflow.node import NodeProfile
@@ -165,11 +166,16 @@ def _delivery_checkpoints(
         branch = str(packet.get("branch", ""))
     records: list[dict[str, object]] = []
     unreadable = 0
+    expected_binding = state_root_binding(profile.state_root)
     if directory.is_dir():
         for path in sorted(directory.glob("*.json")):
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeError, json.JSONDecodeError):
+                unreadable += 1
+                continue
+            binding = value.get("state_root_sha256") if isinstance(value, dict) else None
+            if binding is not None and binding != expected_binding:
                 unreadable += 1
                 continue
             if isinstance(value, dict) and (not branch or value.get("branch") == branch):
@@ -182,7 +188,14 @@ def _delivery_checkpoints(
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             continue
-        if not isinstance(record, dict) or (branch and record.get("branch") != branch):
+        if (
+            not isinstance(record, dict)
+            or (
+                record.get("state_root_sha256") is not None
+                and record.get("state_root_sha256") != expected_binding
+            )
+            or (branch and record.get("branch") != branch)
+        ):
             continue
         facts = record.get("facts")
         if (
@@ -348,6 +361,10 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
         "format": STATUS_FORMAT,
         "observed_at": _now(),
         "profile": {"name": profile.name, "role": profile.role, "path": str(profile.path)},
+        "state_root": {
+            "source": "node_profile",
+            "sha256": state_root_binding(profile.state_root),
+        },
         "listener": _listener(profile),
         "workspace": _workspace(profile),
         "checkpoint": {"ledger": ledger_fact, "delivery": delivery_fact},

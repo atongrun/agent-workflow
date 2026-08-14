@@ -7,7 +7,18 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-12
+## Current Handoff State: 2026-08-14
+
+P0-1 of the usability remediation now defines one canonical host-local state-root contract for
+node-managed execution. A node profile explicitly owns the root; listener argv, generated business
+and preflight handlers, process/lease evidence, RunEvidence, RunLedger context, delivery
+checkpoint/outbox/inbox, Feedback Outbox, readiness, and factual status share its credential-free
+binding. Disagreement is rejected before Agent Bus connection or provider/model invocation, while
+direct script entry retains an explicit platform-default compatibility path. No lifecycle
+vocabulary, Agent Bus behavior, business/Finding ACK separation, retained event, Phase B, Agent
+Host, compiler, rework, status redesign, or binary work changed. The frozen scope and evidence are
+in [`docs/tasks/canonical-state-root-contract.md`](docs/tasks/canonical-state-root-contract.md) and
+its [implementation report](docs/tasks/canonical-state-root-contract-implementation-report.md).
 
 The current Phase A follow-up adds an independent Dogfood Finding operations path: one strict,
 source-gated Finding may be stripped from existing OpenCode coder/reviewer, Codex reviewer, or Pi

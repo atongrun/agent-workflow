@@ -18,6 +18,7 @@ from agent_workflow.manifest import (
     write_manifest,
 )
 from agent_workflow.resources import authority_manifest_path, operations_dir
+from agent_workflow.state_root import state_root_binding
 from agent_workflow.validation import (
     load_role_map_from_files,
     parse_all_resources,
@@ -394,6 +395,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             authority_manifest=authority,
             next_action="clean_checkout",
             stage="implement",
+            state_root_sha256=state_root_binding(Path(args.state_root)),
         )
         ops.RunLedger(Path(args.state_root), run_id).initialize(
             packet,
