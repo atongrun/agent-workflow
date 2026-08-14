@@ -96,6 +96,11 @@ cost of a Windows Service: provisioning those resources for a different identity
 8. Definitions, profiles, argv, install records, and logs contain no password or token.
 9. Install, upgrade, and uninstall are profile-bound and idempotent. Uninstall touches only its exact
    recorded manager identifier and preserves business state and logs.
+10. Operator lifecycle truth is five orthogonal facts. `configured` covers only the
+    profile/config/tool/workspace boundary; `installed` comes from the native install record plus
+    definition digest; `running` retains the exact profile/process/lease/launch agreement;
+    `connected` is a bounded live Bus observation; and `dispatch_capable` requires current Fast
+    validation of the bound Deep proof. False, unknown, and stale facts are not collapsed.
 
 ## Decision matrix
 
@@ -143,7 +148,10 @@ The common commands are `doctor`, `foreground`, `reconcile`, `install`, `start`,
 definition. That definition sets a one-minute/current-user schedule, `IgnoreNew`, and `PT0S`
 unlimited execution; its action is the exact reconcile argv. Profiles and desired state remain
 portable JSON. Operators do not write XML, and PowerShell is neither generated nor invoked.
-`install` leaves desired state stopped; `start` is the explicit transition to running.
+`install` leaves desired state stopped; `start` is the explicit transition to running. Installation
+is an explicit idempotent prerequisite: `start` never creates or rewrites a definition, and a
+missing install record fails before desired-state or manager mutation with the exact
+`awf node install --profile <profile>` action on every manager.
 The already supported Agent Bus `control:shutdown` may stop it gracefully from another node;
 `awf node start` asks the local supervisor to resume it.
 

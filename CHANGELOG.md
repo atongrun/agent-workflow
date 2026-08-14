@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Replace the node readiness umbrella `status=ready` with credential-free `configured`,
+  `installed`, `running`, `connected`, and `dispatch_capable` facts plus one legal next action.
+  Managed installation now comes only from the native install record and definition digest;
+  `start` retains the explicit idempotent `install` prerequisite on all three managers.
+
 ### Added
 
 - Add Phase A of the bounded Dogfood Finding pipeline to the operations surface. Existing

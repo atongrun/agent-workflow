@@ -9,6 +9,18 @@
 
 ## Current Handoff State: 2026-08-14
 
+P0-2 replaces the node doctor's ambiguous `status=ready` with five orthogonal facts:
+`configured`, `installed`, `running`, `connected`, and `dispatch_capable`. Configuration proves
+only the profile/config/tool/workspace boundary; native install record plus definition digest owns
+managed installation; running retains exact profile/process/lease/launch identity; connection is
+a bounded live observation; and dispatch capability is true only when current Fast validation
+accepts its bound Deep proof. Human and JSON doctor/status output preserve false, unknown, and
+stale facts and select one legal next action. Managed install remains an explicit idempotent
+prerequisite, and uninstalled start fails before desired-state or manager mutation with the same
+exact install action on launchd, systemd, and Task Scheduler. The frozen scope and evidence are in
+[`docs/tasks/truthful-lifecycle-state-model.md`](docs/tasks/truthful-lifecycle-state-model.md) and
+its [implementation report](docs/tasks/truthful-lifecycle-state-model-implementation-report.md).
+
 P0-1 of the usability remediation now defines one canonical host-local state-root contract for
 node-managed execution. A node profile explicitly owns the root; listener argv, generated business
 and preflight handlers, process/lease evidence, RunEvidence, RunLedger context, delivery
@@ -71,8 +83,10 @@ matrix remains the acceptance gate.
 The node doctor also has a bounded machine-readable operator snapshot:
 `awf node doctor --profile <profile> --json --ttl-seconds <seconds>`. It lets an architect replace
 sequential host, path, tool, Bus, workspace, and listener discovery commands with one remote call.
-The credential-free fingerprint and validity window are discovery evidence only; the report never
-claims dispatch authority, writes a cache, emits an event, or replaces Fast/Deep Preflight. See
+The v2 report names configuration, installation, running, connection, and dispatch capability
+separately. Its credential-free fingerprint and validity window remain discovery evidence; it
+writes no cache, emits no event, and derives a true dispatch fact only by rerunning the existing
+read-only Fast gate against a current bound Deep proof. See
 [`docs/tasks/node-readiness-snapshot-implementation-report.md`](docs/tasks/node-readiness-snapshot-implementation-report.md).
 
 Node startup allows 15 seconds for the child listener to repeat startup validation and publish its

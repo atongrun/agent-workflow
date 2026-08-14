@@ -148,7 +148,7 @@ assert awf_control_plane.DEFAULT_ROUTES
 assert callable(awf_dispatch.main)
 assert awf_feedback.EVENT_TYPE == "feedback:awf-finding-v1"
 assert status.STATUS_FORMAT == "awf.node-status.v1"
-assert node.READINESS_FORMAT == "awf.node-readiness.v1"
+assert node.READINESS_FORMAT == "awf.node-readiness.v2"
 assert Path(cli._ops_module().__file__).resolve().is_relative_to(operations)
 assert cli._authority_manifest_for_repo(Path.cwd()) == (
     operations / "authority-manifest.example.json"

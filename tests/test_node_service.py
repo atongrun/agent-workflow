@@ -181,6 +181,11 @@ def test_start_and_stop_persist_desired_state_before_manager_action(
         return {"state": state}
 
     monkeypatch.setattr(node, "write_desired_state", write_state)
+    monkeypatch.setattr(
+        node,
+        "_installed_snapshot",
+        lambda value: {"status": "true", "value": True},
+    )
     monkeypatch.setattr(node, "_resolve_managed_manager", lambda value: Manager())
 
     assert node.start(profile) == 0
@@ -191,6 +196,36 @@ def test_start_and_stop_persist_desired_state_before_manager_action(
         ("desired", "stopped"),
         ("manager.stop", None),
     ]
+
+
+@pytest.mark.parametrize("manager", ["launchd", "systemd", "task-scheduler"])
+def test_managed_start_requires_exact_install_action_before_desired_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    manager: str,
+):
+    profile = load_managed_profile(tmp_path, manager=manager)
+    monkeypatch.setattr(
+        node,
+        "_installed_snapshot",
+        lambda value: {"status": "false", "value": False},
+    )
+    monkeypatch.setattr(
+        node,
+        "write_desired_state",
+        lambda *_args, **_kwargs: pytest.fail("uninstalled start must not mutate desired state"),
+    )
+    monkeypatch.setattr(
+        node,
+        "_resolve_managed_manager",
+        lambda value: pytest.fail("uninstalled start must not call the native manager"),
+    )
+
+    with pytest.raises(
+        node.NodeError,
+        match=r"awf node install --profile .*profile\.json",
+    ):
+        node.start(profile)
 
 
 def test_install_leaves_managed_node_stopped_until_explicit_start(
@@ -245,6 +280,7 @@ def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
     assert "powershell" not in rendered.lower()
     assert "password" not in rendered.lower()
     assert "winsw" not in rendered.lower()
+    assert node_service.installed_snapshot(profile, "task-scheduler")["status"] == "true"
 
 
 def test_task_scheduler_stop_ends_task_and_exact_bound_taskkills_process_tree(
@@ -330,6 +366,7 @@ def test_task_scheduler_upgrade_replaces_a_drifted_action_record(tmp_path: Path)
     record["action_argv"] = ["old-python", "old-entrypoint"]
     install_path.write_text(json.dumps(record), encoding="utf-8")
 
+    assert node_service.installed_snapshot(profile, "task-scheduler")["status"] == "stale"
     manager.upgrade()
 
     creates = [argv for argv in calls if "/Create" in argv]

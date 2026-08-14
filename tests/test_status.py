@@ -196,6 +196,14 @@ def test_snapshot_labels_unavailable_queue_without_failing(monkeypatch, tmp_path
 def test_human_status_names_both_review_hash_semantics(capsys):
     value = {
         "profile": {"name": "reviewer", "role": "reviewer"},
+        "lifecycle": {
+            "configured": {"status": "true"},
+            "installed": {"status": "true"},
+            "running": {"status": "true"},
+            "connected": {"status": "true"},
+            "dispatch_capable": {"status": "true"},
+        },
+        "next_action": {"id": "remote_dispatch_allowed", "command": None},
         "listener": {"status": "running"},
         "workspace": {
             "status": "ready",
@@ -222,5 +230,7 @@ def test_human_status_names_both_review_hash_semantics(capsys):
     status.print_human(value)
 
     output = capsys.readouterr().out
+    assert "dispatch_capable=true" in output
+    assert "next_action=remote_dispatch_allowed" in output
     assert "file_sha256=sha256:file" in output
     assert "canonical_report_sha256=sha256:canonical" in output

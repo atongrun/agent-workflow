@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from jsonschema import Draft202012Validator
 
@@ -33,7 +34,7 @@ TOOL_CONFIG = {
     "opencode": ("AWF_OPENCODE_BIN", "opencode"),
     "pi": ("AWF_PI_BIN", "pi"),
 }
-READINESS_FORMAT = "awf.node-readiness.v1"
+READINESS_FORMAT = "awf.node-readiness.v2"
 MAX_READINESS_TTL_SECONDS = 86400
 LISTENER_START_TIMEOUT_SECONDS = 15
 
@@ -491,7 +492,7 @@ def _resolved_executable(value: str) -> str:
     return str(Path(resolved).resolve()) if resolved else str(Path(value).resolve())
 
 
-def _local_readiness(profile: NodeProfile) -> LocalReadiness:
+def _configured_readiness(profile: NodeProfile) -> LocalReadiness:
     inherited_root = os.environ.get("AWF_STATE_ROOT")
     if inherited_root and resolve_state_root(inherited_root) != profile.state_root:
         raise NodeError("local readiness failed; profile state root conflicts with environment")
@@ -513,32 +514,6 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
     bus = awf_config.native_executable(config.get("AWF_BUS_BIN", "agent-bus"))
     if not (shutil.which(bus) or Path(bus).is_file()):
         raise NodeError("local readiness failed; Agent Bus executable is unavailable")
-    environment = dict(os.environ)
-    token = config[ROLE_TOKEN[profile.role]]
-    environment.update(
-        {
-            "AGENT_BUS_URL": config["AGENT_BUS_URL"],
-            "AGENT_BUS_TOKEN": token,
-            "AGENT_BUS_AGENT": profile.role,
-        }
-    )
-    import awf_network
-
-    awf_network.add_url_host_to_no_proxy(environment, config["AGENT_BUS_URL"])
-    try:
-        bus_probe = awf_listen.run_command(
-            [bus, "doctor"],
-            env=environment,
-            capture_output=True,
-            text=True,
-            timeout=20,
-            secrets=(token,),
-            allow_shell_wrapper=True,
-        )
-    except awf_listen.ExecutionFailure as exc:
-        raise NodeError("local readiness failed; Agent Bus health probe failed") from exc
-    if bus_probe.returncode != 0:
-        raise NodeError("local readiness failed; Agent Bus health probe failed")
     tool = ""
     tool_version_sha256 = ""
     if profile.role != "architect":
@@ -566,6 +541,55 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
         tool_executable=_resolved_executable(tool) if tool else "",
         tool_version_sha256=tool_version_sha256,
     )
+
+
+def _connection_snapshot(profile: NodeProfile, readiness: LocalReadiness) -> dict[str, object]:
+    awf_config, awf_listen = _operations_modules()
+    bus = awf_config.native_executable(readiness.config.get("AWF_BUS_BIN", "agent-bus"))
+    environment = dict(os.environ)
+    token = readiness.config[ROLE_TOKEN[profile.role]]
+    environment.update(
+        {
+            "AGENT_BUS_URL": readiness.config["AGENT_BUS_URL"],
+            "AGENT_BUS_TOKEN": token,
+            "AGENT_BUS_AGENT": profile.role,
+        }
+    )
+    import awf_network
+
+    awf_network.add_url_host_to_no_proxy(environment, readiness.config["AGENT_BUS_URL"])
+    try:
+        probe = awf_listen.run_command(
+            [bus, "doctor"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            secrets=(token,),
+            allow_shell_wrapper=True,
+        )
+    except awf_listen.ExecutionFailure:
+        return {
+            "status": "unknown",
+            "value": None,
+            "source": "bounded_agent_bus_doctor",
+            "reason": "agent_bus_probe_unavailable",
+        }
+    if probe.returncode != 0:
+        return {
+            "status": "false",
+            "value": False,
+            "source": "bounded_agent_bus_doctor",
+            "reason": "agent_bus_probe_failed",
+        }
+    return {"status": "true", "value": True, "source": "bounded_agent_bus_doctor"}
+
+
+def _local_readiness(profile: NodeProfile) -> LocalReadiness:
+    readiness = _configured_readiness(profile)
+    if _connection_snapshot(profile, readiness)["status"] != "true":
+        raise NodeError("local readiness failed; Agent Bus health probe failed")
+    return readiness
 
 
 def _load_runtime_config(profile: NodeProfile) -> tuple[dict[str, str], Path]:
@@ -597,6 +621,213 @@ def _listener_snapshot(profile: NodeProfile) -> dict[str, object]:
     }
 
 
+def _installed_snapshot(profile: NodeProfile) -> dict[str, object]:
+    if profile.lifecycle_mode != "managed":
+        return {
+            "status": "not_applicable",
+            "value": None,
+            "source": "session_lifecycle",
+        }
+    from agent_workflow import node_service
+
+    try:
+        manager = node_service.resolve_manager(str(profile.lifecycle.get("manager", "auto")))
+        return node_service.installed_snapshot(profile, manager)
+    except NodeServiceError:
+        return {
+            "status": "unknown",
+            "value": None,
+            "source": "native_install_record+definition_digest",
+            "reason": "native_manager_observation_unavailable",
+        }
+
+
+def _dispatch_capability_snapshot(
+    profile: NodeProfile,
+    readiness: LocalReadiness,
+    connected: dict[str, object],
+    observed_at: datetime,
+) -> dict[str, object]:
+    if connected.get("status") != "true":
+        return {
+            "status": "false" if connected.get("status") == "false" else "unknown",
+            "value": False if connected.get("status") == "false" else None,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "agent_bus_not_connected",
+        }
+    directory = operations_dir()
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
+    import awf_preflight
+
+    path = awf_preflight.cache_path(profile.state_root)
+    if not path.is_file():
+        return {
+            "status": "false",
+            "value": False,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "deep_proof_missing",
+        }
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        expires_at = datetime.fromisoformat(str(cached["expires_at"]))
+        deep = cached["deep"]
+        source_role = str(deep["source_role"])
+        target_role = str(deep["target_role"])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return {
+            "status": "unknown",
+            "value": None,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "deep_proof_unreadable",
+        }
+    if expires_at.tzinfo is None:
+        return {
+            "status": "unknown",
+            "value": None,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "deep_proof_expiry_invalid",
+        }
+    if expires_at <= observed_at:
+        return {
+            "status": "stale",
+            "value": False,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "deep_proof_expired",
+        }
+    if source_role != profile.role or target_role not in ROLE_TOKEN:
+        return {
+            "status": "stale",
+            "value": False,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "deep_proof_role_mismatch",
+        }
+    args = SimpleNamespace(
+        repo=profile.repo,
+        config=profile.config_path,
+        state_root=profile.state_root,
+        authority_manifest=authority_manifest_path(),
+        source_role=source_role,
+        target_role=target_role,
+        upstream_remote=str(profile.values.get("upstream_remote", "upstream")),
+        head_remote=str(profile.values.get("head_remote", "fork")),
+        gh_bin=str(profile.values.get("gh_bin", "gh")),
+        model_tool=readiness.tool_executable,
+        model_tool_policy="not-applicable" if profile.role == "architect" else "required",
+        run_id="",
+        intent="remote-dispatch",
+    )
+    try:
+        report = awf_preflight.run_fast(args).report
+    except (awf_preflight.PreflightError, OSError, ValueError):
+        return {
+            "status": "unknown",
+            "value": None,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "fast_preflight_unavailable",
+        }
+    if report.get("allow_remote_dispatch") is True:
+        return {
+            "status": "true",
+            "value": True,
+            "source": "fast_preflight+bound_deep_proof",
+            "valid_until": expires_at.isoformat(),
+        }
+    action = str(report.get("required_next_action", "fix_fast_preflight"))
+    return {
+        "status": "stale" if action == "run_deep_preflight" else "false",
+        "value": False,
+        "source": "fast_preflight+bound_deep_proof",
+        "reason": action,
+    }
+
+
+def _running_fact(listener: dict[str, object]) -> dict[str, object]:
+    status = str(listener.get("status", "unknown"))
+    mapped = {
+        "running": ("true", True),
+        "stopped": ("false", False),
+        "stale": ("stale", False),
+    }.get(status, ("unknown", None))
+    return {
+        "status": mapped[0],
+        "value": mapped[1],
+        "source": "profile+process_record+listener_lease+launch_identity",
+    }
+
+
+def _next_lifecycle_action(
+    profile: NodeProfile, facts: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    if facts["configured"]["status"] != "true":
+        return {"id": "fix_node_configuration", "command": None}
+    installed = facts["installed"]["status"]
+    if profile.lifecycle_mode == "managed" and installed == "false":
+        return {
+            "id": "node_install",
+            "command": f"awf node install --profile {profile.path}",
+        }
+    if profile.lifecycle_mode == "managed" and installed == "stale":
+        return {
+            "id": "node_upgrade",
+            "command": f"awf node upgrade --profile {profile.path}",
+        }
+    if profile.lifecycle_mode == "managed" and installed == "unknown":
+        return {
+            "id": "inspect_native_installation",
+            "command": None,
+        }
+    running = facts["running"]["status"]
+    if running == "false":
+        return {
+            "id": "node_start",
+            "command": f"awf node start --profile {profile.path}",
+        }
+    if running in {"unknown", "stale"}:
+        return {
+            "id": "inspect_listener_identity",
+            "command": f"awf node status --profile {profile.path} --json",
+        }
+    if facts["connected"]["status"] != "true":
+        return {
+            "id": "fix_agent_bus_connection",
+            "command": f"awf node doctor --profile {profile.path}",
+        }
+    if facts["dispatch_capable"]["status"] != "true":
+        return {
+            "id": "run_fast_preflight",
+            "command": None,
+        }
+    return {"id": "remote_dispatch_allowed", "command": None}
+
+
+def lifecycle_report(
+    profile: NodeProfile,
+    *,
+    configured: dict[str, object],
+    installed: dict[str, object],
+    listener: dict[str, object],
+    connected: dict[str, object],
+    dispatch_capable: dict[str, object],
+) -> tuple[dict[str, dict[str, object]], dict[str, object]]:
+    running = _running_fact(listener)
+    if running["status"] != "true":
+        dispatch_capable = {
+            "status": "false" if running["status"] == "false" else running["status"],
+            "value": False if running["status"] in {"false", "stale"} else None,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "listener_not_running",
+        }
+    facts = {
+        "configured": configured,
+        "installed": installed,
+        "running": running,
+        "connected": connected,
+        "dispatch_capable": dispatch_capable,
+    }
+    return facts, _next_lifecycle_action(profile, facts)
+
+
 def _readiness_fingerprint(
     profile: NodeProfile,
     readiness: LocalReadiness,
@@ -624,7 +855,7 @@ def _readiness_fingerprint(
         "listener": listener,
     }
     body = json.dumps(selected, sort_keys=True, separators=(",", ":"))
-    return "sha256:" + hashlib.sha256(("awf-node-readiness-v1\0" + body).encode()).hexdigest()
+    return "sha256:" + hashlib.sha256(("awf-node-readiness-v2\0" + body).encode()).hexdigest()
 
 
 def doctor_report(
@@ -633,16 +864,57 @@ def doctor_report(
     *,
     ttl_seconds: int,
     observed_at: datetime,
+    listener: dict[str, object] | None = None,
+    installed: dict[str, object] | None = None,
+    connected: dict[str, object] | None = None,
+    dispatch_capable: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if ttl_seconds < 1 or ttl_seconds > MAX_READINESS_TTL_SECONDS:
         raise NodeError(f"--ttl-seconds must be between 1 and {MAX_READINESS_TTL_SECONDS}")
-    listener = _listener_snapshot(profile)
+    listener = listener or _listener_snapshot(profile)
+    installed = installed or _installed_snapshot(profile)
+    connected = connected or {
+        "status": "unknown",
+        "value": None,
+        "source": "bounded_agent_bus_doctor",
+        "reason": "not_observed",
+    }
+    dispatch_capable = dispatch_capable or {
+        "status": "unknown",
+        "value": None,
+        "source": "fast_preflight+bound_deep_proof",
+        "reason": "not_observed",
+    }
+    facts, next_action = lifecycle_report(
+        profile,
+        configured={
+            "status": "true",
+            "value": True,
+            "source": "profile+configuration+tool+workspace",
+        },
+        installed=installed,
+        listener=listener,
+        connected=connected,
+        dispatch_capable=dispatch_capable,
+    )
+    valid_until = observed_at + timedelta(seconds=ttl_seconds)
+    dispatch_valid_until = facts["dispatch_capable"].get("valid_until")
+    if facts["dispatch_capable"]["status"] == "true" and dispatch_valid_until:
+        try:
+            valid_until = min(valid_until, datetime.fromisoformat(str(dispatch_valid_until)))
+        except (TypeError, ValueError):
+            facts["dispatch_capable"] = {
+                "status": "unknown",
+                "value": None,
+                "source": "fast_preflight+bound_deep_proof",
+                "reason": "deep_proof_expiry_invalid",
+            }
+            next_action = _next_lifecycle_action(profile, facts)
     tool_status = "not_applicable" if profile.role == "architect" else "pass"
     return {
         "format": READINESS_FORMAT,
-        "status": "ready",
         "observed_at": observed_at.isoformat(),
-        "valid_until": (observed_at + timedelta(seconds=ttl_seconds)).isoformat(),
+        "valid_until": valid_until.isoformat(),
         "scope": "operator-discovery-only",
         "awf_version": __version__,
         "runtime": {
@@ -661,6 +933,8 @@ def doctor_report(
             "sha256": state_root_binding(profile.state_root),
         },
         "fingerprint": _readiness_fingerprint(profile, readiness, listener),
+        "lifecycle": facts,
+        "next_action": next_action,
         "listener": listener,
         "layers": [
             {"id": "profile", "status": "pass"},
@@ -670,7 +944,6 @@ def doctor_report(
                 "status": "pass",
                 "scope": "source" if profile.role == "architect" else "dedicated_role",
             },
-            {"id": "agent_bus", "status": "pass"},
             {
                 "id": "model_tool",
                 "status": tool_status,
@@ -678,10 +951,6 @@ def doctor_report(
                 "model_invoked": False,
             },
         ],
-        "remote_dispatch": {
-            "status": "not_proven",
-            "required_gate": "fast/deep-preflight",
-        },
         "invalidate_on": [
             "ttl_expired",
             "profile_or_selection_changed",
@@ -698,24 +967,39 @@ def doctor(
     json_output: bool = False,
     ttl_seconds: int = 3600,
 ) -> int:
-    if profile.lifecycle_mode == "managed":
-        _managed_action(profile, "doctor")
-    readiness = _local_readiness(profile)
+    readiness = _configured_readiness(profile)
+    connected = _connection_snapshot(profile, readiness)
+    observed_at = _now()
+    listener = _listener_snapshot(profile)
+    dispatch_capable = (
+        _dispatch_capability_snapshot(profile, readiness, connected, observed_at)
+        if listener.get("status") == "running"
+        else {
+            "status": "false" if listener.get("status") == "stopped" else "unknown",
+            "value": False if listener.get("status") == "stopped" else None,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "listener_not_running",
+        }
+    )
     report = doctor_report(
         profile,
         readiness,
         ttl_seconds=ttl_seconds,
-        observed_at=_now(),
+        observed_at=observed_at,
+        listener=listener,
+        installed=_installed_snapshot(profile),
+        connected=connected,
+        dispatch_capable=dispatch_capable,
     )
     if json_output:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
-    state = str(report["listener"]["status"])
-    print(
-        f"profile={profile.name} role={profile.role} readiness=pass listener={state} "
-        f"repo={profile.repo}"
-    )
-    print("remote_dispatch=not_proven; use the existing Fast/Deep preflight for dispatch authority")
+    lifecycle = report["lifecycle"]
+    states = " ".join(f"{name}={lifecycle[name]['status']}" for name in lifecycle)
+    print(f"profile={profile.name} role={profile.role} {states} repo={profile.repo}")
+    next_action = report["next_action"]
+    suffix = f" command={next_action['command']}" if next_action.get("command") else ""
+    print(f"next_action={next_action['id']}{suffix}")
     return 0
 
 
@@ -836,6 +1120,17 @@ def uninstall(profile: NodeProfile) -> int:
 
 def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
     if profile.lifecycle_mode == "managed":
+        installed = _installed_snapshot(profile)
+        if installed.get("status") == "false":
+            raise NodeError(
+                "managed lifecycle is not installed; run "
+                f"awf node install --profile {profile.path}"
+            )
+        if installed.get("status") != "true":
+            raise NodeError(
+                "managed lifecycle installation is unknown or stale; run "
+                f"awf node upgrade --profile {profile.path}"
+            )
         write_desired_state(profile, "running")
         return _managed_action(profile, "start")
     if _inside_ssh_session() and not allow_session_bound:
@@ -973,8 +1268,6 @@ def reconcile(profile: NodeProfile) -> int:
 
 
 def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False) -> int:
-    if profile.lifecycle_mode == "managed":
-        _managed_action(profile, "status")
     try:
         record = _process_record(profile)
     except NodeError:

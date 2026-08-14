@@ -65,6 +65,64 @@ def _listener(profile: NodeProfile) -> dict[str, object]:
     }
 
 
+def _lifecycle(
+    profile: NodeProfile,
+    listener: dict[str, object],
+    queue: dict[str, object],
+) -> tuple[dict[str, dict[str, object]], dict[str, object]]:
+    from agent_workflow import node
+
+    readiness = None
+    try:
+        readiness = node._configured_readiness(profile)
+        configured: dict[str, object] = {
+            "status": "true",
+            "value": True,
+            "source": "profile+configuration+tool+workspace",
+        }
+    except node.NodeError as exc:
+        configured = {
+            "status": "false",
+            "value": False,
+            "source": "profile+configuration+tool+workspace",
+            "reason": str(exc),
+        }
+    connected = (
+        {
+            "status": "true",
+            "value": True,
+            "source": "bounded_agent_bus_pending_observation",
+        }
+        if queue.get("status") == "observed"
+        else {
+            "status": "unknown",
+            "value": None,
+            "source": "bounded_agent_bus_pending_observation",
+            "reason": "agent_bus_observation_unavailable",
+        }
+    )
+    dispatch_capable = (
+        node._dispatch_capability_snapshot(
+            profile, readiness, connected, datetime.now(timezone.utc)
+        )
+        if readiness is not None and listener.get("status") == "running"
+        else {
+            "status": "unknown",
+            "value": None,
+            "source": "fast_preflight+bound_deep_proof",
+            "reason": "configuration_not_ready",
+        }
+    )
+    return node.lifecycle_report(
+        profile,
+        configured=configured,
+        installed=node._installed_snapshot(profile),
+        listener=listener,
+        connected=connected,
+        dispatch_capable=dispatch_capable,
+    )
+
+
 def _workspace(profile: NodeProfile) -> dict[str, object]:
     facts: dict[str, object] = {
         "source": "git_read_only",
@@ -357,6 +415,9 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
     ledger_fact, ledger = _ledger(profile, run_id)
     delivery_fact, review_file_sha = _delivery_checkpoints(profile, ledger)
     pull_request, ci = _pr_and_ci(profile, ledger)
+    listener = _listener(profile)
+    queue = _queue(profile)
+    lifecycle, next_action = _lifecycle(profile, listener, queue)
     return {
         "format": STATUS_FORMAT,
         "observed_at": _now(),
@@ -365,10 +426,12 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
             "source": "node_profile",
             "sha256": state_root_binding(profile.state_root),
         },
-        "listener": _listener(profile),
+        "lifecycle": lifecycle,
+        "next_action": next_action,
+        "listener": listener,
         "workspace": _workspace(profile),
         "checkpoint": {"ledger": ledger_fact, "delivery": delivery_fact},
-        "queue": _queue(profile),
+        "queue": queue,
         "artifacts": _artifacts(profile, ledger, review_file_sha),
         "pull_request": pull_request,
         "ci": ci,
@@ -382,6 +445,11 @@ def print_human(value: dict[str, object]) -> None:
     checkpoint = value["checkpoint"]
     queue = value["queue"]
     artifacts = value["artifacts"]
+    lifecycle = value["lifecycle"]
+    print("lifecycle: " + " ".join(f"{name}={lifecycle[name]['status']}" for name in lifecycle))
+    next_action = value["next_action"]
+    suffix = f" command={next_action['command']}" if next_action.get("command") else ""
+    print(f"next_action={next_action['id']}{suffix}")
     print(
         f"profile={profile['name']} role={profile['role']} listener={listener['status']} "
         f"workspace={workspace['status']} queue={queue['status']}"

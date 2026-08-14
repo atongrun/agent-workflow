@@ -268,7 +268,22 @@ def readiness(profile: node.NodeProfile, **changes: object) -> node.LocalReadine
 def test_doctor_json_emits_secret_free_reusable_snapshot(monkeypatch, capsys, tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
     observed = datetime(2026, 8, 9, 1, 2, 3, tzinfo=timezone.utc)
-    monkeypatch.setattr(node, "_local_readiness", lambda value: readiness(value))
+    monkeypatch.setattr(node, "_configured_readiness", lambda value: readiness(value))
+    monkeypatch.setattr(
+        node,
+        "_connection_snapshot",
+        lambda *_args: {"status": "true", "value": True, "source": "bus"},
+    )
+    monkeypatch.setattr(
+        node,
+        "_dispatch_capability_snapshot",
+        lambda *_args: {
+            "status": "false",
+            "value": False,
+            "source": "preflight",
+            "reason": "deep_proof_missing",
+        },
+    )
     monkeypatch.setattr(
         node,
         "_listener_snapshot",
@@ -284,8 +299,8 @@ def test_doctor_json_emits_secret_free_reusable_snapshot(monkeypatch, capsys, tm
     assert node.doctor(profile, json_output=True, ttl_seconds=3600) == 0
 
     report = json.loads(capsys.readouterr().out)
-    assert report["format"] == "awf.node-readiness.v1"
-    assert report["status"] == "ready"
+    assert report["format"] == "awf.node-readiness.v2"
+    assert "status" not in report
     assert report["observed_at"] == "2026-08-09T01:02:03+00:00"
     assert report["valid_until"] == "2026-08-09T02:02:03+00:00"
     assert report["scope"] == "operator-discovery-only"
@@ -307,10 +322,14 @@ def test_doctor_json_emits_secret_free_reusable_snapshot(monkeypatch, capsys, tm
     }
     assert report["fingerprint"].startswith("sha256:")
     assert report["listener"]["status"] == "running"
-    assert report["remote_dispatch"] == {
-        "status": "not_proven",
-        "required_gate": "fast/deep-preflight",
+    assert {name: fact["status"] for name, fact in report["lifecycle"].items()} == {
+        "configured": "true",
+        "installed": "not_applicable",
+        "running": "true",
+        "connected": "true",
+        "dispatch_capable": "false",
     }
+    assert report["next_action"]["id"] == "run_fast_preflight"
     serialized = json.dumps(report, sort_keys=True)
     assert "secret" not in serialized
     assert "bus.invalid" not in serialized
@@ -341,6 +360,78 @@ def test_doctor_fingerprint_changes_with_tool_version(monkeypatch, tmp_path: Pat
     )
 
     assert first["fingerprint"] != second["fingerprint"]
+
+
+@pytest.mark.parametrize(
+    ("installed", "listener_status", "expected", "next_action"),
+    [
+        ("false", "stopped", (True, False, False), "node_install"),
+        ("true", "stopped", (True, True, False), "node_start"),
+        ("true", "running", (True, True, True), "remote_dispatch_allowed"),
+    ],
+)
+def test_lifecycle_facts_cover_representative_transitions(
+    tmp_path: Path,
+    installed: str,
+    listener_status: str,
+    expected: tuple[bool, bool, bool],
+    next_action: str,
+):
+    profile = node.load_profile(
+        str(
+            write_profile(
+                tmp_path,
+                lifecycle={"mode": "managed", "manager": "auto", "scope": "user"},
+            )
+        )
+    )
+    facts, action = node.lifecycle_report(
+        profile,
+        configured={"status": "true", "value": True},
+        installed={"status": installed, "value": installed == "true"},
+        listener={"status": listener_status},
+        connected={"status": "true", "value": True},
+        dispatch_capable={"status": "true", "value": True},
+    )
+
+    observed = tuple(
+        facts[name]["value"] for name in ("configured", "installed", "running")
+    )
+    assert observed == expected
+    assert action["id"] == next_action
+
+
+def test_missing_and_stale_preflight_are_not_dispatch_capable(tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    connected = {"status": "true", "value": True}
+    observed = datetime(2026, 8, 14, tzinfo=timezone.utc)
+
+    missing = node._dispatch_capability_snapshot(profile, readiness(profile), connected, observed)
+    cache = profile.state_root / "preflight" / "latest-deep.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(
+        json.dumps(
+            {
+                "expires_at": "2026-08-13T00:00:00+00:00",
+                "deep": {"source_role": profile.role, "target_role": "coder"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale = node._dispatch_capability_snapshot(profile, readiness(profile), connected, observed)
+    facts, action = node.lifecycle_report(
+        profile,
+        configured={"status": "true", "value": True},
+        installed={"status": "not_applicable", "value": None},
+        listener={"status": "running"},
+        connected=connected,
+        dispatch_capable=stale,
+    )
+
+    assert (missing["status"], missing["value"]) == ("false", False)
+    assert (stale["status"], stale["value"]) == ("stale", False)
+    assert facts["dispatch_capable"]["status"] == "stale"
+    assert action["id"] == "run_fast_preflight"
 
 
 def test_doctor_rejects_invalid_snapshot_ttl(tmp_path: Path):

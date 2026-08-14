@@ -289,6 +289,11 @@ def _remove_install_record(profile) -> None:
 def _require_installed(profile, manager: str) -> dict[str, object]:
     from agent_workflow import __version__
 
+    if not (_service_dir(profile) / "install.json").is_file():
+        raise NodeServiceError(
+            "managed lifecycle is not installed; run "
+            f"awf node install --profile {Path(profile.path).resolve()}"
+        )
     record = _install_record(profile)
     expected = {
         "manager": manager,
@@ -306,6 +311,45 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
     if _sha256(Path(sys.executable).resolve()) != record.get("python_sha256"):
         raise NodeServiceError("installed Python digest does not match its record; run upgrade")
     return record
+
+
+def installed_snapshot(profile, manager: str) -> dict[str, object]:
+    """Report native installation truth without treating local readiness as installation."""
+    path = _service_dir(profile) / "install.json"
+    if not path.is_file():
+        return {
+            "status": "false",
+            "value": False,
+            "source": "native_install_record+definition_digest",
+            "manager": manager,
+            "reason": "install_record_missing",
+        }
+    try:
+        _install_record(profile)
+    except NodeServiceError:
+        return {
+            "status": "unknown",
+            "value": None,
+            "source": "native_install_record+definition_digest",
+            "manager": manager,
+            "reason": "install_record_unreadable",
+        }
+    try:
+        _require_installed(profile, manager)
+    except NodeServiceError:
+        return {
+            "status": "stale",
+            "value": False,
+            "source": "native_install_record+definition_digest",
+            "manager": manager,
+            "reason": "install_record_or_definition_drifted",
+        }
+    return {
+        "status": "true",
+        "value": True,
+        "source": "native_install_record+definition_digest",
+        "manager": manager,
+    }
 
 
 def _require_upgrade_target(profile, manager: str, manager_id: str) -> dict[str, object]:

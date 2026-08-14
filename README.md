@@ -310,9 +310,9 @@ absolute JSON path is also accepted. The `awf.node-profile.v1` schema contains o
 role, repository, tool, route, state, and log settings. `state_root` is required and is the sole
 state source for a node-managed listener; direct script entry points retain an explicit
 `--state-root` / `AWF_STATE_ROOT` / platform-default compatibility order. Tokens and the Bus URL remain exclusively
-in owner-only `dispatch.env`. `doctor` checks the schema, role/tool boundary, strict credential
-file, role-aware Git workspace, Bus health, and model executable before start; it does not replace
-the existing Fast/Deep remote-dispatch proof. Profiles that omit `lifecycle` retain the local
+in owner-only `dispatch.env`. `doctor` reports schema/config/tool/workspace readiness separately
+from a bounded live Bus connection observation; it does not collapse either into installation,
+running, or dispatch authority. Profiles that omit `lifecycle` retain the local
 `session` mode. Under SSH, session start is rejected unless `--allow-session-bound` makes the
 temporary limitation explicit. `managed` mode renders the same complete profile into a launchd
 user agent, lingering systemd user unit, or Windows Task Scheduler `InteractiveToken` task whose
@@ -327,15 +327,21 @@ proved the manager, listener PID, launch identity, lease, queue consumption, cra
 clean local stop. The evidence matrix is recorded in the
 [lifecycle implementation report](docs/tasks/windows-listener-service-lifecycle-implementation-report.md).
 
-`doctor --json` emits one credential-free `awf.node-readiness.v1` snapshot for operator discovery.
-It binds the installed `awf`, profile, strict configuration, workspace, selected tool version, and
-listener observation into a SHA-256 fingerprint and gives the observation a bounded reuse window.
-An architect may collect it with one remote command and reuse it across a short serial TaskCard
-run while the listed invalidation conditions remain false. The snapshot is not written, sent over
-Agent Bus, or accepted as dispatch authority: `remote_dispatch.status` is always `not_proven`, and
-the existing Fast/Deep Preflight remains mandatory where its policy requires it.
+Managed `start` never installs implicitly. If the native definition is absent, it fails before
+desired-state or manager mutation and names `awf node install --profile <profile>` as the single
+legal next action on launchd, systemd, and Task Scheduler.
 
-Node status is read-only. It labels the source of listener/PID/lease, Git workspace, run-ledger,
+`doctor --json` emits one credential-free `awf.node-readiness.v2` snapshot for operator discovery.
+It replaces the umbrella `ready` adjective with `configured`, `installed`, `running`, `connected`,
+and `dispatch_capable`, each with explicit provenance and true/false/unknown/stale semantics. The
+report binds the installed `awf`, profile, strict configuration, workspace, selected tool version,
+and listener observation into a SHA-256 fingerprint and gives the observation a bounded reuse
+window. A true dispatch fact is never inferred from doctor, install, or listener state: it requires
+current Fast validation of the bound Deep proof. The snapshot is not written or sent over Agent
+Bus, and Fast/Deep Preflight remains the dispatch authority.
+
+Node status is read-only. It begins with the same five lifecycle facts and one legal next action,
+then labels the source of listener/PID/lease, Git workspace, run-ledger,
 delivery-checkpoint, Agent Bus pending, artifact, pull-request, and CI observations; unavailable
 live facts remain `unknown`, `not_recorded`, or `not_requested`. Recorded and live PR/CI facts are
 shown separately so drift stays visible. ReviewReport integrity also uses two explicit names:
