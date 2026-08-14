@@ -256,6 +256,7 @@ def _write_install_record(
         "format": "awf.node-managed-install.v1",
         "manager": manager,
         "profile": str(Path(profile.path).resolve()),
+        "profile_source": str(Path(profile.authoring_path).resolve()),
         "profile_sha256": profile.digest,
         "definition": str(definition),
         "definition_sha256": "sha256:" + hashlib.sha256(body).hexdigest(),
@@ -293,6 +294,7 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
     expected = {
         "manager": manager,
         "profile": str(Path(profile.path).resolve()),
+        "profile_source": str(Path(profile.authoring_path).resolve()),
         "profile_sha256": profile.digest,
         "python": str(Path(sys.executable).resolve()),
         "awf_version": __version__,
@@ -440,6 +442,8 @@ class SystemdAdapter:
 
     def stop(self, bound_pid: int | None = None) -> int:
         _require_installed(self.profile, "systemd")
+        if _bound_live_listener_pid(self.profile) is None:
+            return 0
         _run(["systemctl", "--user", "stop", self.unit])
         return _after_manager_stop(self.profile)
 
@@ -454,13 +458,17 @@ class SystemdAdapter:
 
     def stop_for_upgrade(self) -> int:
         _require_upgrade_target(self.profile, "systemd", self.unit)
+        if _bound_live_listener_pid(self.profile) is None:
+            return 0
         _run(["systemctl", "--user", "stop", self.unit])
         return _after_manager_stop(self.profile)
 
     def uninstall(self) -> int:
         _require_installed(self.profile, "systemd")
-        _run(["systemctl", "--user", "disable", "--now", self.unit], check=False)
-        _after_manager_stop(self.profile)
+        if _bound_live_listener_pid(self.profile) is not None:
+            _run(["systemctl", "--user", "stop", self.unit])
+            _after_manager_stop(self.profile)
+        _run(["systemctl", "--user", "disable", self.unit], check=False)
         self.definition.unlink(missing_ok=True)
         _run(["systemctl", "--user", "daemon-reload"])
         _remove_install_record(self.profile)
@@ -515,6 +523,8 @@ class LaunchdAdapter:
 
     def stop(self, bound_pid: int | None = None, launch_id: str = "") -> int:
         _require_installed(self.profile, "launchd")
+        if _bound_live_listener_pid(self.profile) is None:
+            return 0
         _run(["launchctl", "disable", f"{self.domain}/{self.label}"])
         _run(["launchctl", "kill", "SIGTERM", f"{self.domain}/{self.label}"], check=False)
         return _after_manager_stop(self.profile)
@@ -530,14 +540,19 @@ class LaunchdAdapter:
 
     def stop_for_upgrade(self) -> int:
         _require_upgrade_target(self.profile, "launchd", self.label)
+        if _bound_live_listener_pid(self.profile) is None:
+            return 0
         _run(["launchctl", "disable", f"{self.domain}/{self.label}"])
         _run(["launchctl", "kill", "SIGTERM", f"{self.domain}/{self.label}"], check=False)
         return _after_manager_stop(self.profile)
 
     def uninstall(self) -> int:
         _require_installed(self.profile, "launchd")
+        if _bound_live_listener_pid(self.profile) is not None:
+            _run(["launchctl", "disable", f"{self.domain}/{self.label}"])
+            _run(["launchctl", "kill", "SIGTERM", f"{self.domain}/{self.label}"], check=False)
+            _after_manager_stop(self.profile)
         _run(["launchctl", "bootout", self.domain, str(self.definition)], check=False)
-        _after_manager_stop(self.profile)
         self.definition.unlink(missing_ok=True)
         _remove_install_record(self.profile)
         return 0

@@ -23,6 +23,7 @@ from agent_workflow.resources import authority_manifest_path, operations_dir, sc
 from agent_workflow.state_root import resolve_state_root, state_root_binding
 
 PROFILE_FORMAT = "awf.node-profile.v1"
+INSTALLED_PROFILE_FORMAT = "awf.node-installed-profile.v1"
 ROLE_TOKEN = {
     "architect": "AWF_ARCH_TOKEN",
     "coder": "AWF_CODER_TOKEN",
@@ -46,6 +47,8 @@ class NodeError(RuntimeError):
 class NodeProfile:
     path: Path
     values: dict[str, object]
+    source_path: Path | None = None
+    source_aliases: tuple[Path, ...] = ()
 
     @property
     def name(self) -> str:
@@ -98,6 +101,10 @@ class NodeProfile:
     @property
     def lifecycle_mode(self) -> str:
         return str(self.lifecycle.get("mode", "session"))
+
+    @property
+    def authoring_path(self) -> Path:
+        return self.source_path or self.path
 
 
 def lifecycle_mode(profile: NodeProfile) -> str:
@@ -239,6 +246,156 @@ def load_profile(value: str) -> NodeProfile:
     profile = NodeProfile(path=path, values=data)
     _validate_profile_semantics(profile)
     return profile
+
+
+def _safe_profile_name(name: str) -> str:
+    return "".join(char if char.isalnum() or char in "._-" else "-" for char in name)
+
+
+def _installed_profiles_root() -> Path:
+    return default_config_home() / "installed-profiles"
+
+
+def _profile_source_key(path: Path) -> str:
+    normalized = os.path.normcase(str(path.expanduser().resolve()))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _source_registry_path(path: Path) -> Path:
+    return _installed_profiles_root() / "registry" / f"source-{_profile_source_key(path)}.json"
+
+
+def _name_registry_path(name: str) -> Path:
+    return _installed_profiles_root() / "registry" / f"name-{_safe_profile_name(name)}.json"
+
+
+def _snapshot_path(profile: NodeProfile) -> Path:
+    digest = profile.digest.removeprefix("sha256:")
+    return (
+        _installed_profiles_root()
+        / "snapshots"
+        / _safe_profile_name(profile.name)
+        / f"{digest}.json"
+    )
+
+
+def _stage_installed_profile(profile: NodeProfile) -> NodeProfile:
+    """Write or verify the immutable credential-free snapshot used by native managers."""
+    path = _snapshot_path(profile)
+    if path.exists():
+        installed = load_profile(str(path))
+        if installed.digest != profile.digest or installed.values != profile.values:
+            raise NodeError("installed profile snapshot digest/content mismatch")
+    else:
+        _atomic_write(path, profile.values)
+        installed = load_profile(str(path))
+    return NodeProfile(
+        path=installed.path,
+        values=installed.values,
+        source_path=profile.authoring_path,
+    )
+
+
+def _registry_value(profile: NodeProfile, aliases: tuple[Path, ...]) -> dict[str, object]:
+    sources = sorted(
+        {str(profile.authoring_path.resolve()), *(str(alias.resolve()) for alias in aliases)}
+    )
+    return {
+        "format": INSTALLED_PROFILE_FORMAT,
+        "name": profile.name,
+        "original_source": str(profile.authoring_path.resolve()),
+        "source_aliases": sources,
+        "installed_profile": str(profile.path.resolve()),
+        "profile_sha256": profile.digest,
+    }
+
+
+def _commit_installed_profile(profile: NodeProfile, *, aliases: tuple[Path, ...] = ()) -> None:
+    all_aliases = (*profile.source_aliases, *aliases)
+    value = _registry_value(profile, all_aliases)
+    for source_value in value["source_aliases"]:
+        source = Path(str(source_value))
+        alias_value = dict(value)
+        alias_value["requested_source"] = str(source)
+        _atomic_write(_source_registry_path(source), alias_value)
+    _atomic_write(_name_registry_path(profile.name), value)
+
+
+def _registry_candidates(value: str) -> list[tuple[Path, Path | None]]:
+    resolved = resolve_profile_path(value)
+    candidates = [(_source_registry_path(resolved), resolved)]
+    raw = Path(value).expanduser()
+    if not raw.is_absolute() and raw.parent == Path(".") and raw.suffix != ".json":
+        candidates.append((_name_registry_path(value), None))
+    return candidates
+
+
+def load_installed_profile(value: str) -> NodeProfile | None:
+    """Resolve one exact installed binding without scanning or repairing durable state."""
+    for registry_path, requested_source in _registry_candidates(value):
+        if not registry_path.exists():
+            continue
+        try:
+            record = json.loads(registry_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise NodeError(f"installed profile registry is unreadable: {registry_path}") from exc
+        if not isinstance(record, dict) or record.get("format") != INSTALLED_PROFILE_FORMAT:
+            raise NodeError(f"installed profile registry is invalid: {registry_path}")
+        if requested_source is not None and record.get("requested_source") != str(
+            requested_source.resolve()
+        ):
+            raise NodeError("installed profile source binding drifted")
+        aliases = record.get("source_aliases")
+        if (
+            not isinstance(aliases, list)
+            or not aliases
+            or not all(isinstance(alias, str) and Path(alias).is_absolute() for alias in aliases)
+        ):
+            raise NodeError("installed profile source aliases are invalid")
+        if requested_source is not None and str(requested_source.resolve()) not in aliases:
+            raise NodeError("installed profile source alias is not bound to this snapshot")
+        snapshot = Path(str(record.get("installed_profile", ""))).expanduser().resolve()
+        root = _installed_profiles_root().resolve()
+        if snapshot == root or not snapshot.is_relative_to(root):
+            raise NodeError("installed profile registry points outside the durable profile root")
+        installed = load_profile(str(snapshot))
+        if installed.digest != record.get("profile_sha256") or installed.name != record.get("name"):
+            raise NodeError("installed profile snapshot identity drifted")
+        source = Path(str(record.get("original_source", ""))).expanduser().resolve()
+        return NodeProfile(
+            path=installed.path,
+            values=installed.values,
+            source_path=source,
+            source_aliases=tuple(Path(alias).resolve() for alias in aliases),
+        )
+    return None
+
+
+def _load_operational_profile(value: str) -> NodeProfile:
+    source: NodeProfile | None = None
+    source_error: NodeError | None = None
+    try:
+        source = load_profile(value)
+    except NodeError as exc:
+        source_error = exc
+    if source is not None and source.lifecycle_mode == "session":
+        return source
+    installed = None
+    if source is not None and source.path.is_relative_to(_installed_profiles_root().resolve()):
+        installed = load_installed_profile(source.name)
+        if installed is None or installed.path != source.path:
+            raise NodeError("durable installed profile is not the current registered snapshot")
+    if installed is None:
+        installed = load_installed_profile(value)
+    if installed is not None:
+        return installed
+    if source is not None:
+        return source
+    assert source_error is not None
+    raise NodeError(
+        f"{source_error}; no exact durable installed profile binding exists for "
+        f"{resolve_profile_path(value)}"
+    ) from source_error
 
 
 def _validate_profile_semantics(profile: NodeProfile) -> None:
@@ -958,10 +1115,12 @@ def _managed_action(profile: NodeProfile, action: str, *args, **kwargs) -> int:
 
 
 def install(profile: NodeProfile) -> int:
-    desired_exists = desired_state_path(profile).exists()
-    result = _managed_action(profile, "install")
+    installed = _stage_installed_profile(profile)
+    desired_exists = desired_state_path(installed).exists()
+    result = _managed_action(installed, "install")
+    _commit_installed_profile(installed)
     if not desired_exists:
-        write_desired_state(profile, "stopped")
+        write_desired_state(installed, "stopped")
     return result
 
 
@@ -972,17 +1131,66 @@ def restart(profile: NodeProfile) -> int:
     return _managed_action(profile, "start")
 
 
-def upgrade(profile: NodeProfile) -> int:
+def _transition_desired_profile(
+    current: NodeProfile,
+    target: NodeProfile,
+    state: str,
+) -> None:
+    _, awf_listen = _operations_modules()
+    try:
+        with awf_listen.control_plane_lock(_desired_lock_path(current)):
+            previous = _read_desired_state(current)
+            value = {
+                "format": "awf.node-desired-state.v1",
+                "state": state,
+                "profile": str(target.path),
+                "profile_sha256": target.digest,
+                "generation": int(previous.get("generation", 0)) + 1,
+            }
+            _atomic_write(desired_state_path(target), value)
+    except awf_listen.ControlPlaneDenied as exc:
+        raise NodeError("managed desired state lock is unavailable") from exc
+
+
+def upgrade(profile: NodeProfile, *, replacement: NodeProfile | None = None) -> int:
+    if replacement is not None:
+        stable = (
+            ("name", profile.name, replacement.name),
+            ("role", profile.role, replacement.role),
+            ("repo", profile.repo, replacement.repo),
+            ("state_root", profile.state_root, replacement.state_root),
+            ("lifecycle", profile.lifecycle, replacement.lifecycle),
+        )
+        changed = [name for name, current, proposed in stable if current != proposed]
+        if changed:
+            raise NodeError(
+                "managed upgrade cannot change installed identity fields: " + ", ".join(changed)
+            )
     write_desired_state(profile, "stopped")
     _managed_action(profile, "stop_for_upgrade")
-    _managed_action(profile, "install", force=True)
-    write_desired_state(profile, "running")
-    return _managed_action(profile, "start")
+    target = _stage_installed_profile(replacement or profile)
+    _managed_action(target, "install", force=True)
+    aliases = tuple(
+        source
+        for source in {profile.authoring_path, *profile.source_aliases}
+        if source != target.authoring_path
+    )
+    _commit_installed_profile(target, aliases=aliases)
+    _transition_desired_profile(profile, target, "running")
+    return _managed_action(target, "start")
 
 
 def uninstall(profile: NodeProfile) -> int:
     write_desired_state(profile, "stopped")
-    return _managed_action(profile, "uninstall")
+    result = _managed_action(profile, "uninstall")
+    registry_paths = {
+        _source_registry_path(source)
+        for source in {profile.authoring_path, *profile.source_aliases}
+    }
+    registry_paths.add(_name_registry_path(profile.name))
+    for path in registry_paths:
+        path.unlink(missing_ok=True)
+    return result
 
 
 def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
@@ -1009,7 +1217,11 @@ def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
 def _start_locked(profile: NodeProfile) -> int:
     existing = _process_record(profile)
     if existing and _pid_alive(existing.get("pid")):
-        raise NodeError(f"node already running with pid={existing.get('pid')}")
+        incumbent = str(existing.get("profile", "unknown"))
+        raise NodeError(
+            f"node role is already owned by profile={incumbent} pid={existing.get('pid')}; "
+            f"run awf node stop --profile {incumbent} before starting another owner"
+        )
     if existing:
         profile.process_path.unlink(missing_ok=True)
     profile.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1058,7 +1270,11 @@ def _start_locked(profile: NodeProfile) -> int:
 def _foreground_record(profile: NodeProfile, launch_id: str) -> None:
     existing = _process_record(profile)
     if existing and _pid_alive(existing.get("pid")):
-        raise NodeError(f"node already running with pid={existing.get('pid')}")
+        incumbent = str(existing.get("profile", "unknown"))
+        raise NodeError(
+            f"node role is already owned by profile={incumbent} pid={existing.get('pid')}; "
+            f"run awf node stop --profile {incumbent} before starting another owner"
+        )
     record = {
         "format": "awf.node-process.v1",
         "pid": os.getpid(),
@@ -1224,7 +1440,18 @@ def run(
     allow_session_bound: bool = False,
 ) -> int:
     try:
-        profile = load_profile(profile_value)
+        if command == "install":
+            profile = load_profile(profile_value)
+        else:
+            profile = _load_operational_profile(profile_value)
+        replacement = None
+        if command == "upgrade":
+            try:
+                candidate = load_profile(profile_value)
+            except NodeError:
+                candidate = None
+            if candidate is not None and candidate.path != profile.path:
+                replacement = candidate
         handlers = {
             "doctor": lambda: doctor(profile, json_output=json_output, ttl_seconds=ttl_seconds),
             "foreground": lambda: foreground(profile),
@@ -1235,7 +1462,7 @@ def run(
             "stop": lambda: stop(profile),
             "logs": lambda: logs(profile, lines),
             "restart": lambda: restart(profile),
-            "upgrade": lambda: upgrade(profile),
+            "upgrade": lambda: upgrade(profile, replacement=replacement),
             "uninstall": lambda: uninstall(profile),
         }
         return handlers[command]()

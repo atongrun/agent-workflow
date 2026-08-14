@@ -4,6 +4,12 @@
 
 ### Added
 
+- Give managed node installations a durable immutable profile identity. Native definitions now
+  reference a credential-free content-addressed profile snapshot, and later lifecycle commands can
+  resolve the exact installed binding after the authoring profile moves or disappears. Exact stop
+  retains manager/profile/role/repository/state-root/launch/process/lease agreement and refuses
+  identity drift before manager signaling.
+
 - Replace the node doctor's umbrella `ready` label with orthogonal configured, installed, running,
   connected, and dispatch-capable facts plus one legal next action. Managed start now validates
   the explicit native installation before desired-state mutation and names the exact install or

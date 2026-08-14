@@ -216,6 +216,7 @@ def test_install_leaves_managed_node_stopped_until_explicit_start(
     tmp_path: Path,
 ):
     profile = load_managed_profile(tmp_path)
+    monkeypatch.setattr(node, "default_config_home", lambda: tmp_path / "config")
 
     class Manager:
         def install(self):
@@ -225,6 +226,200 @@ def test_install_leaves_managed_node_stopped_until_explicit_start(
 
     assert node.install(profile) == 0
     assert json.loads(desired_path(profile).read_text(encoding="utf-8"))["state"] == "stopped"
+
+
+def test_install_snapshot_survives_deleted_authoring_profile_and_stops_exact_listener(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from agent_workflow import status as factual_status
+
+    source = write_profile(
+        tmp_path,
+        lifecycle=managed_lifecycle(manager="task-scheduler"),
+    )
+    profile = node.load_profile(str(source))
+    calls: list[list[str]] = []
+
+    def manager_for(value: node.NodeProfile):
+        return node_service.TaskSchedulerAdapter(
+            value,
+            run_command=lambda argv, **kwargs: calls.append(argv) or "",
+            current_user=node_service._current_windows_user(),
+        )
+
+    monkeypatch.setattr(node, "default_config_home", lambda: tmp_path / "config")
+    monkeypatch.setattr(node, "_resolve_managed_manager", manager_for)
+
+    assert node.install(profile) == 0
+    installed = node.load_installed_profile(str(source))
+    assert installed is not None
+    assert installed.path.is_relative_to((tmp_path / "config" / "installed-profiles").resolve())
+    install_record = json.loads(
+        (installed.node_dir / "managed" / "install.json").read_text(encoding="utf-8")
+    )
+    definition = Path(str(install_record["definition"])).read_text(encoding="utf-8")
+    assert install_record["profile"] == str(installed.path)
+    assert install_record["profile_source"] == str(source.resolve())
+    assert str(installed.path) in definition
+    assert str(source.resolve()) not in definition
+    assert node._load_operational_profile(str(installed.path)).authoring_path == source.resolve()
+
+    source.unlink()
+    resolved = node._load_operational_profile(str(source))
+    launch_id = "a" * 32
+    resolved.node_dir.mkdir(parents=True, exist_ok=True)
+    resolved.process_path.write_text(
+        json.dumps(
+            {
+                "format": "awf.node-process.v1",
+                "pid": 4321,
+                "process_creation_filetime": 777,
+                "launch_id": launch_id,
+                "profile": str(resolved.path),
+                "profile_sha256": resolved.digest,
+                "state_root": str(resolved.state_root),
+                "state_root_sha256": node.state_root_binding(resolved.state_root),
+                "role": resolved.role,
+                "repo": str(resolved.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    lease_path = resolved.state_root / "listeners" / f"{resolved.role}.json"
+    lease_path.parent.mkdir(parents=True, exist_ok=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": launch_id,
+                "role": resolved.role,
+                "repo": str(resolved.repo),
+                "state_root": str(resolved.state_root),
+                "state_root_sha256": node.state_root_binding(resolved.state_root),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 4321)
+    monkeypatch.setattr(node, "_windows_process_creation_filetime", lambda pid: 777)
+    observed_profiles: list[Path] = []
+    monkeypatch.setattr(
+        factual_status,
+        "snapshot",
+        lambda value, run_id: (
+            observed_profiles.append(value.path) or {"listener": {"status": "running"}}
+        ),
+    )
+    monkeypatch.setattr(factual_status, "print_human", lambda value: None)
+
+    assert node.run("status", str(source)) == 0
+    assert observed_profiles == [resolved.path]
+
+    calls.clear()
+    assert node.stop(resolved) == 0
+    taskkill = next(argv for argv in calls if argv[0].lower().endswith("taskkill.exe"))
+    assert taskkill[taskkill.index("/PID") + 1] == "4321"
+
+
+def test_managed_stop_refuses_wrong_installed_identity_before_manager_signal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    profile.node_dir.mkdir(parents=True)
+    profile.process_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "profile": str(profile.path),
+                "profile_sha256": "sha256:" + "f" * 64,
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    manager = node_service.TaskSchedulerAdapter(
+        profile,
+        run_command=lambda argv, **kwargs: calls.append(argv) or "",
+        current_user=node_service._current_windows_user(),
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: True)
+
+    with pytest.raises(node_service.NodeServiceError, match="profile identity drift"):
+        manager.stop()
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("manager_name", "adapter_type"),
+    [
+        ("systemd", node_service.SystemdAdapter),
+        ("launchd", node_service.LaunchdAdapter),
+    ],
+)
+def test_posix_managed_stop_refuses_identity_drift_before_manager_signal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    manager_name: str,
+    adapter_type: type,
+):
+    profile = load_managed_profile(tmp_path, manager=manager_name)
+    profile.node_dir.mkdir(parents=True)
+    profile.process_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "profile": str(profile.path),
+                "profile_sha256": "sha256:" + "f" * 64,
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(node_service, "_require_installed", lambda value, manager: {})
+    monkeypatch.setattr(
+        node_service,
+        "_run",
+        lambda argv, **kwargs: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: True)
+
+    with pytest.raises(node_service.NodeServiceError, match="profile identity drift"):
+        adapter_type(profile).stop()
+    assert calls == []
 
 
 def test_task_scheduler_install_uses_native_indefinite_periodic_definition(

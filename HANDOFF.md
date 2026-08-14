@@ -9,6 +9,16 @@
 
 ## Current Handoff State: 2026-08-14
 
+P0-3 makes managed profile identity durable beyond its authoring file. Install writes one
+credential-free content-addressed snapshot and exact source/name registry beneath the platform AWF
+configuration directory; launchd, systemd, and Task Scheduler definitions reference that snapshot.
+Managed start/status/logs/stop/restart/upgrade/uninstall and reconcile therefore use the installed
+identity even when the authoring file moved or disappeared. Exact stop still requires the native
+install/definition, installed profile digest, role/repository/state-root, launch identity, process
+creation identity where supported, and live lease to agree; no broad process-name or PID-only stop
+was added. See [`docs/tasks/durable-profile-exact-stop.md`](docs/tasks/durable-profile-exact-stop.md)
+and its [implementation report](docs/tasks/durable-profile-exact-stop-implementation-report.md).
+
 P0-1 of the usability remediation now defines one canonical host-local state-root contract for
 node-managed execution. A node profile explicitly owns the root; listener argv, generated business
 and preflight handlers, process/lease evidence, RunEvidence, RunLedger context, delivery
