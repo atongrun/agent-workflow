@@ -284,8 +284,8 @@ def test_doctor_json_emits_secret_free_reusable_snapshot(monkeypatch, capsys, tm
     assert node.doctor(profile, json_output=True, ttl_seconds=3600) == 0
 
     report = json.loads(capsys.readouterr().out)
-    assert report["format"] == "awf.node-readiness.v1"
-    assert report["status"] == "ready"
+    assert report["format"] == "awf.node-readiness.v2"
+    assert "status" not in report
     assert report["observed_at"] == "2026-08-09T01:02:03+00:00"
     assert report["valid_until"] == "2026-08-09T02:02:03+00:00"
     assert report["scope"] == "operator-discovery-only"
@@ -307,10 +307,22 @@ def test_doctor_json_emits_secret_free_reusable_snapshot(monkeypatch, capsys, tm
     }
     assert report["fingerprint"].startswith("sha256:")
     assert report["listener"]["status"] == "running"
-    assert report["remote_dispatch"] == {
-        "status": "not_proven",
-        "required_gate": "fast/deep-preflight",
+    assert {
+        name: report[name]
+        for name in ("configured", "installed", "running", "connected", "dispatch_capable")
+    } == {
+        "configured": True,
+        "installed": None,
+        "running": True,
+        "connected": True,
+        "dispatch_capable": False,
     }
+    assert report["lifecycle"]["configured"] is True
+    assert report["lifecycle"]["installed"] is None
+    assert report["lifecycle"]["running"] is True
+    assert report["lifecycle"]["connected"] is True
+    assert report["lifecycle"]["dispatch_capable"] is False
+    assert report["lifecycle"]["next_legal_action"]["id"] == "run_fast_deep_preflight"
     serialized = json.dumps(report, sort_keys=True)
     assert "secret" not in serialized
     assert "bus.invalid" not in serialized
@@ -341,6 +353,82 @@ def test_doctor_fingerprint_changes_with_tool_version(monkeypatch, tmp_path: Pat
     )
 
     assert first["fingerprint"] != second["fingerprint"]
+
+
+@pytest.mark.parametrize(
+    ("installed", "install_status", "listener_status", "expected_running", "next_action"),
+    [
+        (False, "not_installed", "stopped", False, "install"),
+        (True, "current", "stopped", False, "start"),
+        (True, "current", "running", True, "run_fast_deep_preflight"),
+    ],
+)
+def test_lifecycle_facts_keep_configured_installed_and_running_orthogonal(
+    monkeypatch,
+    tmp_path: Path,
+    installed: bool,
+    install_status: str,
+    listener_status: str,
+    expected_running: bool,
+    next_action: str,
+):
+    from agent_workflow import node_service
+
+    profile = node.load_profile(
+        str(write_profile(tmp_path, lifecycle={"mode": "managed", "manager": "auto"}))
+    )
+    monkeypatch.setattr(
+        node_service,
+        "installation_snapshot",
+        lambda value: {
+            "source": "native_manager_install_record+definition",
+            "manager": "launchd",
+            "installed": installed,
+            "status": install_status,
+        },
+    )
+    monkeypatch.setattr(
+        node,
+        "_listener_snapshot",
+        lambda value: {"status": listener_status},
+    )
+
+    facts = node.lifecycle_facts(profile, configured=True, connected=True)
+
+    assert facts["configured"] is True
+    assert facts["installed"] is installed
+    assert facts["running"] is expected_running
+    assert facts["next_legal_action"]["id"] == next_action
+
+
+def test_lifecycle_facts_report_stale_listener_and_missing_preflight(
+    monkeypatch, tmp_path: Path
+):
+    from agent_workflow import node_service
+
+    profile = node.load_profile(
+        str(write_profile(tmp_path, lifecycle={"mode": "managed", "manager": "auto"}))
+    )
+    monkeypatch.setattr(
+        node_service,
+        "installation_snapshot",
+        lambda value: {
+            "source": "native_manager_install_record+definition",
+            "manager": "launchd",
+            "installed": True,
+            "status": "current",
+        },
+    )
+    monkeypatch.setattr(node, "_listener_snapshot", lambda value: {"status": "stale"})
+
+    facts = node.lifecycle_facts(profile, configured=True, connected=None)
+
+    assert facts["running"] is False
+    assert facts["running_observation"]["status"] == "stale"
+    assert facts["connected"] is None
+    assert facts["dispatch_capable"] is False
+    assert facts["preflight"]["status"] == "missing"
+    assert facts["next_legal_action"]["id"] == "stop"
 
 
 def test_doctor_rejects_invalid_snapshot_ttl(tmp_path: Path):

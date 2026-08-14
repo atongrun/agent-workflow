@@ -10,12 +10,13 @@ a serial downstream run would undermine the capacity-isolation goal.
 
 ## Decision
 
-`awf node doctor --profile <profile> --json --ttl-seconds <seconds>` emits
-`awf.node-readiness.v1`. The report contains only credential-free facts: observation and expiry
+`awf node doctor --profile <profile> --json --ttl-seconds <seconds>` now emits
+`awf.node-readiness.v2`. The report contains only credential-free facts: observation and expiry
 times, installed Agent Workflow/Python/platform identity, the role/tool/model selection, profile
 digest, an opaque readiness fingerprint, listener binding, passed local readiness layers,
-explicit invalidation reasons, and
-`remote_dispatch.status=not_proven`.
+explicit invalidation reasons, and independent lifecycle facts. The former umbrella
+`status: ready` is removed: configured, installed, running, connected, and dispatch-capable
+observations retain false, unknown, not-applicable, and stale distinctions.
 
 The fingerprint binds the installed Agent Workflow version and operations tree, profile, strict
 configuration, role repository, Agent Bus executable, selected model executable and version hash,
@@ -30,7 +31,8 @@ repository. Known profile, configuration, workspace, tool, listener, or Bus chan
 observation before its stated expiry. Fast/Deep Preflight retains its fingerprint, HMAC cache,
 transport proof, and sole authority to permit remote dispatch.
 
-Agent Bus remains transport-only. Readiness JSON is intentionally not added to its protocol or
+Agent Bus remains transport-only. A successful bounded Bus doctor probe is reported as connected
+only for that observation window; listener or manager state does not imply a connection. Readiness JSON is intentionally not added to its protocol or
 queue lifecycle; an operator may collect the first report with one remote command and reuse that
 bounded evidence for the healthy portion of a short serial run.
 

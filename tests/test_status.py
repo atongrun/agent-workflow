@@ -196,6 +196,17 @@ def test_snapshot_labels_unavailable_queue_without_failing(monkeypatch, tmp_path
 def test_human_status_names_both_review_hash_semantics(capsys):
     value = {
         "profile": {"name": "reviewer", "role": "reviewer"},
+        "lifecycle": {
+            "configured": None,
+            "installed": True,
+            "running": False,
+            "connected": None,
+            "dispatch_capable": False,
+            "installation": {"status": "current"},
+            "running_observation": {"status": "stale"},
+            "preflight": {"status": "missing"},
+            "next_legal_action": {"command": "awf node stop --profile reviewer"},
+        },
         "listener": {"status": "running"},
         "workspace": {
             "status": "ready",
@@ -222,5 +233,8 @@ def test_human_status_names_both_review_hash_semantics(capsys):
     status.print_human(value)
 
     output = capsys.readouterr().out
+    assert "configured=unknown installed=true running=false" in output
+    assert "running_observation=stale preflight=missing" in output
+    assert "next_legal_action=awf node stop --profile reviewer" in output
     assert "file_sha256=sha256:file" in output
     assert "canonical_report_sha256=sha256:canonical" in output

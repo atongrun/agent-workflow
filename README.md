@@ -327,15 +327,18 @@ proved the manager, listener PID, launch identity, lease, queue consumption, cra
 clean local stop. The evidence matrix is recorded in the
 [lifecycle implementation report](docs/tasks/windows-listener-service-lifecycle-implementation-report.md).
 
-`doctor --json` emits one credential-free `awf.node-readiness.v1` snapshot for operator discovery.
+`doctor --json` emits one credential-free `awf.node-readiness.v2` snapshot for operator discovery.
 It binds the installed `awf`, profile, strict configuration, workspace, selected tool version, and
 listener observation into a SHA-256 fingerprint and gives the observation a bounded reuse window.
+The report has no umbrella `ready` state: `configured`, `installed`, `running`, `connected`, and
+`dispatch_capable` are independent facts with explicit evidence status and one legal next action.
 An architect may collect it with one remote command and reuse it across a short serial TaskCard
 run while the listed invalidation conditions remain false. The snapshot is not written, sent over
-Agent Bus, or accepted as dispatch authority: `remote_dispatch.status` is always `not_proven`, and
-the existing Fast/Deep Preflight remains mandatory where its policy requires it.
+Agent Bus, or accepted as dispatch authority. Missing, stale, or merely unexamined Fast/Deep
+Preflight evidence never becomes dispatch authority.
 
-Node status is read-only. It labels the source of listener/PID/lease, Git workspace, run-ledger,
+Node status is read-only. It reports the same five lifecycle facts without performing doctor or
+Preflight work, so configuration/connectivity may honestly remain unknown. It labels the source of listener/PID/lease, Git workspace, run-ledger,
 delivery-checkpoint, Agent Bus pending, artifact, pull-request, and CI observations; unavailable
 live facts remain `unknown`, `not_recorded`, or `not_requested`. Recorded and live PR/CI facts are
 shown separately so drift stays visible. ReviewReport integrity also uses two explicit names:

@@ -354,6 +354,9 @@ def _pr_and_ci(profile: NodeProfile, ledger: dict[str, object]) -> tuple[dict, d
 
 
 def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
+    from agent_workflow import node
+
+    listener = _listener(profile)
     ledger_fact, ledger = _ledger(profile, run_id)
     delivery_fact, review_file_sha = _delivery_checkpoints(profile, ledger)
     pull_request, ci = _pr_and_ci(profile, ledger)
@@ -365,7 +368,8 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
             "source": "node_profile",
             "sha256": state_root_binding(profile.state_root),
         },
-        "listener": _listener(profile),
+        "lifecycle": node.lifecycle_facts(profile, listener=listener),
+        "listener": listener,
         "workspace": _workspace(profile),
         "checkpoint": {"ledger": ledger_fact, "delivery": delivery_fact},
         "queue": _queue(profile),
@@ -382,6 +386,32 @@ def print_human(value: dict[str, object]) -> None:
     checkpoint = value["checkpoint"]
     queue = value["queue"]
     artifacts = value["artifacts"]
+    lifecycle = value.get("lifecycle")
+    if isinstance(lifecycle, dict):
+        def label(item: object) -> str:
+            if item is True:
+                return "true"
+            if item is False:
+                return "false"
+            return "unknown"
+
+        print(
+            "lifecycle: "
+            + " ".join(
+                f"{name}={label(lifecycle.get(name))}"
+                for name in (
+                    "configured",
+                    "installed",
+                    "running",
+                    "connected",
+                    "dispatch_capable",
+                )
+            )
+            + f" installation_status={lifecycle['installation']['status']}"
+            + f" running_observation={lifecycle['running_observation']['status']}"
+            + f" preflight={lifecycle['preflight']['status']}"
+        )
+        print(f"next_legal_action={lifecycle['next_legal_action']['command']}")
     print(
         f"profile={profile['name']} role={profile['role']} listener={listener['status']} "
         f"workspace={workspace['status']} queue={queue['status']}"

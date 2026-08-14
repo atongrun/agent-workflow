@@ -20,6 +20,18 @@ Host, compiler, rework, status redesign, or binary work changed. The frozen scop
 in [`docs/tasks/canonical-state-root-contract.md`](docs/tasks/canonical-state-root-contract.md) and
 its [implementation report](docs/tasks/canonical-state-root-contract-implementation-report.md).
 
+P0-2 replaces the node doctor's ambiguous top-level `status: ready` with independent
+`configured`, `installed`, `running`, `connected`, and `dispatch_capable` facts in
+`awf.node-readiness.v2`; factual node status carries the same lifecycle block while leaving facts
+it did not observe unknown. Managed installation comes only from the current native install record
+and definition, running still requires exact process/profile/lease/launch identity, and only a
+bounded Bus doctor probe establishes connected. Node commands never promote missing, stale, or
+unexamined Fast/Deep evidence to dispatch authority. Managed `start` consistently fails before
+desired-state mutation when uninstalled and gives the exact explicit `install` action instead of
+silently installing. See
+[`docs/tasks/truthful-lifecycle-state-model.md`](docs/tasks/truthful-lifecycle-state-model.md) and
+its [implementation report](docs/tasks/truthful-lifecycle-state-model-implementation-report.md).
+
 The current Phase A follow-up adds an independent Dogfood Finding operations path: one strict,
 source-gated Finding may be stripped from existing OpenCode coder/reviewer, Codex reviewer, or Pi
 reviewer Reports before formal validation/import, queued under a separate Feedback Outbox, sent
