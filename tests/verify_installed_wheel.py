@@ -143,6 +143,8 @@ def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
                     "model": model,
                     "on_type": route,
                     "state_root": str(state_root),
+                    "upstream_repo": "owner/repo",
+                    "head_repo": "owner/fork",
                 }
             ),
             encoding="utf-8",
@@ -164,12 +166,12 @@ def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
             "--profile",
             f"reviewer={profile_paths[1]}",
         ],
-        check=True,
         cwd=root / "outside-source",
         env=clean_env,
         capture_output=True,
         text=True,
     )
+    assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["format"] == "awf.run-contract-report.v1"
     assert report["compatibility"]["status"] == "compatible"

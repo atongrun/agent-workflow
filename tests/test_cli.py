@@ -37,8 +37,7 @@ def test_plan_check_rejects_run_manifest_as_authority_before_compilation(
 ):
     task_card = tmp_path / "card.md"
     task_card.write_text(
-        "## Task ID\n\nTASK-001\n\n## Working Context\n\n"
-        "- **Task branch**: `feature/TASK-001`\n",
+        "## Task ID\n\nTASK-001\n\n## Working Context\n\n- **Task branch**: `feature/TASK-001`\n",
         encoding="utf-8",
     )
     manifest_path = write_manifest(

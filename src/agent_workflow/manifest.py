@@ -304,9 +304,9 @@ def derive_manifest(
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 def _sha256(value: object) -> str:
@@ -356,8 +356,7 @@ def compile_run_contract(
     if set(routes) != set(required_routes):
         raise ManifestError("RunManifest routes must contain implement, review, and rework")
     route_versions = {
-        stage: _route_version(str(routes[stage]), stem)
-        for stage, stem in required_routes.items()
+        stage: _route_version(str(routes[stage]), stem) for stage, stem in required_routes.items()
     }
 
     by_role: dict[str, dict[str, Any]] = {}

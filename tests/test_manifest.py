@@ -183,9 +183,7 @@ def test_run_contract_reports_explicit_v1_v3_compatibility(tmp_path: Path, route
         ("route", "route"),
     ],
 )
-def test_run_contract_table_rejects_cross_binding_drift(
-    tmp_path: Path, drift: str, message: str
-):
+def test_run_contract_table_rejects_cross_binding_drift(tmp_path: Path, drift: str, message: str):
     inputs = compiled_inputs(tmp_path)
     if drift == "run":
         inputs["run_id"] = "task-other"
