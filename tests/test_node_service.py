@@ -367,6 +367,61 @@ def test_managed_stop_refuses_wrong_installed_identity_before_manager_signal(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("manager_name", "adapter_type"),
+    [
+        ("systemd", node_service.SystemdAdapter),
+        ("launchd", node_service.LaunchdAdapter),
+    ],
+)
+def test_posix_managed_stop_refuses_identity_drift_before_manager_signal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    manager_name: str,
+    adapter_type: type,
+):
+    profile = load_managed_profile(tmp_path, manager=manager_name)
+    profile.node_dir.mkdir(parents=True)
+    profile.process_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "profile": str(profile.path),
+                "profile_sha256": "sha256:" + "f" * 64,
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "role": profile.role,
+                "repo": str(profile.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(node_service, "_require_installed", lambda value, manager: {})
+    monkeypatch.setattr(
+        node_service,
+        "_run",
+        lambda argv, **kwargs: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: True)
+
+    with pytest.raises(node_service.NodeServiceError, match="profile identity drift"):
+        adapter_type(profile).stop()
+    assert calls == []
+
+
 def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
     tmp_path: Path,
 ):

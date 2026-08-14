@@ -21,9 +21,9 @@ queue, or model fallback was introduced.
   lifecycle ownership are unchanged. Identity replacement is deliberately an uninstall/install.
 - `src/agent_workflow/node_service.py` records both original-source provenance and installed
   snapshot identity while rendering every manager action from the installed profile.
-- Two focused tests cover the costly boundaries: delete the temporary authoring file and prove
-  installed status/exact stop, then corrupt the installed process identity and prove no manager
-  command is issued.
+- Three focused tests cover the costly boundaries: delete the temporary authoring file and prove
+  installed status/exact stop, then corrupt the installed process identity and prove no Windows,
+  systemd, or launchd manager command is issued.
 - README, lifecycle architecture, CHANGELOG, HANDOFF, and the frozen TaskCard describe the same
   runtime/authoring split. No new dependency, schema, manager, daemon, or migration layer was added.
 
@@ -35,6 +35,10 @@ Allowed local Mac gates:
 - `git diff --check` and TaskCard allowed-path inspection — passed.
 - Static review confirmed definitions receive the installed snapshot and the wrong-identity test
   observes zero manager signals.
+- Independent pre-merge review found that systemd/launchd previously signaled their exact manager
+  before checking process/lease identity. The shared exact-listener gate now runs first for stop,
+  restart, upgrade-stop, and uninstall; a table-driven regression proves zero native calls on
+  drift.
 
 Per the frozen Level B contract, local Pytest, Ruff, Rust, and platform service managers were not
 run. GitHub CI owns the full suite, format/lint gates, and installed-wheel platform matrix. Final
