@@ -401,9 +401,7 @@ def test_lifecycle_facts_keep_configured_installed_and_running_orthogonal(
     assert facts["next_legal_action"]["id"] == next_action
 
 
-def test_lifecycle_facts_report_stale_listener_and_missing_preflight(
-    monkeypatch, tmp_path: Path
-):
+def test_lifecycle_facts_report_stale_listener_and_missing_preflight(monkeypatch, tmp_path: Path):
     from agent_workflow import node_service
 
     profile = node.load_profile(

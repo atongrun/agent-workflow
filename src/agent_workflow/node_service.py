@@ -368,12 +368,8 @@ def require_installed(profile) -> None:
     if snapshot["installed"] is True:
         return
     if snapshot["installed"] is False:
-        raise NodeServiceError(
-            f"managed lifecycle is not installed; run {install_action}"
-        )
-    raise NodeServiceError(
-        f"managed lifecycle installation is stale; run {upgrade_action}"
-    )
+        raise NodeServiceError(f"managed lifecycle is not installed; run {install_action}")
+    raise NodeServiceError(f"managed lifecycle installation is stale; run {upgrade_action}")
 
 
 class Adapter(Protocol):

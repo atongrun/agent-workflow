@@ -690,13 +690,7 @@ def lifecycle_facts(
             "status": "not_applicable",
         }
     running_status = str(listener.get("status", "unknown"))
-    running = (
-        True
-        if running_status == "running"
-        else None
-        if running_status == "unknown"
-        else False
-    )
+    running = True if running_status == "running" else None if running_status == "unknown" else False
     preflight = _preflight_fact(profile, observed)
     facts = {
         "format": "awf.node-lifecycle.v1",

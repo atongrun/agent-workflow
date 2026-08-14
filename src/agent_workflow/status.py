@@ -388,6 +388,7 @@ def print_human(value: dict[str, object]) -> None:
     artifacts = value["artifacts"]
     lifecycle = value.get("lifecycle")
     if isinstance(lifecycle, dict):
+
         def label(item: object) -> str:
             if item is True:
                 return "true"
