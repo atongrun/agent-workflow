@@ -274,6 +274,7 @@ def test_install_snapshot_survives_deleted_authoring_profile_and_stops_exact_lis
             {
                 "format": "awf.node-process.v1",
                 "pid": 4321,
+                "process_creation_filetime": 777,
                 "launch_id": launch_id,
                 "profile": str(resolved.path),
                 "profile_sha256": resolved.digest,
@@ -301,6 +302,7 @@ def test_install_snapshot_survives_deleted_authoring_profile_and_stops_exact_lis
         encoding="utf-8",
     )
     monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 4321)
+    monkeypatch.setattr(node, "_windows_process_creation_filetime", lambda pid: 777)
     observed_profiles: list[Path] = []
     monkeypatch.setattr(
         factual_status,
