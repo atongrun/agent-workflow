@@ -305,8 +305,9 @@ def test_install_snapshot_survives_deleted_authoring_profile_and_stops_exact_lis
     monkeypatch.setattr(
         factual_status,
         "snapshot",
-        lambda value, run_id: observed_profiles.append(value.path)
-        or {"listener": {"status": "running"}},
+        lambda value, run_id: (
+            observed_profiles.append(value.path) or {"listener": {"status": "running"}}
+        ),
     )
     monkeypatch.setattr(factual_status, "print_human", lambda value: None)
 

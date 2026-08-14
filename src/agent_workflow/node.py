@@ -346,8 +346,10 @@ def load_installed_profile(value: str) -> NodeProfile | None:
         ):
             raise NodeError("installed profile source binding drifted")
         aliases = record.get("source_aliases")
-        if not isinstance(aliases, list) or not aliases or not all(
-            isinstance(alias, str) and Path(alias).is_absolute() for alias in aliases
+        if (
+            not isinstance(aliases, list)
+            or not aliases
+            or not all(isinstance(alias, str) and Path(alias).is_absolute() for alias in aliases)
         ):
             raise NodeError("installed profile source aliases are invalid")
         if requested_source is not None and str(requested_source.resolve()) not in aliases:
