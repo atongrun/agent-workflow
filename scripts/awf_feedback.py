@@ -32,6 +32,8 @@ except ModuleNotFoundError:  # package import in tests
     from .awf_executor import DEVNULL, ExecutionFailure
     from .awf_executor import run as run_command
 
+from agent_workflow.state_root import state_root_binding
+
 FINDING_FORMAT = "awf.finding-candidate.v1"
 IDENTITY_FORMAT = "awf.finding-occurrence-identity.v1"
 OCCURRENCE_FORMAT = "awf.finding-occurrence.v1"
@@ -334,7 +336,7 @@ def _load_record(path: Path, *, label: str) -> dict[str, object]:
 
 
 def _validate_outbox_record(value: Mapping[str, object]) -> dict[str, object]:
-    exact_keys = {
+    required_keys = {
         "format",
         "status",
         "occurrence",
@@ -342,8 +344,13 @@ def _validate_outbox_record(value: Mapping[str, object]) -> dict[str, object]:
         "created_at",
         "updated_at",
     }
-    if set(value) != exact_keys or value.get("format") != OUTBOX_FORMAT:
+    valid_keys = {frozenset(required_keys), frozenset({*required_keys, "state_root_sha256"})}
+    if frozenset(value) not in valid_keys or value.get("format") != OUTBOX_FORMAT:
         raise FeedbackStateError("Feedback Outbox record format is invalid")
+    if "state_root_sha256" in value and not _SHA256_ID_RE.fullmatch(
+        str(value.get("state_root_sha256", ""))
+    ):
+        raise FeedbackStateError("Feedback Outbox state-root binding is invalid")
     if value.get("status") not in {"pending", "sent"}:
         raise FeedbackStateError("Feedback Outbox record status is invalid")
     raw_occurrence = value.get("occurrence")
@@ -403,6 +410,16 @@ def queue_occurrence(state_root: Path, occurrence: Mapping[str, object]) -> Path
             existing = _load_record(path, label="Feedback Outbox record")
             if _validate_outbox_record(existing) != checked:
                 raise FeedbackStateError("Feedback Outbox occurrence conflicts with existing state")
+            root_binding = existing.get("state_root_sha256", "")
+            if root_binding and root_binding != state_root_binding(state_root):
+                raise FeedbackStateError(
+                    "Feedback Outbox state-root binding conflicts with location"
+                )
+            if not root_binding:
+                _atomic_write(
+                    path,
+                    {**existing, "state_root_sha256": state_root_binding(state_root)},
+                )
             return path
         now = _now()
         _atomic_write(
@@ -410,6 +427,7 @@ def queue_occurrence(state_root: Path, occurrence: Mapping[str, object]) -> Path
             {
                 "format": OUTBOX_FORMAT,
                 "status": "pending",
+                "state_root_sha256": state_root_binding(state_root),
                 "occurrence": checked,
                 "occurrence_sha256": _sha256_json(checked),
                 "created_at": now,
@@ -525,6 +543,9 @@ def feedback_status(state_root: Path) -> dict[str, int]:
             record = _load_record(path, label="Feedback Outbox record")
             occurrence = _validate_outbox_record(record)
             _validate_occurrence_path(path, occurrence)
+            root_binding = record.get("state_root_sha256", "")
+            if root_binding and root_binding != state_root_binding(state_root):
+                raise FeedbackStateError("Feedback Outbox state-root binding conflicts with location")
             counts[str(record["status"])] += 1
         except (FeedbackStateError, FindingContractError):
             counts["corrupt"] += 1
@@ -539,6 +560,9 @@ def _mark_sent(path: Path, occurrence: Mapping[str, object]) -> None:
         record = _load_record(path, label="Feedback Outbox record")
         checked = _validate_outbox_record(record)
         _validate_occurrence_path(path, checked)
+        root_binding = record.get("state_root_sha256", "")
+        if root_binding and root_binding != state_root_binding(root.parent):
+            raise FeedbackStateError("Feedback Outbox state-root binding conflicts with location")
         if checked != occurrence:
             raise FeedbackStateError("Feedback Outbox changed while sending")
         record["status"] = "sent"

@@ -44,6 +44,7 @@ except ModuleNotFoundError:  # package import in tests
     from .awf_executor import ExecutionFailure
     from .awf_executor import run as run_command
 from awf_network import add_url_host_to_no_proxy
+from agent_workflow.state_root import state_root_binding
 
 PREFLIGHT_REQUEST_TYPE = "control:awf-preflight-v1"
 PREFLIGHT_RESULT_TYPE = "control:awf-preflight-result-v1"
@@ -161,7 +162,14 @@ def acquire_listener_lease(
                     f"role={owner_role} pid={owner_pid}"
                 )
 
-        record = {"pid": os.getpid(), "role": role, "repo": resolved_repo}
+        resolved_root = str(state_root.resolve())
+        record = {
+            "pid": os.getpid(),
+            "role": role,
+            "repo": resolved_repo,
+            "state_root": resolved_root,
+            "state_root_sha256": state_root_binding(state_root),
+        }
         if launch_id:
             record["launch_id"] = launch_id
         try:
@@ -184,7 +192,13 @@ def release_listener_lease(
     launch_id: str = "",
 ) -> None:
     """Release only the exact lease created by this process."""
-    expected = {"pid": os.getpid(), "role": role, "repo": os.path.normcase(str(repo.resolve()))}
+    expected = {
+        "pid": os.getpid(),
+        "role": role,
+        "repo": os.path.normcase(str(repo.resolve())),
+        "state_root": str(path.parent.parent.resolve()),
+        "state_root_sha256": state_root_binding(path.parent.parent),
+    }
     if launch_id:
         expected["launch_id"] = launch_id
     try:
@@ -209,6 +223,7 @@ def build_handler(
     on_type: str = "",
     upstream_remote: str = "upstream",
     head_remote: str = "fork",
+    state_root: Path | None = None,
 ) -> str:
     """Build the agent-bus --on handler command.
 
@@ -281,6 +296,13 @@ def build_handler(
         ]
     else:
         fields += ["--review-report", "{payload.review_report}"]
+    if state_root is not None:
+        fields += [
+            "--state-root",
+            f'"{state_root}"',
+            "--state-root-sha256",
+            state_root_binding(state_root),
+        ]
     return f'"{python_exe}" "{role_script}" {role} ' + " ".join(fields)
 
 
@@ -360,6 +382,18 @@ def main(argv: list[str] | None = None) -> int:
         die("role must be a lowercase safe identifier")
     if a.node_launch_id and not re.fullmatch(r"[0-9a-f]{32}", a.node_launch_id):
         die("node launch identity is invalid")
+    if a.node_launch_id and a.state_root is None:
+        die("node-managed listener requires an explicit --state-root")
+    listener_root = (a.state_root or default_state_root()).expanduser().resolve()
+    inherited_root = os.environ.get("AWF_STATE_ROOT")
+    if inherited_root and Path(inherited_root).expanduser().resolve() != listener_root:
+        die("state-root mismatch between listener argv and inherited environment")
+    listener_binding = state_root_binding(listener_root)
+    inherited_binding = os.environ.get("AWF_STATE_ROOT_SHA256", "")
+    if inherited_binding and inherited_binding != listener_binding:
+        die("state-root binding mismatch between listener argv and inherited environment")
+    os.environ["AWF_STATE_ROOT"] = str(listener_root)
+    os.environ["AWF_STATE_ROOT_SHA256"] = listener_binding
 
     try:
         config_path = a.config or default_config_path()
@@ -440,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         on_type=on_type,
         upstream_remote=a.upstream_remote,
         head_remote=a.head_remote,
+        state_root=listener_root,
     )
 
     print(f"[listen] role={a.role} repo={repo} tool={a.tool} model={a.model or '<default>'}")
@@ -470,10 +505,11 @@ def main(argv: list[str] | None = None) -> int:
             on_type=active_types[1],
             upstream_remote=a.upstream_remote,
             head_remote=a.head_remote,
+            state_root=listener_root,
         )
         listen_argv += ["--on", active_types[1], rework_handler]
     if a.enable_preflight and config_path is not None:
-        preflight_root = (a.state_root or default_state_root()).resolve()
+        preflight_root = listener_root
         listen_argv += [
             "--on",
             PREFLIGHT_REQUEST_TYPE,
@@ -496,7 +532,6 @@ def main(argv: list[str] | None = None) -> int:
         ]
 
     try:
-        listener_root = (a.state_root or default_state_root()).resolve()
         lease_path = acquire_listener_lease(
             listener_root,
             a.role,

@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from agent_workflow.state_root import state_root_binding
+
 LEDGER_FORMAT = "awf.run-ledger.v1"
 PACKET_FORMAT = "awf.context-packet.v1"
 AUTHORITY_FORMAT = "awf.authority-manifest.v1"
@@ -154,6 +156,7 @@ def build_context_packet(
     stage: str,
     current_stage_evidence_commit: str = "",
     ledger_sequence: int = 0,
+    state_root_sha256: str = "",
 ) -> dict[str, object]:
     """Build a bounded, credential-free recovery packet."""
     if not run_id or not taskcard or not frozen_base or not branch or not stage or not next_action:
@@ -180,6 +183,7 @@ def build_context_packet(
             128,
         ),
         "ledger_sequence": ledger_sequence,
+        "state_root_sha256": state_root_sha256,
         "created_at": _now(),
     }
     for key in ("evidence", "prohibited_actions"):
@@ -200,6 +204,8 @@ def build_context_packet(
         raise ControlPlaneDenied("context packet authority manifest binding is unsafe")
     if len(_canonical(values).encode("utf-8")) > MAX_PACKET_BYTES:
         raise ControlPlaneDenied("context packet exceeds bounded size")
+    if state_root_sha256 and not re.fullmatch(r"sha256:[0-9a-f]{64}", state_root_sha256):
+        raise ControlPlaneDenied("context packet state-root binding is invalid")
     values["packet_sha256"] = _sha(values)
     return values
 
@@ -266,6 +272,9 @@ class RunLedger:
             raise ControlPlaneDenied("ledger and context packet are inconsistent")
         if ledger.get("packet_sha256") != packet.get("packet_sha256"):
             raise ControlPlaneDenied("ledger does not bind the current context packet")
+        packet_root = packet.get("state_root_sha256", "")
+        if packet_root and packet_root != state_root_binding(self.state_root):
+            raise ControlPlaneDenied("run ledger state-root binding does not match its location")
         return ledger, packet
 
     def initialize(
@@ -274,6 +283,9 @@ class RunLedger:
         verify_context_packet(packet)
         if packet.get("run_id") != self.run_id:
             raise ControlPlaneDenied("context packet run ID does not match ledger")
+        packet_root = packet.get("state_root_sha256", "")
+        if packet_root and packet_root != state_root_binding(self.state_root):
+            raise ControlPlaneDenied("context packet state-root binding does not match ledger root")
         if not 1 <= max_attempts <= 100 or not 0 <= rework_budget <= 100:
             raise ControlPlaneDenied("attempt/rework budgets must be non-negative and bounded")
         with _lock(self.lock_path):
@@ -286,6 +298,7 @@ class RunLedger:
                     "frozen_base",
                     "branch",
                     "authority_manifest",
+                    "state_root_sha256",
                 )
                 if any(current_packet.get(key) != packet.get(key) for key in immutable):
                     raise ControlPlaneDenied("run already exists with a different context packet")

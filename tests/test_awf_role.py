@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_workflow.state_root import state_root_binding
 from scripts import awf_executor
 from scripts.agent_adapters.opencode import _FINDING_INSTRUCTIONS as OPENCODE_FINDING_INSTRUCTIONS
 
@@ -132,6 +133,162 @@ def test_listener_handler_passes_event_id_once():
     assert "--delivery-id {payload.awf_delivery_id}" in handler
     assert "--payload-sha256 {payload.awf_payload_sha256}" in handler
     assert "--source-event-id {payload.awf_source_event_id}" in handler
+
+
+def test_custom_state_root_propagates_to_run_and_feedback_records(monkeypatch, tmp_path):
+    state_root = (tmp_path / "custom-state").resolve()
+    binding = state_root_binding(state_root)
+    observed = {}
+
+    def role_handler(args):
+        observed["evidence"] = args.evidence
+        authority = {
+            "sha256": "sha256:" + "a" * 64,
+            "allowed_operations": ["diagnose", "endpoint_discovery", "listener_restart"],
+        }
+        packet = awf_role.build_context_packet(
+            run_id="root-propagation",
+            taskcard="docs/task.md",
+            frozen_base="a" * 40,
+            branch="codex/root-propagation",
+            authority_manifest=authority,
+            next_action="stop",
+            stage="implement",
+            state_root_sha256=binding,
+        )
+        awf_role.RunLedger(state_root, "root-propagation").initialize(
+            packet, stage="implement", max_attempts=1, rework_budget=1
+        )
+        input_context = {
+            "key": "delivery-root",
+            "delivery_id": "delivery-root",
+            "payload_sha256": "sha256:payload",
+            "source_event_id": 901,
+        }
+        observed["checkpoint_path"], _ = awf_role.begin_recovery_checkpoint(
+            args.evidence,
+            input_context,
+            role="reviewer",
+            branch="codex/root-propagation",
+            source_commit="a" * 40,
+            provenance=_pr_provenance(),
+        )
+        payload = awf_role.build_delivery_payload(
+            "reviewer", "decision:awf-ready", {"task_id": "root-propagation"}, args.evidence
+        )
+        observed["outbox_path"], _ = awf_role.prepare_outbox(
+            args.evidence,
+            input_context,
+            action="reviewer.pass",
+            branch="codex/root-propagation",
+            source_commit="a" * 40,
+            evidence_commit="b" * 40,
+            to_role="architect",
+            event_type="decision:awf-ready",
+            payload=payload,
+        )
+        awf_role.complete_inbox(args.evidence, "delivery-root", "sha256:payload")
+        feedback = sys.modules["awf_feedback"]
+        occurrence = feedback.build_occurrence(
+            {
+                "kind": "reliability",
+                "component": "configuration",
+                "summary": "Canonical state root",
+                "observed": "All state shares one root",
+                "expected": "The binding remains exact",
+            },
+            input_delivery_id="delivery-root",
+            source_role="reviewer",
+            source_tool="pi",
+            awf_version=awf_role.AWF_VERSION,
+        )
+        observed["feedback_path"] = feedback.queue_occurrence(state_root, occurrence)
+        return 0
+
+    monkeypatch.setitem(awf_role.ROLES, "reviewer", role_handler)
+    monkeypatch.setenv("AWF_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("AWF_STATE_ROOT_SHA256", binding)
+
+    assert awf_role.main(
+        [
+            "reviewer",
+            "--event-id",
+            "901",
+            "--branch",
+            "codex/root-propagation",
+            "--state-root",
+            str(state_root),
+            "--state-root-sha256",
+            binding,
+        ]
+    ) == 0
+
+    evidence = observed["evidence"]
+    assert evidence.state_dir == state_root
+    result = json.loads(evidence.result_path.read_text(encoding="utf-8"))
+    assert result["state_root_sha256"] == binding
+    _, packet = awf_role.RunLedger(state_root, "root-propagation").recover()
+    assert packet["state_root_sha256"] == binding
+    checkpoint = json.loads(observed["checkpoint_path"].read_text(encoding="utf-8"))
+    assert checkpoint["state_root_sha256"] == binding
+    outbox = json.loads(observed["outbox_path"].read_text(encoding="utf-8"))
+    assert outbox["state_root_sha256"] == binding
+    inbox = next((state_root / "inbox" / "reviewer").glob("*.json"))
+    assert json.loads(inbox.read_text(encoding="utf-8"))["state_root_sha256"] == binding
+    feedback_record = json.loads(observed["feedback_path"].read_text(encoding="utf-8"))
+    assert feedback_record["state_root_sha256"] == binding
+
+
+def test_state_root_mismatch_fails_before_bus_or_model(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    expected = (tmp_path / "expected").resolve()
+    conflicting = (tmp_path / "conflicting").resolve()
+    environment = {
+        "AGENT_BUS_URL": "http://bus.invalid",
+        "AWF_CODER_TOKEN": "test-token",
+        "AWF_STATE_ROOT": str(conflicting),
+    }
+    monkeypatch.setattr(awf_listen.os, "environ", environment)
+    monkeypatch.setattr(
+        awf_listen,
+        "run_command",
+        lambda *_args, **_kwargs: pytest.fail("mismatch must fail before Bus connect"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        awf_listen.main(
+            [
+                "--role",
+                "coder",
+                "--repo",
+                str(repo),
+                "--state-root",
+                str(expected),
+                "--node-launch-id",
+                "a" * 32,
+            ]
+        )
+
+    monkeypatch.setattr(
+        awf_role.ROLES,
+        "coder",
+        lambda _args: pytest.fail("mismatch must fail before model invocation"),
+    )
+    monkeypatch.setenv("AWF_STATE_ROOT", str(expected))
+    monkeypatch.setenv("AWF_STATE_ROOT_SHA256", state_root_binding(expected))
+    with pytest.raises(SystemExit, match="2"):
+        awf_role.main(
+            [
+                "coder",
+                "--event-id",
+                "902",
+                "--branch",
+                "codex/root-mismatch",
+                "--state-root",
+                str(conflicting),
+            ]
+        )
 
 
 def test_listener_handler_passes_distinct_report_paths():
@@ -1012,6 +1169,7 @@ def test_v3_outbox_persists_complete_provenance_tuple(tmp_path):
     )
 
     assert record["format"] == "awf.outbox.v2"
+    assert record["state_root_sha256"] == state_root_binding(evidence.state_dir)
     assert record["provenance"] == awf_role.provenance_payload(provenance)
     assert record["payload"]["head_sha"] == "b" * 40
 

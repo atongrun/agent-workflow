@@ -288,7 +288,8 @@ awf node uninstall --profile coder-windows
   "tool": "pi",
   "model": "reviewer-model",
   "upstream_repo": "owner/project",
-  "head_repo": "contributor/project"
+  "head_repo": "contributor/project",
+  "state_root": "/absolute/path/to/host-local-awf-state"
 }
 ```
 
@@ -306,7 +307,9 @@ Persistent user profiles add one secret-free lifecycle object:
 
 A named profile resolves to the platform config directory under `awf/profiles/<name>.json`; an
 absolute JSON path is also accepted. The `awf.node-profile.v1` schema contains only non-secret
-role, repository, tool, route, state, and log settings. Tokens and the Bus URL remain exclusively
+role, repository, tool, route, state, and log settings. `state_root` is required and is the sole
+state source for a node-managed listener; direct script entry points retain an explicit
+`--state-root` / `AWF_STATE_ROOT` / platform-default compatibility order. Tokens and the Bus URL remain exclusively
 in owner-only `dispatch.env`. `doctor` checks the schema, role/tool boundary, strict credential
 file, role-aware Git workspace, Bus health, and model executable before start; it does not replace
 the existing Fast/Deep remote-dispatch proof. Profiles that omit `lifecycle` retain the local

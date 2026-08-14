@@ -363,6 +363,11 @@ def test_flush_marks_sent_only_after_bus_success(tmp_path: Path, monkeypatch):
     assert (sent, failed) == (1, 0)
     assert calls[0][0][1:4] == ["send", "--from", "reviewer"]
     assert awf_feedback.feedback_status(state)["sent"] == 1
+    outbox_path = next((state / "feedback" / "outbox").glob("*.json"))
+    record = json.loads(outbox_path.read_text(encoding="utf-8"))
+    record["state_root_sha256"] = "sha256:" + "f" * 64
+    outbox_path.write_text(json.dumps(record), encoding="utf-8")
+    assert awf_feedback.feedback_status(state)["corrupt"] == 1
 
 
 def test_flush_failure_keeps_pending(tmp_path: Path, monkeypatch):

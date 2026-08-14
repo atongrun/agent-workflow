@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent_workflow import cli, node
+from agent_workflow.state_root import state_root_binding
 
 
 def profile_values(tmp_path: Path, **changes: object) -> dict[str, object]:
@@ -188,6 +189,8 @@ def test_listener_lease_keeps_direct_pid_compatibility_without_launch_identity(t
 
     assert node._lease_matches(profile, lease, 42)
     assert not node._lease_matches(profile, lease, 7)
+    lease.update(state_root=str(tmp_path / "other"), state_root_sha256="sha256:" + "f" * 64)
+    assert not node._lease_matches(profile, lease, 42)
 
 
 def test_listener_snapshot_accepts_distinct_pid_with_bound_launch_identity(
@@ -201,6 +204,9 @@ def test_listener_snapshot_accepts_distinct_pid_with_bound_launch_identity(
             "pid": 42,
             "launch_id": "a" * 32,
             "profile_sha256": profile.digest,
+            "profile": str(profile.path),
+            "role": profile.role,
+            "repo": str(profile.repo),
         },
     )
     monkeypatch.setattr(
@@ -227,6 +233,9 @@ def test_listener_snapshot_rejects_dead_listener_behind_live_launcher(monkeypatc
             "pid": 42,
             "launch_id": "a" * 32,
             "profile_sha256": profile.digest,
+            "profile": str(profile.path),
+            "role": profile.role,
+            "repo": str(profile.repo),
         },
     )
     monkeypatch.setattr(
@@ -292,6 +301,10 @@ def test_doctor_json_emits_secret_free_reusable_snapshot(monkeypatch, capsys, tm
         "model": "",
     }
     assert report["profile_sha256"] == profile.digest
+    assert report["state_root"] == {
+        "source": "node_profile",
+        "sha256": state_root_binding(profile.state_root),
+    }
     assert report["fingerprint"].startswith("sha256:")
     assert report["listener"]["status"] == "running"
     assert report["remote_dispatch"] == {
@@ -402,7 +415,11 @@ def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatc
     assert record["pid"] == 4321
     assert len(record["launch_id"]) == 32
     assert record["profile_sha256"] == profile.digest
+    assert record["state_root"] == str(profile.state_root)
+    assert record["state_root_sha256"] == state_root_binding(profile.state_root)
     assert Path(observed["argv"][1]).name == "awf_listen.py"
+    state_root_index = observed["argv"].index("--state-root")
+    assert observed["argv"][state_root_index + 1] == str(profile.state_root)
     assert observed["argv"][-2:] == ["--node-launch-id", record["launch_id"]]
     assert observed["cwd"] == profile.repo
     assert observed["stdin"] is node.subprocess.DEVNULL
