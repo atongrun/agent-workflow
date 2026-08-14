@@ -4,6 +4,13 @@
 
 ### Added
 
+- Add a local-only `awf plan check` compiler/linter that keeps owner RunManifest and internal
+  authority-manifest classes distinct, validates the frozen TaskCard's ImplementationReport and
+  ReviewReport allowlist plus exact role profile/repository/state-root bindings, and emits an
+  `awf.run-contract-report.v1` with compiler provenance and explicit v1-v3 compatibility. This
+  read-only package does not switch setup/run/dispatch or perform Git, process, ledger, Bus, or
+  event mutations.
+
 - Give managed node installations a durable immutable profile identity. Native definitions now
   reference a credential-free content-addressed profile snapshot, and later lifecycle commands can
   resolve the exact installed binding after the authoring profile moves or disappears. Exact stop

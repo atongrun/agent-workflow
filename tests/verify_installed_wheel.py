@@ -80,6 +80,103 @@ finally:
         assert process.wait(timeout=10) == 0
 
 
+def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
+    repo = root / "compiled-run-repo"
+    repo.mkdir()
+    state_root = root / "compiled-run-state"
+    task_id = "WHEEL-CHECK-001"
+    implementation = f".awf/artifacts/impl-report-{task_id}.md"
+    review = f".awf/artifacts/review-report-{task_id}.md"
+    card = repo / "task.md"
+    card.write_text(
+        f"## Task ID\n\n{task_id}\n\n"
+        "<!-- awf-postflight\n"
+        + json.dumps(
+            {
+                "allowed_paths": ["result.txt", implementation, review],
+                "verification_commands": [],
+            }
+        )
+        + "\n-->\n",
+        encoding="utf-8",
+    )
+    manifest = repo / "run-manifest.json"
+    subprocess.run(
+        [
+            str(awf),
+            "setup",
+            "--repo",
+            str(repo),
+            "--card",
+            "task.md",
+            "--manifest",
+            str(manifest),
+            "--branch",
+            f"feature/{task_id}",
+            "--tool",
+            "opencode",
+            "--model",
+            "coder/model",
+            "--reviewer-tool",
+            "pi",
+            "--reviewer-model",
+            "reviewer/model",
+        ],
+        check=True,
+        cwd=root / "outside-source",
+        env=clean_env,
+    )
+    profile_paths = []
+    for role, tool, model, route in (
+        ("coder", "opencode", "coder/model", "task:awf-impl-v3"),
+        ("reviewer", "pi", "reviewer/model", "task:awf-review-v3"),
+    ):
+        profile = repo / f"{role}.json"
+        profile.write_text(
+            json.dumps(
+                {
+                    "format": "awf.node-profile.v1",
+                    "name": f"wheel-{role}",
+                    "role": role,
+                    "repo": str(repo),
+                    "tool": tool,
+                    "model": model,
+                    "on_type": route,
+                    "state_root": str(state_root),
+                    "upstream_repo": "owner/repo",
+                    "head_repo": "owner/fork",
+                }
+            ),
+            encoding="utf-8",
+        )
+        profile_paths.append(profile)
+    result = subprocess.run(
+        [
+            str(awf),
+            "plan",
+            "check",
+            "--repo",
+            str(repo),
+            "--run-manifest",
+            str(manifest),
+            "--state-root",
+            str(state_root),
+            "--profile",
+            f"coder={profile_paths[0]}",
+            "--profile",
+            f"reviewer={profile_paths[1]}",
+        ],
+        cwd=root / "outside-source",
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["format"] == "awf.run-contract-report.v1"
+    assert report["compatibility"]["status"] == "compatible"
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: verify_installed_wheel.py <wheel>")
@@ -156,6 +253,7 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
 """
         subprocess.run([str(python), "-c", proof], check=True, cwd=outside, env=clean_env)
         verify_listener_pid_binding(python, root, clean_env)
+        verify_plan_check(awf, root, clean_env)
         subprocess.run(
             [str(awf), "version"],
             check=True,

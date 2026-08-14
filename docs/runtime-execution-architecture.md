@@ -2,6 +2,20 @@
 
 ## Decision
 
+Before any operational surface consumes owner intent, `awf plan check` can compile the local files
+into one deterministic `awf.run-contract-report.v1`. This P0-4a surface is deliberately read-only:
+it validates the `awf.run-manifest.v1` owner document, the separate internal
+`awf.authority-manifest.v1`, the frozen TaskCard and both report paths, the canonical state-root,
+and exact coder/reviewer node-profile identities. It emits compiler/version provenance, explicit
+v1-v3 route compatibility, and canonical SHA-256 bindings without creating a RunLedger, invoking
+Git, connecting to Agent Bus, or starting a listener/model. Installed profile registry resolution
+is preferred so the compiled identity remains usable after an authoring profile is removed.
+
+P0-4a does not change `setup`, `run`, or `dispatch`; those existing paths remain compatibility
+surfaces until P0-4b independently switches normal consumption after the read-only fixtures are
+proven. The generic RunManifest flags on those older commands are therefore not reinterpreted by
+this package.
+
 All delivery, model, Git, and other trusted Workflow command execution crosses
 `scripts/awf_executor.py`. The non-core `awf node` lifecycle has one explicit exception: it may
 start the foreground listener or invoke a native service manager with fixed structured argv. That

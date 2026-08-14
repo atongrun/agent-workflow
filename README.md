@@ -232,6 +232,10 @@ bounded serial runbook:
 awf setup --repo . --card <path-or-id> \
   --tool opencode --model <coder-model> \
   --reviewer-tool pi --reviewer-model <reviewer-model>
+awf plan check --repo . --run-manifest .awf/run-manifest.json \
+  --state-root <host-local-state-root> \
+  --profile coder=<profile-name-or-path> \
+  --profile reviewer=<profile-name-or-path>
 awf run --repo . --card <path-or-id>
 awf status --run <run-id>
 awf resume --run <run-id>
@@ -239,6 +243,11 @@ awf resume --run <run-id>
 
 `awf setup` writes only credential-free `.awf/run-manifest.json`; secrets remain
 in the existing owner-only `dispatch.env`, and `.envrc` is never written.
+`awf plan check` is a read-only pre-operation compiler/linter. It resolves durable installed
+profiles when available, keeps the owner RunManifest and internal authority-manifest classes
+distinct, checks the frozen TaskCard plus ImplementationReport/ReviewReport allowlist, and emits an
+`awf.run-contract-report.v1` with compiler provenance and mutual SHA-256 bindings. It does not
+initialize a ledger, mutate Git, connect to Agent Bus, start a process, or dispatch an event.
 `awf run` and default `awf dispatch` consume that owner manifest and reject
 conflicting execution metadata; `dispatch.env` remains limited to secrets and
 runtime binaries. The default run ID is `task-<branch-task-suffix>`, matching

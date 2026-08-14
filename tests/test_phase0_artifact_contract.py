@@ -32,8 +32,9 @@ def write_card(path: Path, allowed_paths: list[str]) -> None:
 def test_dispatch_compiles_one_report_path_used_by_listener_executor_and_postflight(tmp_path):
     task_id = "phase0-contract-one"
     report_path = awf_artifact_contract.compile_implementation_report_path(task_id)
+    review_path = awf_artifact_contract.compile_review_report_path(task_id)
     card = tmp_path / "task.md"
-    write_card(card, ["result.txt", report_path])
+    write_card(card, ["result.txt", report_path, review_path])
 
     stage_contract = awf_artifact_contract.compile_stage_artifact_contract(
         card_path=card,
@@ -65,6 +66,15 @@ def test_dispatch_compiles_one_report_path_used_by_listener_executor_and_postfli
         awf_role.resolve_repo_file(str(tmp_path), str(payload["report"]), "ImplementationReport")
         == tmp_path / report_path
     )
+    run_contract = awf_artifact_contract.compile_run_artifact_contract(
+        repo=tmp_path,
+        card_path=card,
+        task_id=task_id,
+        implementation_report_path=report_path,
+        review_report_path=review_path,
+    )
+    assert run_contract.taskcard_path == "task.md"
+    assert run_contract.review_report_path == review_path
 
 
 def test_owner_report_path_survives_a_distinct_delivery_task_id(tmp_path):
