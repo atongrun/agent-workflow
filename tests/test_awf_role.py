@@ -273,7 +273,7 @@ def test_state_root_mismatch_fails_before_bus_or_model(monkeypatch, tmp_path):
             ]
         )
 
-    monkeypatch.setattr(
+    monkeypatch.setitem(
         awf_role.ROLES,
         "coder",
         lambda _args: pytest.fail("mismatch must fail before model invocation"),

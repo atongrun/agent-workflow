@@ -298,10 +298,27 @@ class RunLedger:
                     "frozen_base",
                     "branch",
                     "authority_manifest",
-                    "state_root_sha256",
                 )
                 if any(current_packet.get(key) != packet.get(key) for key in immutable):
                     raise ControlPlaneDenied("run already exists with a different context packet")
+                current_root = current_packet.get("state_root_sha256", "")
+                if not current_root and packet_root:
+                    current_packet = {**current_packet, "state_root_sha256": packet_root}
+                    current_packet["packet_sha256"] = _sha(
+                        {
+                            key: value
+                            for key, value in current_packet.items()
+                            if key != "packet_sha256"
+                        }
+                    )
+                    existing = {
+                        **existing,
+                        "packet_sha256": current_packet["packet_sha256"],
+                        "context_packet": current_packet,
+                        "updated_at": _now(),
+                    }
+                    _atomic_write(self.packet_path, current_packet)
+                    self._save(existing)
                 return
             ledger = {
                 "format": LEDGER_FORMAT,

@@ -5024,7 +5024,12 @@ def main(argv: list[str] | None = None) -> int:
         p.error("handler state-root binding does not match --state-root")
     if inherited_binding and inherited_binding != binding:
         p.error("handler state-root binding does not match inherited environment")
-    a.evidence = RunEvidence(a.event_id, a.role, state_root=state_root)
+    explicit_root = a.state_root is not None or bool(inherited_root)
+    a.evidence = RunEvidence(
+        a.event_id,
+        a.role,
+        state_root=state_root if explicit_root else None,
+    )
     a.evidence.record(
         "handler_start",
         handler_pid=os.getpid(),
