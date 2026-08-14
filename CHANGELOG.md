@@ -4,6 +4,11 @@
 
 ### Added
 
+- Replace the node doctor's umbrella `ready` label with orthogonal configured, installed, running,
+  connected, and dispatch-capable facts plus one legal next action. Managed start now validates
+  the explicit native installation before desired-state mutation and names the exact install or
+  upgrade action instead of installing implicitly.
+
 - Add Phase A of the bounded Dogfood Finding pipeline to the operations surface. Existing
   OpenCode coder/reviewer, Codex reviewer, and Pi reviewer Reports may carry one strict safe EOF
   Finding that trusted code strips before business validation/import, places in an independent

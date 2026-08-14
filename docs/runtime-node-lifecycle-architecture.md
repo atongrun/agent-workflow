@@ -82,8 +82,10 @@ cost of a Windows Service: provisioning those resources for a different identity
 3. Every supervisor runs exactly `awf node reconcile --profile <absolute-path>`. Reconcile reads one
    atomic JSON desired-state record and either exits stopped or runs the unchanged foreground
    listener; neither layer detaches.
-4. Running requires agreement among installed definition digest, process record, profile digest,
-   live PID, exact `launch_id`, role/repo, and lease. PID liveness alone is insufficient.
+4. Installation and running are orthogonal. Managed installation is current only when the native
+   manager install record, profile/Python/action bindings, definition, and digests agree. Running
+   requires agreement among process record, profile digest, live PID, exact `launch_id`, role/repo,
+   and lease. PID liveness, desired state, or installation alone is insufficient.
 5. Only one manager instance is allowed; an existing live listener wins over another start.
 6. Agent Bus `control:shutdown` remains the normal remote graceful-stop path. A successful clean
    listener exit records desired `stopped`; a non-zero exit preserves desired `running`. `awf node
@@ -143,9 +145,33 @@ The common commands are `doctor`, `foreground`, `reconcile`, `install`, `start`,
 definition. That definition sets a one-minute/current-user schedule, `IgnoreNew`, and `PT0S`
 unlimited execution; its action is the exact reconcile argv. Profiles and desired state remain
 portable JSON. Operators do not write XML, and PowerShell is neither generated nor invoked.
-`install` leaves desired state stopped; `start` is the explicit transition to running.
+`install` leaves desired state stopped; `start` is the explicit transition to running. Managed
+`start` first requires the current native install record and definition. If absent, it fails before
+writing desired state and names the exact `awf node install --profile <resolved-profile>` action;
+it never installs implicitly. Drift names `upgrade` instead of silently repairing evidence. This
+ordering and behavior are identical across launchd, systemd, and Task Scheduler.
 The already supported Agent Bus `control:shutdown` may stop it gracefully from another node;
 `awf node start` asks the local supervisor to resume it.
+
+## Truthful lifecycle observations
+
+Doctor and factual status expose five independent machine-readable facts:
+
+- `configured`: doctor proved the profile, strict configuration, workspace, Bus executable, and
+  role-scoped tool boundary; status leaves this unknown because it does not repeat doctor.
+- `installed`: the native manager install record and definition are current. Missing is false;
+  unreadable or drifted evidence is stale/unknown. Session mode is not applicable.
+- `running`: process/profile/lease/PID/launch identity agrees. It does not imply installation or
+  connectivity.
+- `connected`: doctor made one bounded Agent Bus health observation. Status leaves it unknown;
+  neither a listener lease nor a manager process is a connection proof.
+- `dispatch_capable`: true is reserved for current required Fast/Deep Preflight evidence. Node
+  doctor/status do not run that gate; missing proof is false and stale/unexamined proof is reported
+  without promotion.
+
+Human and JSON output order the first blocking fact into one legal next action. These observations
+are read-only and do not start a listener, alter native definitions, mutate a queue, or invoke a
+model.
 
 ## Failure and recovery
 

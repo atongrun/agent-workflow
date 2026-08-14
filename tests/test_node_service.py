@@ -182,15 +182,33 @@ def test_start_and_stop_persist_desired_state_before_manager_action(
 
     monkeypatch.setattr(node, "write_desired_state", write_state)
     monkeypatch.setattr(node, "_resolve_managed_manager", lambda value: Manager())
+    monkeypatch.setattr(
+        node_service,
+        "require_installed",
+        lambda value: calls.append(("installation.current", None)),
+    )
 
     assert node.start(profile) == 0
     assert node.stop(profile) == 0
     assert calls == [
+        ("installation.current", None),
         ("desired", "running"),
         ("manager.start", None),
         ("desired", "stopped"),
         ("manager.stop", None),
     ]
+
+    calls.clear()
+
+    def not_installed(value: node.NodeProfile):
+        raise node_service.NodeServiceError(
+            f"managed lifecycle is not installed; run awf node install --profile {value.path}"
+        )
+
+    monkeypatch.setattr(node_service, "require_installed", not_installed)
+    with pytest.raises(node_service.NodeServiceError, match="awf node install --profile"):
+        node.start(profile)
+    assert calls == []
 
 
 def test_install_leaves_managed_node_stopped_until_explicit_start(

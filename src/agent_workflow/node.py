@@ -33,7 +33,7 @@ TOOL_CONFIG = {
     "opencode": ("AWF_OPENCODE_BIN", "opencode"),
     "pi": ("AWF_PI_BIN", "pi"),
 }
-READINESS_FORMAT = "awf.node-readiness.v1"
+READINESS_FORMAT = "awf.node-readiness.v2"
 MAX_READINESS_TTL_SECONDS = 86400
 LISTENER_START_TIMEOUT_SECONDS = 15
 
@@ -627,6 +627,127 @@ def _readiness_fingerprint(
     return "sha256:" + hashlib.sha256(("awf-node-readiness-v1\0" + body).encode()).hexdigest()
 
 
+def _preflight_fact(profile: NodeProfile, observed_at: datetime) -> dict[str, object]:
+    path = profile.state_root / "preflight" / "latest-deep.json"
+    if not path.is_file():
+        return {
+            "dispatch_capable": False,
+            "status": "missing",
+            "source": "fast/deep-preflight",
+        }
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        expires_at = datetime.fromisoformat(str(value["expires_at"]))
+    except (OSError, UnicodeError, KeyError, ValueError, json.JSONDecodeError):
+        return {
+            "dispatch_capable": None,
+            "status": "unknown",
+            "source": "fast/deep-preflight",
+        }
+    if expires_at.tzinfo is None:
+        return {
+            "dispatch_capable": None,
+            "status": "unknown",
+            "source": "fast/deep-preflight",
+        }
+    if expires_at <= observed_at:
+        return {
+            "dispatch_capable": False,
+            "status": "stale",
+            "source": "fast/deep-preflight",
+            "expires_at": expires_at.isoformat(),
+        }
+    return {
+        "dispatch_capable": None,
+        "status": "not_evaluated",
+        "source": "fast/deep-preflight",
+        "expires_at": expires_at.isoformat(),
+    }
+
+
+def lifecycle_facts(
+    profile: NodeProfile,
+    *,
+    configured: bool | None = None,
+    connected: bool | None = None,
+    observed_at: datetime | None = None,
+    valid_until: datetime | None = None,
+    listener: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Assemble orthogonal lifecycle facts without inferring one fact from another."""
+    from agent_workflow import node_service
+
+    observed = observed_at or _now()
+    if listener is None:
+        listener = _listener_snapshot(profile)
+    if profile.lifecycle_mode == "managed":
+        installation = node_service.installation_snapshot(profile)
+    else:
+        installation = {
+            "source": "lifecycle_mode",
+            "manager": "none",
+            "installed": None,
+            "status": "not_applicable",
+        }
+    running_status = str(listener.get("status", "unknown"))
+    running = {"running": True, "unknown": None}.get(running_status, False)
+    preflight = _preflight_fact(profile, observed)
+    facts = {
+        "format": "awf.node-lifecycle.v1",
+        "configured": configured,
+        "installed": installation["installed"],
+        "running": running,
+        "connected": connected,
+        "dispatch_capable": preflight["dispatch_capable"],
+        "installation": installation,
+        "running_observation": {
+            "source": "node_process_record+listener_lease+pid_probe",
+            "status": running_status,
+        },
+        "connection_observation": {
+            "source": "agent_bus_doctor" if connected is not None else "not_observed",
+            "status": (
+                "connected"
+                if connected is True
+                else "disconnected"
+                if connected is False
+                else "unknown"
+            ),
+        },
+        "preflight": preflight,
+    }
+    if valid_until is not None and connected is not None:
+        facts["connection_observation"]["valid_until"] = valid_until.isoformat()
+    facts["next_legal_action"] = _next_lifecycle_action(profile, facts)
+    return facts
+
+
+def _node_action(profile: NodeProfile, action: str) -> dict[str, object]:
+    profile_arg = str(profile.path.resolve())
+    argv = ["awf", "node", action, "--profile", profile_arg]
+    return {"id": action, "argv": argv, "command": subprocess.list2cmdline(argv)}
+
+
+def _next_lifecycle_action(profile: NodeProfile, facts: dict[str, object]) -> dict[str, object]:
+    installed = facts["installed"]
+    if profile.lifecycle_mode == "managed" and installed is False:
+        return _node_action(profile, "install")
+    if profile.lifecycle_mode == "managed" and installed is None:
+        installation = facts["installation"]
+        if installation["status"] == "stale":
+            return _node_action(profile, "upgrade")
+    running_observation = facts["running_observation"]
+    if running_observation["status"] == "stale":
+        return _node_action(profile, "stop")
+    if facts["running"] is False:
+        return _node_action(profile, "start")
+    if facts["connected"] is not True:
+        return _node_action(profile, "doctor")
+    if facts["dispatch_capable"] is not True:
+        return {"id": "run_fast_deep_preflight", "command": "run Fast/Deep Preflight"}
+    return {"id": "remote_dispatch_allowed", "command": "remote dispatch allowed"}
+
+
 def doctor_report(
     profile: NodeProfile,
     readiness: LocalReadiness,
@@ -636,13 +757,21 @@ def doctor_report(
 ) -> dict[str, object]:
     if ttl_seconds < 1 or ttl_seconds > MAX_READINESS_TTL_SECONDS:
         raise NodeError(f"--ttl-seconds must be between 1 and {MAX_READINESS_TTL_SECONDS}")
+    valid_until = observed_at + timedelta(seconds=ttl_seconds)
     listener = _listener_snapshot(profile)
+    lifecycle = lifecycle_facts(
+        profile,
+        configured=True,
+        connected=True,
+        observed_at=observed_at,
+        valid_until=valid_until,
+        listener=listener,
+    )
     tool_status = "not_applicable" if profile.role == "architect" else "pass"
     return {
         "format": READINESS_FORMAT,
-        "status": "ready",
         "observed_at": observed_at.isoformat(),
-        "valid_until": (observed_at + timedelta(seconds=ttl_seconds)).isoformat(),
+        "valid_until": valid_until.isoformat(),
         "scope": "operator-discovery-only",
         "awf_version": __version__,
         "runtime": {
@@ -661,6 +790,17 @@ def doctor_report(
             "sha256": state_root_binding(profile.state_root),
         },
         "fingerprint": _readiness_fingerprint(profile, readiness, listener),
+        **{
+            name: lifecycle[name]
+            for name in (
+                "configured",
+                "installed",
+                "running",
+                "connected",
+                "dispatch_capable",
+            )
+        },
+        "lifecycle": lifecycle,
         "listener": listener,
         "layers": [
             {"id": "profile", "status": "pass"},
@@ -678,10 +818,6 @@ def doctor_report(
                 "model_invoked": False,
             },
         ],
-        "remote_dispatch": {
-            "status": "not_proven",
-            "required_gate": "fast/deep-preflight",
-        },
         "invalidate_on": [
             "ttl_expired",
             "profile_or_selection_changed",
@@ -710,13 +846,28 @@ def doctor(
     if json_output:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
-    state = str(report["listener"]["status"])
+    lifecycle = report["lifecycle"]
+    print(f"profile={profile.name} role={profile.role} repo={profile.repo}")
     print(
-        f"profile={profile.name} role={profile.role} readiness=pass listener={state} "
-        f"repo={profile.repo}"
+        "lifecycle: "
+        + " ".join(
+            f"{name}={_truth_label(lifecycle[name])}"
+            for name in ("configured", "installed", "running", "connected", "dispatch_capable")
+        )
+        + f" installation_status={lifecycle['installation']['status']}"
+        + f" running_observation={lifecycle['running_observation']['status']}"
+        + f" preflight={lifecycle['preflight']['status']}"
     )
-    print("remote_dispatch=not_proven; use the existing Fast/Deep preflight for dispatch authority")
+    print(f"next_legal_action={lifecycle['next_legal_action']['command']}")
     return 0
+
+
+def _truth_label(value: object) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return "unknown"
 
 
 def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
@@ -836,6 +987,9 @@ def uninstall(profile: NodeProfile) -> int:
 
 def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
     if profile.lifecycle_mode == "managed":
+        from agent_workflow import node_service
+
+        node_service.require_installed(profile)
         write_desired_state(profile, "running")
         return _managed_action(profile, "start")
     if _inside_ssh_session() and not allow_session_bound:
@@ -973,8 +1127,6 @@ def reconcile(profile: NodeProfile) -> int:
 
 
 def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False) -> int:
-    if profile.lifecycle_mode == "managed":
-        _managed_action(profile, "status")
     try:
         record = _process_record(profile)
     except NodeError:

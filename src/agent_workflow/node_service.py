@@ -328,6 +328,50 @@ def _guard_install(profile, manager: str, *, force: bool) -> bool:
     return True
 
 
+def installation_snapshot(profile) -> dict[str, object]:
+    """Report credential-free native install-record and definition truth."""
+    manager = resolve_manager(str(profile.lifecycle.get("manager", "auto")))
+    record_path = _service_dir(profile) / "install.json"
+    if not record_path.is_file():
+        return {
+            "source": "native_manager_install_record+definition",
+            "manager": manager,
+            "installed": False,
+            "status": "not_installed",
+        }
+    try:
+        _require_installed(profile, manager)
+    except NodeServiceError:
+        return {
+            "source": "native_manager_install_record+definition",
+            "manager": manager,
+            "installed": None,
+            "status": "stale",
+        }
+    return {
+        "source": "native_manager_install_record+definition",
+        "manager": manager,
+        "installed": True,
+        "status": "current",
+    }
+
+
+def require_installed(profile) -> None:
+    """Fail before desired-state mutation unless native installation evidence is current."""
+    snapshot = installation_snapshot(profile)
+    install_action = subprocess.list2cmdline(
+        ["awf", "node", "install", "--profile", str(Path(profile.path).resolve())]
+    )
+    upgrade_action = subprocess.list2cmdline(
+        ["awf", "node", "upgrade", "--profile", str(Path(profile.path).resolve())]
+    )
+    if snapshot["installed"] is True:
+        return
+    if snapshot["installed"] is False:
+        raise NodeServiceError(f"managed lifecycle is not installed; run {install_action}")
+    raise NodeServiceError(f"managed lifecycle installation is stale; run {upgrade_action}")
+
+
 class Adapter(Protocol):
     def doctor(self) -> int: ...
     def install(self, *, force: bool = False) -> int: ...
