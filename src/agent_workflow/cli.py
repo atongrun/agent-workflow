@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +13,7 @@ from agent_workflow import __version__, node
 from agent_workflow.errors import ParseError
 from agent_workflow.manifest import (
     ManifestError,
+    compile_run_contract,
     default_manifest_path,
     derive_manifest,
     load_manifest,
@@ -18,7 +21,7 @@ from agent_workflow.manifest import (
     write_manifest,
 )
 from agent_workflow.resources import authority_manifest_path, operations_dir
-from agent_workflow.state_root import state_root_binding
+from agent_workflow.state_root import resolve_state_root, state_root_binding
 from agent_workflow.validation import (
     load_role_map_from_files,
     parse_all_resources,
@@ -234,6 +237,104 @@ def _authority_manifest_for_repo(repo: Path) -> Path:
     """Preserve an explicit downstream manifest, otherwise use the packaged default."""
     downstream = repo / "scripts" / "authority-manifest.example.json"
     return downstream if downstream.is_file() else authority_manifest_path()
+
+
+def _profile_arguments(values: list[str]) -> list[node.NodeProfile]:
+    profiles: list[node.NodeProfile] = []
+    for value in values:
+        role, separator, path = value.partition("=")
+        if not separator or role not in {"coder", "reviewer"} or not path:
+            raise ManifestError("--profile must be coder=PATH or reviewer=PATH")
+        profile = node.load_installed_profile(path) or node.load_profile(path)
+        if profile.role != role:
+            raise ManifestError(f"--profile role {role!r} contains {profile.role!r}")
+        profiles.append(profile)
+    return profiles
+
+
+def cmd_plan_check(args: argparse.Namespace) -> int:
+    """Compile a local-only run contract report before any operational action."""
+    ops = _ops_module()
+    try:
+        scripts = operations_dir()
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        import awf_artifact_contract
+
+        repo = Path(args.repo).resolve()
+        manifest_path = Path(args.run_manifest).expanduser().resolve()
+        values = load_manifest(manifest_path)
+        card = resolve_manifest_card(values, repo)
+        authority_path = (
+            Path(args.authority_manifest).expanduser().resolve()
+            if args.authority_manifest
+            else _authority_manifest_for_repo(repo)
+        )
+        authority = ops.load_authority_manifest(authority_path)
+        authority_binding = ops.authority_manifest_binding(authority)
+        artifact = awf_artifact_contract.compile_run_artifact_contract(
+            repo=repo,
+            card_path=card,
+            task_id=str(values["task_id"]),
+            implementation_report_path=str(values["report_paths"]["implementation"]),
+            review_report_path=str(values["report_paths"]["review"]),
+        )
+        profiles = _profile_arguments(args.profile)
+        state_root = resolve_state_root(args.state_root)
+        taskcard_binding = {
+            "format": "awf.taskcard-postflight.v1",
+            "path": artifact.taskcard_path,
+            "sha256": "sha256:" + hashlib.sha256(card.read_bytes()).hexdigest(),
+            "allowed_paths_sha256": "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    artifact.allowed_paths,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "task_id": artifact.task_id,
+            "implementation_report_path": artifact.implementation_report_path,
+            "review_report_path": artifact.review_report_path,
+            "mutable_by_model": False,
+        }
+        profile_bindings = [
+            {
+                "role": profile.role,
+                "path": str(profile.path),
+                "profile_source": "installed" if profile.source_path else "authoring",
+                "sha256": profile.digest,
+                "state_root": str(profile.state_root),
+                "values": profile.values,
+            }
+            for profile in profiles
+        ]
+        run_id = args.run or f"task-{str(values['branch']).rsplit('/', 1)[-1]}"
+        report = compile_run_contract(
+            repo=repo,
+            run_id=run_id,
+            run_manifest=values,
+            run_manifest_path=manifest_path,
+            authority_manifest=authority,
+            authority_manifest_path=authority_path,
+            authority_binding=authority_binding,
+            taskcard_binding=taskcard_binding,
+            state_root=state_root,
+            state_root_sha256=state_root_binding(state_root),
+            profiles=profile_bindings,
+            compiler_version=__version__,
+        )
+    except (
+        ManifestError,
+        OSError,
+        node.NodeError,
+        ops.ControlPlaneDenied,
+        awf_artifact_contract.ArtifactContractError,
+    ) as exc:
+        print(f"ERROR: plan check failed: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -549,6 +650,24 @@ def main(argv: list[str] | None = None) -> int:
     setup_parser.add_argument("--base-ref", default="main")
     setup_parser.add_argument("--replace", action="store_true")
     setup_parser.set_defaults(func=cmd_setup)
+
+    plan_parser = subparsers.add_parser("plan", help="Compile or lint owner run intent")
+    plan_commands = plan_parser.add_subparsers(dest="plan_command", required=True)
+    plan_check_parser = plan_commands.add_parser(
+        "check", help="Read and validate a complete local run contract"
+    )
+    plan_check_parser.add_argument("--repo", default=".")
+    plan_check_parser.add_argument("--run-manifest", required=True)
+    plan_check_parser.add_argument("--authority-manifest", default="")
+    plan_check_parser.add_argument("--state-root", required=True)
+    plan_check_parser.add_argument("--run", default="")
+    plan_check_parser.add_argument(
+        "--profile",
+        action="append",
+        required=True,
+        help="Bind one exact role profile as coder=PATH or reviewer=PATH",
+    )
+    plan_check_parser.set_defaults(func=cmd_plan_check)
 
     dispatch_parser = subparsers.add_parser(
         "dispatch", help="Dispatch a TaskCard from its manifest"

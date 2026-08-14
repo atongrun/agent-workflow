@@ -6,6 +6,7 @@ intentionally contains no tokens and is never treated as shell input.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,8 @@ from subprocess import run as _run
 from typing import Any
 
 FORMAT = "awf.run-manifest.v1"
+COMPILER_FORMAT = "awf.run-contract-compiler.v1"
+REPORT_FORMAT = "awf.run-contract-report.v1"
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _ACE_RE = re.compile(r"(.+?):((?:\([A-Za-z,]+\))+)\Z")
 _ALLOWED = {
@@ -148,8 +151,9 @@ def _lock_windows_manifest(path: Path) -> None:
 
 
 def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(value, dict) or value.get("format") != FORMAT:
-        raise ManifestError("manifest format is invalid")
+    received_format = value.get("format") if isinstance(value, dict) else type(value).__name__
+    if not isinstance(value, dict) or received_format != FORMAT:
+        raise ManifestError(f"RunManifest requires {FORMAT}; received {received_format!r}")
     unknown = set(value) - _ALLOWED
     if unknown:
         raise ManifestError("manifest contains unknown fields")
@@ -297,3 +301,165 @@ def derive_manifest(
             if value
         },
     }
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _sha256(value: object) -> str:
+    return "sha256:" + hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _route_version(route: str, stem: str) -> str:
+    match = re.fullmatch(rf"task:awf-{re.escape(stem)}(?:-(v[23]))?", route)
+    if match is None:
+        raise ManifestError(f"RunManifest {stem} route is not compatible with v1-v3")
+    return match.group(1) or "v1"
+
+
+def _profile_selection(profile: dict[str, Any]) -> tuple[str, str]:
+    return str(profile["values"].get("tool", "")), str(profile["values"].get("model", ""))
+
+
+def compile_run_contract(
+    *,
+    repo: Path,
+    run_id: str,
+    run_manifest: dict[str, Any],
+    run_manifest_path: Path,
+    authority_manifest: dict[str, Any],
+    authority_manifest_path: Path,
+    authority_binding: dict[str, Any],
+    taskcard_binding: dict[str, Any],
+    state_root: Path,
+    state_root_sha256: str,
+    profiles: list[dict[str, Any]],
+    compiler_version: str,
+) -> dict[str, Any]:
+    """Compile one local compatibility report without performing any external action."""
+    values = validate_manifest(run_manifest)
+    repo = Path(repo).resolve()
+    branch = str(values["branch"])
+    task_id = str(values["task_id"])
+    branch_task_id = branch.rsplit("/", 1)[-1]
+    if branch_task_id != task_id:
+        raise ManifestError("RunManifest task_id must exactly match the task branch leaf")
+    expected_run_id = f"task-{branch_task_id}"
+    if run_id != expected_run_id:
+        raise ManifestError(f"run id must be {expected_run_id!r} for the bound branch")
+
+    routes = values["routes"]
+    required_routes = {"implement": "impl", "review": "review", "rework": "rework"}
+    if set(routes) != set(required_routes):
+        raise ManifestError("RunManifest routes must contain implement, review, and rework")
+    route_versions = {
+        stage: _route_version(str(routes[stage]), stem)
+        for stage, stem in required_routes.items()
+    }
+
+    by_role: dict[str, dict[str, Any]] = {}
+    for profile in profiles:
+        role = str(profile.get("role", ""))
+        if role in by_role:
+            raise ManifestError(f"multiple node profiles are bound to role {role!r}")
+        by_role[role] = profile
+    if set(by_role) != {"coder", "reviewer"}:
+        raise ManifestError("compiler requires exactly one coder and one reviewer profile")
+
+    models = values["models"]
+    expected_selections = {
+        "coder": (str(models.get("tool", "")), str(models.get("model", ""))),
+        "reviewer": (
+            str(models.get("reviewer_tool", "")),
+            str(models.get("reviewer_model", "")),
+        ),
+    }
+    provenance = values.get("provenance", {})
+    role_routes = {
+        "coder": {str(routes["implement"]), str(routes["rework"])},
+        "reviewer": {str(routes["review"])},
+    }
+    profile_report: dict[str, dict[str, Any]] = {}
+    for role, profile in by_role.items():
+        profile_values = profile["values"]
+        if _profile_selection(profile) != expected_selections[role]:
+            raise ManifestError(f"{role} profile tool/model conflicts with RunManifest")
+        if Path(str(profile_values["repo"])).expanduser().resolve() != repo:
+            raise ManifestError(f"{role} profile repository conflicts with the compiled repository")
+        if Path(str(profile["state_root"])).resolve() != Path(state_root).resolve():
+            raise ManifestError(f"{role} profile state root conflicts with the compiled state root")
+        on_type = str(profile_values.get("on_type", ""))
+        if on_type and on_type not in role_routes[role]:
+            raise ManifestError(f"{role} profile route conflicts with RunManifest")
+        for key in (
+            "upstream_repo",
+            "head_repo",
+            "upstream_remote",
+            "head_remote",
+            "base_ref",
+        ):
+            manifest_value = str(provenance.get(key, ""))
+            profile_value = str(profile_values.get(key, ""))
+            if manifest_value and profile_value and manifest_value != profile_value:
+                raise ManifestError(f"{role} profile {key} conflicts with RunManifest")
+        profile_report[role] = {
+            "format": str(profile_values.get("format", "")),
+            "name": str(profile_values.get("name", "")),
+            "path": str(Path(profile["path"]).resolve()),
+            "profile_source": str(profile.get("profile_source", "authoring")),
+            "sha256": str(profile["sha256"]),
+            "state_root_sha256": state_root_sha256,
+        }
+
+    report_paths = values["report_paths"]
+    if taskcard_binding.get("task_id") != task_id:
+        raise ManifestError("TaskCard task identity conflicts with RunManifest")
+    if taskcard_binding.get("implementation_report_path") != report_paths["implementation"]:
+        raise ManifestError("TaskCard ImplementationReport conflicts with RunManifest")
+    if taskcard_binding.get("review_report_path") != report_paths["review"]:
+        raise ManifestError("TaskCard ReviewReport conflicts with RunManifest")
+
+    bindings = {
+        "run_manifest": {
+            "format": FORMAT,
+            "path": str(Path(run_manifest_path).resolve()),
+            "sha256": _sha256(values),
+        },
+        "authority_manifest": {
+            "format": str(authority_manifest.get("format", "")),
+            "path": str(Path(authority_manifest_path).resolve()),
+            "sha256": str(authority_binding["sha256"]),
+        },
+        "taskcard": taskcard_binding,
+        "state_root": {
+            "path": str(Path(state_root).resolve()),
+            "sha256": state_root_sha256,
+        },
+        "profiles": profile_report,
+    }
+    result: dict[str, Any] = {
+        "format": REPORT_FORMAT,
+        "compiler": {
+            "format": COMPILER_FORMAT,
+            "name": "agent-workflow",
+            "version": compiler_version,
+        },
+        "compatibility": {
+            "status": "compatible",
+            "run_manifest": FORMAT,
+            "route_versions": route_versions,
+        },
+        "identity": {
+            "run_id": run_id,
+            "task_id": task_id,
+            "branch": branch,
+            "repo": str(repo),
+            "rework_budget": values.get("rework_budget", 0),
+        },
+        "bindings": bindings,
+    }
+    result["contract_sha256"] = _sha256(result)
+    return result

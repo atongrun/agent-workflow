@@ -32,6 +32,42 @@ def run_awf(*args: str, cwd: Path = PROJECT_ROOT) -> subprocess.CompletedProcess
     return completed
 
 
+def test_plan_check_rejects_run_manifest_as_authority_before_compilation(
+    monkeypatch, tmp_path: Path, capsys
+):
+    task_card = tmp_path / "card.md"
+    task_card.write_text(
+        "## Task ID\n\nTASK-001\n\n## Working Context\n\n"
+        "- **Task branch**: `feature/TASK-001`\n",
+        encoding="utf-8",
+    )
+    manifest_path = write_manifest(
+        tmp_path / "run-manifest.json",
+        derive_manifest(task_card, branch="feature/TASK-001", tool="codex"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "compile_run_contract",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("compiler must not run")),
+    )
+
+    result = cli.cmd_plan_check(
+        SimpleNamespace(
+            repo=str(tmp_path),
+            run_manifest=str(manifest_path),
+            authority_manifest=str(manifest_path),
+            state_root=str(tmp_path / "state"),
+            run="",
+            profile=[],
+        )
+    )
+
+    assert result == 1
+    error = capsys.readouterr().err
+    assert "awf.authority-manifest.v1" in error
+    assert "awf.run-manifest.v1" in error
+
+
 class TestCLIVersion:
     def test_version_prints_version(self):
         result = run_awf("version")

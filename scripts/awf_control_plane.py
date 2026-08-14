@@ -769,8 +769,11 @@ def load_authority_manifest(path: Path) -> dict[str, object]:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ControlPlaneDenied("authority manifest is unreadable or invalid JSON") from exc
-    if not isinstance(value, dict) or value.get("format") != AUTHORITY_FORMAT:
-        raise ControlPlaneDenied("authority manifest format is invalid")
+    received_format = value.get("format") if isinstance(value, dict) else type(value).__name__
+    if not isinstance(value, dict) or received_format != AUTHORITY_FORMAT:
+        raise ControlPlaneDenied(
+            f"authority manifest requires {AUTHORITY_FORMAT}; received {received_format!r}"
+        )
     allowed = value.get("allowed_operations", [])
     if not isinstance(allowed, list) or any(item not in SAFE_OPERATIONS for item in allowed):
         raise ControlPlaneDenied("authority manifest contains an unsafe operation")

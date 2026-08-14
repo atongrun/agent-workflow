@@ -9,6 +9,16 @@
 
 ## Current Handoff State: 2026-08-14
 
+P0-4a adds a read-only contract compiler before any normal execution-surface switch. The
+`awf plan check` command keeps `awf.run-manifest.v1` owner intent distinct from the internal
+`awf.authority-manifest.v1`, validates TaskCard/ImplementationReport/ReviewReport allowlist,
+run/branch, v1-v3 routes, role tool/model, repository/provenance, canonical state-root, and exact
+durable profile identities, then prints a deterministic `awf.run-contract-report.v1` with
+compiler provenance and SHA-256 bindings. It never initializes a ledger, mutates Git, connects to
+Agent Bus, starts a process, or emits an event. Normal `setup`, `run`, and `dispatch` consumption is
+unchanged until P0-4b. See
+[`docs/tasks/read-only-run-contract-compiler.md`](docs/tasks/read-only-run-contract-compiler.md).
+
 P0-3 makes managed profile identity durable beyond its authoring file. Install writes one
 credential-free content-addressed snapshot and exact source/name registry beneath the platform AWF
 configuration directory; launchd, systemd, and Task Scheduler definitions reference that snapshot.
