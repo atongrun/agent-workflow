@@ -1664,6 +1664,202 @@ def test_assert_model_workspace_state_rejects_git_helper_injection_before_git_ru
     assert not git_calls
 
 
+def test_trusted_commit_advances_same_durable_model_workspace(repositories, tmp_path):
+    _, _, executor = repositories
+    source_commit = run("git", "rev-parse", "HEAD", cwd=executor)
+    evidence = awf_role.RunEvidence(120, "coder", state_root=tmp_path / "state")
+    workspace = Path(
+        awf_role.prepare_model_workspace(str(executor), source_commit, state_dir=evidence.run_dir)
+    )
+    (workspace / "workspace-transition.txt").write_text("implemented\n", encoding="utf-8")
+    imported_tree = awf_role.import_model_delta(str(workspace), str(executor))
+    control_sha256 = awf_role.durable_model_control_sha256(str(workspace))
+    run("git", "commit", "-m", "trusted implementation", cwd=executor)
+    trusted_commit = run("git", "rev-parse", "HEAD", cwd=executor)
+
+    manifest_sha256 = awf_role.advance_model_workspace_to_trusted_commit(
+        evidence,
+        str(workspace),
+        str(executor),
+        source_commit=source_commit,
+        imported_tree=imported_tree,
+        trusted_commit=trusted_commit,
+        expected_control_sha256=control_sha256,
+    )
+
+    assert run("git", "rev-parse", "HEAD", cwd=workspace) == trusted_commit
+    assert run("git", "status", "--porcelain", cwd=workspace) == ""
+    assert run("git", "remote", cwd=workspace) == ""
+    assert awf_role.durable_model_manifest_sha256(str(workspace)) == manifest_sha256
+    assert awf_role.durable_model_control_sha256(str(workspace)) == control_sha256
+
+
+def test_rework_restores_unique_implement_lineage_and_rejects_git_drift(repositories, tmp_path):
+    _, _, executor = repositories
+    source_commit = run("git", "rev-parse", "HEAD", cwd=executor)
+    state_root = tmp_path / "state"
+    implement_evidence = awf_role.RunEvidence(121, "coder", state_root=state_root)
+    workspace = Path(
+        awf_role.prepare_model_workspace(
+            str(executor), source_commit, state_dir=implement_evidence.run_dir
+        )
+    )
+    (workspace / "lineage.txt").write_text("implemented\n", encoding="utf-8")
+    imported_tree = awf_role.import_model_delta(str(workspace), str(executor))
+    control_sha256 = awf_role.durable_model_control_sha256(str(workspace))
+    run("git", "commit", "-m", "trusted implementation", cwd=executor)
+    trusted_commit = run("git", "rev-parse", "HEAD", cwd=executor)
+    manifest_sha256 = awf_role.advance_model_workspace_to_trusted_commit(
+        implement_evidence,
+        str(workspace),
+        str(executor),
+        source_commit=source_commit,
+        imported_tree=imported_tree,
+        trusted_commit=trusted_commit,
+        expected_control_sha256=control_sha256,
+    )
+
+    run_id = "synthetic-implement-rework"
+    authority = awf_role.authority_manifest_binding(
+        awf_role.load_authority_manifest(
+            Path(awf_role.__file__).resolve().parent / "authority-manifest.example.json"
+        )
+    )
+    ledger = awf_role.RunLedger(state_root, run_id)
+    packet = awf_role.build_context_packet(
+        run_id=run_id,
+        taskcard="task.md",
+        frozen_base=source_commit,
+        branch="feature/task",
+        authority_manifest=authority,
+        next_action="implement",
+        stage="implement",
+        current_stage_evidence_commit=source_commit,
+    )
+    ledger.initialize(packet, stage="implement", max_attempts=1, rework_budget=1)
+    implement_delivery = "awf:" + "1" * 64
+    assert ledger.pre_invocation_gate(
+        event_id=121,
+        event_type="task:awf-impl-v3",
+        role="coder",
+        delivery_id=implement_delivery,
+        payload_sha256="sha256:" + "1" * 64,
+        stage="implement",
+        current_stage_evidence_commit=source_commit,
+    ).allowed
+    current_provenance = _pr_provenance(
+        base_sha=source_commit,
+        head_sha=trusted_commit,
+    )
+    input_context = {
+        "key": implement_delivery,
+        "delivery_id": implement_delivery,
+        "payload_sha256": "sha256:" + "1" * 64,
+        "source_event_id": 120,
+    }
+    checkpoint_path, checkpoint = awf_role.begin_recovery_checkpoint(
+        implement_evidence,
+        input_context,
+        role="coder",
+        branch="feature/task",
+        source_commit=source_commit,
+        provenance=_pr_provenance(base_sha=source_commit, head_sha=source_commit, pull_request=0),
+    )
+    transitions = [
+        (
+            "model_started",
+            {
+                "model_workspace": str(workspace),
+                "model_manifest_sha256": manifest_sha256,
+                "model_event_id": 121,
+                "model_process": "opencode",
+            },
+        ),
+        ("model_completed", {}),
+        ("postflight_completed", {"postflight_model_manifest_sha256": manifest_sha256}),
+        (
+            "model_imported",
+            {
+                "imported_tree": imported_tree,
+                "trusted_workspace_source_commit": source_commit,
+                "trusted_workspace_control_sha256": control_sha256,
+            },
+        ),
+        (
+            "commit_created",
+            {
+                "commit_sha": trusted_commit,
+                "trusted_workspace_commit_sha": trusted_commit,
+                "trusted_workspace_manifest_sha256": manifest_sha256,
+            },
+        ),
+        ("fork_sha_verified", {"head_sha": trusted_commit}),
+        (
+            "pr_tuple_verified",
+            {"verified_provenance": awf_role.provenance_payload(current_provenance)},
+        ),
+        ("outbox_prepared", {"outbox_delivery_id": "awf:" + "2" * 64}),
+        ("outbox_sent", {"outbox_delivery_id": "awf:" + "2" * 64}),
+    ]
+    for phase, facts in transitions:
+        checkpoint = awf_role.advance_recovery_checkpoint(
+            implement_evidence, checkpoint_path, checkpoint, phase, **facts
+        )
+    assert ledger.pre_invocation_gate(
+        event_id=122,
+        event_type="task:awf-review-v3",
+        role="reviewer",
+        delivery_id="awf:" + "3" * 64,
+        payload_sha256="sha256:" + "3" * 64,
+        stage="review",
+        current_stage_evidence_commit=trusted_commit,
+    ).allowed
+    assert ledger.pre_invocation_gate(
+        event_id=123,
+        event_type="task:awf-rework-v3",
+        role="coder",
+        delivery_id="awf:" + "4" * 64,
+        payload_sha256="sha256:" + "4" * 64,
+        stage="rework",
+        rework=True,
+        current_stage_evidence_commit=trusted_commit,
+    ).allowed
+    args = argparse.Namespace(branch="feature/task", commit=trusted_commit, run_id=run_id)
+    rework_evidence = awf_role.RunEvidence(123, "coder", state_root=state_root)
+    lineage_delivery, lineage_sha256 = awf_role.resolve_fresh_rework_workspace_lineage(
+        rework_evidence, args, current_provenance
+    )
+    _, rework_checkpoint = awf_role.begin_recovery_checkpoint(
+        rework_evidence,
+        {
+            "key": "awf:" + "4" * 64,
+            "delivery_id": "awf:" + "4" * 64,
+            "payload_sha256": "sha256:" + "4" * 64,
+            "source_event_id": 122,
+        },
+        role="coder",
+        branch="feature/task",
+        source_commit=trusted_commit,
+        provenance=current_provenance,
+        workspace_lineage_delivery_id=lineage_delivery,
+        workspace_lineage_checkpoint_sha256=lineage_sha256,
+    )
+    restored, restored_manifest = awf_role.restore_rework_workspace_lineage(
+        rework_evidence, args, current_provenance, rework_checkpoint
+    )
+    assert restored == str(workspace.resolve())
+    assert restored_manifest == manifest_sha256
+
+    run("git", "config", "lineage.drift", "true", cwd=workspace)
+    provider_calls = []
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.restore_rework_workspace_lineage(
+            rework_evidence, args, current_provenance, rework_checkpoint
+        )
+        provider_calls.append("rework")
+    assert provider_calls == []
+
+
 def test_import_model_delta_reproduces_verified_tree_without_git_metadata(repositories, tmp_path):
     _, _, executor = repositories
     expected = run("git", "rev-parse", "HEAD", cwd=executor)
@@ -4905,6 +5101,16 @@ def test_model_completed_postflight_failure_replays_without_model_or_rework(monk
     )
     monkeypatch.setattr(
         awf_role,
+        "durable_model_control_sha256",
+        lambda *args, **kwargs: "sha256:model-control",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "advance_model_workspace_to_trusted_commit",
+        lambda *args, **kwargs: "sha256:trusted-model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
         "restore_durable_model_manifest",
         lambda *args, **kwargs: str(repo),
     )
@@ -5751,6 +5957,16 @@ def test_pr_failure_replay_resumes_after_verified_fork_without_model(monkeypatch
         awf_role,
         "durable_model_manifest_sha256",
         lambda *args, **kwargs: "sha256:model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_control_sha256",
+        lambda *args, **kwargs: "sha256:model-control",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "advance_model_workspace_to_trusted_commit",
+        lambda *args, **kwargs: "sha256:trusted-model-manifest",
     )
     monkeypatch.setattr(
         awf_role,

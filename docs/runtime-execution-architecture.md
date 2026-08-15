@@ -20,6 +20,18 @@ immutable run identity. Generic setup/run `--manifest` input is rejected in favo
 `--run-manifest`; old uncompiled manifests get an explicit setup migration. Native dispatch stays
 on its existing compatibility path and is not changed by P0-4b.
 
+The coder owns one durable no-remote model workspace across an initial implementation and its one
+authorized rework. After postflight imports an exact tree and trusted code creates the executor
+commit, the runner verifies the commit parent/tree, imports only that local credential-free commit
+object into the existing workspace, advances detached HEAD, removes transient fetch/reflog state,
+and freezes a new Git manifest. The implement checkpoint records this trusted transition separately
+from its immutable input delivery/source commit. A v3 rework does not accept a workspace path from
+Agent Bus: it resolves exactly one prior authorized implement delivery from the same RunLedger,
+loads that coder checkpoint, and requires its completed review handoff, current PR tuple/commit,
+imported tree, stable Git-control binding, and post-transition manifest to match before invoking the
+provider. Same-delivery recovery continues from its own checkpoint and never repeats a completed or
+ambiguous call. Route, stage, and the one-rework budget remain control-plane authority.
+
 All delivery, model, Git, and other trusted Workflow command execution crosses
 `scripts/awf_executor.py`. The non-core `awf node` lifecycle has one explicit exception: it may
 start the foreground listener or invoke a native service manager with fixed structured argv. That

@@ -9,6 +9,16 @@
 
 ## Current Handoff State: 2026-08-14
 
+P0-5 closes the implement-to-rework workspace ownership gap for trusted v3 runs. The initial coder
+checkpoint now separates immutable delivery/source identity from the expected trusted transition
+to the verified implementation commit and records the imported tree, stable Git-control binding,
+and post-transition manifest. A rework resolves the unique prior authorized implement delivery
+from the same RunLedger and reuses that exact no-remote workspace only when the completed handoff,
+current PR tuple/commit, checkpoint digest, and Git manifest all match before provider invocation.
+Agent Bus payloads, control-plane stage/budget authority, same-delivery no-replay behavior, and
+business/Finding ACK separation are unchanged. See
+[`docs/tasks/implement-rework-workspace-transition.md`](docs/tasks/implement-rework-workspace-transition.md).
+
 P0-4b makes the proven compiler a mandatory setup/run gate. Setup now stores the canonical
 state-root and coder/reviewer profile references in the credential-free owner RunManifest, compiles
 the complete current graph, and writes owner-only `.awf/run-contract.json`. Run reloads and

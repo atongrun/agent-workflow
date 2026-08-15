@@ -578,7 +578,11 @@ class RunLedger:
                         ledger=ledger,
                     )
             current_stage = str(ledger.get("stage"))
-            rework_transition = stage == "rework" and current_stage in {"implement", "rework"}
+            rework_transition = stage == "rework" and current_stage in {
+                "implement",
+                "review",
+                "rework",
+            }
             review_transition = stage == "review" and current_stage == "implement"
             if stage and current_stage != stage and not rework_transition and not review_transition:
                 return self._deny(
