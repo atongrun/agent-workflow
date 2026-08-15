@@ -4,6 +4,14 @@
 
 ### Added
 
+- Add a thin, payload-blind usability facade over existing profile, compiler, lifecycle and causal
+  status contracts. `awf init`/`enroll` generates validated credential-free coder/reviewer
+  profiles and the default compiled project artifacts; top-level `doctor`, `start`, `run check`,
+  bare `run`, `status --explain`, `drain`, and `stop` discover those exact bindings. Managed start
+  composes install only from explicit `not_installed` evidence, while drain requires every queue
+  observation to be known and empty before exact stop. Existing setup/plan/node/run/status call
+  shapes remain available, and the facade owns no dispatch, recovery, model, event, or ACK logic.
+
 - Add payload-blind causal run diagnostics to `awf node status --run ... --explain`. The status
   projection identifies stage/attempt, first blocker, owner/cause, checkpoint-proven model
   invocation, and one legal next action, while Feedback capture/outbox/flush facts remain
