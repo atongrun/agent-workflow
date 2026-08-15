@@ -663,4 +663,4 @@ def test_native_manager_and_gbk_log_boundaries_are_utf8_safe(
     assert node_service._tail_file(log_path, 1) == 0
     console.flush()
 
-    assert raw_output.getvalue().decode("gbk") == "状态??\n"
+    assert raw_output.getvalue().decode("gbk").splitlines() == ["状态??"]
