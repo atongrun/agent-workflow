@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 from pathlib import Path
@@ -615,3 +616,51 @@ def test_mac_and_systemd_definitions_target_reconcile_not_foreground(
     assert expected_profile in rendered
     assert "AGENT_BUS_TOKEN" not in rendered
     assert "password" not in rendered.lower()
+
+
+def test_native_manager_and_gbk_log_boundaries_are_utf8_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv: list[str], **kwargs: object):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 7, "状态🙂\ufffd", "sensitive raw output")
+
+    monkeypatch.setattr(node_service.subprocess, "run", fake_run)
+    argv = ["manager", "--literal", "a & b"]
+
+    completed = node_service._run(argv, check=False, timeout=9)
+
+    assert completed.args == argv
+    assert completed.returncode == 7
+    assert calls == [
+        (
+            argv,
+            {
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "timeout": 9,
+                "check": False,
+            },
+        )
+    ]
+    with pytest.raises(node_service.NodeServiceError) as failed:
+        node_service._run(argv)
+    assert "exit=7" in str(failed.value)
+    assert "text=utf-8/replace" in str(failed.value)
+    assert "sensitive raw output" not in str(failed.value)
+
+    log_path = tmp_path / "listener.log"
+    log_path.write_bytes("状态🙂".encode("utf-8") + b"\\xff\n")
+    raw_output = io.BytesIO()
+    console = io.TextIOWrapper(raw_output, encoding="gbk", errors="strict")
+    monkeypatch.setattr(node_service.sys, "stdout", console)
+
+    assert node_service._tail_file(log_path, 1) == 0
+    console.flush()
+
+    assert raw_output.getvalue().decode("gbk") == "状态??\n"

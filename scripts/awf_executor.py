@@ -28,6 +28,8 @@ _SECRET_KEY = re.compile(r"(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|AUTH)", re.IG
 _SENSITIVE_ARG = re.compile(
     r"(?i)(?:token|secret|password|passwd|api[_-]?key|authorization)=([^\s]+)"
 )
+_TEXT_ENCODING = "utf-8"
+_TEXT_ERRORS = "replace"
 
 
 class RuntimeKind(str, Enum):
@@ -301,9 +303,9 @@ def run(
     if text is None:
         text = encoding is not None or isinstance(input, str)
     if text and encoding is None:
-        encoding = "utf-8"
+        encoding = _TEXT_ENCODING
     if text and errors is None:
-        errors = "replace"
+        errors = _TEXT_ERRORS
     try:
         completed = _subprocess.run(
             normalized,
@@ -362,8 +364,8 @@ def start(
     stdout: int | IO[object] | None = None,
     stderr: int | IO[object] | None = None,
     text: bool = True,
-    encoding: str = "utf-8",
-    errors: str = "replace",
+    encoding: str | None = None,
+    errors: str | None = None,
     allow_shell_wrapper: bool = False,
     secrets: Sequence[str] = (),
     runtime: RuntimeInfo | None = None,
@@ -378,6 +380,10 @@ def start(
     )
     if stdin is None:
         stdin = DEVNULL
+    if text and encoding is None:
+        encoding = _TEXT_ENCODING
+    if text and errors is None:
+        errors = _TEXT_ERRORS
     try:
         return _subprocess.Popen(
             normalized,
