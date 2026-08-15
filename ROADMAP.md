@@ -96,6 +96,9 @@ Completed engineering gates:
 - [x] Freeze independent coder/reviewer selections in the owner RunManifest and exact committed
   TaskCard; route OpenCode-to-Pi review and Pi-to-OpenCode deterministic rework without changing
   the v3 payload schema or weakening pre-model selection-integrity.
+- [x] Preserve one coder-owned no-remote workspace across trusted implementation and one authorized
+  v3 rework; bind expected commit/tree evolution separately from immutable delivery identity and
+  require exact same-run ledger/checkpoint/PR/Git lineage before the rework provider starts.
 
 Remaining Phase 2 work:
 

@@ -258,6 +258,7 @@ _INPUT_TYPES = {
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9_.-]{1,100}$")
 _REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_DELIVERY_ID_RE = re.compile(r"^awf:[0-9a-f]{64}$")
 _PROVENANCE_FIELDS = (
     "provenance_version",
     "upstream_repo",
@@ -499,6 +500,11 @@ def _control_plane_enabled() -> bool:
     return os.environ.get("AWF_CONTROL_PLANE", "0") == "1"
 
 
+def workflow_run_id(a: argparse.Namespace) -> str:
+    task_id = a.branch.rsplit("/", 1)[-1]
+    return getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
+
+
 def pre_invocation_gate(
     a: argparse.Namespace, role: str, evidence: RunEvidence | None
 ) -> object | None:
@@ -508,8 +514,7 @@ def pre_invocation_gate(
     event_type = getattr(a, "input_type", "") or (
         "task:awf-review-v2" if role == "reviewer" else "task:awf-impl-v2"
     )
-    task_id = a.branch.rsplit("/", 1)[-1]
-    run_id = getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
+    run_id = workflow_run_id(a)
     stage = (
         getattr(a, "stage", "")
         or os.environ.get("AWF_STAGE")
@@ -702,6 +707,8 @@ def _checkpoint_immutable(record_value: dict[str, object]) -> dict[str, object]:
             "source_commit",
             "provenance",
             "state_root_sha256",
+            "workspace_lineage_delivery_id",
+            "workspace_lineage_checkpoint_sha256",
         )
     }
 
@@ -740,6 +747,14 @@ def validate_recovery_checkpoint(record_value: dict[str, object]) -> None:
     facts = record_value.get("facts")
     if not isinstance(facts, dict):
         die("recovery checkpoint facts are invalid")
+    lineage_delivery = record_value.get("workspace_lineage_delivery_id", "")
+    lineage_checkpoint = record_value.get("workspace_lineage_checkpoint_sha256", "")
+    if bool(lineage_delivery) != bool(lineage_checkpoint):
+        die("recovery checkpoint workspace lineage binding is incomplete")
+    if lineage_delivery and not _DELIVERY_ID_RE.fullmatch(str(lineage_delivery)):
+        die("recovery checkpoint workspace lineage delivery is invalid")
+    if lineage_checkpoint and not re.fullmatch(r"sha256:[0-9a-f]{64}", str(lineage_checkpoint)):
+        die("recovery checkpoint workspace lineage digest is invalid")
 
 
 def begin_recovery_checkpoint(
@@ -750,6 +765,8 @@ def begin_recovery_checkpoint(
     branch: str,
     source_commit: str,
     provenance: dict[str, object],
+    workspace_lineage_delivery_id: str = "",
+    workspace_lineage_checkpoint_sha256: str = "",
 ) -> tuple[Path, dict[str, object]]:
     path = delivery_state_path(evidence, "checkpoint", str(input_context["key"]))
     record_value: dict[str, object] = {
@@ -768,6 +785,13 @@ def begin_recovery_checkpoint(
         "facts": {},
         "updated_at": _utc_now(),
     }
+    if workspace_lineage_delivery_id or workspace_lineage_checkpoint_sha256:
+        record_value.update(
+            {
+                "workspace_lineage_delivery_id": workspace_lineage_delivery_id,
+                "workspace_lineage_checkpoint_sha256": workspace_lineage_checkpoint_sha256,
+            }
+        )
     validate_recovery_checkpoint(record_value)
     existing = _load_delivery_record(path, "recovery checkpoint")
     if existing is not None:
@@ -1737,6 +1761,107 @@ def durable_model_manifest_sha256(workspace: str) -> str:
     return canonical_payload_sha256(serializable)
 
 
+def durable_model_control_sha256(workspace: str) -> str:
+    """Bind Git control metadata that must survive a trusted HEAD/index transition."""
+    manifest = _model_git_manifest(str(Path(workspace).resolve()))
+    stable = {
+        key: list(value)
+        for key, value in manifest.items()
+        if key not in {"HEAD", "index-semantic"}
+    }
+    return canonical_payload_sha256(stable)
+
+
+def _assert_durable_model_workspace_path(evidence: RunEvidence, workspace: str) -> Path:
+    resolved = Path(workspace).resolve()
+    state_root = evidence.state_dir.resolve()
+    if (
+        resolved == state_root
+        or state_root not in resolved.parents
+        or not resolved.name.startswith("model-workspace-")
+        or not resolved.is_dir()
+        or resolved.is_symlink()
+    ):
+        die("durable model workspace is outside the Workflow state root")
+    return resolved
+
+
+def advance_model_workspace_to_trusted_commit(
+    evidence: RunEvidence,
+    workspace: str,
+    trusted_repo: str,
+    *,
+    source_commit: str,
+    imported_tree: str,
+    trusted_commit: str,
+    expected_control_sha256: str,
+) -> str:
+    """Advance one no-remote workspace after the trusted commit is fully verified."""
+    resolved = _assert_durable_model_workspace_path(evidence, workspace)
+    if not all(_FULL_COMMIT_RE.fullmatch(value) for value in (source_commit, trusted_commit)):
+        die("trusted workspace transition commit is invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", imported_tree):
+        die("trusted workspace transition tree is invalid")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_control_sha256):
+        die("trusted workspace transition control binding is invalid")
+    if durable_model_control_sha256(str(resolved)) != expected_control_sha256:
+        die("durable model workspace control metadata does not match its checkpoint")
+    if git_out(str(resolved), "remote"):
+        die("durable model workspace gained a Git remote before trusted transition")
+    trusted_parent = git_out(trusted_repo, "rev-parse", "--verify", f"{trusted_commit}^1")
+    trusted_tree = git_out(trusted_repo, "rev-parse", "--verify", f"{trusted_commit}^{{tree}}")
+    if trusted_parent != source_commit or trusted_tree != imported_tree:
+        die("trusted commit does not match the verified workspace transition")
+
+    current_head = git_out(str(resolved), "rev-parse", "--verify", "HEAD^{commit}")
+    if current_head == source_commit:
+        if git_out(str(resolved), "write-tree") != imported_tree:
+            die("durable model workspace tree does not match the imported checkpoint")
+        if postflight_git(str(resolved), "diff", "--quiet").returncode != 0:
+            die("durable model workspace changed after trusted import")
+        fetched = run_command(
+            [
+                "git",
+                "-C",
+                str(resolved),
+                "fetch",
+                "--no-tags",
+                "--no-write-fetch-head",
+                trusted_repo,
+                trusted_commit,
+            ],
+            stdin=DEVNULL,
+            stdout=DEVNULL,
+            stderr=DEVNULL,
+            env=postflight_git_env(),
+        )
+        if fetched.returncode != 0:
+            die("failed to import the trusted commit into the durable model workspace")
+        if postflight_git(str(resolved), "checkout", "--detach", "--force", trusted_commit).returncode:
+            die("failed to advance the durable model workspace to the trusted commit")
+    elif current_head != trusted_commit:
+        die("durable model workspace HEAD is outside its trusted transition")
+
+    git_dir = resolved / ".git"
+    for name in ("FETCH_HEAD", "ORIG_HEAD"):
+        path = git_dir / name
+        if path.exists():
+            path.unlink()
+    logs = git_dir / "logs"
+    if logs.exists():
+        shutil.rmtree(logs)
+    if durable_model_control_sha256(str(resolved)) != expected_control_sha256:
+        die("trusted workspace transition changed immutable Git control metadata")
+    if git_out(str(resolved), "rev-parse", "--verify", "HEAD^{commit}") != trusted_commit:
+        die("durable model workspace did not reach the trusted commit")
+    if git_out(str(resolved), "rev-parse", "--verify", "HEAD^{tree}") != imported_tree:
+        die("durable model workspace trusted tree is inconsistent")
+    if git_out(str(resolved), "remote") or git_out(str(resolved), "status", "--porcelain"):
+        die("durable model workspace is not clean after trusted transition")
+    freeze_model_git_metadata(str(resolved))
+    return durable_model_manifest_sha256(str(resolved))
+
+
 def _postflight_was_completed(evidence: RunEvidence) -> bool:
     """Recognize a completed trusted postflight boundary from durable evidence."""
     try:
@@ -1831,22 +1956,95 @@ def restore_durable_model_manifest(
     workspace: str,
     expected_sha256: str,
 ) -> str:
-    resolved = Path(workspace).resolve()
-    state_root = evidence.state_dir.resolve()
-    if (
-        resolved == state_root
-        or state_root not in resolved.parents
-        or not resolved.name.startswith("model-workspace-")
-        or not resolved.is_dir()
-        or resolved.is_symlink()
-    ):
-        die("durable model workspace is outside the Workflow state root")
+    resolved = _assert_durable_model_workspace_path(evidence, workspace)
     manifest = _model_git_manifest(str(resolved))
     serializable = {key: list(value) for key, value in manifest.items()}
     if canonical_payload_sha256(serializable) != expected_sha256:
         die("durable model workspace Git metadata does not match its checkpoint")
     _MODEL_GIT_MANIFESTS[str(resolved)] = manifest
     return str(resolved)
+
+
+def _implement_lineage_checkpoint(
+    evidence: RunEvidence,
+    a: argparse.Namespace,
+    provenance: dict[str, object],
+) -> tuple[Path, dict[str, object]]:
+    ledger, packet = RunLedger(evidence.state_dir, workflow_run_id(a)).recover()
+    if packet.get("branch") != a.branch or packet.get("current_stage_evidence_commit") != a.commit:
+        die("rework context packet does not match its branch/current commit")
+    events = ledger.get("events")
+    if not isinstance(events, list):
+        die("rework ledger events are invalid")
+    deliveries = {
+        str(event.get("delivery_id"))
+        for event in events
+        if isinstance(event, dict)
+        and event.get("role") == "coder"
+        and event.get("stage") == "implement"
+        and event.get("status") == "authorized"
+        and _DELIVERY_ID_RE.fullmatch(str(event.get("delivery_id", "")))
+    }
+    if len(deliveries) != 1:
+        die("rework requires exactly one authorized implement workspace lineage")
+    delivery_id = next(iter(deliveries))
+    checkpoint_path = delivery_state_path(evidence, "checkpoint", delivery_id)
+    checkpoint = _load_delivery_record(checkpoint_path, "implement workspace lineage checkpoint")
+    if checkpoint is None:
+        die("rework implement workspace lineage checkpoint is missing")
+    validate_recovery_checkpoint(checkpoint)
+    facts = dict(checkpoint["facts"])
+    if (
+        checkpoint.get("role") != "coder"
+        or checkpoint.get("input_delivery_id") != delivery_id
+        or checkpoint.get("branch") != a.branch
+        or checkpoint.get("phase") != "outbox_sent"
+        or facts.get("head_sha") != a.commit
+        or facts.get("trusted_workspace_commit_sha") != a.commit
+        or facts.get("verified_provenance") != provenance_payload(provenance)
+    ):
+        die("rework implement workspace lineage does not match its trusted handoff")
+    for field, pattern in (
+        ("imported_tree", r"[0-9a-f]{40}"),
+        ("trusted_workspace_manifest_sha256", r"sha256:[0-9a-f]{64}"),
+    ):
+        if not re.fullmatch(pattern, str(facts.get(field, ""))):
+            die(f"rework implement workspace lineage {field} is invalid")
+    return checkpoint_path, checkpoint
+
+
+def resolve_fresh_rework_workspace_lineage(
+    evidence: RunEvidence,
+    a: argparse.Namespace,
+    provenance: dict[str, object],
+) -> tuple[str, str]:
+    _, checkpoint = _implement_lineage_checkpoint(evidence, a, provenance)
+    return str(checkpoint["input_delivery_id"]), canonical_payload_sha256(checkpoint)
+
+
+def restore_rework_workspace_lineage(
+    evidence: RunEvidence,
+    a: argparse.Namespace,
+    provenance: dict[str, object],
+    checkpoint: dict[str, object],
+) -> tuple[str, str]:
+    delivery_id = str(checkpoint.get("workspace_lineage_delivery_id", ""))
+    expected_checkpoint_sha256 = str(
+        checkpoint.get("workspace_lineage_checkpoint_sha256", "")
+    )
+    lineage_path = delivery_state_path(evidence, "checkpoint", delivery_id)
+    lineage = _load_delivery_record(lineage_path, "implement workspace lineage checkpoint")
+    if lineage is None or canonical_payload_sha256(lineage) != expected_checkpoint_sha256:
+        die("rework implement workspace lineage checkpoint changed")
+    _, current = _implement_lineage_checkpoint(evidence, a, provenance)
+    if current != lineage:
+        die("rework implement workspace lineage is no longer unique and exact")
+    facts = dict(lineage["facts"])
+    workspace = str(facts.get("model_workspace", ""))
+    manifest_sha256 = str(facts.get("trusted_workspace_manifest_sha256", ""))
+    restored = restore_durable_model_manifest(evidence, workspace, manifest_sha256)
+    assert_model_workspace_state(restored, a.commit)
+    return restored, manifest_sha256
 
 
 def recover_completed_model_checkpoint(
@@ -4047,6 +4245,21 @@ def role_coder(a: argparse.Namespace) -> int:
             if recovered is None:
                 die("duplicate Workflow event has no durable recovery checkpoint or outbox")
             checkpoint_path, existing_checkpoint = recovered
+        workspace_lineage_delivery_id = ""
+        workspace_lineage_checkpoint_sha256 = ""
+        if getattr(a, "input_type", "") == "task:awf-rework-v3":
+            if existing_checkpoint is None:
+                (
+                    workspace_lineage_delivery_id,
+                    workspace_lineage_checkpoint_sha256,
+                ) = resolve_fresh_rework_workspace_lineage(evidence, a, provenance)
+            else:
+                workspace_lineage_delivery_id = str(
+                    existing_checkpoint.get("workspace_lineage_delivery_id", "")
+                )
+                workspace_lineage_checkpoint_sha256 = str(
+                    existing_checkpoint.get("workspace_lineage_checkpoint_sha256", "")
+                )
         checkpoint_path, checkpoint = begin_recovery_checkpoint(
             evidence,
             input_context,
@@ -4054,6 +4267,8 @@ def role_coder(a: argparse.Namespace) -> int:
             branch=a.branch,
             source_commit=a.commit,
             provenance=provenance,
+            workspace_lineage_delivery_id=workspace_lineage_delivery_id,
+            workspace_lineage_checkpoint_sha256=workspace_lineage_checkpoint_sha256,
         )
     elif duplicate:
         die("duplicate Workflow event has no durable downstream outbox")
@@ -4093,9 +4308,22 @@ def role_coder(a: argparse.Namespace) -> int:
             contract = parse_postflight_contract(card_file)
             validate_implementation_report_contract(card_file, a, evidence)
         model_state_dir = evidence.run_dir if evidence is not None else None
-        model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
-        if checkpoint is not None and checkpoint_path is not None:
+        if (
+            getattr(a, "input_type", "") == "task:awf-rework-v3"
+            and checkpoint is not None
+            and evidence is not None
+            and provenance is not None
+        ):
+            model_repo, model_manifest_sha256 = restore_rework_workspace_lineage(
+                evidence,
+                a,
+                provenance,
+                checkpoint,
+            )
+        else:
+            model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
             model_manifest_sha256 = durable_model_manifest_sha256(model_repo)
+        if checkpoint is not None and checkpoint_path is not None:
             checkpoint = advance_recovery_checkpoint(
                 evidence,
                 checkpoint_path,
@@ -4231,6 +4459,8 @@ def role_coder(a: argparse.Namespace) -> int:
                 checkpoint,
                 "model_imported",
                 imported_tree=imported_tree,
+                trusted_workspace_source_commit=a.commit,
+                trusted_workspace_control_sha256=durable_model_control_sha256(model_repo),
             )
         recovery_phase = "model_imported"
     elif checkpoint is not None:
@@ -4276,12 +4506,28 @@ def role_coder(a: argparse.Namespace) -> int:
             die("trusted commit checkpoint is invalid")
         record(evidence, "commit", commit_status="pass", commit_sha=commit_sha)
         if checkpoint is not None and checkpoint_path is not None:
+            facts = dict(checkpoint["facts"])
+            model_workspace = str(facts.get("model_workspace", ""))
+            workspace_control_sha256 = str(
+                facts.get("trusted_workspace_control_sha256", "")
+            )
+            trusted_workspace_manifest_sha256 = advance_model_workspace_to_trusted_commit(
+                evidence,
+                model_workspace,
+                repo,
+                source_commit=a.commit,
+                imported_tree=imported_tree,
+                trusted_commit=commit_sha,
+                expected_control_sha256=workspace_control_sha256,
+            )
             checkpoint = advance_recovery_checkpoint(
                 evidence,
                 checkpoint_path,
                 checkpoint,
                 "commit_created",
                 commit_sha=commit_sha,
+                trusted_workspace_commit_sha=commit_sha,
+                trusted_workspace_manifest_sha256=trusted_workspace_manifest_sha256,
             )
         recovery_phase = "commit_created"
     else:

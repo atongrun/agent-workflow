@@ -148,6 +148,13 @@ model invocation and after their verified model, artifact, publication/provenanc
 boundaries. Duplicate deliveries resume from the last trusted boundary; an ambiguous model
 invocation is never repeated. A retained Windows-to-Mac proof recovered the same coder and reviewer
 deliveries, routed a structured PASS, and completed architect ACK without repeating either model.
+For v3 `REQUEST_CHANGES`, the coder reuses the initial coder-owned durable workspace only after the
+same RunLedger identifies one unique authorized implement delivery and its completed checkpoint
+matches the exact current PR tuple, trusted implementation commit/tree, and credential-free Git
+manifest. Trusted code advances that same no-remote workspace after commit creation; immutable
+invocation identity remains bound to the original delivery/source commit. Agent Bus carries no
+workspace path or new lineage payload, and any lineage or Git drift fails before rework provider
+invocation.
 For every metadata-complete v1-v3 coder or reviewer delivery, the effective listener `tool` and
 `model` must also match the selection already bound into the canonical payload hash. Mismatches fail
 before control-plane authorization, recovery/outbox work, model invocation, or inbox completion;
