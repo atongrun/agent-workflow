@@ -14,10 +14,13 @@ from agent_workflow.errors import ParseError
 from agent_workflow.manifest import (
     ManifestError,
     compile_run_contract,
+    default_compiled_report_path,
     default_manifest_path,
     derive_manifest,
+    load_compiled_report,
     load_manifest,
     resolve_manifest_card,
+    write_compiled_report,
     write_manifest,
 )
 from agent_workflow.resources import authority_manifest_path, operations_dir
@@ -252,8 +255,53 @@ def _profile_arguments(values: list[str]) -> list[node.NodeProfile]:
     return profiles
 
 
-def cmd_plan_check(args: argparse.Namespace) -> int:
-    """Compile a local-only run contract report before any operational action."""
+def _profile_reference_map(values: list[str]) -> dict[str, str]:
+    references: dict[str, str] = {}
+    for value in values:
+        role, separator, path = value.partition("=")
+        if not separator or role not in {"coder", "reviewer"} or not path:
+            raise ManifestError("--profile must be coder=PATH or reviewer=PATH")
+        if role in references:
+            raise ManifestError(f"--profile contains duplicate role {role!r}")
+        references[role] = path
+    if set(references) != {"coder", "reviewer"}:
+        raise ManifestError("--profile requires exactly one coder and one reviewer")
+    return references
+
+
+def _compiler_inputs(
+    values: dict, state_root_value: str = "", profile_values: list[str] | None = None
+) -> tuple[Path, list[str]]:
+    manifest_state_root = str(values.get("state_root", ""))
+    manifest_profiles = values.get("profiles", {})
+    supplied_profiles = _profile_reference_map(profile_values) if profile_values else {}
+    if state_root_value and manifest_state_root:
+        if resolve_state_root(state_root_value) != resolve_state_root(manifest_state_root):
+            raise ManifestError("--state-root conflicts with owner RunManifest")
+    if supplied_profiles and manifest_profiles and supplied_profiles != manifest_profiles:
+        raise ManifestError("--profile conflicts with owner RunManifest")
+    selected_state_root = state_root_value or manifest_state_root
+    selected_profiles = supplied_profiles or manifest_profiles
+    if not selected_state_root or set(selected_profiles) != {"coder", "reviewer"}:
+        raise ManifestError(
+            "owner RunManifest has no compiled inputs; rerun awf setup with --state-root and "
+            "coder/reviewer --profile bindings"
+        )
+    return resolve_state_root(selected_state_root), [
+        f"{role}={selected_profiles[role]}" for role in ("coder", "reviewer")
+    ]
+
+
+def _compile_owner_contract(
+    *,
+    repo: Path,
+    values: dict,
+    manifest_path: Path,
+    authority_manifest: str = "",
+    state_root_value: str = "",
+    profile_values: list[str] | None = None,
+    run_id: str = "",
+) -> dict:
     ops = _ops_module()
     try:
         scripts = operations_dir()
@@ -261,13 +309,10 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
             sys.path.insert(0, str(scripts))
         import awf_artifact_contract
 
-        repo = Path(args.repo).resolve()
-        manifest_path = Path(args.run_manifest).expanduser().resolve()
-        values = load_manifest(manifest_path)
         card = resolve_manifest_card(values, repo)
         authority_path = (
-            Path(args.authority_manifest).expanduser().resolve()
-            if args.authority_manifest
+            Path(authority_manifest).expanduser().resolve()
+            if authority_manifest
             else _authority_manifest_for_repo(repo)
         )
         authority = ops.load_authority_manifest(authority_path)
@@ -279,8 +324,8 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
             implementation_report_path=str(values["report_paths"]["implementation"]),
             review_report_path=str(values["report_paths"]["review"]),
         )
-        profiles = _profile_arguments(args.profile)
-        state_root = resolve_state_root(args.state_root)
+        state_root, profile_args = _compiler_inputs(values, state_root_value, profile_values)
+        profiles = _profile_arguments(profile_args)
         taskcard_binding = {
             "format": "awf.taskcard-postflight.v1",
             "path": artifact.taskcard_path,
@@ -309,10 +354,10 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
             }
             for profile in profiles
         ]
-        run_id = args.run or f"task-{str(values['branch']).rsplit('/', 1)[-1]}"
-        report = compile_run_contract(
+        selected_run_id = run_id or f"task-{str(values['branch']).rsplit('/', 1)[-1]}"
+        return compile_run_contract(
             repo=repo,
-            run_id=run_id,
+            run_id=selected_run_id,
             run_manifest=values,
             run_manifest_path=manifest_path,
             authority_manifest=authority,
@@ -324,13 +369,26 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
             profiles=profile_bindings,
             compiler_version=__version__,
         )
-    except (
-        ManifestError,
-        OSError,
-        node.NodeError,
-        ops.ControlPlaneDenied,
-        awf_artifact_contract.ArtifactContractError,
-    ) as exc:
+    except (ops.ControlPlaneDenied, awf_artifact_contract.ArtifactContractError) as exc:
+        raise ManifestError(str(exc)) from exc
+
+
+def cmd_plan_check(args: argparse.Namespace) -> int:
+    """Compile a local-only run contract report before any operational action."""
+    try:
+        repo = Path(args.repo).resolve()
+        manifest_path = Path(args.run_manifest).expanduser().resolve()
+        values = load_manifest(manifest_path)
+        report = _compile_owner_contract(
+            repo=repo,
+            values=values,
+            manifest_path=manifest_path,
+            authority_manifest=args.authority_manifest,
+            state_root_value=args.state_root,
+            profile_values=args.profile,
+            run_id=args.run,
+        )
+    except (ManifestError, OSError, node.NodeError) as exc:
         print(f"ERROR: plan check failed: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
@@ -339,7 +397,17 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     try:
+        if getattr(args, "manifest", ""):
+            raise ManifestError("--manifest was replaced by --run-manifest for awf setup")
         repo = Path(args.repo).resolve()
+        _profile_reference_map(args.profile)
+        resolved_profiles = _profile_arguments(args.profile)
+        profile_references = {
+            profile.role: str(profile.path.resolve()) for profile in resolved_profiles
+        }
+        if not args.state_root:
+            raise ManifestError("awf setup requires an explicit --state-root")
+        state_root = resolve_state_root(args.state_root)
         values = derive_manifest(
             _resolve_card(args.card, repo),
             branch=args.branch,
@@ -353,13 +421,36 @@ def cmd_setup(args: argparse.Namespace) -> int:
             upstream_remote=args.upstream_remote,
             head_remote=args.head_remote,
             base_ref=args.base_ref,
+            state_root=str(state_root),
+            profiles=profile_references,
         )
-        path = Path(args.manifest) if args.manifest else repo / ".awf" / "run-manifest.json"
-        write_manifest(path, values, replace=args.replace)
-    except (ManifestError, OSError) as exc:
+        path = (
+            Path(args.run_manifest).expanduser().resolve()
+            if args.run_manifest
+            else default_manifest_path(repo)
+        )
+        contract_path = (
+            Path(args.run_contract).expanduser().resolve()
+            if args.run_contract
+            else default_compiled_report_path(repo)
+        )
+        if not args.replace and (path.exists() or contract_path.exists()):
+            raise ManifestError(
+                "owner RunManifest or compiled contract already exists; pass --replace"
+            )
+        report = _compile_owner_contract(
+            repo=repo,
+            values=values,
+            manifest_path=path,
+            authority_manifest=args.authority_manifest,
+        )
+        write_manifest(path, values)
+        write_compiled_report(contract_path, report)
+    except (ManifestError, OSError, node.NodeError) as exc:
         print(f"ERROR: setup failed: {exc}", file=sys.stderr)
         return 1
     print(f"configured RunManifest: {path.resolve()}")
+    print(f"compiled run contract: {contract_path.resolve()} ({report['contract_sha256']})")
     print("secrets unchanged: configure dispatch.env separately; .envrc was not written")
     return 0
 
@@ -445,9 +536,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     ops = _ops_module()
     try:
+        if getattr(args, "manifest", ""):
+            raise ManifestError("--manifest was replaced by --run-manifest for awf run")
         repo = Path(args.repo).resolve()
         card = _resolve_card(args.card, repo)
-        values, _ = _load_owner_manifest(repo, card, args.manifest)
+        values, manifest_path = _load_owner_manifest(repo, card, args.run_manifest)
         supplied = {
             "branch": args.branch,
             "tool": args.tool,
@@ -480,7 +573,29 @@ def cmd_run(args: argparse.Namespace) -> int:
                 f"--run must be {canonical_run_id!r} to match trusted listener recovery"
             )
         run_id = canonical_run_id
-        authority_path = _authority_manifest_for_repo(repo)
+        state_root, _ = _compiler_inputs(values)
+        if args.state_root and resolve_state_root(args.state_root) != state_root:
+            raise ManifestError("--state-root conflicts with compiled owner RunManifest")
+        contract_path = (
+            Path(args.run_contract).expanduser().resolve()
+            if args.run_contract
+            else default_compiled_report_path(repo)
+        )
+        persisted_report = load_compiled_report(contract_path)
+        authority_path = Path(
+            str(persisted_report.get("bindings", {}).get("authority_manifest", {}).get("path", ""))
+        )
+        current_report = _compile_owner_contract(
+            repo=repo,
+            values=values,
+            manifest_path=manifest_path,
+            authority_manifest=str(authority_path),
+            run_id=run_id,
+        )
+        if current_report != persisted_report:
+            raise ManifestError(
+                "compiled run contract drifted; rerun awf setup --replace before awf run"
+            )
         authority = ops.authority_manifest_binding(ops.load_authority_manifest(authority_path))
         base = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
@@ -496,9 +611,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             authority_manifest=authority,
             next_action="clean_checkout",
             stage="implement",
-            state_root_sha256=state_root_binding(Path(args.state_root)),
+            state_root_sha256=state_root_binding(state_root),
+            run_contract_sha256=str(current_report["contract_sha256"]),
         )
-        ops.RunLedger(Path(args.state_root), run_id).initialize(
+        ops.RunLedger(state_root, run_id).initialize(
             packet,
             stage="implement",
             max_attempts=1,
@@ -636,7 +752,12 @@ def main(argv: list[str] | None = None) -> int:
     setup_parser = subparsers.add_parser("setup", help="Create a credential-free owner RunManifest")
     setup_parser.add_argument("--repo", default=".")
     setup_parser.add_argument("--card", required=True)
-    setup_parser.add_argument("--manifest", default="")
+    setup_parser.add_argument("--run-manifest", default="")
+    setup_parser.add_argument("--manifest", default="", help=argparse.SUPPRESS)
+    setup_parser.add_argument("--run-contract", default="")
+    setup_parser.add_argument("--authority-manifest", default="")
+    setup_parser.add_argument("--state-root", default="")
+    setup_parser.add_argument("--profile", action="append", default=[])
     setup_parser.add_argument("--branch", default="")
     setup_parser.add_argument("--tool", required=True)
     setup_parser.add_argument("--model", default="")
@@ -659,12 +780,11 @@ def main(argv: list[str] | None = None) -> int:
     plan_check_parser.add_argument("--repo", default=".")
     plan_check_parser.add_argument("--run-manifest", required=True)
     plan_check_parser.add_argument("--authority-manifest", default="")
-    plan_check_parser.add_argument("--state-root", required=True)
+    plan_check_parser.add_argument("--state-root", default="")
     plan_check_parser.add_argument("--run", default="")
     plan_check_parser.add_argument(
         "--profile",
         action="append",
-        required=True,
         help="Bind one exact role profile as coder=PATH or reviewer=PATH",
     )
     plan_check_parser.set_defaults(func=cmd_plan_check)
@@ -726,16 +846,16 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = subparsers.add_parser("run", help="Initialize the bounded serial operator run")
     run_parser.add_argument("--repo", default=".")
     run_parser.add_argument("--card", required=True)
-    run_parser.add_argument("--manifest", default="")
+    run_parser.add_argument("--run-manifest", default="")
+    run_parser.add_argument("--manifest", default="", help=argparse.SUPPRESS)
+    run_parser.add_argument("--run-contract", default="")
     run_parser.add_argument("--run", default="")
     run_parser.add_argument("--branch", default="")
     run_parser.add_argument("--tool", default="")
     run_parser.add_argument("--model", default="")
     run_parser.add_argument("--reviewer-tool", default="")
     run_parser.add_argument("--reviewer-model", default="")
-    run_parser.add_argument(
-        "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
-    )
+    run_parser.add_argument("--state-root", default="")
     run_parser.add_argument("--rework-budget", type=int, default=1)
     run_parser.set_defaults(func=cmd_run)
 

@@ -231,26 +231,33 @@ bounded serial runbook:
 ```bash
 awf setup --repo . --card <path-or-id> \
   --tool opencode --model <coder-model> \
-  --reviewer-tool pi --reviewer-model <reviewer-model>
-awf plan check --repo . --run-manifest .awf/run-manifest.json \
+  --reviewer-tool pi --reviewer-model <reviewer-model> \
   --state-root <host-local-state-root> \
   --profile coder=<profile-name-or-path> \
   --profile reviewer=<profile-name-or-path>
-awf run --repo . --card <path-or-id>
+awf plan check --repo . --run-manifest .awf/run-manifest.json
+awf run --repo . --card <path-or-id> --run-manifest .awf/run-manifest.json
 awf status --run <run-id>
 awf resume --run <run-id>
 ```
 
-`awf setup` writes only credential-free `.awf/run-manifest.json`; secrets remain
-in the existing owner-only `dispatch.env`, and `.envrc` is never written.
+`awf setup` writes credential-free, owner-only `.awf/run-manifest.json` and
+`.awf/run-contract.json`; secrets remain in the existing owner-only `dispatch.env`, and `.envrc`
+is never written. The RunManifest persists the canonical state-root and exact coder/reviewer
+profile references. The compiled report binds their resolved identities and the internal authority
+input.
 `awf plan check` is a read-only pre-operation compiler/linter. It resolves durable installed
 profiles when available, keeps the owner RunManifest and internal authority-manifest classes
 distinct, checks the frozen TaskCard plus ImplementationReport/ReviewReport allowlist, and emits an
 `awf.run-contract-report.v1` with compiler provenance and mutual SHA-256 bindings. It does not
 initialize a ledger, mutate Git, connect to Agent Bus, start a process, or dispatch an event.
-`awf run` and default `awf dispatch` consume that owner manifest and reject
-conflicting execution metadata; `dispatch.env` remains limited to secrets and
-runtime binaries. The default run ID is `task-<branch-task-suffix>`, matching
+`awf run` recompiles the current local graph, requires exact equality with the persisted report,
+and binds its `contract_sha256` into the context packet before resolving Git HEAD or initializing a
+ledger. Generic `--manifest` is rejected on setup/run in favor of the class-specific
+`--run-manifest`; an older uncompiled manifest receives an explicit setup migration error. The
+lower-level dispatch compatibility surface remains unchanged in this package. `dispatch.env`
+remains limited to secrets and runtime binaries. The default run ID is
+`task-<branch-task-suffix>`, matching
 trusted listener recovery. Status labels unrecorded health/checkpoint/queue values
 explicitly, and resume is fail-closed: it cannot replay a model, ACK, requeue,
 or historical delivery.

@@ -101,31 +101,6 @@ def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
         encoding="utf-8",
     )
     manifest = repo / "run-manifest.json"
-    subprocess.run(
-        [
-            str(awf),
-            "setup",
-            "--repo",
-            str(repo),
-            "--card",
-            "task.md",
-            "--manifest",
-            str(manifest),
-            "--branch",
-            f"feature/{task_id}",
-            "--tool",
-            "opencode",
-            "--model",
-            "coder/model",
-            "--reviewer-tool",
-            "pi",
-            "--reviewer-model",
-            "reviewer/model",
-        ],
-        check=True,
-        cwd=root / "outside-source",
-        env=clean_env,
-    )
     profile_paths = []
     for role, tool, model, route in (
         ("coder", "opencode", "coder/model", "task:awf-impl-v3"),
@@ -150,6 +125,41 @@ def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
             encoding="utf-8",
         )
         profile_paths.append(profile)
+    subprocess.run(
+        [
+            str(awf),
+            "setup",
+            "--repo",
+            str(repo),
+            "--card",
+            "task.md",
+            "--run-manifest",
+            str(manifest),
+            "--branch",
+            f"feature/{task_id}",
+            "--tool",
+            "opencode",
+            "--model",
+            "coder/model",
+            "--reviewer-tool",
+            "pi",
+            "--reviewer-model",
+            "reviewer/model",
+            "--upstream-repo",
+            "owner/repo",
+            "--head-repo",
+            "owner/fork",
+            "--state-root",
+            str(state_root),
+            "--profile",
+            f"coder={profile_paths[0]}",
+            "--profile",
+            f"reviewer={profile_paths[1]}",
+        ],
+        check=True,
+        cwd=root / "outside-source",
+        env=clean_env,
+    )
     result = subprocess.run(
         [
             str(awf),
@@ -159,12 +169,6 @@ def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
             str(repo),
             "--run-manifest",
             str(manifest),
-            "--state-root",
-            str(state_root),
-            "--profile",
-            f"coder={profile_paths[0]}",
-            "--profile",
-            f"reviewer={profile_paths[1]}",
         ],
         cwd=root / "outside-source",
         env=clean_env,
@@ -175,6 +179,45 @@ def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
     report = json.loads(result.stdout)
     assert report["format"] == "awf.run-contract-report.v1"
     assert report["compatibility"]["status"] == "compatible"
+    subprocess.run(["git", "init"], check=True, cwd=repo, env=clean_env, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "installed-wheel@example.invalid"],
+        check=True,
+        cwd=repo,
+        env=clean_env,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Installed Wheel Check"],
+        check=True,
+        cwd=repo,
+        env=clean_env,
+    )
+    subprocess.run(["git", "add", "."], check=True, cwd=repo, env=clean_env)
+    subprocess.run(
+        ["git", "commit", "-m", "fixture"],
+        check=True,
+        cwd=repo,
+        env=clean_env,
+        capture_output=True,
+    )
+    run = subprocess.run(
+        [
+            str(awf),
+            "run",
+            "--repo",
+            str(repo),
+            "--card",
+            "task.md",
+            "--run-manifest",
+            str(manifest),
+        ],
+        cwd=root / "outside-source",
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stderr
+    assert f"run=task-{task_id}" in run.stdout
 
 
 def main() -> int:

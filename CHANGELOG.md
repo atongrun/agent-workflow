@@ -4,6 +4,13 @@
 
 ### Added
 
+- Make normal setup/run consume the compiled run contract. Setup now persists canonical
+  state-root and coder/reviewer profile references in the owner RunManifest and writes an
+  owner-only `.awf/run-contract.json`; run recompiles every bound local input and requires exact
+  equality before Git HEAD lookup or RunLedger initialization. Context packets bind the compiled
+  SHA immutably, while generic setup/run `--manifest` and uncompiled legacy intent fail with an
+  explicit migration path. Native dispatch remains on its existing compatibility surface.
+
 - Add a local-only `awf plan check` compiler/linter that keeps owner RunManifest and internal
   authority-manifest classes distinct, validates the frozen TaskCard's ImplementationReport and
   ReviewReport allowlist plus exact role profile/repository/state-root bindings, and emits an

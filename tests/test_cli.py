@@ -609,8 +609,20 @@ def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_pat
         "## Task ID\n\nDOGFOOD-001\n\n- **Task branch**: `card-branch`\n",
         encoding="utf-8",
     )
-    values = derive_manifest(card, branch="owner-branch", tool="codex", rework_budget=4)
+    state_root = tmp_path / "state"
+    values = derive_manifest(
+        card,
+        branch="owner-branch",
+        tool="codex",
+        rework_budget=4,
+        state_root=str(state_root),
+        profiles={"coder": "coder-profile", "reviewer": "reviewer-profile"},
+    )
     manifest = write_manifest(tmp_path / ".awf" / "run-manifest.json", values)
+    compiled = {
+        "contract_sha256": "sha256:" + "b" * 64,
+        "bindings": {"authority_manifest": {"path": str(tmp_path / "authority.json")}},
+    }
     captured = {}
 
     class FakeLedger:
@@ -638,6 +650,8 @@ def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_pat
             return kwargs
 
     monkeypatch.setattr(cli, "_ops_module", lambda: FakeOps)
+    monkeypatch.setattr(cli, "load_compiled_report", lambda _path: compiled)
+    monkeypatch.setattr(cli, "_compile_owner_contract", lambda **_kwargs: compiled)
     monkeypatch.setattr(
         cli.subprocess,
         "run",
@@ -646,20 +660,90 @@ def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_pat
     args = Namespace(
         repo=str(tmp_path),
         card="card.md",
-        manifest=str(manifest),
+        manifest="",
+        run_manifest=str(manifest),
+        run_contract=str(tmp_path / "run-contract.json"),
         branch="",
         tool="",
         model="",
         run="",
-        state_root=str(tmp_path / "state"),
+        state_root="",
         rework_budget=1,
     )
 
     assert cli.cmd_run(args) == 0
     assert captured["run_id"] == "task-owner-branch"
     assert captured["packet"]["branch"] == "owner-branch"
+    assert captured["packet"]["run_contract_sha256"] == "sha256:" + "b" * 64
     assert captured["kwargs"]["rework_budget"] == 4
     assert "run=task-owner-branch" in capsys.readouterr().out
+
+
+def test_run_rejects_compiled_drift_before_git_or_ledger(monkeypatch, tmp_path: Path, capsys):
+    card = tmp_path / "card.md"
+    card.write_text("## Task ID\n\nTASK-001\n", encoding="utf-8")
+    values = derive_manifest(
+        card,
+        branch="feature/TASK-001",
+        tool="codex",
+        state_root=str(tmp_path / "state"),
+        profiles={"coder": "coder-profile", "reviewer": "reviewer-profile"},
+    )
+    manifest = write_manifest(tmp_path / ".awf" / "run-manifest.json", values)
+    persisted = {
+        "contract_sha256": "sha256:" + "a" * 64,
+        "bindings": {"authority_manifest": {"path": str(tmp_path / "authority.json")}},
+    }
+
+    class FakeOps:
+        ControlPlaneDenied = RuntimeError
+
+        class RunLedger:
+            def __init__(self, *_args):
+                raise AssertionError("ledger must not be constructed after compiler drift")
+
+    monkeypatch.setattr(cli, "_ops_module", lambda: FakeOps)
+    monkeypatch.setattr(cli, "load_compiled_report", lambda _path: persisted)
+    monkeypatch.setattr(
+        cli,
+        "_compile_owner_contract",
+        lambda **_kwargs: {**persisted, "contract_sha256": "sha256:" + "b" * 64},
+    )
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Git must not run after compiler drift")
+        ),
+    )
+    result = cli.cmd_run(
+        Namespace(
+            repo=str(tmp_path),
+            card="card.md",
+            manifest="",
+            run_manifest=str(manifest),
+            run_contract=str(tmp_path / "run-contract.json"),
+            branch="",
+            tool="",
+            model="",
+            reviewer_tool="",
+            reviewer_model="",
+            run="",
+            state_root="",
+            rework_budget=1,
+        )
+    )
+
+    assert result == 1
+    assert "compiled run contract drifted" in capsys.readouterr().err
+
+
+def test_setup_and_run_reject_generic_manifest_flag_with_migration_error():
+    setup = run_awf("setup", "--card", "missing.md", "--tool", "codex", "--manifest", "legacy.json")
+    run = run_awf("run", "--card", "missing.md", "--manifest", "legacy.json")
+
+    assert "--manifest was replaced by --run-manifest for awf setup" in setup.stderr
+    assert "--manifest was replaced by --run-manifest for awf run" in run.stderr
 
 
 def test_authority_manifest_prefers_downstream_override_then_packaged_default(

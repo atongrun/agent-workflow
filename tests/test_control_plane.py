@@ -44,6 +44,7 @@ def make_ledger(tmp_path: Path, *, budget: int = 1) -> RunLedger:
         authority_manifest=AUTHORITY_BINDING,
         next_action="run coder preflight",
         stage="implement",
+        run_contract_sha256="sha256:" + "b" * 64,
     )
     ledger.initialize(packet, stage="implement", max_attempts=1, rework_budget=budget)
     return ledger
@@ -57,7 +58,26 @@ def test_packet_is_bounded_and_recoverable_from_a_fresh_session(tmp_path: Path):
     assert recovered_ledger["format"] == "awf.run-ledger.v1"
     assert packet["taskcard"] == "docs/task.md"
     assert packet["next_action"] == "run coder preflight"
+    assert packet["run_contract_sha256"] == "sha256:" + "b" * 64
     assert len(json.dumps(packet).encode()) < 32 * 1024
+    drifted = build_context_packet(
+        run_id="run-1",
+        taskcard="docs/task.md",
+        frozen_base="a" * 40,
+        branch="awf/task-1",
+        phase="execute",
+        transition="task:awf-impl-v2",
+        evidence=["docs/evidence.md"],
+        prohibited_actions=["ACK/requeue historical events"],
+        authority_manifest=AUTHORITY_BINDING,
+        next_action="run coder preflight",
+        stage="implement",
+        run_contract_sha256="sha256:" + "c" * 64,
+    )
+    with pytest.raises(ControlPlaneDenied, match="different context packet"):
+        RunLedger(tmp_path, "run-1").initialize(
+            drifted, stage="implement", max_attempts=1, rework_budget=1
+        )
 
 
 @pytest.mark.parametrize(

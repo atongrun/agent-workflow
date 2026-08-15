@@ -11,10 +11,14 @@ v1-v3 route compatibility, and canonical SHA-256 bindings without creating a Run
 Git, connecting to Agent Bus, or starting a listener/model. Installed profile registry resolution
 is preferred so the compiled identity remains usable after an authoring profile is removed.
 
-P0-4a does not change `setup`, `run`, or `dispatch`; those existing paths remain compatibility
-surfaces until P0-4b independently switches normal consumption after the read-only fixtures are
-proven. The generic RunManifest flags on those older commands are therefore not reinterpreted by
-this package.
+P0-4b switches normal setup/run only after the P0-4a fixtures are proven. Setup persists the
+canonical state-root and coder/reviewer profile references in the owner RunManifest, validates the
+whole graph, and writes an owner-only compiled report. Run reloads both files, resolves the exact
+authority/profile/TaskCard inputs, recompiles, and requires byte-for-byte data equality before Git
+HEAD resolution or RunLedger initialization. The context packet makes `run_contract_sha256` an
+immutable run identity. Generic setup/run `--manifest` input is rejected in favor of
+`--run-manifest`; old uncompiled manifests get an explicit setup migration. Native dispatch stays
+on its existing compatibility path and is not changed by P0-4b.
 
 All delivery, model, Git, and other trusted Workflow command execution crosses
 `scripts/awf_executor.py`. The non-core `awf node` lifecycle has one explicit exception: it may
