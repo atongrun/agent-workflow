@@ -52,10 +52,7 @@ def make_ledger(tmp_path: Path, *, budget: int = 1) -> RunLedger:
 
 def on_argv_registrations(argv: list[str]) -> list[tuple[str, list[str]]]:
     on_argv_indexes = [index for index, value in enumerate(argv) if value == "--on-argv"]
-    return [
-        (argv[index + 1], json.loads(argv[index + 2]))
-        for index in on_argv_indexes
-    ]
+    return [(argv[index + 1], json.loads(argv[index + 2])) for index in on_argv_indexes]
 
 
 def test_packet_is_bounded_and_recoverable_from_a_fresh_session(tmp_path: Path):
