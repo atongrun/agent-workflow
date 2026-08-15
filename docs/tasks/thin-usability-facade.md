@@ -63,15 +63,15 @@ native service-definition choices without becoming a scheduler or a second contr
 
 ## Acceptance criteria
 
-- [ ] The supported journey requires no authority-manifest argument, state-root argument or native
+- [x] The supported journey requires no authority-manifest argument, state-root argument or native
   service-definition editing.
-- [ ] Generated profiles, RunManifest and run contract are inspectable and identify their source.
-- [ ] Existing setup/plan/node/status/resume/dispatch commands remain compatible.
-- [ ] Thin journey records seven operator commands and the explicit machine/runtime/project choices;
+- [x] Generated profiles, RunManifest and run contract are inspectable and identify their source.
+- [x] Existing setup/plan/node/status/resume/dispatch commands remain compatible.
+- [x] Thin journey records seven operator commands and the explicit machine/runtime/project choices;
   elapsed time remains a final fresh-machine benchmark measurement.
-- [ ] Read-only commands are payload-blind and cannot ACK, requeue, dispatch, recover or invoke a
+- [x] Read-only commands are payload-blind and cannot ACK, requeue, dispatch, recover or invoke a
   model; start/drain preserve fail-closed lifecycle and queue gates.
-- [ ] Two focused tests and the full GitHub CI matrix pass.
+- [x] Two focused tests and the full GitHub CI matrix pass.
 - [ ] Independent review approves the exact PR head before merge.
 
 ## Required output

@@ -44,7 +44,10 @@ schema, database, scheduler, recovery path, provider registry, or Agent Bus beha
 ## Verification
 
 - Local Mac: Python `compileall` and `git diff --check`; no pytest or Ruff was run locally.
-- GitHub CI and independent exact-head review: pending until the PR head is published.
+- GitHub Actions run `31862772976`: all six required jobs passed on the published PR head,
+  including Linux/macOS/Windows installed-wheel checks, the Linux test/lint suite, the Windows
+  test suite, and the macOS runtime check.
+- Independent exact-head review remains the final pre-merge gate and will be attached to PR #90.
 
 ## Remaining risks
 
