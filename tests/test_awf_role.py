@@ -135,6 +135,99 @@ def test_listener_handler_passes_event_id_once():
     assert "--source-event-id {payload.awf_source_event_id}" in handler
 
 
+def test_structured_handler_argv_json_preserves_paths_and_payload_placeholders(tmp_path):
+    def render_placeholders(argv: list[str], event: dict[str, object]) -> list[str]:
+        rendered: list[str] = []
+        for value in argv:
+            if value.startswith("{") and value.endswith("}"):
+                current: object = event
+                for part in value[1:-1].split("."):
+                    assert isinstance(current, dict)
+                    current = current[part]
+                rendered.append(str(current))
+            else:
+                rendered.append(value)
+        return rendered
+
+    role_state_root = tmp_path / "state root \u03a9"
+    preflight_state_root = tmp_path / "preflight state \u03a9"
+    config_path = tmp_path / "config dir" / "dispatch \u03a9.env"
+    role_argv = awf_listen.build_handler_argv(
+        str(tmp_path / "bin dir" / "python exe"),
+        str(tmp_path / "script dir" / "awf_role.py"),
+        "coder",
+        on_type="task:awf-rework-v3",
+        upstream_remote="up stream",
+        head_remote="fork remote",
+        state_root=role_state_root,
+    )
+    preflight_argv = awf_listen.build_preflight_handler_argv(
+        str(tmp_path / "bin dir" / "python exe"),
+        str(tmp_path / "script dir" / "awf_preflight.py"),
+        "handle-request",
+        config_path=config_path,
+        state_root=preflight_state_root,
+    )
+
+    assert json.loads(awf_listen.handler_argv_json(role_argv)) == role_argv
+    assert json.loads(awf_listen.handler_argv_json(preflight_argv)) == preflight_argv
+    assert str(role_state_root) in role_argv
+    assert f'"{role_state_root}"' not in role_argv
+    assert str(config_path) in preflight_argv
+    assert f'"{config_path}"' not in preflight_argv
+
+    attack = 'value"; touch /tmp/not-executed --branch'
+    role_event = {
+        "id": 21,
+        "type": "task:awf-rework-v3",
+        "payload": {
+            "awf_delivery_id": "delivery-1",
+            "awf_payload_sha256": "sha256:payload",
+            "awf_source_event_id": "20",
+            "branch": attack,
+            "card": "docs/task card.md",
+            "commit": "a" * 40,
+            "model": "test model",
+            "tool": "opencode",
+            "report": "docs/report path.md",
+            "provenance_version": "awf.pr-provenance.v1",
+            "upstream_repo": "upstream/project",
+            "base_ref": "main",
+            "base_sha": "b" * 40,
+            "head_repo": "fork/project",
+            "head_ref": "codex/structured-handler-contract",
+            "head_sha": "c" * 40,
+            "pull_request": "90",
+            "review_report_path": "docs/review path.md",
+            "review_report": attack,
+        },
+    }
+    preflight_event = {
+        "id": 22,
+        "type": awf_listen.PREFLIGHT_REQUEST_TYPE,
+        "payload": {
+            "probe_id": attack,
+            "fingerprint": "sha256:" + "d" * 64,
+            "source_role": "architect",
+            "target_role": "coder",
+        },
+    }
+
+    rendered_role = render_placeholders(role_argv, role_event)
+    rendered_preflight = render_placeholders(preflight_argv, preflight_event)
+
+    assert rendered_role[rendered_role.index("--delivery-id") + 1] == "delivery-1"
+    assert rendered_role[rendered_role.index("--payload-sha256") + 1] == "sha256:payload"
+    assert rendered_role[rendered_role.index("--branch") + 1] == attack
+    assert rendered_role[rendered_role.index("--report") + 1] == "docs/report path.md"
+    assert rendered_role[rendered_role.index("--review-feedback") + 1] == attack
+    assert rendered_role[rendered_role.index("--pull-request") + 1] == "90"
+    assert "touch" not in rendered_role
+    assert rendered_preflight[rendered_preflight.index("--probe-id") + 1] == attack
+    assert rendered_preflight[rendered_preflight.index("--config") + 1] == str(config_path)
+    assert "touch" not in rendered_preflight
+
+
 def test_custom_state_root_propagates_to_run_and_feedback_records(monkeypatch, tmp_path):
     state_root = (tmp_path / "custom-state").resolve()
     binding = state_root_binding(state_root)

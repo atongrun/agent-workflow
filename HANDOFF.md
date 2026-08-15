@@ -9,6 +9,16 @@
 
 ## Current Handoff State: 2026-08-14
 
+P1-3 removes the remaining production handler command-template boundary. Role, coder rework,
+architect terminal and optional no-model Preflight registrations are exact `awf.handler-argv.v1`
+lists serialized as UTF-8 JSON for the pinned Agent Bus `agent-bus.listen.on-argv.v1` consumer.
+Executable/script/config/state-root paths and payload placeholders remain separate tokens; existing
+`awf_role.py` delivery/provenance/state-root/stage/checkpoint/outbox/postflight and return-code gates
+are unchanged. Install/activate the compatible Bus before Workflow; roll back Workflow before Bus.
+An older Bus rejects `--on-argv` before SSE connection or event delivery, with no event-time
+fallback. See [`docs/tasks/structured-handler-contract.md`](docs/tasks/structured-handler-contract.md)
+and its [implementation report](docs/tasks/structured-handler-contract-implementation-report.md).
+
 P1-2 adds a thin beginner facade without adding a second configuration or control plane. `awf
 init`/`enroll` generates credential-free coder/reviewer profiles in the platform config home,
 validates them with the existing node contract, and reuses setup to write the default owner

@@ -214,6 +214,13 @@ invokes a shell directly. Runtime detection, Git Bash executable-path normalizat
 Windows wrapper policy, redacted failure diagnostics, and timeout handling are enforced centrally
 and protected by an AST boundary test.
 
+Listener handlers now keep that boundary across Agent Bus as well. Agent Workflow emits the pinned
+`awf.handler-argv.v1` token list as UTF-8 JSON through Bus `--on-argv`; role, rework, terminal and
+Preflight paths no longer collapse executable paths, fixed flags or payload placeholders into a
+command string. Deploy the compatible Bus consumer before this Workflow version; rollback Workflow
+before Bus. An incompatible older Bus fails while parsing local listener arguments, before SSE
+connection or event delivery.
+
 Every new loop can now begin with the versioned, fail-closed
 [runtime Preflight](docs/runtime-preflight-architecture.md):
 `python scripts/awf_preflight.py fast --repo <repo> --model-tool <cli>` on model-executing
