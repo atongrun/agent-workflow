@@ -9,6 +9,16 @@
 
 ## Current Handoff State: 2026-08-14
 
+P2 is evaluating binary distribution in GitHub CI without changing the production runtime. The
+native matrix compares PyInstaller one-folder, PEX scie eager, and a checksum-verifying Go launcher
+paired with an independently versioned PEX app on Linux x86_64/arm64, Windows x86_64, and macOS
+x86_64/arm64. Required probes preserve unrelated-cwd resources, Python interpreter re-entry,
+no-model run-contract checking, UTF-8 exact argv/log data, and native lifecycle definition
+rendering; real service mutation, live events, model invocation, signing/notarization, installers,
+and a production ABI remain out of scope. See
+[`docs/tasks/binary-distribution-feasibility.md`](docs/tasks/binary-distribution-feasibility.md) and
+its [report](docs/tasks/binary-distribution-feasibility-report.md).
+
 P1-3 removes the remaining production handler command-template boundary. Role, coder rework,
 architect terminal and optional no-model Preflight registrations are exact `awf.handler-argv.v1`
 lists serialized as UTF-8 JSON for the pinned Agent Bus `agent-bus.listen.on-argv.v1` consumer.

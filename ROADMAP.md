@@ -102,6 +102,10 @@ Completed engineering gates:
 
 Remaining Phase 2 work:
 
+- [ ] Complete the five-target CI-only binary distribution feasibility matrix and publish a
+  measured Go/No-Go report. This does not create a production ABI, installer, signing pipeline, or
+  release commitment.
+
 - [x] Replace shell/Git-Bash `dispatch.env` sourcing with one strict cross-platform Python
   configuration loader shared by listener, dispatch, bootstrap, and service entry points. No
   PowerShell dependency, credential output, interpolation, or permissive parsing is allowed. See
