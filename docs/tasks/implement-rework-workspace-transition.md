@@ -105,6 +105,7 @@ confusing expected trusted Git evolution with model-side identity drift.
     "CHANGELOG.md",
     "ROADMAP.md",
     "scripts/awf_role.py",
+    "scripts/awf_control_plane.py",
     "tests/test_awf_role.py",
     "tests/test_control_plane.py"
   ],

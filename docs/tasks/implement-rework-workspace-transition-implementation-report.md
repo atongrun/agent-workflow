@@ -23,8 +23,9 @@ an exact same-run ledger/checkpoint/provenance/Git lineage.
   outbox handoff, branch, current commit, verified PR tuple, imported tree, workspace path under the
   same state root, and exact post-transition manifest before the provider starts.
 - Existing same-delivery recovery remains authoritative after a rework checkpoint exists, so a
-  completed or ambiguous model call is never repeated. Existing control-plane route/stage/rework
-  budget logic remains unchanged; Agent Bus carries no workspace path or new payload field.
+  completed or ambiguous model call is never repeated. The control plane adds only the missing
+  reviewer-authorized `review -> rework` stage transition; route uniqueness and the existing
+  one-rework budget remain unchanged. Agent Bus carries no workspace path or new payload field.
 
 ## Proportional verification
 

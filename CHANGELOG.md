@@ -9,7 +9,8 @@
   stable Git-control binding, and post-transition manifest in the implement checkpoint. Rework
   resolves the unique prior implement delivery from the same RunLedger and requires exact
   checkpoint, PR tuple, current commit, and no-remote Git state before provider invocation. Agent
-  Bus payloads and existing route/stage/rework-budget authority are unchanged.
+  Bus payloads and rework-budget authority are unchanged; the stage gate now recognizes the
+  reviewer-authorized `review -> rework` transition.
 
 - Make normal setup/run consume the compiled run contract. Setup now persists canonical
   state-root and coder/reviewer profile references in the owner RunManifest and writes an

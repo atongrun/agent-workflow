@@ -4320,7 +4320,8 @@ def role_coder(a: argparse.Namespace) -> int:
             )
         else:
             model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
-            model_manifest_sha256 = durable_model_manifest_sha256(model_repo)
+            if checkpoint is not None:
+                model_manifest_sha256 = durable_model_manifest_sha256(model_repo)
         if checkpoint is not None and checkpoint_path is not None:
             checkpoint = advance_recovery_checkpoint(
                 evidence,
