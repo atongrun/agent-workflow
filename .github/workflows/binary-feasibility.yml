@@ -29,8 +29,8 @@ jobs:
           - runner: macos-14
             target: macos-arm64
     env:
-      AWF_BUILD_ROOT: ${{ runner.temp }}/awf-binary-build
-      AWF_EVIDENCE_ROOT: ${{ runner.temp }}/awf-binary-evidence
+      AWF_BUILD_ROOT: binary-feasibility-build
+      AWF_EVIDENCE_ROOT: binary-feasibility-evidence
     steps:
       - uses: actions/checkout@v4
 
@@ -65,13 +65,13 @@ jobs:
 
       - name: Build the three native candidates
         run: >-
-          python scripts/verify_binary_feasibility.py build
+          python experiments/binary-feasibility/verify.py build
           --repo .
           --output "${{ env.AWF_BUILD_ROOT }}"
 
       - name: Measure PyInstaller one-folder
         run: >-
-          python scripts/verify_binary_feasibility.py collect
+          python experiments/binary-feasibility/verify.py collect
           --candidate pyinstaller-onedir
           --target ${{ matrix.target }}
           --build-root "${{ env.AWF_BUILD_ROOT }}"
@@ -79,7 +79,7 @@ jobs:
 
       - name: Measure PEX scie eager
         run: >-
-          python scripts/verify_binary_feasibility.py collect
+          python experiments/binary-feasibility/verify.py collect
           --candidate pex-scie-eager
           --target ${{ matrix.target }}
           --build-root "${{ env.AWF_BUILD_ROOT }}"
@@ -87,7 +87,7 @@ jobs:
 
       - name: Measure Go launcher plus versioned PEX app
         run: >-
-          python scripts/verify_binary_feasibility.py collect
+          python experiments/binary-feasibility/verify.py collect
           --candidate go-launcher-pex-app
           --target ${{ matrix.target }}
           --build-root "${{ env.AWF_BUILD_ROOT }}"
@@ -133,7 +133,7 @@ jobs:
 
       - name: Require the complete candidate and target matrix
         run: >-
-          python scripts/verify_binary_feasibility.py summarize
+          python experiments/binary-feasibility/verify.py summarize
           --input "${{ runner.temp }}/awf-binary-evidence"
           --output "${{ runner.temp }}/awf-binary-summary.json"
 

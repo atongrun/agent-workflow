@@ -29,7 +29,7 @@ deployment.
 5. `experiments/binary-feasibility/awf_entry.py`
 6. `experiments/binary-feasibility/go.mod`
 7. `experiments/binary-feasibility/main.go`
-8. `scripts/verify_binary_feasibility.py`
+8. `experiments/binary-feasibility/verify.py`
 9. `tests/test_binary_feasibility.py`
 10. `README.md`
 11. `CHANGELOG.md`
@@ -130,7 +130,7 @@ unproved production requirements, and the Go/No-Go recommendation.
     "experiments/binary-feasibility/awf_entry.py",
     "experiments/binary-feasibility/go.mod",
     "experiments/binary-feasibility/main.go",
-    "scripts/verify_binary_feasibility.py",
+    "experiments/binary-feasibility/verify.py",
     "tests/test_binary_feasibility.py",
     "README.md",
     "CHANGELOG.md",

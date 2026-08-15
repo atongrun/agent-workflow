@@ -26,7 +26,8 @@ The comparison is deliberately limited to:
   production CLI. It checks real resource directories, Python `-m` and script re-entry, exact argv
   through a fake external CLI, UTF-8 log round-trip, and native definition rendering. It does not
   install/start/stop a service, connect remotely, or invoke a model.
-- `verify_binary_feasibility.py` builds all three candidates natively, measures size/checksum/file
+- `experiments/binary-feasibility/verify.py` builds all three candidates natively, measures
+  size/checksum/file
   count and cold/warm startup, exercises an unrelated-cwd no-model `run check`, generates a
   CycloneDX SBOM, records absent signing/notarization/attestation honestly, and rejects incomplete
   or target-drifted evidence.

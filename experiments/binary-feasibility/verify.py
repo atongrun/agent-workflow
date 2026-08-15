@@ -432,9 +432,7 @@ def _go_manifest_swap_gate(
     finally:
         manifest_path.write_text(original, encoding="utf-8")
         previous.unlink(missing_ok=True)
-    current_result = _run(
-        [str(executable), "version"], cwd=cwd, timeout=30, check=False, env=env
-    )
+    current_result = _run([str(executable), "version"], cwd=cwd, timeout=30, check=False, env=env)
     return previous_result.returncode == 0 and current_result.returncode == 0
 
 
@@ -463,9 +461,7 @@ def collect_evidence(candidate: str, target: str, build_root: Path, output: Path
         manifest_swap = None
         if candidate == "go-launcher-pex-app":
             go_gate = _go_checksum_gate(artifact_root, executable, outside, environment)
-            manifest_swap = _go_manifest_swap_gate(
-                artifact_root, executable, outside, environment
-            )
+            manifest_swap = _go_manifest_swap_gate(artifact_root, executable, outside, environment)
     sbom = build_root / "sbom.cdx.json"
     tooling = json.loads((build_root / "tooling.json").read_text(encoding="utf-8"))
     evidence = {
@@ -599,9 +595,7 @@ def summarize(input_root: Path, output: Path) -> None:
     if missing:
         raise FeasibilityError(f"missing candidate evidence: {missing}")
     results = {
-        candidate: {
-            target: _candidate_passes(records[(candidate, target)]) for target in TARGETS
-        }
+        candidate: {target: _candidate_passes(records[(candidate, target)]) for target in TARGETS}
         for candidate in CANDIDATES
     }
     go_all = all(results["go-launcher-pex-app"].values())
