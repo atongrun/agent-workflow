@@ -874,18 +874,15 @@ def test_node_errors_are_concise_without_traceback(capsys, tmp_path: Path):
 
 def test_cli_routes_all_node_commands(monkeypatch, tmp_path: Path):
     calls = []
+
+    def fake_run(command, profile, **options):
+        calls.append((command, profile, options))
+        return 0
+
     monkeypatch.setattr(
         node,
         "run",
-        lambda command,
-        profile,
-        lines=100,
-        run_id="",
-        json_output=False,
-        explain=False,
-        ttl_seconds=3600: (
-            calls.append((command, profile, lines, run_id, json_output, explain, ttl_seconds)) or 0
-        ),
+        fake_run,
     )
 
     assert cli.main(["node", "doctor", "--profile", "reviewer-mac"]) == 0
@@ -906,7 +903,37 @@ def test_cli_routes_all_node_commands(monkeypatch, tmp_path: Path):
         == 0
     )
     assert calls == [
-        ("doctor", "reviewer-mac", 100, "", False, False, 3600),
-        ("logs", str(tmp_path), 12, "", False, False, 3600),
-        ("status", "reviewer-mac", 100, "task-1", True, True, 3600),
+        (
+            "doctor",
+            "reviewer-mac",
+            {
+                "lines": 100,
+                "run_id": "",
+                "json_output": False,
+                "explain": False,
+                "ttl_seconds": 3600,
+            },
+        ),
+        (
+            "logs",
+            str(tmp_path),
+            {
+                "lines": 12,
+                "run_id": "",
+                "json_output": False,
+                "explain": False,
+                "ttl_seconds": 3600,
+            },
+        ),
+        (
+            "status",
+            "reviewer-mac",
+            {
+                "lines": 100,
+                "run_id": "task-1",
+                "json_output": True,
+                "explain": True,
+                "ttl_seconds": 3600,
+            },
+        ),
     ]

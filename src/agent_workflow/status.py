@@ -387,15 +387,14 @@ def _feedback(profile: NodeProfile) -> dict[str, object]:
     rejected = int(counts.get("rejected", 0))
     corrupt = int(counts.get("corrupt", 0))
     captured = pending + sent
-    flush = (
-        "blocked"
-        if corrupt
-        else "pending"
-        if pending
-        else "complete"
-        if sent
-        else "not_recorded"
-    )
+    if corrupt:
+        flush = "blocked"
+    elif pending:
+        flush = "pending"
+    elif sent:
+        flush = "complete"
+    else:
+        flush = "not_recorded"
     return {
         "source": "feedback_outbox_files_read_only",
         "status": "observed",
@@ -424,15 +423,19 @@ def _model_invocation(profile: NodeProfile, ledger: dict[str, object]) -> bool |
     expected_binding = state_root_binding(profile.state_root)
     observed_checkpoint = False
     events = ledger.get("events") if isinstance(ledger, dict) else None
-    authorized = [
-        item
-        for item in events
-        if isinstance(item, dict)
-        and item.get("status") == "authorized"
-        and item.get("role") in {"coder", "reviewer"}
-        and isinstance(item.get("delivery_id"), str)
-        and item.get("delivery_id")
-    ] if isinstance(events, list) else []
+    authorized = (
+        [
+            item
+            for item in events
+            if isinstance(item, dict)
+            and item.get("status") == "authorized"
+            and item.get("role") in {"coder", "reviewer"}
+            and isinstance(item.get("delivery_id"), str)
+            and item.get("delivery_id")
+        ]
+        if isinstance(events, list)
+        else []
+    )
     for event in authorized:
         delivery_id = str(event["delivery_id"])
         digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
