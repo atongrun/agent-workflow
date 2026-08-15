@@ -739,9 +739,7 @@ def test_run_rejects_compiled_drift_before_git_or_ledger(monkeypatch, tmp_path: 
 
 
 def test_setup_and_run_reject_generic_manifest_flag_with_migration_error():
-    setup = run_awf(
-        "setup", "--card", "missing.md", "--tool", "codex", "--manifest", "legacy.json"
-    )
+    setup = run_awf("setup", "--card", "missing.md", "--tool", "codex", "--manifest", "legacy.json")
     run = run_awf("run", "--card", "missing.md", "--manifest", "legacy.json")
 
     assert "--manifest was replaced by --run-manifest for awf setup" in setup.stderr

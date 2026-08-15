@@ -209,9 +209,7 @@ def build_context_packet(
         raise ControlPlaneDenied("context packet exceeds bounded size")
     if state_root_sha256 and not re.fullmatch(r"sha256:[0-9a-f]{64}", state_root_sha256):
         raise ControlPlaneDenied("context packet state-root binding is invalid")
-    if run_contract_sha256 and not re.fullmatch(
-        r"sha256:[0-9a-f]{64}", run_contract_sha256
-    ):
+    if run_contract_sha256 and not re.fullmatch(r"sha256:[0-9a-f]{64}", run_contract_sha256):
         raise ControlPlaneDenied("context packet run-contract binding is invalid")
     values["packet_sha256"] = _sha(values)
     return values

@@ -534,8 +534,6 @@ def load_compiled_report(path: Path) -> dict[str, Any]:
     return validate_compiled_report(value)
 
 
-def write_compiled_report(
-    path: Path, value: dict[str, Any], *, replace: bool = True
-) -> Path:
+def write_compiled_report(path: Path, value: dict[str, Any], *, replace: bool = True) -> Path:
     validate_compiled_report(value)
     return _write_owner_json(path, value, replace=replace)
