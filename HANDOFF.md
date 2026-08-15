@@ -7,15 +7,17 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-14
+## Current Handoff State: 2026-08-15
 
-P2 is evaluating binary distribution in GitHub CI without changing the production runtime. The
-native matrix compares PyInstaller one-folder, PEX scie eager, and a checksum-verifying Go launcher
-paired with an independently versioned PEX app on Linux x86_64/arm64, Windows x86_64, and macOS
-x86_64/arm64. Required probes preserve unrelated-cwd resources, Python interpreter re-entry,
-no-model run-contract checking, UTF-8 exact argv/log data, and native lifecycle definition
-rendering; real service mutation, live events, model invocation, signing/notarization, installers,
-and a production ABI remain out of scope. See
+P2 completed the 15-cell native binary distribution matrix without changing production runtime.
+PyInstaller one-folder, PEX scie eager, and a checksum-verifying Go launcher paired with an
+independently versioned PEX app all failed the frozen all-five-target acceptance gate. The
+deterministic result is `NO_GO_PRODUCTION_BINARY`: no candidate preserved Python interpreter
+re-entry on every target, and the PEX-based candidates also failed their Windows runtime/no-model
+probe. Packaged resources, native lifecycle rendering, exact argv/UTF-8 where reported, Go checksum
+failure, artifact size/startup/SHA, CycloneDX SBOMs, and the disposable SQLite Bus smoke remain
+useful measured research. No production ABI, installer, updater, signing/notarization claim, live
+event, model invocation, or service mutation was created. See
 [`docs/tasks/binary-distribution-feasibility.md`](docs/tasks/binary-distribution-feasibility.md) and
 its [report](docs/tasks/binary-distribution-feasibility-report.md).
 
