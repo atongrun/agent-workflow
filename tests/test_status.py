@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent_workflow import node, status
 
@@ -177,6 +179,13 @@ def test_snapshot_labels_unavailable_queue_without_failing(monkeypatch, tmp_path
         lambda value: {"source": "agent_bus_pending_read_only", "status": "unknown"},
     )
     monkeypatch.setattr(status, "_artifacts", lambda *args: {"status": "not_recorded"})
+    monkeypatch.setattr(status, "_feedback", lambda value: {"status": "not_recorded"})
+    monkeypatch.setattr(status, "_model_invocation", lambda *args: None)
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda *args, **kwargs: {"dispatch_capable": None},
+    )
     monkeypatch.setattr(
         status,
         "_pr_and_ci",
@@ -191,6 +200,178 @@ def test_snapshot_labels_unavailable_queue_without_failing(monkeypatch, tmp_path
     assert value["format"] == "awf.node-status.v1"
     assert value["queue"]["status"] == "unknown"
     assert value["checkpoint"]["ledger"]["status"] == "not_requested"
+
+
+def test_causal_status_identifies_lifecycle_boundary_before_model():
+    lifecycle = {
+        "configured": True,
+        "installed": False,
+        "running": False,
+        "connected": None,
+        "dispatch_capable": False,
+        "next_legal_action": {"command": "awf node install --profile reviewer-node"},
+    }
+
+    causal = status._causal_status(
+        "task-1",
+        lifecycle,
+        {"status": "not_requested", "stage": "not_recorded", "attempts": 0},
+        {},
+        None,
+    )
+
+    assert causal["status"] == "blocked"
+    assert causal["owner"] == "node_lifecycle"
+    assert causal["cause"] == "lifecycle_installed_false"
+    assert causal["model_invocation"] == "unknown"
+    assert causal["next_legal_action"] == "awf node install --profile reviewer-node"
+
+
+def test_snapshot_reports_rejected_pre_model_event_without_payload_or_mutation(
+    monkeypatch, tmp_path: Path
+):
+    profile = make_profile(tmp_path)
+    ledger = {
+        "stage": "implement",
+        "stage_attempts": {},
+        "terminal_state": "",
+        "events": [
+            {
+                "event_id": 901,
+                "event_type": "task:synthetic-impl-v3",
+                "role": "coder",
+                "status": "rejected",
+                "reason": "stage_mismatch",
+                "delivery_id": "synthetic-delivery",
+                "payload_sha256": "sha256:synthetic",
+                "payload": "must-not-appear",
+            }
+        ],
+        "decisions": [
+            {
+                "status": "rejected",
+                "reason": "stage_mismatch",
+                "role": "coder",
+            }
+        ],
+    }
+    lifecycle = {"dispatch_capable": True}
+    mutations: list[str] = []
+
+    def forbidden(*args, **kwargs):
+        mutations.append("called")
+        raise AssertionError("read-only status must not mutate runtime state")
+
+    monkeypatch.setattr(node, "start", forbidden)
+    monkeypatch.setattr(node, "stop", forbidden)
+    monkeypatch.setattr(status, "_listener", lambda value: {"status": "running"})
+    monkeypatch.setattr(status, "_workspace", lambda value: {"status": "ready"})
+    monkeypatch.setattr(
+        status,
+        "_ledger",
+        lambda value, run_id: (
+            {
+                "source": "run_ledger",
+                "status": "recorded",
+                "run_id": run_id,
+                "stage": "implement",
+                "attempts": 0,
+                "next_action": "stop",
+            },
+            ledger,
+        ),
+    )
+    monkeypatch.setattr(
+        status,
+        "_delivery_checkpoints",
+        lambda *args: ({"status": "not_recorded"}, ""),
+    )
+    monkeypatch.setattr(status, "_queue", lambda value: {"status": "unknown"})
+    monkeypatch.setattr(status, "_artifacts", lambda *args: {"status": "not_recorded"})
+    monkeypatch.setattr(
+        status,
+        "_pr_and_ci",
+        lambda *args: (
+            {"recorded": "not_recorded", "live": "not_requested"},
+            {"recorded": "not_recorded", "live": "not_requested"},
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "awf_feedback",
+        SimpleNamespace(
+            FeedbackStateError=ValueError,
+            feedback_status=lambda value: {
+                "pending": 0,
+                "sent": 0,
+                "rejected": 0,
+                "corrupt": 0,
+            },
+            flush_feedback=forbidden,
+            ingest_occurrence=forbidden,
+            queue_occurrence=forbidden,
+        ),
+    )
+    monkeypatch.setattr(status, "_model_invocation", lambda *args: None)
+    monkeypatch.setattr(node, "lifecycle_facts", lambda *args, **kwargs: lifecycle)
+
+    value = status.snapshot(profile, "task-1")
+
+    assert mutations == []
+    assert value["causal"]["status"] == "blocked"
+    assert value["causal"]["owner"] == "workflow_control_plane"
+    assert value["causal"]["cause"] == "stage_mismatch"
+    assert value["causal"]["model_invocation"] == "not_observed"
+    assert "payload" not in value["causal"]["event_observation"]["latest"]
+    assert "delivery_id" not in value["causal"]["event_observation"]["latest"]
+    assert "payload_sha256" not in value["causal"]["event_observation"]["latest"]
+    assert value["causal"]["event_observation"]["payload_hash_observed"] is True
+
+
+def test_business_terminal_keeps_feedback_pending_independent(monkeypatch, tmp_path: Path):
+    profile = make_profile(tmp_path)
+    ledger = {
+        "terminal_state": "completed",
+        "stage": "review",
+        "stage_attempts": {"review": 1},
+        "events": [{"event_id": 902, "role": "reviewer", "status": "authorized"}],
+        "decisions": [{"status": "authorized", "reason": "authorized"}],
+    }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "awf_feedback",
+        SimpleNamespace(
+            FeedbackStateError=ValueError,
+            feedback_status=lambda value: {
+                "pending": 1,
+                "sent": 0,
+                "rejected": 0,
+                "corrupt": 0,
+            },
+        ),
+    )
+
+    causal = status._causal_status(
+        "task-2",
+        {"dispatch_capable": False},
+        {
+            "status": "recorded",
+            "stage": "review",
+            "attempts": 2,
+            "next_action": "stop",
+        },
+        ledger,
+        True,
+    )
+    feedback = status._feedback(profile)
+
+    assert causal["status"] == "terminal"
+    assert causal["cause"] == "business_completed"
+    assert causal["model_invocation"] == "observed"
+    assert feedback["outbox"] == "pending"
+    assert feedback["flush"] == "pending"
+    assert feedback["next_legal_action"].startswith("awf feedback flush")
 
 
 def test_human_status_names_both_review_hash_semantics(capsys):
@@ -228,9 +409,25 @@ def test_human_status_names_both_review_hash_semantics(capsys):
         },
         "pull_request": {"recorded": {"number": 1}, "live": {"state": "OPEN"}},
         "ci": {"recorded": {"status": "recorded"}, "live": {"all_green": True}},
+        "feedback": {
+            "capture": "recorded",
+            "outbox": "pending",
+            "flush": "pending",
+            "counts": {"pending": 1},
+        },
+        "causal": {
+            "run_id": "task-1",
+            "stage": "review",
+            "attempt": 1,
+            "status": "blocked",
+            "owner": "workflow_control_plane",
+            "cause": "stage_mismatch",
+            "model_invocation": "not_observed",
+            "next_legal_action": "correct stage_mismatch",
+        },
     }
 
-    status.print_human(value)
+    status.print_human(value, explain=True)
 
     output = capsys.readouterr().out
     assert "configured=unknown installed=true running=false" in output
@@ -238,3 +435,6 @@ def test_human_status_names_both_review_hash_semantics(capsys):
     assert "next_legal_action=awf node stop --profile reviewer" in output
     assert "file_sha256=sha256:file" in output
     assert "canonical_report_sha256=sha256:canonical" in output
+    assert "feedback: capture=recorded outbox=pending flush=pending pending=1" in output
+    assert "causal: run=task-1 stage=review attempt=1 status=blocked" in output
+    assert "owner=workflow_control_plane cause=stage_mismatch" in output

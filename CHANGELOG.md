@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add payload-blind causal run diagnostics to `awf node status --run ... --explain`. The status
+  projection identifies stage/attempt, first blocker, owner/cause, checkpoint-proven model
+  invocation, and one legal next action, while Feedback capture/outbox/flush facts remain
+  independent from business terminal/ACK state. The reader performs no ACK, requeue, recovery,
+  redispatch, Feedback flush, lifecycle mutation, or model invocation.
+
 - Preserve one coder-owned durable model workspace across trusted implementation and the single
   authorized rework. The runner records the verified imported tree, trusted commit transition,
   stable Git-control binding, and post-transition manifest in the implement checkpoint. Rework

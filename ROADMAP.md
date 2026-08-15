@@ -125,6 +125,9 @@ Remaining Phase 2 work:
 - [x] Aggregate listener, workspace, checkpoint, queue, artifact, PR, and CI facts in a read-only
   node status snapshot; distinguish ReviewReport raw `file_sha256` from normalized
   `canonical_report_sha256` and label unknown facts without inference.
+- [x] Project those facts into a payload-blind causal run explanation with first blocker, owner,
+  model-invocation evidence and one legal next action; keep Feedback delivery state independent
+  from business terminal/ACK state.
 - [x] Add a credential-free `awf node doctor --json` discovery snapshot so one remote command can
   replace repeated host/path/tool readiness probes across a short serial run, without creating a
   second authority cache or adding Agent Bus runtime semantics.

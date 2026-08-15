@@ -9,6 +9,15 @@
 
 ## Current Handoff State: 2026-08-14
 
+P1-1 makes run-aware node status causal without making it active. `awf node status --run ...
+--explain` projects existing lifecycle, RunLedger and exact authorized-delivery checkpoint facts
+into stage/attempt, first blocker, owner/cause, model-invocation evidence, payload-blind event
+observation, and one legal next action. Feedback capture/outbox/flush is reported as an independent
+top-level component, so neither business terminal/ACK nor pending Feedback rewrites the other.
+Status does not ACK, requeue, recover, redispatch, flush, mutate lifecycle, or invoke a model. The
+UTF-safe executor/native-manager/log boundary was completed separately in P1-1a. See
+[`docs/tasks/causal-status-and-feedback-diagnostics.md`](docs/tasks/causal-status-and-feedback-diagnostics.md).
+
 P0-5 closes the implement-to-rework workspace ownership gap for trusted v3 runs. The initial coder
 checkpoint now separates immutable delivery/source identity from the expected trusted transition
 to the verified implementation commit and records the imported tree, stable Git-control binding,
@@ -137,10 +146,12 @@ bounded deadline. Installed-wheel CI launches a real venv child and locks both t
 redirector observation and launch-identity contract. See
 [`docs/tasks/windows-venv-pid-binding-implementation-report.md`](docs/tasks/windows-venv-pid-binding-implementation-report.md).
 
-`awf node status --profile <profile> [--run <run-id>] [--json]` is the factual read-only view. It
+`awf node status --profile <profile> [--run <run-id>] [--json] [--explain]` is the factual read-only
+view. It
 keeps recorded and live PR/CI facts separate, reports unavailable observations honestly, and names
 ReviewReport raw-file and normalized-object hashes as `file_sha256` and
-`canonical_report_sha256`. The reader does not invoke recovery or any event lifecycle mutation.
+`canonical_report_sha256`. Its causal projection and independent Feedback facts add no recovery or
+event lifecycle mutation.
 See [`docs/tasks/factual-node-status-implementation-report.md`](docs/tasks/factual-node-status-implementation-report.md).
 
 The current addition implements the evidence-backed Pi reviewer need without introducing a generic
