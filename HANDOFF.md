@@ -9,6 +9,17 @@
 
 ## Current Handoff State: 2026-08-14
 
+P1-2 adds a thin beginner facade without adding a second configuration or control plane. `awf
+init`/`enroll` generates credential-free coder/reviewer profiles in the platform config home,
+validates them with the existing node contract, and reuses setup to write the default owner
+RunManifest and compiled run contract. Top-level doctor/start/run-check/run/status/drain/stop
+discover those exact bindings; old setup/plan/node/run/status forms remain available. Managed
+start installs only from explicit `not_installed` evidence, while unknown/stale installation facts
+fail closed. Drain collects read-only queue counts for all selected profiles before any exact stop.
+No facade operation ACKs, requeues, recovers, dispatches, flushes Feedback, reads a business
+payload, or invokes a model. See [`docs/tasks/thin-usability-facade.md`](docs/tasks/thin-usability-facade.md)
+and its [implementation report](docs/tasks/thin-usability-facade-implementation-report.md).
+
 P1-1 makes run-aware node status causal without making it active. `awf node status --run ...
 --explain` projects existing lifecycle, RunLedger and exact authorized-delivery checkpoint facts
 into stage/attempt, first blocker, owner/cause, model-invocation evidence, payload-blind event

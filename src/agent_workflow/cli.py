@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import subprocess
 import sys
 from pathlib import Path
 
-from agent_workflow import __version__, node
+from agent_workflow import __version__, facade, node
 from agent_workflow.errors import ParseError
 from agent_workflow.manifest import (
     ManifestError,
@@ -303,6 +304,7 @@ def _compile_owner_contract(
     state_root_value: str = "",
     profile_values: list[str] | None = None,
     run_id: str = "",
+    stable_profile_references: bool = False,
 ) -> dict:
     ops = _ops_module()
     try:
@@ -328,6 +330,7 @@ def _compile_owner_contract(
         )
         state_root, profile_args = _compiler_inputs(values, state_root_value, profile_values)
         profiles = _profile_arguments(profile_args)
+        configured_profiles = _profile_reference_map(profile_args)
         taskcard_binding = {
             "format": "awf.taskcard-postflight.v1",
             "path": artifact.taskcard_path,
@@ -348,8 +351,18 @@ def _compile_owner_contract(
         profile_bindings = [
             {
                 "role": profile.role,
-                "path": str(profile.path),
-                "profile_source": "installed" if profile.source_path else "authoring",
+                "path": str(
+                    node.resolve_profile_path(configured_profiles[profile.role])
+                    if stable_profile_references
+                    else profile.path
+                ),
+                "profile_source": (
+                    "authoring"
+                    if stable_profile_references
+                    else "installed"
+                    if profile.source_path
+                    else "authoring"
+                ),
                 "sha256": profile.digest,
                 "state_root": str(profile.state_root),
                 "values": profile.values,
@@ -445,6 +458,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
             values=values,
             manifest_path=path,
             authority_manifest=args.authority_manifest,
+            stable_profile_references=getattr(args, "stable_profile_references", False),
         )
         write_manifest(path, values)
         write_compiled_report(contract_path, report)
@@ -454,6 +468,137 @@ def cmd_setup(args: argparse.Namespace) -> int:
     print(f"configured RunManifest: {path.resolve()}")
     print(f"compiled run contract: {contract_path.resolve()} ({report['contract_sha256']})")
     print("secrets unchanged: configure dispatch.env separately; .envrc was not written")
+    return 0
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    """Generate durable profiles, then reuse the existing setup/compiler path."""
+    try:
+        repo = Path(args.repo).resolve()
+        manifest_path = default_manifest_path(repo)
+        contract_path = default_compiled_report_path(repo)
+        if not args.replace and (manifest_path.exists() or contract_path.exists()):
+            raise facade.FacadeError(
+                "owner RunManifest or compiled contract already exists; pass --replace"
+            )
+        project = args.project or repo.name
+        machine = args.machine or platform.node() or "local"
+        state_root, profiles = facade.enroll_profiles(
+            repo=repo,
+            machine=machine,
+            project=project,
+            coder_runtime=args.coder_runtime,
+            coder_model=args.coder_model,
+            reviewer_runtime=args.reviewer_runtime,
+            reviewer_model=args.reviewer_model,
+            lifecycle=args.lifecycle,
+            upstream_repo=args.upstream_repo,
+            head_repo=args.head_repo,
+            upstream_remote=args.upstream_remote,
+            head_remote=args.head_remote,
+            base_ref=args.base_ref,
+            replace=args.replace,
+        )
+    except (facade.FacadeError, node.NodeError, OSError) as exc:
+        print(f"ERROR: init failed: {exc}", file=sys.stderr)
+        return 1
+    setup_args = argparse.Namespace(
+        repo=str(repo),
+        card=args.card,
+        run_manifest="",
+        manifest="",
+        run_contract="",
+        authority_manifest="",
+        state_root=str(state_root),
+        profile=[f"{profile.role}={profile.path}" for profile in profiles],
+        branch=args.branch,
+        tool=args.coder_runtime,
+        model=args.coder_model,
+        reviewer_tool=args.reviewer_runtime,
+        reviewer_model=args.reviewer_model,
+        rework_budget=args.rework_budget,
+        upstream_repo=args.upstream_repo,
+        head_repo=args.head_repo,
+        upstream_remote=args.upstream_remote,
+        head_remote=args.head_remote,
+        base_ref=args.base_ref,
+        replace=args.replace,
+        stable_profile_references=True,
+    )
+    result = cmd_setup(setup_args)
+    if result == 0:
+        print(
+            f"enrolled machine={machine} project={project} "
+            f"coder_runtime={args.coder_runtime} reviewer_runtime={args.reviewer_runtime}"
+        )
+        for profile in profiles:
+            print(f"generated profile: role={profile.role} source={profile.path}")
+    return result
+
+
+def _facade_error(action: str, exc: Exception) -> int:
+    print(f"ERROR: {action} failed: {exc}", file=sys.stderr)
+    return 1
+
+
+def cmd_facade_doctor(args: argparse.Namespace) -> int:
+    try:
+        return facade.doctor(
+            Path(args.repo),
+            role=args.role,
+            ttl_seconds=args.ttl_seconds,
+            explain=args.explain,
+        )
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("doctor", exc)
+
+
+def cmd_facade_start(args: argparse.Namespace) -> int:
+    try:
+        return facade.start(
+            Path(args.repo),
+            role=args.role,
+            allow_session_bound=args.allow_session_bound,
+        )
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("start", exc)
+
+
+def cmd_facade_stop(args: argparse.Namespace) -> int:
+    try:
+        return facade.stop(Path(args.repo), role=args.role)
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("stop", exc)
+
+
+def cmd_facade_drain(args: argparse.Namespace) -> int:
+    try:
+        return facade.drain(Path(args.repo), role=args.role)
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("drain", exc)
+
+
+def cmd_facade_check(args: argparse.Namespace) -> int:
+    try:
+        contract = facade.check(
+            Path(args.repo),
+            lambda current: _compile_owner_contract(
+                repo=current.repo,
+                values=current.manifest,
+                manifest_path=current.manifest_path,
+                authority_manifest=str(
+                    current.contract["bindings"]["authority_manifest"]["path"]
+                ),
+                run_id=current.run_id,
+                stable_profile_references=True,
+            ),
+        )
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("run check", exc)
+    print(
+        f"run={contract.run_id} contract=compatible "
+        f"source={contract.contract_path}"
+    )
     return 0
 
 
@@ -593,6 +738,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             manifest_path=manifest_path,
             authority_manifest=str(authority_path),
             run_id=run_id,
+            stable_profile_references=getattr(args, "facade", False),
         )
         if current_report != persisted_report:
             raise ManifestError(
@@ -628,6 +774,36 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"run={run_id} stage=implement next=clean_checkout")
     print("serial runbook initialized; use awf status --run and awf resume --run")
     return 0
+
+
+def cmd_run_router(args: argparse.Namespace) -> int:
+    if getattr(args, "run_action", "") == "check":
+        return cmd_facade_check(args)
+    if not getattr(args, "card", ""):
+        try:
+            contract = facade.load_project(Path(args.repo))
+            args.card = str(contract.card)
+            args.facade = True
+        except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+            print(f"ERROR: run failed: {exc}", file=sys.stderr)
+            return 1
+    elif not getattr(args, "run_manifest", "") and not getattr(args, "run_contract", ""):
+        try:
+            contract = facade.load_project(Path(args.repo))
+            if _resolve_card(args.card, contract.repo) == contract.card:
+                args.facade = True
+        except (facade.FacadeError, ManifestError, node.NodeError, OSError):
+            pass
+    return cmd_run(args)
+
+
+def cmd_status_router(args: argparse.Namespace) -> int:
+    if getattr(args, "run", ""):
+        return cmd_status(args)
+    try:
+        return facade.status(Path(args.repo), role=args.role, explain=args.explain)
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("status", exc)
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
@@ -774,6 +950,36 @@ def main(argv: list[str] | None = None) -> int:
     setup_parser.add_argument("--replace", action="store_true")
     setup_parser.set_defaults(func=cmd_setup)
 
+    for name in ("init", "enroll"):
+        init_parser = subparsers.add_parser(
+            name,
+            help="Generate durable profiles and compile the default project run",
+        )
+        init_parser.add_argument("--repo", default=".")
+        init_parser.add_argument("--card", required=True)
+        init_parser.add_argument("--machine", default="")
+        init_parser.add_argument("--project", default="")
+        init_parser.add_argument(
+            "--coder-runtime", choices=("codex", "opencode"), default="opencode"
+        )
+        init_parser.add_argument("--coder-model", default="")
+        init_parser.add_argument(
+            "--reviewer-runtime", choices=("codex", "opencode", "pi"), default="pi"
+        )
+        init_parser.add_argument("--reviewer-model", default="")
+        init_parser.add_argument(
+            "--lifecycle", choices=("managed", "session"), default="managed"
+        )
+        init_parser.add_argument("--branch", default="")
+        init_parser.add_argument("--rework-budget", type=int, default=1)
+        init_parser.add_argument("--upstream-repo", required=True)
+        init_parser.add_argument("--head-repo", required=True)
+        init_parser.add_argument("--upstream-remote", default="upstream")
+        init_parser.add_argument("--head-remote", default="fork")
+        init_parser.add_argument("--base-ref", default="main")
+        init_parser.add_argument("--replace", action="store_true")
+        init_parser.set_defaults(func=cmd_init)
+
     plan_parser = subparsers.add_parser("plan", help="Compile or lint owner run intent")
     plan_commands = plan_parser.add_subparsers(dest="plan_command", required=True)
     plan_check_parser = plan_commands.add_parser(
@@ -846,8 +1052,9 @@ def main(argv: list[str] | None = None) -> int:
     feedback_ingest_parser.set_defaults(func=cmd_feedback)
 
     run_parser = subparsers.add_parser("run", help="Initialize the bounded serial operator run")
+    run_parser.add_argument("run_action", nargs="?", choices=("check",), default="")
     run_parser.add_argument("--repo", default=".")
-    run_parser.add_argument("--card", required=True)
+    run_parser.add_argument("--card", default="")
     run_parser.add_argument("--run-manifest", default="")
     run_parser.add_argument("--manifest", default="", help=argparse.SUPPRESS)
     run_parser.add_argument("--run-contract", default="")
@@ -859,15 +1066,50 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--reviewer-model", default="")
     run_parser.add_argument("--state-root", default="")
     run_parser.add_argument("--rework-budget", type=int, default=1)
-    run_parser.set_defaults(func=cmd_run)
+    run_parser.set_defaults(func=cmd_run_router)
 
-    for name, handler in (("status", cmd_status), ("resume", cmd_resume)):
+    status_parser = subparsers.add_parser("status", help="Explain the project or one bounded run")
+    status_parser.add_argument("--repo", default=".")
+    status_parser.add_argument("--run", default="")
+    status_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+    status_parser.add_argument("--explain", action="store_true")
+    status_parser.add_argument(
+        "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
+    )
+    status_parser.set_defaults(func=cmd_status_router)
+
+    for name, handler in (("resume", cmd_resume),):
         operator_parser = subparsers.add_parser(name, help=f"{name.title()} a bounded operator run")
         operator_parser.add_argument("--run", required=True)
         operator_parser.add_argument(
             "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
         )
         operator_parser.set_defaults(func=handler)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Check every profile in the compiled project"
+    )
+    doctor_parser.add_argument("--repo", default=".")
+    doctor_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+    doctor_parser.add_argument("--explain", action="store_true")
+    doctor_parser.add_argument("--ttl-seconds", type=int, default=3600)
+    doctor_parser.set_defaults(func=cmd_facade_doctor)
+
+    start_parser = subparsers.add_parser(
+        "start", help="Install when explicitly absent, then start exact project profiles"
+    )
+    start_parser.add_argument("--repo", default=".")
+    start_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+    start_parser.add_argument("--allow-session-bound", action="store_true")
+    start_parser.set_defaults(func=cmd_facade_start)
+
+    for name, handler in (("stop", cmd_facade_stop), ("drain", cmd_facade_drain)):
+        lifecycle_parser = subparsers.add_parser(
+            name, help=f"{name.title()} exact profiles from the compiled project"
+        )
+        lifecycle_parser.add_argument("--repo", default=".")
+        lifecycle_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+        lifecycle_parser.set_defaults(func=handler)
 
     node_parser = subparsers.add_parser("node", help="Operate one local role listener")
     node_commands = node_parser.add_subparsers(dest="node_command", required=True)

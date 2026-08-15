@@ -232,8 +232,38 @@ route with `--enable-preflight`.
 
 ## Thin Operations Menu
 
-The non-core operator surface has one owner-controlled `RunManifest` and a
-bounded serial runbook:
+The supported beginner path generates the existing credential-free profiles and compiled project
+artifacts rather than introducing another configuration format:
+
+```bash
+awf init --repo . --card <path-or-id> \
+  --machine <machine-name> --project <project-name> \
+  --coder-runtime opencode --coder-model <coder-model> \
+  --reviewer-runtime pi --reviewer-model <reviewer-model> \
+  --upstream-repo <owner/project> --head-repo <contributor/project>
+awf doctor --explain
+awf start
+awf run check
+awf run
+awf status --explain
+awf drain  # requires every exact profile queue observation to be observed and empty
+```
+
+`awf enroll` is the compatibility spelling of `awf init`. Init records the machine/project names
+in deterministic profile identities, records the selected role runtimes in those profiles and the
+RunManifest, uses the platform AWF state root, validates both profiles through the existing node
+contract, and then calls the existing setup/compiler path. It never writes credentials or a native
+service definition. `start` performs managed install before start only for an explicit
+`not_installed` fact; stale or unknown installation evidence fails closed. `doctor`, `run check`,
+and `status` are payload-blind/read-only. `drain` observes pending counts for every selected role
+before any exact stop and never ACKs, requeues, recovers, or dispatches.
+
+The generated `.awf/run-manifest.json`, `.awf/run-contract.json`, and platform config-home profile
+JSON remain inspectable. Use `--role coder|reviewer` on facade lifecycle/status commands when
+operating one role on a machine. Secrets and external runtime authentication remain explicit
+prerequisites in `dispatch.env` and provider-owned configuration.
+
+The advanced surface remains available unchanged for compatibility and debugging:
 
 ```bash
 awf setup --repo . --card <path-or-id> \

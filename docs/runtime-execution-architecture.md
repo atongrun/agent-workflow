@@ -2,6 +2,16 @@
 
 ## Decision
 
+P1-2 places a small payload-blind facade above these proven contracts. It generates schema-valid
+credential-free role profiles in the platform config home, then delegates owner intent compilation
+to the existing setup path. Later facade commands rediscover only the default owner RunManifest,
+compiled contract, canonical state root and exact bound profiles. `run check` recompiles before
+loading the run control plane; bare `run` still reaches the existing initializer. Managed `start`
+may compose existing install/start actions only when lifecycle evidence says `not_installed`;
+unknown/stale evidence is terminal. `drain` reads only per-role pending counts and performs no stop
+unless every observation is known and zero. The facade contains no Agent Bus command, provider
+adapter, workflow transition, recovery, checkpoint, outbox, Feedback or ACK behavior.
+
 Before any operational surface consumes owner intent, `awf plan check` can compile the local files
 into one deterministic `awf.run-contract-report.v1`. This P0-4a surface is deliberately read-only:
 it validates the `awf.run-manifest.v1` owner document, the separate internal

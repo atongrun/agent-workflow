@@ -128,6 +128,9 @@ Remaining Phase 2 work:
 - [x] Project those facts into a payload-blind causal run explanation with first blocker, owner,
   model-invocation evidence and one legal next action; keep Feedback delivery state independent
   from business terminal/ACK state.
+- [x] Compose the stable contracts behind a thin beginner facade: generated durable profiles,
+  default RunManifest/run-contract discovery, causal doctor/status, explicit install-on-start,
+  payload-blind run check, and queue-empty drain, while preserving every low-level command.
 - [x] Add a credential-free `awf node doctor --json` discovery snapshot so one remote command can
   replace repeated host/path/tool readiness probes across a short serial run, without creating a
   second authority cache or adding Agent Bus runtime semantics.
