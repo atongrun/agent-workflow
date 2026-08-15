@@ -66,9 +66,7 @@ def _run(
         command = Path(argv[0]).name
         detail = (result.stderr or result.stdout).strip()
         suffix = f": {detail[-2000:]}" if detail else ""
-        raise FeasibilityError(
-            f"{command} failed with exit code {result.returncode}{suffix}"
-        )
+        raise FeasibilityError(f"{command} failed with exit code {result.returncode}{suffix}")
     return result
 
 
@@ -208,6 +206,7 @@ def build_candidates(repo: Path, output: Path) -> None:
     pex_root.mkdir()
     suffix = ".exe" if os.name == "nt" else ""
     pex_app = pex_root / f"awf-pex{suffix}"
+    pex_output = pex_root / "awf-pex"
     _run(
         [
             sys.executable,
@@ -221,7 +220,7 @@ def build_candidates(repo: Path, output: Path) -> None:
             "--scie",
             "eager",
             "-o",
-            str(pex_app),
+            str(pex_output),
         ],
         cwd=repo,
         timeout=900,
