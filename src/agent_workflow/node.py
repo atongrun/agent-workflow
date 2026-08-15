@@ -1342,7 +1342,13 @@ def reconcile(profile: NodeProfile) -> int:
     return result
 
 
-def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False) -> int:
+def status(
+    profile: NodeProfile,
+    run_id: str = "",
+    *,
+    json_output: bool = False,
+    explain: bool = False,
+) -> int:
     try:
         record = _process_record(profile)
     except NodeError:
@@ -1355,7 +1361,10 @@ def status(profile: NodeProfile, run_id: str = "", *, json_output: bool = False)
     if json_output:
         print(json.dumps(value, indent=2, sort_keys=True))
     else:
-        factual_status.print_human(value)
+        if explain:
+            factual_status.print_human(value, explain=True)
+        else:
+            factual_status.print_human(value)
     listener = value.get("listener")
     return 0 if isinstance(listener, dict) and listener.get("status") == "running" else 3
 
@@ -1436,6 +1445,7 @@ def run(
     lines: int = 100,
     run_id: str = "",
     json_output: bool = False,
+    explain: bool = False,
     ttl_seconds: int = 3600,
     allow_session_bound: bool = False,
 ) -> int:
@@ -1458,7 +1468,12 @@ def run(
             "reconcile": lambda: reconcile(profile),
             "install": lambda: install(profile),
             "start": lambda: start(profile, allow_session_bound=allow_session_bound),
-            "status": lambda: status(profile, run_id, json_output=json_output),
+            "status": lambda: status(
+                profile,
+                run_id,
+                json_output=json_output,
+                explain=explain,
+            ),
             "stop": lambda: stop(profile),
             "logs": lambda: logs(profile, lines),
             "restart": lambda: restart(profile),

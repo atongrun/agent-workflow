@@ -17,6 +17,19 @@ if TYPE_CHECKING:
 
 STATUS_FORMAT = "awf.node-status.v1"
 
+_MODEL_OBSERVED_PHASES = {
+    "model_started",
+    "model_completed",
+    "postflight_completed",
+    "model_imported",
+    "commit_created",
+    "fork_sha_verified",
+    "pr_created",
+    "pr_tuple_verified",
+    "outbox_prepared",
+    "outbox_sent",
+}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -353,6 +366,240 @@ def _pr_and_ci(profile: NodeProfile, ledger: dict[str, object]) -> tuple[dict, d
     return pull_request, ci
 
 
+def _feedback(profile: NodeProfile) -> dict[str, object]:
+    directory = operations_dir()
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
+    import awf_feedback
+
+    try:
+        counts = awf_feedback.feedback_status(profile.state_root)
+    except (OSError, ValueError, awf_feedback.FeedbackStateError):
+        return {
+            "source": "feedback_outbox_files_read_only",
+            "status": "unknown",
+            "capture": "unknown",
+            "outbox": "unknown",
+            "flush": "unknown",
+        }
+    pending = int(counts.get("pending", 0))
+    sent = int(counts.get("sent", 0))
+    rejected = int(counts.get("rejected", 0))
+    corrupt = int(counts.get("corrupt", 0))
+    captured = pending + sent
+    if corrupt:
+        flush = "blocked"
+    elif pending:
+        flush = "pending"
+    elif sent:
+        flush = "complete"
+    else:
+        flush = "not_recorded"
+    return {
+        "source": "feedback_outbox_files_read_only",
+        "status": "observed",
+        "capture": "recorded" if captured else "rejected" if rejected else "not_recorded",
+        "outbox": "corrupt" if corrupt else "pending" if pending else "empty",
+        "flush": flush,
+        "next_legal_action": (
+            f"awf feedback flush --state-root {profile.state_root}"
+            if pending
+            else "inspect corrupt Feedback Outbox records"
+            if corrupt
+            else "none"
+        ),
+        "counts": {
+            "pending": pending,
+            "sent": sent,
+            "rejected": rejected,
+            "corrupt": corrupt,
+        },
+    }
+
+
+def _model_invocation(profile: NodeProfile, ledger: dict[str, object]) -> bool | None:
+    packet = ledger.get("context_packet") if isinstance(ledger, dict) else None
+    branch = str(packet.get("branch", "")) if isinstance(packet, dict) else ""
+    expected_binding = state_root_binding(profile.state_root)
+    observed_checkpoint = False
+    events = ledger.get("events") if isinstance(ledger, dict) else None
+    authorized = (
+        [
+            item
+            for item in events
+            if isinstance(item, dict)
+            and item.get("status") == "authorized"
+            and item.get("role") in {"coder", "reviewer"}
+            and isinstance(item.get("delivery_id"), str)
+            and item.get("delivery_id")
+        ]
+        if isinstance(events, list)
+        else []
+    )
+    for event in authorized:
+        delivery_id = str(event["delivery_id"])
+        digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        path = profile.state_root / "checkpoint" / str(event["role"]) / f"{digest}.json"
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        binding = record.get("state_root_sha256")
+        if binding is not None and binding != expected_binding:
+            continue
+        if branch and record.get("branch") != branch:
+            continue
+        observed_checkpoint = True
+        if record.get("phase") in _MODEL_OBSERVED_PHASES:
+            return True
+    return False if observed_checkpoint else None
+
+
+def _event_observation(ledger: dict[str, object]) -> dict[str, object]:
+    events = ledger.get("events") if isinstance(ledger, dict) else None
+    safe_events = (
+        [item for item in events if isinstance(item, dict)] if isinstance(events, list) else []
+    )
+    latest = safe_events[-1] if safe_events else {}
+    return {
+        "source": "run_ledger_payload_blind",
+        "count": len(safe_events),
+        "payload_hash_observed": isinstance(latest.get("payload_sha256"), str)
+        and bool(latest.get("payload_sha256")),
+        "latest": {
+            key: latest[key]
+            for key in ("event_id", "event_type", "role", "stage", "attempt", "status", "reason")
+            if key in latest
+        },
+    }
+
+
+def _causal_status(
+    run_id: str,
+    lifecycle: dict[str, object],
+    ledger_fact: dict[str, object],
+    ledger: dict[str, object],
+    model_invoked: bool | None,
+) -> dict[str, object]:
+    stage = str(ledger_fact.get("stage", "not_recorded"))
+    stage_attempts = ledger.get("stage_attempts") if isinstance(ledger, dict) else None
+    attempt = (
+        int(stage_attempts.get(stage, 0))
+        if isinstance(stage_attempts, dict)
+        else int(ledger_fact.get("attempts", 0) or 0)
+    )
+    events = _event_observation(ledger)
+    authorized = (
+        [
+            item
+            for item in ledger.get("events", [])
+            if isinstance(item, dict) and item.get("status") == "authorized"
+        ]
+        if isinstance(ledger, dict)
+        else []
+    )
+    if model_invoked is None and ledger_fact.get("status") == "recorded" and not authorized:
+        model_invoked = False
+    model_status = (
+        "observed"
+        if model_invoked is True
+        else "not_observed"
+        if model_invoked is False
+        else "unknown"
+    )
+
+    terminal_state = str(ledger.get("terminal_state", "")) if isinstance(ledger, dict) else ""
+    decisions = ledger.get("decisions") if isinstance(ledger, dict) else None
+    safe_decisions = (
+        [item for item in decisions if isinstance(item, dict)]
+        if isinstance(decisions, list)
+        else []
+    )
+    latest_decision = safe_decisions[-1] if safe_decisions else {}
+    next_action = str(ledger_fact.get("next_action", "inspect recorded facts"))
+    status_value = "active"
+    owner = str(events["latest"].get("role") or "run_owner")
+    cause = "no_blocker_observed"
+
+    if terminal_state:
+        status_value = "terminal"
+        owner = "run_owner"
+        cause = f"business_{terminal_state}"
+        next_action = "stop"
+    elif latest_decision.get("status") == "rejected":
+        status_value = "blocked"
+        cause = str(latest_decision.get("reason", "pre_model_authorization_rejected"))
+        owner = "workflow_control_plane"
+        next_action = f"correct {cause} before creating a fresh authorized delivery"
+    elif lifecycle.get("dispatch_capable") is False:
+        status_value = "blocked"
+        blocked_fact = next(
+            (
+                name
+                for name in ("configured", "installed", "running", "connected", "dispatch_capable")
+                if lifecycle.get(name) is False
+            ),
+            "dispatch_capable",
+        )
+        owner = "node_lifecycle"
+        cause = f"lifecycle_{blocked_fact}_false"
+        action = lifecycle.get("next_legal_action")
+        if isinstance(action, dict):
+            next_action = str(action.get("command") or next_action)
+    elif ledger_fact.get("status") != "recorded":
+        status_value = "unknown"
+        owner = "run_owner"
+        cause = "run_ledger_unavailable"
+
+    first_blocker = {
+        "status": "observed" if status_value == "blocked" else "not_observed",
+        "owner": owner,
+        "cause": cause,
+    }
+    return {
+        "source": "lifecycle+run_ledger+delivery_checkpoints",
+        "status": status_value,
+        "run_id": run_id or "not_requested",
+        "stage": stage,
+        "attempt": attempt,
+        "owner": owner,
+        "cause": cause,
+        "first_blocker": first_blocker,
+        "model_invocation": model_status,
+        "event_observation": events,
+        "next_legal_action": next_action,
+        "prohibited_actions": [
+            "ack",
+            "requeue",
+            "recover",
+            "redispatch",
+            "invoke_model",
+        ],
+        "chain": [
+            {
+                "boundary": "lifecycle",
+                "status": "ready"
+                if lifecycle.get("dispatch_capable") is True
+                else "blocked"
+                if lifecycle.get("dispatch_capable") is False
+                else "unknown",
+            },
+            {"boundary": "run_ledger", "status": ledger_fact.get("status", "unknown")},
+            {
+                "boundary": "pre_model_authorization",
+                "status": latest_decision.get("status", "not_recorded"),
+            },
+            {"boundary": "model_invocation", "status": model_status},
+            {
+                "boundary": "business_terminal",
+                "status": terminal_state or "not_recorded",
+            },
+        ],
+    }
+
+
 def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
     from agent_workflow import node
 
@@ -360,6 +607,8 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
     ledger_fact, ledger = _ledger(profile, run_id)
     delivery_fact, review_file_sha = _delivery_checkpoints(profile, ledger)
     pull_request, ci = _pr_and_ci(profile, ledger)
+    lifecycle = node.lifecycle_facts(profile, listener=listener)
+    model_invoked = _model_invocation(profile, ledger)
     return {
         "format": STATUS_FORMAT,
         "observed_at": _now(),
@@ -368,7 +617,7 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
             "source": "node_profile",
             "sha256": state_root_binding(profile.state_root),
         },
-        "lifecycle": node.lifecycle_facts(profile, listener=listener),
+        "lifecycle": lifecycle,
         "listener": listener,
         "workspace": _workspace(profile),
         "checkpoint": {"ledger": ledger_fact, "delivery": delivery_fact},
@@ -376,10 +625,18 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
         "artifacts": _artifacts(profile, ledger, review_file_sha),
         "pull_request": pull_request,
         "ci": ci,
+        "feedback": _feedback(profile),
+        "causal": _causal_status(
+            run_id,
+            lifecycle,
+            ledger_fact,
+            ledger,
+            model_invoked,
+        ),
     }
 
 
-def print_human(value: dict[str, object]) -> None:
+def print_human(value: dict[str, object], *, explain: bool = False) -> None:
     profile = value["profile"]
     listener = value["listener"]
     workspace = value["workspace"]
@@ -442,3 +699,30 @@ def print_human(value: dict[str, object]) -> None:
         f"live={value['pull_request']['live']}"
     )
     print(f"ci: recorded={value['ci']['recorded']} live={value['ci']['live']}")
+    feedback = value.get("feedback")
+    if isinstance(feedback, dict):
+        counts = feedback.get("counts") if isinstance(feedback.get("counts"), dict) else {}
+        print(
+            "feedback: "
+            f"capture={feedback.get('capture', 'unknown')} "
+            f"outbox={feedback.get('outbox', 'unknown')} "
+            f"flush={feedback.get('flush', 'unknown')} "
+            f"pending={counts.get('pending', 'unknown')}"
+        )
+    if explain:
+        causal = value.get("causal")
+        if isinstance(causal, dict):
+            print(
+                "causal: "
+                f"run={causal.get('run_id', 'not_requested')} "
+                f"stage={causal.get('stage', 'not_recorded')} "
+                f"attempt={causal.get('attempt', 0)} "
+                f"status={causal.get('status', 'unknown')}"
+            )
+            print(
+                "first_blocker: "
+                f"owner={causal.get('owner', 'unknown')} "
+                f"cause={causal.get('cause', 'unknown')} "
+                f"model_invocation={causal.get('model_invocation', 'unknown')}"
+            )
+            print(f"next_legal_action={causal.get('next_legal_action', 'unknown')}")

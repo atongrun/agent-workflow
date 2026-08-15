@@ -294,6 +294,7 @@ awf node doctor --profile reviewer-mac --json --ttl-seconds 3600
 awf node start --profile reviewer-mac
 awf node status --profile reviewer-mac
 awf node status --profile reviewer-mac --run task-DOGFOOD-001 --json
+awf node status --profile reviewer-mac --run task-DOGFOOD-001 --explain
 awf node logs --profile reviewer-mac --lines 100
 awf node stop --profile reviewer-mac
 awf node install --profile coder-windows
@@ -301,6 +302,12 @@ awf node restart --profile coder-windows
 awf node upgrade --profile coder-windows
 awf node uninstall --profile coder-windows
 ```
+
+The run-aware status projection names the first observed blocker, its owner and cause, whether a
+model invocation is proven by the exact run's authorized delivery checkpoints, payload-blind event
+metadata, and one legal next action. Feedback capture/outbox/flush facts remain separate from the
+business terminal and ACK state. Status is read-only and never ACKs, requeues, recovers, dispatches,
+flushes Feedback, or invokes a model.
 
 ```json
 {

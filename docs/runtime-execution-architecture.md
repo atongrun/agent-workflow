@@ -228,6 +228,13 @@ the process record and fails closed. It neither reports a false stop nor signals
 outside the process-group contract. A stale record is removed automatically only when no matching
 listener process remains alive.
 
+Run-aware node status remains outside every mutation path. It reads the existing lifecycle facts,
+verified RunLedger, exact authorized-delivery checkpoints, and local Feedback Outbox counts, then
+projects a payload-blind causal chain: current stage/attempt, first observed blocker, owner/cause,
+model-invocation evidence, and one legal next action. The Feedback projection is independent from
+business terminal and ACK state. Neither JSON status nor `--explain` can ACK, requeue, recover,
+redispatch, flush Feedback, mutate lifecycle, or invoke a provider.
+
 The architect terminal handler treats its configured repository as read-only configuration and
 object input. It creates a fresh event-scoped clone, copies the already validated remote URLs,
 performs all fetch, PR tuple, exact-commit, TaskCard, and ImplementationReport checks inside that

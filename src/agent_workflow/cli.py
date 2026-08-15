@@ -62,6 +62,8 @@ def cmd_node(args: argparse.Namespace) -> int:
         "json_output": getattr(args, "json", False),
         "ttl_seconds": getattr(args, "ttl_seconds", 3600),
     }
+    if getattr(args, "explain", False):
+        options["explain"] = True
     if getattr(args, "allow_session_bound", False):
         options["allow_session_bound"] = True
     return node.run(args.node_command, args.profile, **options)
@@ -889,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
         if name == "status":
             command.add_argument("--run", default="")
             command.add_argument("--json", action="store_true")
+            command.add_argument("--explain", action="store_true")
         if name == "doctor":
             command.add_argument("--json", action="store_true")
             command.add_argument("--ttl-seconds", type=int, default=3600)
