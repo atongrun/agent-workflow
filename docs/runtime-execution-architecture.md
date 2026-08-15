@@ -203,18 +203,18 @@ CI runs the full suite on Ubuntu and Windows PowerShell, reruns executor and
 boundary tests from Windows Git Bash, and runs the focused runtime suite from
 macOS zsh.
 
-## Remaining external shell boundary
+## Structured Agent Bus handler boundary
 
-Agent Bus currently accepts listener handlers as one `--on TYPE COMMAND`
-template. `awf_listen.build_handler()` therefore still serializes an audited
-handler template for Agent Bus to interpret. Agent Workflow does not execute
-that string locally; the local Agent Bus process itself is launched through the
-unified executor.
+Production role and no-model Preflight handlers use the pinned
+`awf.handler-argv.v1 -> agent-bus.listen.on-argv.v1` compatibility tuple. `awf_listen` builds an
+exact token list and serializes it as UTF-8 JSON; Agent Bus replaces placeholders within those
+existing tokens and launches the list with `shell=False`. There is no command-template parse in the
+production Workflow path.
 
-Eliminating this final external template requires an Agent Bus argv/JSON handler
-contract. Until that upstream contract exists, the template remains a narrow
-compatibility boundary and payload placeholder quoting remains owned by Agent
-Bus.
+Agent Bus retains its legacy `--on TYPE COMMAND` surface for older clients, but this Workflow
+listener does not fall back after delivery. Upgrade Bus before Workflow and roll back Workflow
+before Bus. An old Bus rejects the unknown structured option while parsing local CLI arguments,
+before it connects to SSE or can observe an event.
 
 ## Listener ownership and terminal workspace
 

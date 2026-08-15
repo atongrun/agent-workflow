@@ -575,14 +575,14 @@ def test_request_and_result_handlers_run_children_and_publish_evidence(tmp_path,
 
 
 def test_listener_registers_no_model_preflight_handlers():
-    handler = awf_listen.build_preflight_handler(
+    handler = awf_listen.build_preflight_handler_argv(
         "python",
         "awf_preflight.py",
         "handle-request",
         config_path=Path("/safe/config"),
         state_root=Path("/safe/state"),
     )
-    assert "handle-request" in handler
+    assert handler[:3] == ["python", "awf_preflight.py", "handle-request"]
     assert "{id}" in handler
     assert "{payload.probe_id}" in handler
     assert "opencode" not in handler
@@ -628,8 +628,15 @@ def test_listener_preflight_routes_are_explicit_opt_in(tmp_path, monkeypatch):
     )
 
     assert result == 0
+    assert "--on" not in seen
+    on_argv_indexes = [index for index, value in enumerate(seen) if value == "--on-argv"]
+    route_types = [seen[index + 1] for index in on_argv_indexes]
+    route_argvs = [json.loads(seen[index + 2]) for index in on_argv_indexes]
     assert awf_preflight.REQUEST_TYPE in seen
     assert awf_preflight.RESULT_TYPE in seen
+    assert awf_preflight.REQUEST_TYPE in route_types
+    assert awf_preflight.RESULT_TYPE in route_types
+    assert all(isinstance(argv, list) for argv in route_argvs)
 
 
 def test_deep_failure_always_returns_versioned_report(tmp_path, monkeypatch):

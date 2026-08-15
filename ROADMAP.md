@@ -141,6 +141,8 @@ Remaining Phase 2 work:
 - [x] Complete the first non-infrastructure downstream multi-TaskCard dogfood described in Phase 3.
 - [x] Complete the Agent Bus portion of the fresh disposable proof through coder, reviewer, PASS
   decision, and architect ACK without creating a replacement proof event.
+- [x] Pin Workflow `awf.handler-argv.v1` to Agent Bus `agent-bus.listen.on-argv.v1` and keep role,
+  rework, terminal and Preflight handler inputs structured across the transport process boundary.
 
 This Phase changes the operations surface only. It does not promote runner/listener behavior into
 the stable core or modify Agent Bus protocol.

@@ -4,6 +4,11 @@
 
 ### Added
 
+- Emit production role, implement-to-rework, terminal and no-model Preflight listener handlers as
+  the pinned `awf.handler-argv.v1` JSON argv contract consumed by Agent Bus
+  `agent-bus.listen.on-argv.v1`. Paths and payload placeholders remain individual process arguments;
+  no Workflow stage, delivery, recovery, checkpoint/outbox, model, or ACK behavior changes.
+
 - Add a thin, payload-blind usability facade over existing profile, compiler, lifecycle and causal
   status contracts. `awf init`/`enroll` generates validated credential-free coder/reviewer
   profiles and the default compiled project artifacts; top-level `doctor`, `start`, `run check`,

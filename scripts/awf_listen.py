@@ -233,6 +233,26 @@ def build_handler(
     double-quote subset; payload placeholders are substituted and shell-quoted
     by Agent Bus. Agent Workflow launches Agent Bus itself through awf_executor.
     """
+    fields = _role_handler_fields(
+        role,
+        on_type=on_type,
+        upstream_remote=upstream_remote,
+        head_remote=head_remote,
+        state_root=state_root,
+        quote_paths=True,
+    )
+    return f'"{python_exe}" "{role_script}" {role} ' + " ".join(fields)
+
+
+def _role_handler_fields(
+    role: str,
+    *,
+    on_type: str = "",
+    upstream_remote: str = "upstream",
+    head_remote: str = "fork",
+    state_root: Path | None = None,
+    quote_paths: bool = False,
+) -> list[str]:
     fields = [
         "--event-id",
         "{id}",
@@ -298,13 +318,39 @@ def build_handler(
     else:
         fields += ["--review-report", "{payload.review_report}"]
     if state_root is not None:
+        state_root_value = f'"{state_root}"' if quote_paths else str(state_root)
         fields += [
             "--state-root",
-            f'"{state_root}"',
+            state_root_value,
             "--state-root-sha256",
             state_root_binding(state_root),
         ]
-    return f'"{python_exe}" "{role_script}" {role} ' + " ".join(fields)
+    return fields
+
+
+def build_handler_argv(
+    python_exe: str,
+    role_script: str,
+    role: str,
+    *,
+    on_type: str = "",
+    upstream_remote: str = "upstream",
+    head_remote: str = "fork",
+    state_root: Path | None = None,
+) -> list[str]:
+    """Build the awf.handler-argv.v1 role handler argv for Agent Bus."""
+    return [
+        python_exe,
+        role_script,
+        role,
+        *_role_handler_fields(
+            role,
+            on_type=on_type,
+            upstream_remote=upstream_remote,
+            head_remote=head_remote,
+            state_root=state_root,
+        ),
+    ]
 
 
 def build_preflight_handler(
@@ -316,6 +362,23 @@ def build_preflight_handler(
     state_root: Path,
 ) -> str:
     """Build the narrow no-model control handler accepted by Agent Bus v1."""
+    fields = _preflight_handler_fields(
+        command,
+        config_path=config_path,
+        state_root=state_root,
+        quote_paths=True,
+    )
+    return f'"{python_exe}" "{preflight_script}" {command} ' + " ".join(fields)
+
+
+def _preflight_handler_fields(
+    command: str,
+    *,
+    config_path: Path,
+    state_root: Path,
+    quote_paths: bool = False,
+) -> list[str]:
+    state_root_value = f'"{state_root}"' if quote_paths else str(state_root)
     fields = [
         "--event-id",
         "{id}",
@@ -330,10 +393,11 @@ def build_preflight_handler(
         "--target-role",
         "{payload.target_role}",
         "--state-root",
-        f'"{state_root}"',
+        state_root_value,
     ]
     if command == "handle-request":
-        fields += ["--config", f'"{config_path}"']
+        config_value = f'"{config_path}"' if quote_paths else str(config_path)
+        fields += ["--config", config_value]
     else:
         fields += [
             "--request-event-id",
@@ -341,7 +405,33 @@ def build_preflight_handler(
             "--request-child-rc",
             "{payload.request_child_rc}",
         ]
-    return f'"{python_exe}" "{preflight_script}" {command} ' + " ".join(fields)
+    return fields
+
+
+def build_preflight_handler_argv(
+    python_exe: str,
+    preflight_script: str,
+    command: str,
+    *,
+    config_path: Path,
+    state_root: Path,
+) -> list[str]:
+    """Build the awf.handler-argv.v1 no-model Preflight handler argv."""
+    return [
+        python_exe,
+        preflight_script,
+        command,
+        *_preflight_handler_fields(
+            command,
+            config_path=config_path,
+            state_root=state_root,
+        ),
+    ]
+
+
+def handler_argv_json(argv: list[str]) -> str:
+    """Serialize handler argv for agent-bus.listen.on-argv.v1."""
+    return json.dumps([str(value) for value in argv], ensure_ascii=False, separators=(",", ":"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -468,16 +558,6 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
 
-    handler = build_handler(
-        sys.executable,
-        role_script,
-        a.role,
-        on_type=on_type,
-        upstream_remote=a.upstream_remote,
-        head_remote=a.head_remote,
-        state_root=listener_root,
-    )
-
     print(f"[listen] role={a.role} repo={repo} tool={a.tool} model={a.model or '<default>'}")
     print(f"[listen] on '{on_type}' -> {role_script}")
     print(
@@ -497,9 +577,18 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if a.idle is not None:
         listen_argv += ["--exit-after-idle", str(a.idle)]
-    listen_argv += ["--on", on_type, handler]
+    handler_argv = build_handler_argv(
+        sys.executable,
+        role_script,
+        a.role,
+        on_type=on_type,
+        upstream_remote=a.upstream_remote,
+        head_remote=a.head_remote,
+        state_root=listener_root,
+    )
+    listen_argv += ["--on-argv", on_type, handler_argv_json(handler_argv)]
     if len(active_types) > 1:
-        rework_handler = build_handler(
+        rework_handler_argv = build_handler_argv(
             sys.executable,
             role_script,
             a.role,
@@ -508,27 +597,31 @@ def main(argv: list[str] | None = None) -> int:
             head_remote=a.head_remote,
             state_root=listener_root,
         )
-        listen_argv += ["--on", active_types[1], rework_handler]
+        listen_argv += ["--on-argv", active_types[1], handler_argv_json(rework_handler_argv)]
     if a.enable_preflight and config_path is not None:
         preflight_root = listener_root
         listen_argv += [
-            "--on",
+            "--on-argv",
             PREFLIGHT_REQUEST_TYPE,
-            build_preflight_handler(
-                sys.executable,
-                preflight_script,
-                "handle-request",
-                config_path=config_path.resolve(),
-                state_root=preflight_root,
+            handler_argv_json(
+                build_preflight_handler_argv(
+                    sys.executable,
+                    preflight_script,
+                    "handle-request",
+                    config_path=config_path.resolve(),
+                    state_root=preflight_root,
+                )
             ),
-            "--on",
+            "--on-argv",
             PREFLIGHT_RESULT_TYPE,
-            build_preflight_handler(
-                sys.executable,
-                preflight_script,
-                "handle-result",
-                config_path=config_path.resolve(),
-                state_root=preflight_root,
+            handler_argv_json(
+                build_preflight_handler_argv(
+                    sys.executable,
+                    preflight_script,
+                    "handle-result",
+                    config_path=config_path.resolve(),
+                    state_root=preflight_root,
+                )
             ),
         ]
 

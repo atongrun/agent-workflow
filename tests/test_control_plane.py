@@ -50,6 +50,11 @@ def make_ledger(tmp_path: Path, *, budget: int = 1) -> RunLedger:
     return ledger
 
 
+def on_argv_registrations(argv: list[str]) -> list[tuple[str, list[str]]]:
+    on_argv_indexes = [index for index, value in enumerate(argv) if value == "--on-argv"]
+    return [(argv[index + 1], json.loads(argv[index + 2])) for index in on_argv_indexes]
+
+
 def test_packet_is_bounded_and_recoverable_from_a_fresh_session(tmp_path: Path):
     make_ledger(tmp_path)
     recovered_ledger, packet = RunLedger(tmp_path, "run-1").recover()
@@ -558,14 +563,16 @@ def test_default_coder_listener_covers_impl_and_rework_with_distinct_handlers(
         )
         == 0
     )
-    on_indexes = [index for index, value in enumerate(seen) if value == "--on"]
-    assert len(on_indexes) == 2
-    first_type, first_handler = seen[on_indexes[0] + 1 : on_indexes[0] + 3]
-    second_type, second_handler = seen[on_indexes[1] + 1 : on_indexes[1] + 3]
+    assert "--on" not in seen
+    registrations = on_argv_registrations(seen)
+    assert len(registrations) == 2
+    first_type, first_handler = registrations[0]
+    second_type, second_handler = registrations[1]
     assert first_type == "task:awf-impl-v3"
     assert "--review-feedback" not in first_handler
     assert second_type == "task:awf-rework-v3"
-    assert "--review-feedback {payload.review_report}" in second_handler
+    review_feedback = second_handler.index("--review-feedback")
+    assert second_handler[review_feedback + 1] == "{payload.review_report}"
 
 
 def test_default_architect_listener_covers_ready_and_blocked_terminal_decisions(
@@ -607,15 +614,17 @@ def test_default_architect_listener_covers_ready_and_blocked_terminal_decisions(
         )
         == 0
     )
-    on_indexes = [index for index, value in enumerate(seen) if value == "--on"]
-    assert len(on_indexes) == 2
-    first_type, first_handler = seen[on_indexes[0] + 1 : on_indexes[0] + 3]
-    second_type, second_handler = seen[on_indexes[1] + 1 : on_indexes[1] + 3]
+    assert "--on" not in seen
+    registrations = on_argv_registrations(seen)
+    assert len(registrations) == 2
+    first_type, first_handler = registrations[0]
+    second_type, second_handler = registrations[1]
     assert first_type == "decision:awf-ready-v3"
     assert second_type == "decision:awf-blocked-v3"
     assert "--review-feedback" in first_handler
     assert "--review-feedback" in second_handler
-    assert "--review-feedback {payload.review_report}" in second_handler
+    review_feedback = second_handler.index("--review-feedback")
+    assert second_handler[review_feedback + 1] == "{payload.review_report}"
 
 
 def test_listener_rejects_duplicate_role_before_connecting_to_bus(monkeypatch, tmp_path: Path):
