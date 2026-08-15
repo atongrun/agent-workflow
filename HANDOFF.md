@@ -9,6 +9,15 @@
 
 ## Current Handoff State: 2026-08-14
 
+P0-4b makes the proven compiler a mandatory setup/run gate. Setup now stores the canonical
+state-root and coder/reviewer profile references in the credential-free owner RunManifest, compiles
+the complete current graph, and writes owner-only `.awf/run-contract.json`. Run reloads and
+recompiles the exact owner/authority/TaskCard/profile/state-root graph, requires report equality,
+and binds `run_contract_sha256` into the context packet before Git HEAD lookup or RunLedger
+initialization. Generic setup/run `--manifest` and old uncompiled manifests fail with an explicit
+migration; lower-level native dispatch is unchanged. See
+[`docs/tasks/compiled-run-consumption-gate.md`](docs/tasks/compiled-run-consumption-gate.md).
+
 P0-4a adds a read-only contract compiler before any normal execution-surface switch. The
 `awf plan check` command keeps `awf.run-manifest.v1` owner intent distinct from the internal
 `awf.authority-manifest.v1`, validates TaskCard/ImplementationReport/ReviewReport allowlist,

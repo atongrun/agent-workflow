@@ -157,6 +157,7 @@ def build_context_packet(
     current_stage_evidence_commit: str = "",
     ledger_sequence: int = 0,
     state_root_sha256: str = "",
+    run_contract_sha256: str = "",
 ) -> dict[str, object]:
     """Build a bounded, credential-free recovery packet."""
     if not run_id or not taskcard or not frozen_base or not branch or not stage or not next_action:
@@ -186,6 +187,8 @@ def build_context_packet(
         "state_root_sha256": state_root_sha256,
         "created_at": _now(),
     }
+    if run_contract_sha256:
+        values["run_contract_sha256"] = run_contract_sha256
     for key in ("evidence", "prohibited_actions"):
         if not all(
             isinstance(item, str) and len(item.encode("utf-8")) <= 512 for item in values[key]
@@ -206,6 +209,10 @@ def build_context_packet(
         raise ControlPlaneDenied("context packet exceeds bounded size")
     if state_root_sha256 and not re.fullmatch(r"sha256:[0-9a-f]{64}", state_root_sha256):
         raise ControlPlaneDenied("context packet state-root binding is invalid")
+    if run_contract_sha256 and not re.fullmatch(
+        r"sha256:[0-9a-f]{64}", run_contract_sha256
+    ):
+        raise ControlPlaneDenied("context packet run-contract binding is invalid")
     values["packet_sha256"] = _sha(values)
     return values
 
@@ -299,7 +306,12 @@ class RunLedger:
                     "branch",
                     "authority_manifest",
                 )
-                if any(current_packet.get(key) != packet.get(key) for key in immutable):
+                identity_drift = any(
+                    current_packet.get(key) != packet.get(key) for key in immutable
+                ) or current_packet.get("run_contract_sha256", "") != packet.get(
+                    "run_contract_sha256", ""
+                )
+                if identity_drift:
                     raise ControlPlaneDenied("run already exists with a different context packet")
                 current_root = current_packet.get("state_root_sha256", "")
                 if not current_root and packet_root:

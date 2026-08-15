@@ -31,9 +31,12 @@ _ALLOWED = {
     "models",
     "rework_budget",
     "provenance",
+    "state_root",
+    "profiles",
 }
 _PROVENANCE_KEYS = {"upstream_repo", "head_repo", "upstream_remote", "head_remote", "base_ref"}
 DEFAULT_MANIFEST_NAME = ".awf/run-manifest.json"
+DEFAULT_COMPILED_REPORT_NAME = ".awf/run-contract.json"
 
 
 class ManifestError(RuntimeError):
@@ -50,6 +53,11 @@ def _same_windows_principal(left: str, right: str) -> bool:
 def default_manifest_path(repo: Path) -> Path:
     """Return the repository-local owner manifest location."""
     return Path(repo).resolve() / DEFAULT_MANIFEST_NAME
+
+
+def default_compiled_report_path(repo: Path) -> Path:
+    """Return the repository-local compiled run contract location."""
+    return Path(repo).resolve() / DEFAULT_COMPILED_REPORT_NAME
 
 
 def resolve_manifest_card(value: dict[str, Any], repo: Path) -> Path:
@@ -196,6 +204,17 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         raise ManifestError("manifest provenance must be an object")
     if any(not isinstance(v, str) or not v for v in provenance.values()):
         raise ManifestError("manifest provenance values must be non-empty strings")
+    state_root = value.get("state_root")
+    profiles = value.get("profiles")
+    if (state_root is None) != (profiles is None):
+        raise ManifestError("manifest state_root and profiles must be configured together")
+    if state_root is not None:
+        if not isinstance(state_root, str) or not state_root or not Path(state_root).is_absolute():
+            raise ManifestError("manifest state_root must be an absolute path")
+        if not isinstance(profiles, dict) or set(profiles) != {"coder", "reviewer"}:
+            raise ManifestError("manifest profiles must contain coder and reviewer")
+        if any(not isinstance(item, str) or not item for item in profiles.values()):
+            raise ManifestError("manifest profile references must be non-empty strings")
     return dict(value)
 
 
@@ -209,9 +228,8 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return validate_manifest(value)
 
 
-def write_manifest(path: Path, value: dict[str, Any], *, replace: bool = True) -> Path:
+def _write_owner_json(path: Path, value: dict[str, Any], *, replace: bool) -> Path:
     path = Path(path).expanduser().resolve()
-    validate_manifest(value)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and not replace:
         raise ManifestError("manifest already exists; pass an explicit replacement flag")
@@ -233,6 +251,11 @@ def write_manifest(path: Path, value: dict[str, Any], *, replace: bool = True) -
     return path
 
 
+def write_manifest(path: Path, value: dict[str, Any], *, replace: bool = True) -> Path:
+    validate_manifest(value)
+    return _write_owner_json(path, value, replace=replace)
+
+
 def derive_manifest(
     card: Path,
     *,
@@ -247,6 +270,8 @@ def derive_manifest(
     upstream_remote: str = "upstream",
     head_remote: str = "fork",
     base_ref: str = "main",
+    state_root: str = "",
+    profiles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Derive deterministic metadata from a self-contained TaskCard."""
     card = Path(card).resolve()
@@ -268,7 +293,7 @@ def derive_manifest(
         raise ManifestError("TaskCard does not contain a usable Task ID")
     branch_match = re.search(r"(?m)^- \*\*Task branch\*\*: `([^`]+)`", text)
     selected_branch = branch or (branch_match.group(1) if branch_match else f"awf/{task_id}")
-    return {
+    values = {
         "format": FORMAT,
         "task_id": task_id,
         "card": str(card),
@@ -301,6 +326,10 @@ def derive_manifest(
             if value
         },
     }
+    if state_root or profiles:
+        values["state_root"] = str(Path(state_root).expanduser().resolve()) if state_root else ""
+        values["profiles"] = dict(profiles or {})
+    return validate_manifest(values)
 
 
 def _canonical(value: object) -> bytes:
@@ -462,3 +491,51 @@ def compile_run_contract(
     }
     result["contract_sha256"] = _sha256(result)
     return result
+
+
+def validate_compiled_report(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate a persisted compiler report and its self-binding."""
+    required = {
+        "format",
+        "compiler",
+        "compatibility",
+        "identity",
+        "bindings",
+        "contract_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ManifestError("compiled run contract fields are invalid")
+    if value.get("format") != REPORT_FORMAT:
+        raise ManifestError(
+            f"compiled run contract requires {REPORT_FORMAT}; received {value.get('format')!r}"
+        )
+    compiler = value.get("compiler")
+    if not isinstance(compiler, dict) or compiler.get("format") != COMPILER_FORMAT:
+        raise ManifestError("compiled run contract compiler provenance is invalid")
+    compatibility = value.get("compatibility")
+    if not isinstance(compatibility, dict) or compatibility.get("status") != "compatible":
+        raise ManifestError("compiled run contract is not compatible")
+    digest = value.get("contract_sha256")
+    body = {key: item for key, item in value.items() if key != "contract_sha256"}
+    if not isinstance(digest, str) or digest != _sha256(body):
+        raise ManifestError("compiled run contract checksum mismatch")
+    if not isinstance(value.get("identity"), dict) or not isinstance(value.get("bindings"), dict):
+        raise ManifestError("compiled run contract bindings are invalid")
+    return dict(value)
+
+
+def load_compiled_report(path: Path) -> dict[str, Any]:
+    path = Path(path).resolve()
+    _validate_path(path)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ManifestError("compiled run contract is unreadable or invalid JSON") from exc
+    return validate_compiled_report(value)
+
+
+def write_compiled_report(
+    path: Path, value: dict[str, Any], *, replace: bool = True
+) -> Path:
+    validate_compiled_report(value)
+    return _write_owner_json(path, value, replace=replace)

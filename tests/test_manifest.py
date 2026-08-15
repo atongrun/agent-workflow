@@ -10,8 +10,10 @@ from agent_workflow.manifest import (
     compile_run_contract,
     default_manifest_path,
     derive_manifest,
+    load_compiled_report,
     load_manifest,
     resolve_manifest_card,
+    write_compiled_report,
     write_manifest,
 )
 
@@ -158,6 +160,7 @@ def test_manifest_rejects_partial_reviewer_selection(tmp_path: Path):
 @pytest.mark.parametrize("route_version", ["v1", "v2", "v3"])
 def test_run_contract_reports_explicit_v1_v3_compatibility(tmp_path: Path, route_version: str):
     report = compile_run_contract(**compiled_inputs(tmp_path, route_version))
+    persisted = write_compiled_report(tmp_path / "run-contract.json", report)
 
     assert report["format"] == "awf.run-contract-report.v1"
     assert report["compatibility"] == {
@@ -170,6 +173,7 @@ def test_run_contract_reports_explicit_v1_v3_compatibility(tmp_path: Path, route
         },
     }
     assert report["contract_sha256"].startswith("sha256:")
+    assert load_compiled_report(persisted) == report
 
 
 @pytest.mark.parametrize(
