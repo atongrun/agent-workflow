@@ -1361,7 +1361,10 @@ def status(
     if json_output:
         print(json.dumps(value, indent=2, sort_keys=True))
     else:
-        factual_status.print_human(value, explain=explain)
+        if explain:
+            factual_status.print_human(value, explain=True)
+        else:
+            factual_status.print_human(value)
     listener = value.get("listener")
     return 0 if isinstance(listener, dict) and listener.get("status") == "running" else 3
 

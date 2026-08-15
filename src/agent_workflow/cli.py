@@ -60,9 +60,10 @@ def cmd_node(args: argparse.Namespace) -> int:
         "lines": getattr(args, "lines", 100),
         "run_id": getattr(args, "run", ""),
         "json_output": getattr(args, "json", False),
-        "explain": getattr(args, "explain", False),
         "ttl_seconds": getattr(args, "ttl_seconds", 3600),
     }
+    if getattr(args, "explain", False):
+        options["explain"] = True
     if getattr(args, "allow_session_bound", False):
         options["allow_session_bound"] = True
     return node.run(args.node_command, args.profile, **options)
