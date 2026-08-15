@@ -7,11 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
-feasibility = SimpleNamespace(
-    **runpy.run_path(ROOT / "experiments/binary-feasibility/verify.py")
-)
+feasibility = SimpleNamespace(**runpy.run_path(ROOT / "experiments/binary-feasibility/verify.py"))
 
 
 def evidence(candidate: str, target: str, *, passes: bool = True) -> dict:

@@ -64,7 +64,11 @@ def _run(
     )
     if check and result.returncode != 0:
         command = Path(argv[0]).name
-        raise FeasibilityError(f"{command} failed with exit code {result.returncode}")
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail[-2000:]}" if detail else ""
+        raise FeasibilityError(
+            f"{command} failed with exit code {result.returncode}{suffix}"
+        )
     return result
 
 
