@@ -586,19 +586,14 @@ def cmd_facade_check(args: argparse.Namespace) -> int:
                 repo=current.repo,
                 values=current.manifest,
                 manifest_path=current.manifest_path,
-                authority_manifest=str(
-                    current.contract["bindings"]["authority_manifest"]["path"]
-                ),
+                authority_manifest=str(current.contract["bindings"]["authority_manifest"]["path"]),
                 run_id=current.run_id,
                 stable_profile_references=True,
             ),
         )
     except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
         return _facade_error("run check", exc)
-    print(
-        f"run={contract.run_id} contract=compatible "
-        f"source={contract.contract_path}"
-    )
+    print(f"run={contract.run_id} contract=compatible source={contract.contract_path}")
     return 0
 
 
@@ -967,9 +962,7 @@ def main(argv: list[str] | None = None) -> int:
             "--reviewer-runtime", choices=("codex", "opencode", "pi"), default="pi"
         )
         init_parser.add_argument("--reviewer-model", default="")
-        init_parser.add_argument(
-            "--lifecycle", choices=("managed", "session"), default="managed"
-        )
+        init_parser.add_argument("--lifecycle", choices=("managed", "session"), default="managed")
         init_parser.add_argument("--branch", default="")
         init_parser.add_argument("--rework-budget", type=int, default=1)
         init_parser.add_argument("--upstream-repo", required=True)
@@ -1052,7 +1045,7 @@ def main(argv: list[str] | None = None) -> int:
     feedback_ingest_parser.set_defaults(func=cmd_feedback)
 
     run_parser = subparsers.add_parser("run", help="Initialize the bounded serial operator run")
-    run_parser.add_argument("run_action", nargs="?", choices=("check",), default="")
+    run_parser.add_argument("run_action", nargs="?", choices=("check",), default=None)
     run_parser.add_argument("--repo", default=".")
     run_parser.add_argument("--card", default="")
     run_parser.add_argument("--run-manifest", default="")

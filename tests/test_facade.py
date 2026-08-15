@@ -24,17 +24,13 @@ def _card(repo: Path) -> Path:
         "# Synthetic facade journey\n\n"
         "## Task ID\n\nSYNTH-001\n\n"
         "- **Task branch**: `codex/SYNTH-001`\n\n"
-        "<!-- awf-postflight\n"
-        + json.dumps(contract, indent=2)
-        + "\n-->\n",
+        "<!-- awf-postflight\n" + json.dumps(contract, indent=2) + "\n-->\n",
         encoding="utf-8",
     )
     return card
 
 
-def test_seven_command_synthetic_journey_uses_generated_contracts(
-    monkeypatch, tmp_path: Path
-):
+def test_seven_command_synthetic_journey_uses_generated_contracts(monkeypatch, tmp_path: Path):
     repo = tmp_path / "project"
     repo.mkdir()
     card = _card(repo)
@@ -91,10 +87,9 @@ def test_seven_command_synthetic_journey_uses_generated_contracts(
         "sample-mac-lab-coder",
         "sample-mac-lab-reviewer",
     }
-    assert {
-        binding["profile_source"]
-        for binding in contract["bindings"]["profiles"].values()
-    } == {"authoring"}
+    assert {binding["profile_source"] for binding in contract["bindings"]["profiles"].values()} == {
+        "authoring"
+    }
 
     observed: list[str] = []
     monkeypatch.setattr(
@@ -115,10 +110,7 @@ def test_seven_command_synthetic_journey_uses_generated_contracts(
     monkeypatch.setattr(
         node,
         "status",
-        lambda profile, run_id, **_kwargs: observed.append(
-            f"status:{profile.role}:{run_id}"
-        )
-        or 0,
+        lambda profile, run_id, **_kwargs: observed.append(f"status:{profile.role}:{run_id}") or 0,
     )
     monkeypatch.setattr(
         node,

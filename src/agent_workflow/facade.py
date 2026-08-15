@@ -242,10 +242,7 @@ def doctor(
 ) -> int:
     contract = load_project(repo)
     if explain:
-        print(
-            f"project={contract.repo} run={contract.run_id} "
-            f"source={contract.manifest_path}"
-        )
+        print(f"project={contract.repo} run={contract.run_id} source={contract.manifest_path}")
     results = [
         node.doctor(profile, ttl_seconds=ttl_seconds) for profile in _selected(contract, role)
     ]
@@ -264,13 +261,15 @@ def start(
         facts = node.lifecycle_facts(profile)
         if profile.lifecycle_mode == "session":
             plans.append(("start", profile))
-        elif facts.get("installed") is True and facts.get("installation", {}).get(
-            "status"
-        ) == "current":
+        elif (
+            facts.get("installed") is True
+            and facts.get("installation", {}).get("status") == "current"
+        ):
             plans.append(("start", profile))
-        elif facts.get("installed") is False and facts.get("installation", {}).get(
-            "status"
-        ) == "not_installed":
+        elif (
+            facts.get("installed") is False
+            and facts.get("installation", {}).get("status") == "not_installed"
+        ):
             plans.append(("install_start", profile))
         else:
             status = facts.get("installation", {}).get("status", "unknown")
