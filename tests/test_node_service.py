@@ -664,3 +664,12 @@ def test_native_manager_and_gbk_log_boundaries_are_utf8_safe(
     console.flush()
 
     assert raw_output.getvalue().decode("gbk").splitlines() == ["状态??"]
+
+    utf8_output = io.BytesIO()
+    utf8_console = io.TextIOWrapper(utf8_output, encoding="cp65001", errors="strict")
+    monkeypatch.setattr(node_service.sys, "stdout", utf8_console)
+
+    assert node_service._tail_file(log_path, 1) == 0
+    utf8_console.flush()
+
+    assert utf8_output.getvalue().decode("utf-8").splitlines() == ["状态🙂\ufffd"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import getpass
 import hashlib
 import json
@@ -240,7 +241,7 @@ def _decode_utf8(value: bytes | str) -> str:
 def _write_console_text(value: bytes | str, *, end: str = "\n") -> None:
     text = _decode_utf8(value) + end
     encoding = sys.stdout.encoding or _TEXT_ENCODING
-    if encoding.casefold().replace("_", "-") not in {"utf-8", "utf8"}:
+    if codecs.lookup(encoding).name != _TEXT_ENCODING:
         text = text.replace("\ufffd", "?")
     safe_text = text.encode(encoding, errors=_TEXT_ERRORS).decode(encoding)
     sys.stdout.write(safe_text)
