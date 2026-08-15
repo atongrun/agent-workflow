@@ -249,3 +249,35 @@ def test_pathlike_and_unicode_arguments_are_preserved(tmp_path):
     )
 
     assert completed.stdout.strip() == value
+
+
+def test_utf8_replacement_is_shared_by_run_and_start(monkeypatch):
+    code = "import sys; sys.stdout.buffer.write('汉🙂'.encode('utf-8') + b'\\xff')"
+
+    completed = awf_executor.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert completed.args == (sys.executable, "-c", code)
+    assert completed.returncode == 0
+    assert completed.stdout == "汉🙂\ufffd"
+
+    captured = {}
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(awf_executor._subprocess, "Popen", fake_popen)
+
+    awf_executor.start(["tool", "argument"])
+
+    assert captured["argv"] == ("tool", "argument")
+    assert captured["text"] is True
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+    assert captured["shell"] is False

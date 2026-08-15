@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import getpass
 import hashlib
 import json
@@ -23,6 +24,8 @@ class NodeServiceError(RuntimeError):
 
 
 SUPPORTED_MANAGERS = {"launchd", "systemd", "task-scheduler"}
+_TEXT_ENCODING = "utf-8"
+_TEXT_ERRORS = "replace"
 
 
 def resolve_manager(manager: str, *, platform: str = sys.platform, os_name: str = os.name) -> str:
@@ -212,14 +215,36 @@ def _run(
     if not argv or any(not isinstance(item, str) or not item for item in argv):
         raise NodeServiceError("service manager argv must be explicit non-empty strings")
     try:
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding=_TEXT_ENCODING,
+            errors=_TEXT_ERRORS,
+            timeout=timeout,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise NodeServiceError(f"service manager command failed: {argv[0]}") from exc
     if check and result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip().splitlines()
-        suffix = f": {detail[-1]}" if detail else ""
-        raise NodeServiceError(f"service manager command failed: {argv[0]}{suffix}")
+        raise NodeServiceError(
+            f"service manager command failed: {argv[0]} "
+            f"(exit={result.returncode}, text={_TEXT_ENCODING}/{_TEXT_ERRORS})"
+        )
     return result
+
+
+def _decode_utf8(value: bytes | str) -> str:
+    return value.decode(_TEXT_ENCODING, errors=_TEXT_ERRORS) if isinstance(value, bytes) else value
+
+
+def _write_console_text(value: bytes | str, *, end: str = "\n") -> None:
+    text = _decode_utf8(value) + end
+    encoding = sys.stdout.encoding or _TEXT_ENCODING
+    if codecs.lookup(encoding).name != _TEXT_ENCODING:
+        text = text.replace("\ufffd", "?")
+    safe_text = text.encode(encoding, errors=_TEXT_ERRORS).decode(encoding)
+    sys.stdout.write(safe_text)
 
 
 def _sha256(path: Path) -> str:
@@ -437,7 +462,7 @@ class SystemdAdapter:
 
     def logs(self, lines: int = 100) -> int:
         result = _run(["journalctl", "--user", "-u", self.unit, "-n", str(lines), "--no-pager"])
-        print(result.stdout, end="")
+        _write_console_text(result.stdout, end="")
         return 0
 
     def stop(self, bound_pid: int | None = None) -> int:
@@ -909,11 +934,11 @@ def _tail_file(path: Path, lines: int) -> int:
     if lines < 1 or lines > 10000:
         raise NodeServiceError("--lines must be between 1 and 10000")
     try:
-        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        content = _decode_utf8(path.read_bytes()).splitlines()
     except OSError as exc:
         raise NodeServiceError(f"listener log is unavailable: {path}") from exc
     for line in content[-lines:]:
-        print(line)
+        _write_console_text(line)
     return 0
 
 
