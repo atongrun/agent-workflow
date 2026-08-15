@@ -5101,6 +5101,16 @@ def test_model_completed_postflight_failure_replays_without_model_or_rework(monk
     )
     monkeypatch.setattr(
         awf_role,
+        "durable_model_control_sha256",
+        lambda *args, **kwargs: "sha256:model-control",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "advance_model_workspace_to_trusted_commit",
+        lambda *args, **kwargs: "sha256:trusted-model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
         "restore_durable_model_manifest",
         lambda *args, **kwargs: str(repo),
     )
@@ -5947,6 +5957,16 @@ def test_pr_failure_replay_resumes_after_verified_fork_without_model(monkeypatch
         awf_role,
         "durable_model_manifest_sha256",
         lambda *args, **kwargs: "sha256:model-manifest",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "durable_model_control_sha256",
+        lambda *args, **kwargs: "sha256:model-control",
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "advance_model_workspace_to_trusted_commit",
+        lambda *args, **kwargs: "sha256:trusted-model-manifest",
     )
     monkeypatch.setattr(
         awf_role,
