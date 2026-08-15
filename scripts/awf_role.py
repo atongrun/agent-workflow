@@ -1765,9 +1765,7 @@ def durable_model_control_sha256(workspace: str) -> str:
     """Bind Git control metadata that must survive a trusted HEAD/index transition."""
     manifest = _model_git_manifest(str(Path(workspace).resolve()))
     stable = {
-        key: list(value)
-        for key, value in manifest.items()
-        if key not in {"HEAD", "index-semantic"}
+        key: list(value) for key, value in manifest.items() if key not in {"HEAD", "index-semantic"}
     }
     return canonical_payload_sha256(stable)
 
@@ -1837,7 +1835,9 @@ def advance_model_workspace_to_trusted_commit(
         )
         if fetched.returncode != 0:
             die("failed to import the trusted commit into the durable model workspace")
-        if postflight_git(str(resolved), "checkout", "--detach", "--force", trusted_commit).returncode:
+        if postflight_git(
+            str(resolved), "checkout", "--detach", "--force", trusted_commit
+        ).returncode:
             die("failed to advance the durable model workspace to the trusted commit")
     elif current_head != trusted_commit:
         die("durable model workspace HEAD is outside its trusted transition")
@@ -2029,9 +2029,7 @@ def restore_rework_workspace_lineage(
     checkpoint: dict[str, object],
 ) -> tuple[str, str]:
     delivery_id = str(checkpoint.get("workspace_lineage_delivery_id", ""))
-    expected_checkpoint_sha256 = str(
-        checkpoint.get("workspace_lineage_checkpoint_sha256", "")
-    )
+    expected_checkpoint_sha256 = str(checkpoint.get("workspace_lineage_checkpoint_sha256", ""))
     lineage_path = delivery_state_path(evidence, "checkpoint", delivery_id)
     lineage = _load_delivery_record(lineage_path, "implement workspace lineage checkpoint")
     if lineage is None or canonical_payload_sha256(lineage) != expected_checkpoint_sha256:
@@ -4508,9 +4506,7 @@ def role_coder(a: argparse.Namespace) -> int:
         if checkpoint is not None and checkpoint_path is not None:
             facts = dict(checkpoint["facts"])
             model_workspace = str(facts.get("model_workspace", ""))
-            workspace_control_sha256 = str(
-                facts.get("trusted_workspace_control_sha256", "")
-            )
+            workspace_control_sha256 = str(facts.get("trusted_workspace_control_sha256", ""))
             trusted_workspace_manifest_sha256 = advance_model_workspace_to_trusted_commit(
                 evidence,
                 model_workspace,

@@ -1669,9 +1669,7 @@ def test_trusted_commit_advances_same_durable_model_workspace(repositories, tmp_
     source_commit = run("git", "rev-parse", "HEAD", cwd=executor)
     evidence = awf_role.RunEvidence(120, "coder", state_root=tmp_path / "state")
     workspace = Path(
-        awf_role.prepare_model_workspace(
-            str(executor), source_commit, state_dir=evidence.run_dir
-        )
+        awf_role.prepare_model_workspace(str(executor), source_commit, state_dir=evidence.run_dir)
     )
     (workspace / "workspace-transition.txt").write_text("implemented\n", encoding="utf-8")
     imported_tree = awf_role.import_model_delta(str(workspace), str(executor))
@@ -1696,9 +1694,7 @@ def test_trusted_commit_advances_same_durable_model_workspace(repositories, tmp_
     assert awf_role.durable_model_control_sha256(str(workspace)) == control_sha256
 
 
-def test_rework_restores_unique_implement_lineage_and_rejects_git_drift(
-    repositories, tmp_path
-):
+def test_rework_restores_unique_implement_lineage_and_rejects_git_drift(repositories, tmp_path):
     _, _, executor = repositories
     source_commit = run("git", "rev-parse", "HEAD", cwd=executor)
     state_root = tmp_path / "state"
@@ -1828,9 +1824,7 @@ def test_rework_restores_unique_implement_lineage_and_rejects_git_drift(
         rework=True,
         current_stage_evidence_commit=trusted_commit,
     ).allowed
-    args = argparse.Namespace(
-        branch="feature/task", commit=trusted_commit, run_id=run_id
-    )
+    args = argparse.Namespace(branch="feature/task", commit=trusted_commit, run_id=run_id)
     rework_evidence = awf_role.RunEvidence(123, "coder", state_root=state_root)
     lineage_delivery, lineage_sha256 = awf_role.resolve_fresh_rework_workspace_lineage(
         rework_evidence, args, current_provenance
