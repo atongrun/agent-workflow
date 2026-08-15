@@ -655,7 +655,7 @@ def test_native_manager_and_gbk_log_boundaries_are_utf8_safe(
     assert "sensitive raw output" not in str(failed.value)
 
     log_path = tmp_path / "listener.log"
-    log_path.write_bytes("状态🙂".encode("utf-8") + b"\\xff\n")
+    log_path.write_bytes("状态🙂".encode("utf-8") + b"\xff\n")
     raw_output = io.BytesIO()
     console = io.TextIOWrapper(raw_output, encoding="gbk", errors="strict")
     monkeypatch.setattr(node_service.sys, "stdout", console)
