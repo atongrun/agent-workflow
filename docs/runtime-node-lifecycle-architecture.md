@@ -211,6 +211,13 @@ and a checksum-verifying Go launcher plus PEX app all failed the installed-Pytho
 the result is `NO_GO_PRODUCTION_BINARY`. The experiment does not define a production launcher ABI,
 updater, installer, or signing policy.
 
+The P2b readiness assessment confirms that this is a matrix-wide distribution-shape mismatch:
+real Python module/script re-entry failed in all 15 cells. It therefore does not recommend a narrow
+freezer repair. A future candidate may place a small native launcher in front of a relocatable real
+CPython runtime containing the installed AWF application, while distributing Agent Bus
+independently. That recommendation preserves this lifecycle contract but does not adopt an ABI,
+runtime supplier, installer, updater, signing policy, or release artifact.
+
 Windows support is not accepted from CI or a same-SSH smoke. It requires:
 
 1. Session A installs/starts the node, then exits completely.

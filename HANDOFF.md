@@ -40,6 +40,16 @@ event, model invocation, or service mutation was created. See
 [`docs/tasks/binary-distribution-feasibility.md`](docs/tasks/binary-distribution-feasibility.md) and
 its [report](docs/tasks/binary-distribution-feasibility-report.md).
 
+P2b turns that matrix into an actionable release-readiness contract without changing production
+code or adopting a binary ABI. The raw post-merge evidence confirms 15/15 Python interpreter
+re-entry failures, two Windows PEX-family runtime failures, zero passing candidates, and four Go
+manifest-swap successes. Repairing one freezer is therefore not the shortest legal path. The next
+recommended candidate is a small native launcher plus relocatable real CPython and an installed
+AWF application; Agent Bus stays independently distributed. Four technical blockers remain:
+functional five-target runtime bundle, production distribution contract, supply-chain trust, and
+release lifecycle/RC acceptance. Live artifact publication is a separate explicit authorization
+boundary. See [`docs/tasks/binary-release-readiness-report.md`](docs/tasks/binary-release-readiness-report.md).
+
 P1-3 removes the remaining production handler command-template boundary. Role, coder rework,
 architect terminal and optional no-model Preflight registrations are exact `awf.handler-argv.v1`
 lists serialized as UTF-8 JSON for the pinned Agent Bus `agent-bus.listen.on-argv.v1` consumer.

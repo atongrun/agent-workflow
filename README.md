@@ -14,7 +14,11 @@ Binary distribution remains unsupported: the completed CI-only feasibility study
 `NO_GO_PRODUCTION_BINARY`, not an installer or release format. All three candidates failed the
 installed-Python interpreter re-entry acceptance bar on the five-target matrix; see the
 [P2 TaskCard](docs/tasks/binary-distribution-feasibility.md) and
-[feasibility report](docs/tasks/binary-distribution-feasibility-report.md).
+[feasibility report](docs/tasks/binary-distribution-feasibility-report.md). The follow-up
+[release-readiness report](docs/tasks/binary-release-readiness-report.md) derives four technical
+blockers from the raw 15-cell evidence and recommends testing a native launcher with a relocatable
+real CPython runtime and installed AWF application. That shape is not an adopted production ABI;
+Agent Bus remains independently distributed.
 
 ## Two Operating Modes
 

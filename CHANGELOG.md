@@ -4,6 +4,12 @@
 
 ### Added
 
+- Derive a deterministic production-binary readiness artifact from the complete credential-free
+  15-cell feasibility evidence. It rejects patching one freezer candidate because all 15 cells
+  fail real Python interpreter re-entry, recommends a native launcher plus relocatable CPython and
+  installed AWF app as the next candidate without adopting an ABI, and separates four technical
+  blockers from the later live-publication authorization boundary.
+
 - Close the final fresh-machine no-model usability gate without changing production behavior. The
   original benchmark preserves its truthful `BLOCKED_BEFORE_DEEP` result; a separately authorized
   rerun uses fresh exact-main Mac/VPS/Windows environments and a completely isolated Bus, config,

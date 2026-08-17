@@ -123,3 +123,53 @@ def test_summary_fails_closed_when_one_target_is_missing(tmp_path):
     )
     with pytest.raises(feasibility.FeasibilityError, match="missing candidate evidence"):
         feasibility.summarize(source, tmp_path / "summary.json")
+
+
+def test_readiness_rejects_candidate_patch_for_matrix_wide_reentry_failure(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    for candidate in feasibility.CANDIDATES:
+        for target in feasibility.TARGETS:
+            value = evidence(candidate, target)
+            value["runtime_probe"]["python_reentry_module"] = False
+            value["runtime_probe"]["python_reentry_script"] = False
+            if candidate in {"pex-scie-eager", "go-launcher-pex-app"} and target == (
+                "windows-x86_64"
+            ):
+                value["runtime_probe"] = {"format": "unavailable", "returncode": 1}
+                value["version_command"] = False
+                value["no_model_run_check"] = False
+            path = source / f"{candidate}-{target}.json"
+            path.write_text(json.dumps(value), encoding="utf-8")
+
+    output = tmp_path / "readiness.json"
+    feasibility.assess_readiness(source, output)
+    readiness = json.loads(output.read_text(encoding="utf-8"))
+
+    assert readiness["format"] == feasibility.READINESS_FORMAT
+    assert readiness["decision_input"] == "NO_GO_PRODUCTION_BINARY"
+    assert readiness["measurements"] == {
+        "cells": 15,
+        "failed_python_reentry_cells": 15,
+        "pex_windows_runtime_unavailable_cells": 2,
+        "go_manifest_swap_passed_targets": 5,
+        "passing_existing_candidates": [],
+    }
+    assert readiness["existing_candidate_repair"]["recommended"] is False
+    assert readiness["recommended_next_candidate"]["shape"] == (
+        "native-launcher+relocatable-cpython+installed-awf-app"
+    )
+    assert readiness["technical_blocker_count"] == 4
+    assert readiness["authorization_boundary_count"] == 1
+    assert readiness["deferred_extension_count"] == 4
+    assert readiness["production_abi_created"] is False
+
+
+def test_readiness_fails_closed_when_one_target_is_missing(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "one.json").write_text(
+        json.dumps(evidence("pex-scie-eager", "linux-x86_64")), encoding="utf-8"
+    )
+    with pytest.raises(feasibility.FeasibilityError, match="missing candidate evidence"):
+        feasibility.assess_readiness(source, tmp_path / "readiness.json")

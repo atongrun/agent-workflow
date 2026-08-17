@@ -31,6 +31,24 @@ delivery was inspected or operated. See the
 [historical benchmark](docs/tasks/fresh-machine-usability-benchmark-report.md) and
 [acceptance closeout](docs/tasks/fresh-machine-usability-acceptance-closeout-report.md).
 
+## Binary Release Readiness
+
+The completed P2 matrix remains `NO_GO_PRODUCTION_BINARY`. The deterministic P2b assessment rejects
+repairing one measured freezer candidate because real Python module/script re-entry failed in all
+15 cells. The shortest legal next experiment is a native launcher plus relocatable real CPython
+and an installed AWF application, with Agent Bus independently distributed. This is not yet an
+adopted production contract.
+
+- [ ] Pass all frozen runtime and distribution gates with one five-target runtime bundle.
+- [ ] Adopt an explicit production launcher/runtime/app/independent-Bus compatibility contract.
+- [ ] Automate production supply-chain trust, including platform signing/notarization evidence.
+- [ ] Prove immutable install, compatibility, upgrade, rollback and signed RC acceptance.
+
+Live release-asset publication is a separate owner-authorization boundary after these four
+technical blockers close. Windows arm64, macOS universal2, older-glibc/musl breadth and
+package-manager/automatic-updater integration are deferred unless claimed. See the
+[P2b readiness report](docs/tasks/binary-release-readiness-report.md).
+
 ## Phase 0: Method Contract and Validation CLI ✅
 
 - [x] Normative development constitution
