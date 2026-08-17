@@ -7,19 +7,26 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-15
+## Current Handoff State: 2026-08-17
 
-The final fresh-machine benchmark is recorded but not green. A disposable installed-wheel local
-journey completed the seven facade commands in 0.0379 seconds with five explicit decision groups,
-two generated profiles, one RunManifest, one compiled contract, no model invocation, and no
-business event. Fresh exact-main Fast Preflight then stopped before Deep: Mac passed every local
-layer but observed a payload-blind coder pending count of one, while disposable VPS and Windows
-environments lacked the strict operations configuration and enrolled repository relationship.
-No pending delivery was inspected or operated. The milestone result is `BLOCKED_BEFORE_DEEP`; do
-not authorize a new business TaskCard until a separately authorized fresh attempt begins with
-zero scoped queues and provisioned hosts. See the
+The final fresh-machine no-model usability gate is green. The original benchmark's disposable
+installed-wheel local journey completed the seven facade commands in 0.0379 seconds, then its
+cross-machine attempt correctly stopped at `BLOCKED_BEFORE_DEEP`. A separately authorized rerun
+used fresh exact-main Python 3.12 environments and a fully isolated Bus/config/state surface on
+Mac, VPS, and Windows. All three Fast Preflights passed 9/9 layers with architect/coder queues at
+zero. One Mac architect to Windows coder Deep Preflight passed 9/9 layers in 9.303 seconds, both
+handler children succeeded, two distinct disposable control records were acknowledged, and queues
+returned `0/0 -> 0/0`. All temporary processes, credentials, repositories, environments, state,
+database, logs, and reports were removed; the distinct production Bus remained active. No model
+or business event was used, and no production or retained delivery was inspected or operated.
+The current milestone result is `PASS`. See the
 [benchmark TaskCard](docs/tasks/fresh-machine-usability-benchmark.md) and
-[report](docs/tasks/fresh-machine-usability-benchmark-report.md).
+[historical report](docs/tasks/fresh-machine-usability-benchmark-report.md), plus the
+[acceptance closeout](docs/tasks/fresh-machine-usability-acceptance-closeout-report.md).
+
+Passing the no-model gate removes the acceptance blocker but does not invent business scope. The
+next business action still requires its own explicit TaskCard; do not infer it from a production
+pending delivery or reuse a retained event.
 
 P2 completed the 15-cell native binary distribution matrix without changing production runtime.
 PyInstaller one-folder, PEX scie eager, and a checksum-verifying Go launcher paired with an
