@@ -4,6 +4,12 @@
 
 ### Added
 
+- Record the final fresh-machine usability benchmark without changing production behavior. A fresh
+  installed-wheel local synthetic journey completes the seven-command facade with no model or
+  business event, while exact-main Mac/VPS/Windows Fast Preflight preserves the first truthful
+  cross-machine blockers. The milestone remains `BLOCKED_BEFORE_DEEP`; no pending delivery was
+  inspected or operated and no new business TaskCard is authorized.
+
 - Add a CI-only binary distribution feasibility matrix for PyInstaller one-folder, PEX scie eager,
   and a checksum-verifying Go launcher plus independently versioned Python app. Five native
   OS/architecture targets record resources, Python re-entry, lifecycle definition rendering,
