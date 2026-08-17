@@ -20,6 +20,7 @@ from typing import Any
 
 EVIDENCE_FORMAT = "awf.binary-feasibility.v1"
 SUMMARY_FORMAT = "awf.binary-feasibility-summary.v1"
+READINESS_FORMAT = "awf.binary-release-readiness.v1"
 CANDIDATES = ("pyinstaller-onedir", "pex-scie-eager", "go-launcher-pex-app")
 TARGETS = (
     "linux-x86_64",
@@ -579,7 +580,7 @@ def _candidate_passes(value: dict[str, Any]) -> bool:
     )
 
 
-def summarize(input_root: Path, output: Path) -> None:
+def _load_evidence(input_root: Path) -> dict[tuple[str, str], dict[str, Any]]:
     records: dict[tuple[str, str], dict[str, Any]] = {}
     for path in sorted(input_root.rglob("*.json")):
         try:
@@ -597,6 +598,17 @@ def summarize(input_root: Path, output: Path) -> None:
     missing = sorted(required - records.keys())
     if missing:
         raise FeasibilityError(f"missing candidate evidence: {missing}")
+    return records
+
+
+def _evidence_sha256(records: dict[tuple[str, str], dict[str, Any]]) -> str:
+    ordered = [records[(candidate, target)] for candidate in CANDIDATES for target in TARGETS]
+    canonical = json.dumps(ordered, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def summarize(input_root: Path, output: Path) -> None:
+    records = _load_evidence(input_root)
     results = {
         candidate: {target: _candidate_passes(records[(candidate, target)]) for target in TARGETS}
         for candidate in CANDIDATES
@@ -614,6 +626,102 @@ def summarize(input_root: Path, output: Path) -> None:
     output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def assess_readiness(input_root: Path, output: Path) -> None:
+    records = _load_evidence(input_root)
+    results = {
+        candidate: {target: _candidate_passes(records[(candidate, target)]) for target in TARGETS}
+        for candidate in CANDIDATES
+    }
+    failed_reentry = sum(
+        not (
+            record.get("runtime_probe", {}).get("python_reentry_module") is True
+            and record.get("runtime_probe", {}).get("python_reentry_script") is True
+        )
+        for record in records.values()
+    )
+    pex_windows_unavailable = sum(
+        record["candidate"] in {"pex-scie-eager", "go-launcher-pex-app"}
+        and record["target"] == "windows-x86_64"
+        and record.get("runtime_probe", {}).get("format") != "awf.binary-runtime-probe.v1"
+        for record in records.values()
+    )
+    manifest_swap_passes = sum(
+        record["candidate"] == "go-launcher-pex-app"
+        and record.get("upgrade_rollback", {}).get("manifest_swap_tested") is True
+        for record in records.values()
+    )
+    passing_candidates = [
+        candidate for candidate in CANDIDATES if all(results[candidate].values())
+    ]
+    systemic_reentry_failure = failed_reentry == len(records)
+    blockers = [
+        {
+            "id": "functional_runtime_bundle",
+            "status": "blocked",
+            "evidence": "no existing candidate passes every frozen gate on all five targets",
+        },
+        {
+            "id": "production_distribution_contract",
+            "status": "owner_decision_required",
+            "evidence": "no production launcher/runtime/app/Agent-Bus ABI has been adopted",
+        },
+        {
+            "id": "supply_chain_trust",
+            "status": "not_proved",
+            "evidence": "production signing, notarization, attestation, and reputation are absent",
+        },
+        {
+            "id": "release_lifecycle_acceptance",
+            "status": "not_proved",
+            "evidence": (
+                "immutable install, compatibility, upgrade, rollback, and signed RC "
+                "acceptance are absent"
+            ),
+        },
+    ]
+    readiness = {
+        "format": READINESS_FORMAT,
+        "source_format": EVIDENCE_FORMAT,
+        "evidence_sha256": _evidence_sha256(records),
+        "decision_input": "NO_GO_PRODUCTION_BINARY",
+        "production_abi_created": False,
+        "measurements": {
+            "cells": len(records),
+            "failed_python_reentry_cells": failed_reentry,
+            "pex_windows_runtime_unavailable_cells": pex_windows_unavailable,
+            "go_manifest_swap_passed_targets": manifest_swap_passes,
+            "passing_existing_candidates": passing_candidates,
+        },
+        "existing_candidate_repair": {
+            "recommended": not systemic_reentry_failure,
+            "reason": (
+                "all measured shapes conflict with the real-Python interpreter re-entry contract"
+                if systemic_reentry_failure
+                else "the evidence does not prove a matrix-wide interpreter contract conflict"
+            ),
+        },
+        "recommended_next_candidate": {
+            "status": "requires_owner_decision",
+            "shape": "native-launcher+relocatable-cpython+installed-awf-app",
+            "agent_bus_distribution": "independent",
+            "frozen_gates_preserved": True,
+        },
+        "technical_blocker_count": len(blockers),
+        "technical_blockers": blockers,
+        "authorization_boundary_count": 1,
+        "authorization_boundaries": ["live_release_artifact_publication"],
+        "deferred_extension_count": 4,
+        "deferred_extensions": [
+            "windows-arm64",
+            "macos-universal2",
+            "older-glibc-or-musl-breadth",
+            "package-manager-or-automatic-updater",
+        ],
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(readiness, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -628,14 +736,19 @@ def main(argv: list[str] | None = None) -> int:
     aggregate = commands.add_parser("summarize")
     aggregate.add_argument("--input", type=Path, required=True)
     aggregate.add_argument("--output", type=Path, required=True)
+    readiness = commands.add_parser("readiness")
+    readiness.add_argument("--input", type=Path, required=True)
+    readiness.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
             build_candidates(args.repo.resolve(), args.output.resolve())
         elif args.command == "collect":
             collect_evidence(args.candidate, args.target, args.build_root.resolve(), args.output)
-        else:
+        elif args.command == "summarize":
             summarize(args.input.resolve(), args.output)
+        else:
+            assess_readiness(args.input.resolve(), args.output)
     except (FeasibilityError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"ERROR: binary feasibility failed: {exc}", file=sys.stderr)
         return 1
