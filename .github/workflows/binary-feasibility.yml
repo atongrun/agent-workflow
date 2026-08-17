@@ -1,0 +1,146 @@
+name: Binary Feasibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native-candidates:
+    name: native-${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+          - runner: windows-2025
+            target: windows-x86_64
+          - runner: macos-15-intel
+            target: macos-x86_64
+          - runner: macos-14
+            target: macos-arm64
+    env:
+      AWF_BUILD_ROOT: binary-feasibility-build
+      AWF_EVIDENCE_ROOT: binary-feasibility-evidence
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the pinned disposable Agent Bus peer
+        uses: actions/checkout@v4
+        with:
+          repository: atongrun/agent-bus
+          ref: 6ca8f2812be0286607bbbe3f14cc51783637b0b5
+          path: agent-bus-peer
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Install ephemeral feasibility tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build pyinstaller pex
+          python -m pip install . ./agent-bus-peer
+
+      - name: Check the experimental Go source format
+        run: |
+          gofmt -w experiments/binary-feasibility/main.go
+          git diff --exit-code -- experiments/binary-feasibility/main.go
+
+      - name: Build the three native candidates
+        run: >-
+          python experiments/binary-feasibility/verify.py build
+          --repo .
+          --output "${{ env.AWF_BUILD_ROOT }}"
+
+      - name: Measure PyInstaller one-folder
+        run: >-
+          python experiments/binary-feasibility/verify.py collect
+          --candidate pyinstaller-onedir
+          --target ${{ matrix.target }}
+          --build-root "${{ env.AWF_BUILD_ROOT }}"
+          --output "${{ env.AWF_EVIDENCE_ROOT }}/pyinstaller-onedir-${{ matrix.target }}.json"
+
+      - name: Measure PEX scie eager
+        run: >-
+          python experiments/binary-feasibility/verify.py collect
+          --candidate pex-scie-eager
+          --target ${{ matrix.target }}
+          --build-root "${{ env.AWF_BUILD_ROOT }}"
+          --output "${{ env.AWF_EVIDENCE_ROOT }}/pex-scie-eager-${{ matrix.target }}.json"
+
+      - name: Measure Go launcher plus versioned PEX app
+        run: >-
+          python experiments/binary-feasibility/verify.py collect
+          --candidate go-launcher-pex-app
+          --target ${{ matrix.target }}
+          --build-root "${{ env.AWF_BUILD_ROOT }}"
+          --output "${{ env.AWF_EVIDENCE_ROOT }}/go-launcher-pex-app-${{ matrix.target }}.json"
+
+      - name: Exercise a disposable localhost SQLite Agent Bus
+        run: python agent-bus-peer/scripts/test-client-setup.py
+
+      - name: Upload candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: awf-binary-candidates-${{ matrix.target }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ env.AWF_BUILD_ROOT }}/pyinstaller/awf-pyinstaller
+            ${{ env.AWF_BUILD_ROOT }}/pex
+            ${{ env.AWF_BUILD_ROOT }}/go
+            ${{ env.AWF_BUILD_ROOT }}/sbom.cdx.json
+            ${{ env.AWF_BUILD_ROOT }}/tooling.json
+
+      - name: Upload machine-readable evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: awf-binary-evidence-${{ matrix.target }}
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ env.AWF_EVIDENCE_ROOT }}/*.json
+
+  aggregate:
+    name: aggregate-go-no-go-input
+    needs: native-candidates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download native evidence only
+        uses: actions/download-artifact@v4
+        with:
+          pattern: awf-binary-evidence-*
+          path: ${{ runner.temp }}/awf-binary-evidence
+          merge-multiple: true
+
+      - name: Require the complete candidate and target matrix
+        run: >-
+          python experiments/binary-feasibility/verify.py summarize
+          --input "${{ runner.temp }}/awf-binary-evidence"
+          --output "${{ runner.temp }}/awf-binary-summary.json"
+
+      - name: Upload deterministic decision input
+        uses: actions/upload-artifact@v4
+        with:
+          name: awf-binary-feasibility-summary
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/awf-binary-summary.json

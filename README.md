@@ -10,6 +10,12 @@ continuing dependence on scarce high-value-model capacity—not total model call
 The normative method lives in [`constitution.md`](constitution.md). The current implementation is a
 thin, stateless `awf` CLI that validates Role, Workflow, and Artifact contracts.
 
+Binary distribution remains unsupported: the completed CI-only feasibility study returned
+`NO_GO_PRODUCTION_BINARY`, not an installer or release format. All three candidates failed the
+installed-Python interpreter re-entry acceptance bar on the five-target matrix; see the
+[P2 TaskCard](docs/tasks/binary-distribution-feasibility.md) and
+[feasibility report](docs/tasks/binary-distribution-feasibility-report.md).
+
 ## Two Operating Modes
 
 ### Infrastructure development

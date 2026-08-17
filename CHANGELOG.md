@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add a CI-only binary distribution feasibility matrix for PyInstaller one-folder, PEX scie eager,
+  and a checksum-verifying Go launcher plus independently versioned Python app. Five native
+  OS/architecture targets record resources, Python re-entry, lifecycle definition rendering,
+  unrelated-cwd no-model checks, UTF-8 argv/log behavior, size/startup/checksum/SBOM, and absent
+  signing/notarization facts without creating a production binary ABI or changing runtime code.
+
 - Emit production role, implement-to-rework, terminal and no-model Preflight listener handlers as
   the pinned `awf.handler-argv.v1` JSON argv contract consumed by Agent Bus
   `agent-bus.listen.on-argv.v1`. Paths and payload placeholders remain individual process arguments;

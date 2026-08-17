@@ -200,6 +200,17 @@ model.
 
 ## Acceptance gate
 
+### Binary feasibility boundary
+
+The managed lifecycle records a real Python executable and renders that same interpreter for
+`-m agent_workflow...` and packaged operation-script re-entry. A frozen wrapper is not compatible
+merely because it can print `awf version`: it must preserve those interpreter and real-directory
+resource semantics without changing exact-stop identity or installing a service during the probe.
+P2 measured that boundary across five native CI targets. PyInstaller one-folder, PEX scie eager,
+and a checksum-verifying Go launcher plus PEX app all failed the installed-Python re-entry gate, so
+the result is `NO_GO_PRODUCTION_BINARY`. The experiment does not define a production launcher ABI,
+updater, installer, or signing policy.
+
 Windows support is not accepted from CI or a same-SSH smoke. It requires:
 
 1. Session A installs/starts the node, then exits completely.
