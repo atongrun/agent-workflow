@@ -18,13 +18,18 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   disposable configuration/state roots without a model or business event.
 - [x] Run exact-main Fast Preflight on fresh Mac, VPS, and Windows surfaces and preserve the first
   fail-closed boundary without repairing around it.
-- [ ] Complete Deep Preflight with both scoped queues observed at zero and provisioned VPS/Windows
+- [x] Complete Deep Preflight with both scoped queues observed at zero and provisioned VPS/Windows
   operations configuration.
 - [ ] Authorize one new business TaskCard only after the fresh no-model gates pass.
 
-The current milestone result is `BLOCKED_BEFORE_DEEP`: Mac observed one coder-scoped pending
+The original benchmark result was `BLOCKED_BEFORE_DEEP`: Mac observed one coder-scoped pending
 delivery by count only, and the disposable VPS/Windows surfaces lacked strict operations
-configuration. See the [benchmark report](docs/tasks/fresh-machine-usability-benchmark-report.md).
+configuration. A separately authorized, isolated rerun then passed all nine Fast layers on all
+three hosts and one Mac-to-Windows Deep route with handler success, acknowledged request/result,
+and scoped queues `0/0 -> 0/0`. The current no-model gate is `PASS`; no production or retained
+delivery was inspected or operated. See the
+[historical benchmark](docs/tasks/fresh-machine-usability-benchmark-report.md) and
+[acceptance closeout](docs/tasks/fresh-machine-usability-acceptance-closeout-report.md).
 
 ## Phase 0: Method Contract and Validation CLI ✅
 

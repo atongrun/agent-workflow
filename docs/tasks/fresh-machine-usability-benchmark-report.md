@@ -2,9 +2,15 @@
 
 ## Outcome
 
-The local synthetic beginner journey passed, but the cross-machine remote-dispatch gate stopped
-truthfully before Deep Preflight. The milestone result is `BLOCKED_BEFORE_DEEP`, not final product
-acceptance and not authorization for a new business TaskCard.
+This original benchmark's local synthetic beginner journey passed, while its first cross-machine
+attempt stopped truthfully before Deep Preflight at `BLOCKED_BEFORE_DEEP`. That remains the correct
+historical result for PR #93 and the authority available during that run.
+
+A separately authorized, fully isolated rerun subsequently cleared the prerequisites and passed
+Mac/VPS/Windows Fast plus Mac-to-Windows Deep Preflight. The program's current no-model acceptance
+result is therefore `PASS`; see the
+[acceptance closeout report](fresh-machine-usability-acceptance-closeout-report.md). The follow-up
+did not inspect or operate the production pending delivery that blocked this original run.
 
 No model was invoked. No business event was created, read, dispatched, acknowledged, requeued,
 recovered, or reused. The benchmark did not inspect the identity or payload of any pending
@@ -74,13 +80,15 @@ a real command/runtime measurement. The complete fresh remote-dispatch journey d
 this report does not claim a percentage reduction in time-to-first-useful-run and does not replace
 the review estimate with a successful end-to-end number.
 
-## Decision and next legal action
+## Original decision and subsequent closeout
 
 - Keep the merged usability contracts and the P2 `NO_GO_PRODUCTION_BINARY` decision.
-- Do not authorize or dispatch a new business TaskCard.
-- A future, separately authorized acceptance attempt must start from fresh host configuration,
-  enrolled upstream/fork identities, and payload-blind zero queue observations. It must use new
-  disposable Preflight identities and still must not recover or reuse retained business events.
+- At the end of this original run, do not authorize or dispatch a new business TaskCard.
+- The subsequent separately authorized attempt did start from fresh host configuration, enrolled
+  repository identities, payload-blind zero queue observations, and new disposable Preflight
+  identities. It passed without recovering or reusing retained business events.
+- The passed no-model gate permits a separately scoped business TaskCard to be considered, but
+  neither this benchmark nor its closeout invents or dispatches that work.
 
 ## Verification
 
@@ -93,6 +101,7 @@ the review estimate with a successful end-to-end number.
 ## Remaining risks
 
 - Native service-manager lifecycle timing was not measured by the synthetic local seams.
-- VPS/Windows credential provisioning, repo enrollment, and Deep transport proof remain open.
+- VPS/Windows credential provisioning, repo enrollment, and Deep transport proof were open at the
+  end of this run and were later closed by the isolated acceptance rerun.
 - The pending coder delivery remains untouched and unidentified; its legal owner and lifecycle are
   intentionally not inferred here.
