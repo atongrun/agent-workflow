@@ -650,9 +650,7 @@ def assess_readiness(input_root: Path, output: Path) -> None:
         and record.get("upgrade_rollback", {}).get("manifest_swap_tested") is True
         for record in records.values()
     )
-    passing_candidates = [
-        candidate for candidate in CANDIDATES if all(results[candidate].values())
-    ]
+    passing_candidates = [candidate for candidate in CANDIDATES if all(results[candidate].values())]
     systemic_reentry_failure = failed_reentry == len(records)
     blockers = [
         {
