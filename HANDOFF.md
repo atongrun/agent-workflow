@@ -9,6 +9,18 @@
 
 ## Current Handoff State: 2026-08-15
 
+The final fresh-machine benchmark is recorded but not green. A disposable installed-wheel local
+journey completed the seven facade commands in 0.0379 seconds with five explicit decision groups,
+two generated profiles, one RunManifest, one compiled contract, no model invocation, and no
+business event. Fresh exact-main Fast Preflight then stopped before Deep: Mac passed every local
+layer but observed a payload-blind coder pending count of one, while disposable VPS and Windows
+environments lacked the strict operations configuration and enrolled repository relationship.
+No pending delivery was inspected or operated. The milestone result is `BLOCKED_BEFORE_DEEP`; do
+not authorize a new business TaskCard until a separately authorized fresh attempt begins with
+zero scoped queues and provisioned hosts. See the
+[benchmark TaskCard](docs/tasks/fresh-machine-usability-benchmark.md) and
+[report](docs/tasks/fresh-machine-usability-benchmark-report.md).
+
 P2 completed the 15-cell native binary distribution matrix without changing production runtime.
 PyInstaller one-folder, PEX scie eager, and a checksum-verifying Go launcher paired with an
 independently versioned PEX app all failed the frozen all-five-target acceptance gate. The

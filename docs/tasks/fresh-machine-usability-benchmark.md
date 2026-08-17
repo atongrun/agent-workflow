@@ -57,12 +57,12 @@ does not retrofit a target or add another control surface.
 
 ## Acceptance criteria
 
-- [ ] The disposable local seven-command synthetic journey completes without a model invocation.
-- [ ] Fresh Mac, VPS, and Windows no-model Preflight evidence is either complete or stops at the
+- [x] The disposable local seven-command synthetic journey completes without a model invocation.
+- [x] Fresh Mac, VPS, and Windows no-model Preflight evidence is either complete or stops at the
   first truthful fail-closed boundary with the missing prerequisite identified.
-- [ ] The report records elapsed time, commands, human decisions, configuration concepts,
+- [x] The report records elapsed time, commands, human decisions, configuration concepts,
   failures, and remediations without claiming an unmeasured result.
-- [ ] No retained/business event or production service is touched.
+- [x] No retained/business event or production service is touched.
 - [ ] Lore commit, PR, green CI, independent exact-head review, fresh mergeability, merge,
   post-merge main/CI proof, shared-memory pointer update, and short-branch cleanup complete.
 
