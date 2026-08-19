@@ -1,6 +1,6 @@
 # RTS-001 Runtime v2 Semantic Contract Draft — Implementation Report
 
-Status: **TaskCard PASS; PR integration `EXTERNAL_BLOCKED`**
+Status: **TaskCard PASS; PR CI gate green**
 
 ## 1. Outcome and basis
 
@@ -164,9 +164,13 @@ for url 'https://api.github.com/repos/astral-sh/python-build-standalone/releases
 The final attempt is `run_attempt=3`, job `96126310333`, head
 `021e05400b501c64e9e21b24a311d025dc5b329f`. The same Binary Feasibility workflow was green on
 current `main@0ed7812` in run `32048522567`, and the other four target cells passed on this PR.
-This is classified `EXTERNAL_BLOCKED`, not a Runtime/contract regression.
+This was classified `EXTERNAL_BLOCKED`, not a Runtime/contract regression. The evidence-only closeout
+commit `c9130a9` then triggered fresh runs `32271264491` (ordinary CI) and `32271264460` (Binary
+Feasibility) without another manual retry. Both completed green: all five native target cells,
+`aggregate-go-no-go-input`, the ordinary cross-platform tests/runtime jobs, and all three
+installed-wheel jobs passed. The external block is therefore cleared while its three failed
+attempts remain preserved above.
 
-Legal next action: keep PR #96 open and retry the exact unchanged head only after the external GitHub
-API allowance is available, or repair the unrelated Binary Feasibility download/auth/cache boundary
-under a separately reviewed TaskCard. Do not merge a red gate, modify the frozen RTS-001 scope to
-hide the failure, or start RTS-010 live execution before repository integration closes.
+Legal next action: independently review the final evidence-only status update, require its exact
+head CI to remain green, then merge PR #96. Do not modify the frozen RTS-001 scope or start RTS-010
+live execution before repository integration closes.

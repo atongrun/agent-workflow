@@ -10,7 +10,7 @@
 ## Current Handoff State: 2026-08-19 Runtime v2 Decision Plan
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
-development plan are preserved on PR #96 pending repository integration. RTS-001 is the last passed
+development plan are preserved on PR #96 pending final repository integration. RTS-001 is the last passed
 TaskCard gate: the language-neutral
 semantic contract remains `Draft`, its machine-readable fault matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -27,9 +27,10 @@ the integration stop. Ordinary Ubuntu/Windows/macOS and installed-wheel CI passe
 five native matrix cells. `native-macos-arm64` failed three bounded attempts
 at the same external GitHub API `403 rate limit exceeded` while resolving the latest
 `python-build-standalone` release; current main's last comparable run was green. The integration
-state is `EXTERNAL_BLOCKED`: keep the PR open, do not merge the red gate, and do not start RTS-010
-live execution. Retry the unchanged head after the external allowance recovers, or use a separate
-TaskCard for the unrelated CI download/auth/cache boundary.
+state was `EXTERNAL_BLOCKED`. Evidence-only commit `c9130a9` then triggered fresh ordinary and
+Binary Feasibility runs that completed green across all jobs, including all five native cells and
+the aggregate. The block is cleared; require final exact-head Review/CI and merge PR #96 before
+starting RTS-010 live execution.
 
 RTS-001 changed no Runtime code or external state. Two current Python correctness gaps are already
 mapped and must not be mistaken for accepted behavior: compiled RunContract SHA binding appears to
