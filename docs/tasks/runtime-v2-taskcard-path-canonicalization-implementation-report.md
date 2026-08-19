@@ -40,8 +40,15 @@ outbox, inbox, ACK or terminal behavior changed.
 
 - `git diff --check`: PASS.
 - Python compile check for the changed source and regression module: PASS.
-- GitHub ordinary and Binary Feasibility exact-head CI: pending.
-- Independent exact-scope review: pending.
+- GitHub ordinary CI run `32282971933`: PASS. The Ubuntu suite, Windows suite, macOS runtime
+  boundary and installed-wheel jobs on Ubuntu, macOS and Windows all passed. The Windows suite is
+  the cross-platform regression proof for the canonical TaskCard value.
+- GitHub Binary Feasibility run `32282971981`: PASS. All five native target cells and the aggregate
+  decision-input job passed.
+- Independent implementation review of commit `92fb180d788174eb4123ba83cfe9396ffc0b1818`:
+  `PASS` with zero findings. The reviewer confirmed that normalization occurs at the owner identity
+  source, does not weaken immutable ledger comparison, and is locked by the nested-path regression.
+- Final exact-publication-head CI and independent review: pending after this evidence-only update.
 
 The Mac execution policy did not run pytest or Ruff locally. No live Bus, retained event, provider,
 queue, production/default, migration or release action was performed by this implementation
