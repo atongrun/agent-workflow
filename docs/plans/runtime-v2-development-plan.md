@@ -1,7 +1,8 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
-Status: Draft repository plan after independent double review. It is not an ADR and authorizes no
-production implementation, model invocation, queue operation, migration, or release action by itself.
+Status: Active gated repository plan after independent double review. Last passed gate:
+**RTS-001 / Phase 0 Draft (`PASS`, 2026-08-19)**. It is not an ADR and authorizes no production
+implementation, model invocation, queue operation, migration, or release action by itself.
 
 Date: 2026-08-19
 
@@ -126,7 +127,17 @@ Entry criteria:
 
 #### RTS-001 — `awf.semantic-contract.v1` Draft
 
-This is the only immediate execution item.
+At double-review time this was the only immediate execution item. A later owner continuous-execution
+authorization supersedes only that stop boundary: after a TaskCard passes, execution may continue to
+the first next card whose entry criteria and action-specific authority are satisfied. It does not
+weaken phase gates or production/default/release/migration/destructive boundaries.
+
+Execution result: **PASS**. The Draft, 39-case fault matrix and 28-family inventory are versioned in
+[`runtime-v2-semantic-contract.md`](../runtime-v2-semantic-contract.md),
+[`runtime-v2-fault-matrix.md`](../testing/runtime-v2-fault-matrix.md), and the
+[`RTS-001 implementation report`](../tasks/runtime-v2-semantic-contract-draft-implementation-report.md).
+Independent Review 2 returned `PASS` with zero findings. Current Python correctness gaps remain
+explicit faults for Phase 1; they were not waived or repaired by this documentation gate.
 
 Deliverables:
 
@@ -595,9 +606,11 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Next decision point
 
-Complete RTS-001 only. Decide whether the Draft is complete enough to authorize the two Phase 1
-acceptance TaskCards. Do not choose a language, store, Coordinator deployment, or production migration
-at that point.
+RTS-001 passed and the Draft is complete enough to enter Phase 1 under the later owner execution
+authorization. The next planned card is RTS-010, but its fresh live/business TaskCard must still
+satisfy its own entry criteria and scoped authority before any model, queue, remote, or downstream
+mutation. Do not choose a language, store, Coordinator deployment, or production migration at this
+point.
 
 ## 12. Plan Completion Definition
 

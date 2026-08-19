@@ -1,0 +1,376 @@
+{
+  "format": "awf.runtime-v2-fault-matrix.v1",
+  "maturity": "Draft",
+  "basis": "0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2",
+  "contract": "docs/runtime-v2-semantic-contract.md",
+  "outcomes": [
+    "SAFE_CONTINUE",
+    "SAFE_IDEMPOTENT_REPLAY",
+    "SAFE_STABLE_RESEND",
+    "DENY_BEFORE_PROVIDER",
+    "AMBIGUOUS_NO_REPLAY",
+    "DENY_BEFORE_MUTATION",
+    "HANDLER_FAILURE_NO_ACK",
+    "TERMINAL_IDEMPOTENT",
+    "TERMINAL_CONFLICT",
+    "OWNER_DECISION_REQUIRED",
+    "EXTERNAL_OBSERVATION_UNKNOWN"
+  ],
+  "cases": [
+    {
+      "id": "F-RUN-001",
+      "boundary": "run_initialization",
+      "fault": "missing, corrupt, or wrong-format RunLedger/context packet",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "preserve files and diagnose exact run identity",
+      "prohibited": ["initialize a different run over the same identity", "guess recovery state"],
+      "evidence": ["E-RUN-1"]
+    },
+    {
+      "id": "F-RUN-002",
+      "boundary": "run_initialization",
+      "fault": "TaskCard, frozen base, branch, authority, state root, or compiled-contract identity drifts",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "create a separately authorized run or restore exact intent",
+      "prohibited": ["rewrite the existing run identity"],
+      "evidence": ["E-RUN-1", "E-RUN-2"]
+    },
+    {
+      "id": "F-RUN-003",
+      "boundary": "handler_entry",
+      "fault": "compiled RunContract SHA is present in the run but omitted by the handler-rebuilt context packet",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "fix the reference binding under a scoped correctness TaskCard before acceptance",
+      "prohibited": ["drop the compiled-contract binding from the existing ledger"],
+      "evidence": ["E-RUN-1", "E-RUN-2"],
+      "reference_gap": "Current handler packet construction does not propagate run_contract_sha256."
+    },
+    {
+      "id": "F-PROC-001",
+      "boundary": "handler_registration",
+      "fault": "Agent Bus does not support the pinned structured handler-argv contract or argv normalization rejects an unsafe token/wrapper",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "install the compatible independently versioned Bus/runtime or correct the structured argv contract",
+      "prohibited": ["event-time command-string fallback", "interpret business input through a shell"],
+      "evidence": ["E-PROCESS-1", "E-BUS-1"]
+    },
+    {
+      "id": "F-AUTH-001",
+      "boundary": "pre_invocation",
+      "fault": "route missing, non-unique, or role override mismatched",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "correct owner route/configuration and create or redeliver only an exact authorized input",
+      "prohibited": ["listener-local route override", "provider start"],
+      "evidence": ["E-RUN-2"]
+    },
+    {
+      "id": "F-AUTH-002",
+      "boundary": "pre_invocation",
+      "fault": "effective tool/model differs from integrity-bound delivery/TaskCard selection",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "repair exact configuration/selection mismatch",
+      "prohibited": ["execute one provider and report another"],
+      "evidence": ["E-SEL-1"]
+    },
+    {
+      "id": "F-AUTH-003",
+      "boundary": "pre_invocation",
+      "fault": "stage, attempt, rework budget, terminal, or current evidence commit is incompatible",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "status/diagnosis names the recorded denial; owner corrects intent if legal",
+      "prohibited": ["decrement durable budget", "manual stage flag bypass"],
+      "evidence": ["E-RUN-2", "E-STATUS-1"]
+    },
+    {
+      "id": "F-AUTH-004",
+      "boundary": "rework_to_second_review",
+      "fault": "current gate rejects review after rework and default review attempt budget is already consumed",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "repair the current Python reference before RTS-011 and add the full two-review regression",
+      "prohibited": ["claim deterministic rework acceptance", "manually advance stage or budget"],
+      "evidence": ["E-RUN-2", "E-REWORK-1"],
+      "reference_gap": "Current synthetic lineage evidence stops after rework and does not prove the required second review."
+    },
+    {
+      "id": "F-DUP-001",
+      "boundary": "input_delivery",
+      "fault": "same delivery ID and same canonical payload is redelivered before provider start",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "use only exact durable checkpoint/outbox/inbox state",
+      "prohibited": ["new authorization identity"],
+      "evidence": ["E-RUN-2", "E-DELIVERY-1"]
+    },
+    {
+      "id": "F-DUP-002",
+      "boundary": "input_delivery",
+      "fault": "same delivery ID is reused with a different canonical payload",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "preserve conflict for owner diagnosis",
+      "prohibited": ["accept either payload", "replace the delivery"],
+      "evidence": ["E-RUN-2", "E-INBOX-1"]
+    },
+    {
+      "id": "F-INV-000",
+      "boundary": "authorization_before_checkpoint",
+      "fault": "crash after RunLedger authorization but before checkpoint/outbox/inbox creation",
+      "expected_outcome": "OWNER_DECISION_REQUIRED",
+      "legal_next_action": "preserve the consumed authorization/budget and deny automatic provider replay",
+      "prohibited": ["erase the authorized attempt", "assume the provider did not start", "create a replacement delivery"],
+      "evidence": ["E-RUN-2", "E-RECOVERY-1"],
+      "reference_gap": "Current duplicate path has no durable worker record from which to prove a safe automatic action."
+    },
+    {
+      "id": "F-INV-001",
+      "boundary": "authorization_before_process_start",
+      "fault": "crash after authorization/checkpoint model_not_started and before process start",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "invoke once after exact gates and checkpoint revalidation",
+      "prohibited": ["create a second delivery identity"],
+      "evidence": ["E-RUN-2", "E-RECOVERY-1"]
+    },
+    {
+      "id": "F-INV-002",
+      "boundary": "process_start",
+      "fault": "crash after model_started is durable but no trusted completed result is recoverable",
+      "expected_outcome": "AMBIGUOUS_NO_REPLAY",
+      "legal_next_action": "preserve exact process/workspace/evidence for owner decision",
+      "prohibited": ["automatic provider replay", "fresh replacement delivery"],
+      "evidence": ["E-RECOVERY-1", "E-HANDLER-1"]
+    },
+    {
+      "id": "F-INV-003",
+      "boundary": "process_result",
+      "fault": "model_started has exact durable same-event zero-exit evidence and matching workspace manifest",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "promote to model_completed and resume validation without provider invocation",
+      "prohibited": ["second provider invocation"],
+      "evidence": ["E-RECOVERY-1", "E-HANDLER-1"]
+    },
+    {
+      "id": "F-INV-004",
+      "boundary": "process_result",
+      "fault": "provider exits non-zero or trusted result evidence is corrupt/mismatched",
+      "expected_outcome": "HANDLER_FAILURE_NO_ACK",
+      "legal_next_action": "record failure/ambiguity and preserve the same delivery evidence",
+      "prohibited": ["automatic same-delivery provider retry"],
+      "evidence": ["E-RECOVERY-1", "E-HANDLER-1"]
+    },
+    {
+      "id": "F-ART-001",
+      "boundary": "model_completed_before_postflight",
+      "fault": "crash after durable provider completion before postflight",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "skip provider and run frozen postflight against exact durable workspace",
+      "prohibited": ["provider replay", "change TaskCard verification contract"],
+      "evidence": ["E-RECOVERY-1", "E-ART-1"]
+    },
+    {
+      "id": "F-ART-002",
+      "boundary": "artifact_validation",
+      "fault": "missing, multiple, malformed, oversized, unsafe, untracked, hash-drifted, or invalid Artifact",
+      "expected_outcome": "HANDLER_FAILURE_NO_ACK",
+      "legal_next_action": "one bounded same-delivery artifact correction where explicitly supported, otherwise owner-authorized replacement",
+      "prohibited": ["infer PASS from exit zero", "alter bound report SHA/provenance"],
+      "evidence": ["E-ART-1", "E-REVIEW-1"]
+    },
+    {
+      "id": "F-ART-003",
+      "boundary": "postflight_completed_before_import",
+      "fault": "crash after postflight_completed before trusted import",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "revalidate exact workspace/contract and import the verified tree/report",
+      "prohibited": ["repeat provider", "broaden allowed paths"],
+      "evidence": ["E-RECOVERY-1", "E-WORKSPACE-1"]
+    },
+    {
+      "id": "F-GIT-001",
+      "boundary": "model_imported_before_commit",
+      "fault": "crash after trusted import before commit",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "revalidate imported tree/workspace and create the trusted commit",
+      "prohibited": ["provider replay", "model-owned commit"],
+      "evidence": ["E-WORKSPACE-1", "E-RECOVERY-1"]
+    },
+    {
+      "id": "F-GIT-002",
+      "boundary": "commit_before_fork_verification",
+      "fault": "trusted commit exists but push/fresh fetch fails or fork SHA differs",
+      "expected_outcome": "HANDLER_FAILURE_NO_ACK",
+      "legal_next_action": "resume from exact commit after fresh remote verification succeeds",
+      "prohibited": ["send review handoff", "provider replay"],
+      "evidence": ["E-PROV-1", "E-RECOVERY-1"]
+    },
+    {
+      "id": "F-GIT-003",
+      "boundary": "fork_verified_before_pr",
+      "fault": "PR create/lookup is ambiguous, missing, multiple, or tuple/state/head repository drifts",
+      "expected_outcome": "DENY_BEFORE_MUTATION",
+      "legal_next_action": "re-read exact PR number and full tuple; resume only on equality",
+      "prohibited": ["branch-list guess", "review handoff"],
+      "evidence": ["E-PROV-1", "E-PROV-2"]
+    },
+    {
+      "id": "F-REWORK-001",
+      "boundary": "rework_lineage",
+      "fault": "prior implement delivery is missing/non-unique or checkpoint/workspace/commit/PR/tree/Git manifest drifts",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "preserve the recorded lineage and obtain owner correction if possible",
+      "prohibited": ["new workspace", "different implement lineage", "manual checkpoint edit"],
+      "evidence": ["E-REWORK-1"]
+    },
+    {
+      "id": "F-OUT-001",
+      "boundary": "pr_verified_before_outbox",
+      "fault": "crash after trusted local/Git/PR effects before outgoing intent is durable",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "revalidate exact effects and prepare one deterministic outbox envelope",
+      "prohibited": ["provider replay", "new delivery identity"],
+      "evidence": ["E-RECOVERY-1", "E-OUTBOX-1"]
+    },
+    {
+      "id": "F-OUT-002",
+      "boundary": "outbox_prepared_before_send",
+      "fault": "crash with immutable prepared outbox",
+      "expected_outcome": "SAFE_STABLE_RESEND",
+      "legal_next_action": "verify current provenance and send the same delivery identity",
+      "prohibited": ["rebuild different envelope", "provider replay"],
+      "evidence": ["E-OUTBOX-1"]
+    },
+    {
+      "id": "F-OUT-003",
+      "boundary": "outbox_send",
+      "fault": "send raises, returns failure, or process crashes while status is attempting",
+      "expected_outcome": "SAFE_STABLE_RESEND",
+      "legal_next_action": "mark/retain ambiguous and resend only the identical idempotent envelope after evidence revalidation",
+      "prohibited": ["replacement event", "assume unsent", "provider replay"],
+      "evidence": ["E-OUTBOX-1", "E-RUN-2", "E-INBOX-1"]
+    },
+    {
+      "id": "F-OUT-004",
+      "boundary": "outbox_sent_before_inbox",
+      "fault": "crash after sent status before source inbox completion",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "do not resend; complete exact input inbox then return handler success",
+      "prohibited": ["send again", "provider replay"],
+      "evidence": ["E-OUTBOX-1", "E-INBOX-1"]
+    },
+    {
+      "id": "F-IN-001",
+      "boundary": "inbox_completion",
+      "fault": "identical completed input is redelivered",
+      "expected_outcome": "SAFE_IDEMPOTENT_REPLAY",
+      "legal_next_action": "revalidate required v2 provenance where applicable and return success without repeated effects",
+      "prohibited": ["provider invocation", "downstream resend"],
+      "evidence": ["E-INBOX-1", "E-OUTBOX-1"]
+    },
+    {
+      "id": "F-TERM-001",
+      "boundary": "terminal_validation",
+      "fault": "terminal report, Artifact, delivery, commit, or PR tuple drifts",
+      "expected_outcome": "HANDLER_FAILURE_NO_ACK",
+      "legal_next_action": "preserve evidence and correct the external/current fact under explicit authority",
+      "prohibited": ["write terminal", "complete inbox", "ACK"],
+      "evidence": ["E-TERMINAL-1", "E-PROV-2"]
+    },
+    {
+      "id": "F-TERM-002",
+      "boundary": "terminal_write",
+      "fault": "crash after terminal ledger transition before terminal inbox completion",
+      "expected_outcome": "TERMINAL_IDEMPOTENT",
+      "legal_next_action": "revalidate identical terminal evidence, complete exact inbox, and return success",
+      "prohibited": ["different terminal", "provider invocation"],
+      "evidence": ["E-TERMINAL-1", "E-INBOX-1"]
+    },
+    {
+      "id": "F-TERM-003",
+      "boundary": "terminal_replay",
+      "fault": "a different terminal state or evidence is presented for a terminal run",
+      "expected_outcome": "TERMINAL_CONFLICT",
+      "legal_next_action": "preserve both facts for owner decision",
+      "prohibited": ["overwrite terminal", "reinterpret old state"],
+      "evidence": ["E-RUN-1", "E-TERMINAL-1"]
+    },
+    {
+      "id": "F-BUS-001",
+      "boundary": "handler_success_before_ack",
+      "fault": "handler fails before required local effect, outbox/inbox, or terminal is durable",
+      "expected_outcome": "HANDLER_FAILURE_NO_ACK",
+      "legal_next_action": "allow transport redelivery; Workflow independently revalidates exact durable state",
+      "prohibited": ["manual ACK", "manual requeue to manufacture success"],
+      "evidence": ["E-BUS-1", "E-HANDLER-1"]
+    },
+    {
+      "id": "F-BUS-002",
+      "boundary": "handler_success_after_local_completion",
+      "fault": "ACK observation is delayed or unavailable after handler success",
+      "expected_outcome": "EXTERNAL_OBSERVATION_UNKNOWN",
+      "legal_next_action": "retain local completion and observe Bus state without rewriting Workflow terminal",
+      "prohibited": ["claim ACK", "send replacement delivery"],
+      "evidence": ["E-BUS-1", "E-BUS-2", "E-STATUS-1"]
+    },
+    {
+      "id": "F-HIST-001",
+      "boundary": "retained_or_historical_delivery",
+      "fault": "a retained, terminal, superseded, or identity-ambiguous historical delivery is proposed as new work or recovery input",
+      "expected_outcome": "OWNER_DECISION_REQUIRED",
+      "legal_next_action": "leave the delivery and its evidence unchanged until exact owner abandonment/migration/recovery authority exists",
+      "prohibited": ["read payload", "ACK", "requeue", "redispatch", "replacement event", "manual terminal edit"],
+      "evidence": ["E-BUS-2", "E-METHOD-1"]
+    },
+    {
+      "id": "F-LIFE-001",
+      "boundary": "managed_start",
+      "fault": "install record/definition is missing, stale, unknown, or mismatched",
+      "expected_outcome": "DENY_BEFORE_MUTATION",
+      "legal_next_action": "name exact install or upgrade action from observed facts",
+      "prohibited": ["implicit install on unknown", "write desired running first"],
+      "evidence": ["E-LIFE-1"]
+    },
+    {
+      "id": "F-LIFE-002",
+      "boundary": "exact_stop",
+      "fault": "profile/process/lease/launch/PID creation identity or live observation is missing/mismatched",
+      "expected_outcome": "DENY_BEFORE_MUTATION",
+      "legal_next_action": "preserve process/lease records and diagnose exact identity",
+      "prohibited": ["PID-only stop", "process-name kill", "directory scan ownership"],
+      "evidence": ["E-LIFE-1", "E-LIFE-2"]
+    },
+    {
+      "id": "F-LIFE-003",
+      "boundary": "legacy_incarnation",
+      "fault": "legacy lease lacks launch/state-root binding but PID compatibility path is present",
+      "expected_outcome": "OWNER_DECISION_REQUIRED",
+      "legal_next_action": "retain compatibility until replacement/retained-state audit proves safe disposition",
+      "prohibited": ["claim all retained identities have exact modern incarnation", "delete compatibility early"],
+      "evidence": ["E-LIFE-2"],
+      "open_question": "Phase 6 must close or explicitly retain the legacy exact-stop representation."
+    },
+    {
+      "id": "F-FEED-001",
+      "boundary": "feedback_independence",
+      "fault": "Feedback outbox is pending/corrupt/unavailable after a valid business terminal, or best-effort Finding queue persistence fails",
+      "expected_outcome": "EXTERNAL_OBSERVATION_UNKNOWN",
+      "legal_next_action": "report Feedback independently; retain the business terminal/ACK facts",
+      "prohibited": ["rewrite business terminal", "flush during status", "claim malformed reserved Finding envelope is a valid business Artifact"],
+      "evidence": ["E-FEEDBACK-1", "E-STATUS-1"]
+    },
+    {
+      "id": "F-STATUS-001",
+      "boundary": "status_projection",
+      "fault": "queue, GitHub, lifecycle, checkpoint, Feedback, or external observation is unavailable/stale/corrupt",
+      "expected_outcome": "EXTERNAL_OBSERVATION_UNKNOWN",
+      "legal_next_action": "report source/cause and one safe diagnostic action without mutation",
+      "prohibited": ["authorize recovery", "ACK", "requeue", "dispatch", "flush Feedback", "provider invocation"],
+      "evidence": ["E-STATUS-1", "E-FEEDBACK-1"]
+    },
+    {
+      "id": "F-ROLLBACK-001",
+      "boundary": "program_rollback",
+      "fault": "candidate/old Runtime schema or envelope compatibility is unknown",
+      "expected_outcome": "OWNER_DECISION_REQUIRED",
+      "legal_next_action": "preserve program and state evidence; use only a previously proven compatible program",
+      "prohibited": ["state rollback", "silent fallback", "schema reinterpretation"],
+      "evidence": ["E-RUN-1", "E-BUS-1"]
+    }
+  ]
+}
