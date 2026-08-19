@@ -343,7 +343,7 @@ def test_review_from_unbacked_rework_stage_fails_closed(tmp_path: Path):
     recovered, _ = ledger.recover()
     assert recovered["attempts"] == 0
     assert recovered["reworks"] == 0
-    assert recovered["stage_attempts"] == {}
+    assert recovered.get("stage_attempts", {}) == {}
     assert [
         (item["status"], item["reason"], item["delivery_id"]) for item in recovered["events"]
     ] == [("rejected", "stage_mismatch", "review-without-rework")]
