@@ -22,6 +22,7 @@ TASK_ID = "runtime-v2-rts-020-python-shared-slice"
 BRANCH = f"codex/{TASK_ID}"
 ALLOWED_DELTA = ["result.txt"]
 FORMAT = "awf.runtime-v2-python-slice.v1"
+SAFE_CHILD_ENV_KEYS = ("LANG", "LC_ALL", "PATH", "PYTHONIOENCODING", "SYSTEMROOT", "WINDIR")
 
 
 class StateError(RuntimeError):
@@ -48,17 +49,46 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
+def _loads_json_object(text: str, path: Path, outcome: str, legal_next_action: str) -> dict[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(text, object_pairs_hook=reject_duplicate_keys)
+    except Exception as exc:  # noqa: BLE001 - corrupt local state must fail closed.
+        raise StateError(
+            outcome,
+            legal_next_action,
+            f"cannot read {path.name}: {exc}",
+        ) from exc
+    if not isinstance(value, dict):
+        raise StateError(outcome, legal_next_action, f"{path.name} is not a JSON object")
+    return value
+
+
 def _read_envelope(path: Path) -> dict[str, Any]:
     try:
-        envelope = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001 - corrupt local state must fail closed.
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 - missing/corrupt state must fail closed.
         raise StateError(
             "DENY_BEFORE_PROVIDER",
             "preserve files and diagnose exact run identity",
             f"cannot read {path.name}: {exc}",
         ) from exc
+    envelope = _loads_json_object(
+        text, path, "DENY_BEFORE_PROVIDER", "preserve files and diagnose exact run identity"
+    )
     payload = envelope.get("payload")
-    if not isinstance(payload, dict) or envelope.get("checksum") != _digest(payload):
+    if (
+        envelope.get("format") != FORMAT
+        or not isinstance(payload, dict)
+        or envelope.get("checksum") != _digest(payload)
+    ):
         raise StateError(
             "DENY_BEFORE_PROVIDER",
             "preserve files and diagnose exact run identity",
@@ -69,20 +99,28 @@ def _read_envelope(path: Path) -> dict[str, Any]:
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 - provider artifacts are trusted-input checked here.
         raise StateError(
             "HANDLER_FAILURE_NO_ACK",
             "record failure/ambiguity and preserve the same delivery evidence",
-            f"invalid json artifact {path.name}: {exc}",
+            f"cannot read artifact {path.name}: {exc}",
         ) from exc
-    if not isinstance(value, dict):
-        raise StateError(
-            "HANDLER_FAILURE_NO_ACK",
-            "record failure/ambiguity and preserve the same delivery evidence",
-            f"artifact {path.name} is not an object",
-        )
-    return value
+    return _loads_json_object(
+        text,
+        path,
+        "HANDLER_FAILURE_NO_ACK",
+        "record failure/ambiguity and preserve the same delivery evidence",
+    )
+
+
+def _child_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key in SAFE_CHILD_ENV_KEYS:
+        if key in os.environ:
+            env[key] = os.environ[key]
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -167,11 +205,26 @@ def _counter_path(run_dir: Path) -> Path:
     return run_dir / "provider-counts.json"
 
 
+def _has_state_files(run_dir: Path, excluded: set[str] | None = None) -> bool:
+    excluded = excluded or set()
+    if not run_dir.exists():
+        return False
+    return any(child.name not in excluded for child in run_dir.iterdir())
+
+
 def _counter(run_dir: Path) -> dict[str, Any]:
     path = _counter_path(run_dir)
     if not path.exists():
         return {"implement": 0, "review": 0, "calls": []}
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return _loads_json_object(
+            path.read_text(encoding="utf-8"),
+            path,
+            "EXTERNAL_OBSERVATION_UNKNOWN",
+            "inspect exact provider-count evidence",
+        )
+    except StateError:
+        return {"implement": "corrupt", "review": "corrupt", "calls": []}
 
 
 def _compiled_spec(repo: Path, provider: Path, run_id: str) -> dict[str, Any]:
@@ -199,6 +252,12 @@ def _ensure_spec(run_dir: Path, repo: Path, provider: Path, run_id: str) -> dict
     compiled = _compiled_spec(repo, provider, run_id)
     path = _spec_path(run_dir)
     if not path.exists():
+        if _has_state_files(run_dir):
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                "RunSpec missing while other run state exists",
+            )
         _atomic_write(path, compiled)
         return compiled
     existing = _read_envelope(path)
@@ -209,6 +268,137 @@ def _ensure_spec(run_dir: Path, repo: Path, provider: Path, run_id: str) -> dict
             "compiled RunSpec drift",
         )
     return existing
+
+
+def _expected_journal_paths(run_dir: Path, invocation_id: str) -> tuple[Path, Path]:
+    if invocation_id == "implement-1":
+        return (
+            run_dir / "workspaces" / "implement-1",
+            run_dir / "artifacts" / "implementation-report.json",
+        )
+    if invocation_id == "review-1":
+        return (run_dir / "trusted-repo", run_dir / "artifacts" / "review-report.json")
+    raise StateError(
+        "DENY_BEFORE_PROVIDER",
+        "preserve files and diagnose exact run identity",
+        f"unknown invocation identity {invocation_id}",
+    )
+
+
+def _validate_run_identity(run: dict[str, Any], spec: dict[str, Any]) -> None:
+    expected = {
+        "run_id": spec["run_id"],
+        "task_id": spec["task_id"],
+        "spec_digest": _digest(spec),
+    }
+    for key, value in expected.items():
+        if run.get(key) != value:
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                f"RunStore {key} drift",
+            )
+
+
+def _validate_journal_identity(
+    payload: dict[str, Any],
+    spec: dict[str, Any],
+    run_dir: Path,
+    invocation_id: str,
+    role: str,
+) -> None:
+    workspace, artifact = _expected_journal_paths(run_dir, invocation_id)
+    expected = {
+        "invocation_id": invocation_id,
+        "role": role,
+        "spec_digest": _digest(spec),
+        "workspace": str(workspace),
+        "artifact": str(artifact),
+        "provider_command_digest": _digest(spec["provider_command"]),
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                f"InvocationJournal {invocation_id} {key} drift",
+            )
+    _validate_journal_state(payload, spec, run_dir)
+
+
+def _provider_argv(
+    spec: dict[str, Any],
+    run_dir: Path,
+    payload: dict[str, Any],
+    role: str,
+    mode: str,
+) -> list[str]:
+    return [
+        *spec["provider_command"],
+        "--role",
+        role,
+        "--workspace",
+        payload["workspace"],
+        "--artifact",
+        payload["artifact"],
+        "--counter",
+        str(_counter_path(run_dir)),
+        "--mode",
+        mode,
+    ]
+
+
+def _validate_launch_binding(payload: dict[str, Any], spec: dict[str, Any], run_dir: Path) -> None:
+    launch_intent = payload.get("launch_intent")
+    if not isinstance(launch_intent, dict):
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "InvocationJournal launch intent missing",
+        )
+    mode = launch_intent.get("mode")
+    if not isinstance(mode, str):
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "InvocationJournal launch mode missing",
+        )
+    expected = _provider_argv(spec, run_dir, payload, str(payload["role"]), mode)
+    if launch_intent.get("argv") != expected:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "InvocationJournal launch argv drift",
+        )
+
+
+def _validate_journal_state(payload: dict[str, Any], spec: dict[str, Any], run_dir: Path) -> None:
+    state = payload.get("state")
+    if state not in {"prepared", "launch_intent", "started", "result", "validated"}:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            f"InvocationJournal invalid state {state}",
+        )
+    has_launch = payload.get("launch_intent") is not None
+    has_started = payload.get("started") is not None
+    has_result = payload.get("result") is not None
+    has_validated = payload.get("validated") is not None
+    expected_presence = {
+        "prepared": (False, False, False, False),
+        "launch_intent": (True, False, False, False),
+        "started": (True, True, False, False),
+        "result": (True, True, True, False),
+        "validated": (True, True, True, True),
+    }
+    if (has_launch, has_started, has_result, has_validated) != expected_presence[state]:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "InvocationJournal phase consistency drift",
+        )
+    if has_launch:
+        _validate_launch_binding(payload, spec, run_dir)
 
 
 def _load_run(run_dir: Path) -> dict[str, Any] | None:
@@ -229,7 +419,14 @@ class RunStore:
     def load(self) -> dict[str, Any]:
         current = _load_run(self.run_dir)
         if current is not None:
+            _validate_run_identity(current, self.spec)
             return current
+        if _has_state_files(self.run_dir, excluded={"runspec.json"}):
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                "RunStore missing while other run state exists",
+            )
         payload = {
             "run_id": self.spec["run_id"],
             "task_id": self.spec["task_id"],
@@ -246,11 +443,14 @@ class RunStore:
         return payload
 
     def save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _validate_run_identity(payload, self.spec)
         _atomic_write(self.path, payload)
         return payload
 
     def authorize(self, payload: dict[str, Any], invocation_id: str, role: str) -> dict[str, Any]:
+        _validate_run_identity(payload, self.spec)
         journal = _read_envelope(_journal_path(self.run_dir, invocation_id))
+        _validate_journal_identity(journal, self.spec, self.run_dir, invocation_id, role)
         if journal.get("state") != "prepared":
             raise StateError(
                 "OWNER_DECISION_REQUIRED",
@@ -265,6 +465,7 @@ class RunStore:
         return self.save(payload)
 
     def phase(self, payload: dict[str, Any], phase: str, **facts: Any) -> dict[str, Any]:
+        _validate_run_identity(payload, self.spec)
         payload = dict(payload)
         payload["phase"] = phase
         payload.update(facts)
@@ -282,7 +483,9 @@ class InvocationJournal:
         self.path = _journal_path(run_dir, invocation_id)
 
     def read(self) -> dict[str, Any]:
-        return _read_envelope(self.path)
+        payload = _read_envelope(self.path)
+        _validate_journal_identity(payload, self.spec, self.run_dir, self.invocation_id, self.role)
+        return payload
 
     def prepare(self, workspace: Path, artifact: Path) -> dict[str, Any]:
         payload = {
@@ -291,6 +494,7 @@ class InvocationJournal:
             "spec_digest": _digest(self.spec),
             "workspace": str(workspace),
             "artifact": str(artifact),
+            "provider_command_digest": _digest(self.spec["provider_command"]),
             "state": "prepared",
             "prepared_is_launch_intent": False,
             "launch_intent": None,
@@ -307,8 +511,15 @@ class InvocationJournal:
         _atomic_write(self.path, payload)
         return payload
 
-    def launch(self, command: list[str]) -> dict[str, Any]:
-        return self.update(state="launch_intent", launch_intent={"argv": command})
+    def launch(self, command: list[str], mode: str) -> dict[str, Any]:
+        provider_command = self.spec["provider_command"]
+        if _digest(command[: len(provider_command)]) != _digest(provider_command):
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                "provider command binding drift",
+            )
+        return self.update(state="launch_intent", launch_intent={"argv": command, "mode": mode})
 
     def started(self, pid: int) -> dict[str, Any]:
         return self.update(state="started", started={"pid": pid})
@@ -331,21 +542,9 @@ def _invoke_provider(
     mode: str = "normal",
 ) -> dict[str, Any]:
     payload = journal.read()
-    command = [
-        *spec["provider_command"],
-        "--role",
-        role,
-        "--workspace",
-        payload["workspace"],
-        "--artifact",
-        payload["artifact"],
-        "--counter",
-        str(_counter_path(journal.run_dir)),
-        "--mode",
-        mode,
-    ]
-    journal.launch(command)
-    process = subprocess.Popen(command, cwd=payload["workspace"])
+    command = _provider_argv(spec, journal.run_dir, payload, role, mode)
+    journal.launch(command, mode)
+    process = subprocess.Popen(command, cwd=payload["workspace"], env=_child_env())
     journal.started(process.pid)
     return_code = process.wait()
     return journal.result(return_code)
@@ -495,18 +694,32 @@ def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: st
                     "authorized invocation is missing its prepared journal",
                 )
             payload = journal.read()
-            if payload.get("state") != "prepared":
-                run = store.phase(run, "implement_launch_intent")
-            else:
+            if payload.get("state") == "prepared":
                 _invoke_provider(journal, spec, "implement", mode=mode)
                 run = store.phase(run, "implement_result")
+            elif payload.get("state") in {"launch_intent", "started"}:
+                raise StateError(
+                    "AMBIGUOUS_NO_REPLAY",
+                    "preserve exact process/workspace/evidence for owner decision",
+                    "implement launch/start has no recoverable result",
+                )
+            elif payload.get("state") in {"result", "validated"}:
+                run = store.phase(run, "implement_result")
+            else:
+                raise StateError(
+                    "OWNER_DECISION_REQUIRED",
+                    "preserve program and state evidence; use only a previously proven compatible program",
+                    f"unknown implement journal state {payload.get('state')}",
+                )
         elif phase == "implement_launch_intent":
+            _invocation(run_dir, spec, "implement-1", "implement").read()
             raise StateError(
                 "AMBIGUOUS_NO_REPLAY",
                 "preserve exact process/workspace/evidence for owner decision",
                 "launch intent has no recoverable result",
             )
         elif phase == "implement_started":
+            _invocation(run_dir, spec, "implement-1", "implement").read()
             raise StateError(
                 "AMBIGUOUS_NO_REPLAY",
                 "preserve exact process/workspace/evidence for owner decision",
@@ -537,8 +750,24 @@ def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: st
             run = store.authorize(run, journal.invocation_id, "review")
         elif phase == "review_authorized":
             journal = _invocation(run_dir, spec, "review-1", "review")
-            _invoke_provider(journal, spec, "review")
-            run = store.phase(run, "review_result")
+            payload = journal.read()
+            if payload.get("state") == "prepared":
+                _invoke_provider(journal, spec, "review")
+                run = store.phase(run, "review_result")
+            elif payload.get("state") in {"launch_intent", "started"}:
+                raise StateError(
+                    "AMBIGUOUS_NO_REPLAY",
+                    "preserve exact process/workspace/evidence for owner decision",
+                    "review launch/start has no recoverable result",
+                )
+            elif payload.get("state") in {"result", "validated"}:
+                run = store.phase(run, "review_result")
+            else:
+                raise StateError(
+                    "OWNER_DECISION_REQUIRED",
+                    "preserve program and state evidence; use only a previously proven compatible program",
+                    f"unknown review journal state {payload.get('state')}",
+                )
         elif phase == "review_result":
             review_sha = _validate_review(run_dir, spec)
             _verify_trusted_identity(run_dir, run)
@@ -593,14 +822,30 @@ def _inject_fault(run_dir: Path, spec: dict[str, Any], fault: str) -> dict[str, 
     if fault == "auth_launch_no_result":
         journal = _prepare_implement(run_dir, spec)
         run = store.authorize(run, journal.invocation_id, "implement")
-        journal.launch([*spec["provider_command"], "--role", "implement"])
+        journal.launch(_provider_argv(spec, run_dir, journal.read(), "implement", "normal"), "normal")
         return store.phase(run, "implement_launch_intent")
     if fault == "start_result":
         journal = _prepare_implement(run_dir, spec)
         run = store.authorize(run, journal.invocation_id, "implement")
-        journal.launch([*spec["provider_command"], "--role", "implement"])
+        journal.launch(_provider_argv(spec, run_dir, journal.read(), "implement", "normal"), "normal")
         journal.started(424242)
         return store.phase(run, "implement_started")
+    if fault == "review_launch_no_result":
+        run = _continue_until_review_authorized(run_dir, spec, run)
+        journal = _invocation(run_dir, spec, "review-1", "review")
+        journal.launch(_provider_argv(spec, run_dir, journal.read(), "review", "normal"), "normal")
+        return run
+    if fault == "review_started_no_result":
+        run = _continue_until_review_authorized(run_dir, spec, run)
+        journal = _invocation(run_dir, spec, "review-1", "review")
+        journal.launch(_provider_argv(spec, run_dir, journal.read(), "review", "normal"), "normal")
+        journal.started(525252)
+        return run
+    if fault == "review_result_recover":
+        run = _continue_until_review_authorized(run_dir, spec, run)
+        journal = _invocation(run_dir, spec, "review-1", "review")
+        _invoke_provider(journal, spec, "review")
+        return run
     if fault == "artifact":
         return _continue(run_dir, spec, run, mode="invalid-artifact")
     if fault == "result_validate":
@@ -631,6 +876,18 @@ def _inject_fault(run_dir: Path, spec: dict[str, Any], fault: str) -> dict[str, 
         envelope["payload"]["source_head"] = "0" * 40
         path.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return run
+    if fault == "runspec_rechecksum_drift":
+        drifted = dict(spec)
+        drifted["source_head"] = "0" * 40
+        _atomic_write(_spec_path(run_dir), drifted)
+        return run
+    if fault == "journal_rechecksum_drift":
+        journal = _prepare_implement(run_dir, spec)
+        run = store.authorize(run, journal.invocation_id, "implement")
+        drifted = dict(_read_envelope(journal.path))
+        drifted["role"] = "review"
+        _atomic_write(journal.path, drifted)
+        return run
     if fault == "git_drift":
         run = _continue_until_review_result(run_dir, spec, run)
         trusted = run_dir / "trusted-repo"
@@ -639,6 +896,46 @@ def _inject_fault(run_dir: Path, spec: dict[str, Any], fault: str) -> dict[str, 
         _git(trusted, "commit", "-m", "Inject trusted git drift")
         return run
     raise SystemExit(f"unknown fault injection: {fault}")
+
+
+def _continue_until_review_authorized(
+    run_dir: Path, spec: dict[str, Any], run: dict[str, Any]
+) -> dict[str, Any]:
+    store = RunStore(run_dir, spec)
+    while run["phase"] != "review_authorized":
+        if run["phase"] == "initialized":
+            journal = _prepare_implement(run_dir, spec)
+            run = store.authorize(run, journal.invocation_id, "implement")
+        elif run["phase"] == "implement_authorized":
+            journal = _invocation(run_dir, spec, "implement-1", "implement")
+            _invoke_provider(journal, spec, "implement")
+            run = store.phase(run, "implement_result")
+        elif run["phase"] == "implement_result":
+            workspace, artifact_sha = _validate_implementation(run_dir, spec)
+            commit, tree = _import_and_commit(run_dir, spec, workspace)
+            run = store.phase(
+                run,
+                "implement_committed",
+                implementation_report_sha256=artifact_sha,
+                trusted_commit=commit,
+                trusted_tree=tree,
+            )
+        elif run["phase"] == "implement_committed":
+            run = store.phase(
+                run,
+                "review_handoff_intent",
+                handoff_intent={
+                    "kind": "synthetic-local-review",
+                    "trusted_commit": run["trusted_commit"],
+                    "trusted_tree": run["trusted_tree"],
+                },
+            )
+        elif run["phase"] == "review_handoff_intent":
+            journal = _prepare_review(run_dir, spec)
+            run = store.authorize(run, journal.invocation_id, "review")
+        else:
+            return run
+    return run
 
 
 def _continue_until_review_result(run_dir: Path, spec: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
@@ -705,6 +1002,37 @@ def _journal_observations(run_dir: Path) -> dict[str, Any]:
     return observations
 
 
+def _assert_no_active_or_invalid_journals(run_dir: Path, spec: dict[str, Any]) -> None:
+    invocations = run_dir / "invocations"
+    if not invocations.exists():
+        return
+    roles = {"implement-1": "implement", "review-1": "review"}
+    for path in sorted(invocations.glob("*.json")):
+        invocation_id = path.stem
+        role = roles.get(invocation_id)
+        if role is None:
+            raise StateError(
+                "DENY_BEFORE_MUTATION",
+                "preserve process/lease records and diagnose exact identity",
+                f"unknown journal {invocation_id}",
+            )
+        try:
+            payload = _read_envelope(path)
+            _validate_journal_identity(payload, spec, run_dir, invocation_id, role)
+        except StateError as exc:
+            raise StateError(
+                "DENY_BEFORE_MUTATION",
+                "preserve process/lease records and diagnose exact identity",
+                exc.source,
+            ) from exc
+        if payload.get("state") in {"launch_intent", "started"}:
+            raise StateError(
+                "DENY_BEFORE_MUTATION",
+                "preserve process/lease records and diagnose exact identity",
+                f"active invocation {invocation_id}",
+            )
+
+
 def _status_from_run(run_dir: Path, run_id: str, run: dict[str, Any] | None) -> dict[str, Any]:
     if run is None:
         return {
@@ -734,25 +1062,50 @@ def _status_from_run(run_dir: Path, run_id: str, run: dict[str, Any] | None) -> 
         outcome = "DENY_BEFORE_PROVIDER"
         legal_next_action = "commit exact RunStore authorization before launch"
         blocker = {"owner": "runstore", "source": "prepared journal is not launch intent"}
-    elif phase == "implement_authorized":
+    elif phase in {"implement_authorized", "review_authorized"}:
+        invocation_id = "implement-1" if phase == "implement_authorized" else "review-1"
+        role = "implement" if phase == "implement_authorized" else "review"
         try:
-            journal = _read_envelope(_journal_path(run_dir, "implement-1"))
+            spec = _read_envelope(_spec_path(run_dir))
+            journal = _read_envelope(_journal_path(run_dir, invocation_id))
+            _validate_journal_identity(journal, spec, run_dir, invocation_id, role)
             if journal.get("state") == "prepared":
                 outcome = "SAFE_CONTINUE"
                 legal_next_action = "invoke once after exact gates and journal revalidation"
+                blocker = None
+            elif journal.get("state") in {"result", "validated"}:
+                outcome = "SAFE_CONTINUE"
+                legal_next_action = (
+                    "skip provider and run frozen postflight against exact durable workspace"
+                    if role == "implement"
+                    else "skip provider and validate the durable review result"
+                )
                 blocker = None
             else:
                 outcome = "AMBIGUOUS_NO_REPLAY"
                 legal_next_action = "preserve exact process/workspace/evidence for owner decision"
                 blocker = {"owner": "journal", "source": "authorized invocation is past prepared"}
         except StateError as exc:
-            outcome = "OWNER_DECISION_REQUIRED"
-            legal_next_action = "preserve the consumed authorization/budget and deny automatic provider replay"
+            if "InvocationJournal" in exc.source:
+                outcome = exc.outcome
+                legal_next_action = exc.legal_next_action
+            else:
+                outcome = "OWNER_DECISION_REQUIRED"
+                legal_next_action = (
+                    "preserve the consumed authorization/budget and deny automatic provider replay"
+                )
             blocker = {"owner": "owner", "source": exc.source}
     elif phase in {"implement_launch_intent", "implement_started"}:
-        outcome = "AMBIGUOUS_NO_REPLAY"
-        legal_next_action = "preserve exact process/workspace/evidence for owner decision"
-        blocker = {"owner": "journal", "source": "launch/start lacks recoverable result"}
+        try:
+            spec = _read_envelope(_spec_path(run_dir))
+            _invocation(run_dir, spec, "implement-1", "implement").read()
+            outcome = "AMBIGUOUS_NO_REPLAY"
+            legal_next_action = "preserve exact process/workspace/evidence for owner decision"
+            blocker = {"owner": "journal", "source": "launch/start lacks recoverable result"}
+        except StateError as exc:
+            outcome = exc.outcome
+            legal_next_action = exc.legal_next_action
+            blocker = {"owner": "owner", "source": exc.source}
     elif phase in {"implement_result", "implement_committed"}:
         outcome = "SAFE_CONTINUE"
         legal_next_action = (
@@ -800,9 +1153,26 @@ def _status_from_run(run_dir: Path, run_id: str, run: dict[str, Any] | None) -> 
 def _status(state_root: Path, run_id: str) -> dict[str, Any]:
     run_dir = _run_dir(state_root, run_id)
     try:
-        if _spec_path(run_dir).exists():
-            _read_envelope(_spec_path(run_dir))
+        spec = None
+        spec_exists = _spec_path(run_dir).exists()
+        run_exists = _run_path(run_dir).exists()
+        if not spec_exists and _has_state_files(run_dir):
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                "RunSpec missing while other run state exists",
+            )
+        if spec_exists and not run_exists:
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                "RunStore missing while RunSpec exists",
+            )
+        if spec_exists:
+            spec = _read_envelope(_spec_path(run_dir))
         run = _load_run(run_dir)
+        if run is not None and spec is not None:
+            _validate_run_identity(run, spec)
         return _status_from_run(run_dir, run_id, run)
     except StateError as exc:
         return {
@@ -830,6 +1200,8 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     try:
         spec = _ensure_spec(run_dir, repo, provider, args.run_id)
         existing = _load_run(run_dir)
+        if existing is not None:
+            _validate_run_identity(existing, spec)
         if existing and existing.get("phase") in {"completed", "blocked", "stopped"}:
             return _status_from_run(run_dir, args.run_id, existing)
         if args.fault:
@@ -866,6 +1238,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
 def _stop(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = _run_dir(Path(args.state_root), args.run_id)
     try:
+        spec = _read_envelope(_spec_path(run_dir))
         run = _load_run(run_dir)
         if run is None:
             raise StateError(
@@ -873,17 +1246,8 @@ def _stop(args: argparse.Namespace) -> dict[str, Any]:
                 "inspect the exact experiment state root",
                 "run is absent",
             )
-        active = [
-            key
-            for key, value in _journal_observations(run_dir).items()
-            if value.get("state") in {"launch_intent", "started"}
-        ]
-        if active:
-            raise StateError(
-                "DENY_BEFORE_MUTATION",
-                "preserve process/lease records and diagnose exact identity",
-                f"active invocations: {active}",
-            )
+        _validate_run_identity(run, spec)
+        _assert_no_active_or_invalid_journals(run_dir, spec)
         stopped = dict(run)
         stopped["phase"] = "stopped"
         stopped["stop"] = {

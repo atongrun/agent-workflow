@@ -23,6 +23,8 @@ Real disposable/local evidence:
   Artifact validation and completion facts;
 - no-remote local Git workspaces and trusted commit/tree revalidation;
 - deterministic fault injection, exact rerun and duplicate checks.
+- checksum-valid identity-drift rejection for RunStore, RunSpec and InvocationJournal bindings;
+- credential-minimized child environment with a sentinel-secret regression.
 
 Synthetic evidence:
 
@@ -61,23 +63,43 @@ baseline.
 
 ## Measurements
 
-- Experiment production nonblank/noncomment LOC: `runner.py` 834, provider fixture 72.
-- Fixture/test LOC: shared JSON fixture 136 lines, focused pytest module 247 nonblank/noncomment
+- Experiment production nonblank/noncomment LOC: `runner.py` 1175, provider fixture 74.
+- Fixture/test LOC: shared JSON fixture 172 lines, focused pytest module 399 nonblank/noncomment
   lines.
 - Direct dependencies: Python standard library, repository test dependency `pytest`, local `git`
   executable.
 - Platform gates exercised locally: Python compile, duplicate-key fixture validation, direct
-  runner smoke covering normal path and all 12 machine fault rows.
+  runner smoke covering normal path and all 14 machine fault rows.
 - Platform gates not exercised locally: focused pytest, full pytest, Ruff and cross-platform CI.
   The Mac boundary for this task remains no local pytest/Ruff.
 
+## Independent review status
+
+Independent review of `aa315f5f847f89cb3bb2ebec46d9ccf8fd4aca7b` returned `REQUEST_CHANGES`
+with four HIGH findings and one MEDIUM finding. This follow-up fixes:
+
+- constant-true prohibited assertions by replacing them with machine-readable fixture assertions and
+  concrete state/effect checks;
+- checksum-valid RunSpec, RunStore and InvocationJournal identity drift before provider/mutation;
+- review-stage `prepared`/`launch_intent`/`started`/durable-result recovery semantics;
+- `stop` denial for corrupt, unreadable or identity-invalid journals without writing;
+- credential-minimized provider child environment and duplicate-key state/artifact fail-closed
+  handling.
+
+The review artifact no longer claims an independent PASS. Final verdict is reserved for the next
+independent reviewer.
+
 ## Verification at implementation time
 
-- `python3 -m py_compile experiments/runtime-v2-python/runner.py tests/fixtures/runtime_v2_shared_slice_provider.py tests/test_runtime_v2_rts020_python_slice.py`: PASS
+- `compile()` for `experiments/runtime-v2-python/runner.py`,
+  `tests/fixtures/runtime_v2_shared_slice_provider.py` and
+  `tests/test_runtime_v2_rts020_python_slice.py`: PASS
 - duplicate-key JSON fixture validation with `object_pairs_hook`: PASS, 8 top-level cases
-- direct runner smoke in a temporary Git repository: PASS, normal terminal plus 12 fault rows
+- direct helper smoke in temporary Git repositories: PASS, normal terminal plus 14 fixture rows
 - expanded direct smoke: PASS, status byte-readonly snapshots, exact stop, authorized-prepared
-  recovery, ambiguous no-replay, result/effect recovery, state drift and Git drift
+  recovery, ambiguous no-replay, result/effect recovery, state drift, Git drift, review-stage
+  durable-result recovery, launch argv drift, presence join, duplicate-key state/artifact and
+  sentinel-secret child env checks
 - local pytest/Ruff: intentionally not run on Mac per task boundary
 
 <!-- awf-implementation-report
@@ -93,17 +115,18 @@ baseline.
     ".awf/artifacts/review-report-runtime-v2-rts-020-python-shared-slice.md"
   ],
   "commands": [
-    "python3 -m py_compile experiments/runtime-v2-python/runner.py tests/fixtures/runtime_v2_shared_slice_provider.py tests/test_runtime_v2_rts020_python_slice.py",
+    "compile() for changed Python files",
     "duplicate-key JSON fixture validation with object_pairs_hook",
-    "direct runner smoke in a temporary Git repository",
-    "expanded direct smoke for recovery/no-replay/status-readonly checks"
+    "direct helper smoke in temporary Git repositories",
+    "expanded direct smoke for recovery/no-replay/status-readonly/identity-drift/credential-env checks"
   ],
   "tests": [
     "Static compile PASS",
     "Fixture duplicate-key validation PASS",
-    "Direct normal-path and fault smoke PASS"
+    "Direct normal-path and fault smoke PASS after REQUEST_CHANGES fixes"
   ],
-  "source_revision": "working-tree implementation pending Lore commit",
+  "source_revision": "REQUEST_CHANGES follow-up pending Lore commit",
+  "review_status": "REQUEST_CHANGES addressed locally; final PASS reserved for independent reviewer",
   "synthetic_boundaries": [
     "provider intelligence",
     "delivery observation",

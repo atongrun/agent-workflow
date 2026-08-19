@@ -21,6 +21,8 @@ The experiment exposes a small command protocol through `runner.py`:
 Real local evidence:
 
 - Python child processes use structured argv with no shell.
+- Child processes receive a minimized allowlist environment; ambient sentinel secrets are tested not
+  to reach the scripted provider.
 - JSON state is written atomically with checksums.
 - `RunStore` is the only writer for workflow phase, authorization, handoff
   intent, terminal and local stop facts.

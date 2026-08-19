@@ -30,6 +30,9 @@ def _counter(path: Path, role: str) -> None:
 
 
 def main() -> int:
+    if "RTS020_SENTINEL_SECRET" in os.environ:
+        return 71
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--role", choices=["implement", "review"], required=True)
     parser.add_argument("--workspace", required=True)

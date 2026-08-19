@@ -27,7 +27,8 @@
           "inject": "auth_prepared_only",
           "expected_outcome": "DENY_BEFORE_PROVIDER",
           "legal_next_action": "commit exact RunStore authorization before launch",
-          "prohibited": ["provider start", "treat prepared as launch intent", "guessed authorization"]
+          "prohibited": ["provider start", "treat prepared as launch intent", "guessed authorization"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
         },
         {
           "id": "S-AUTH-START-MISSING-JOURNAL",
@@ -35,7 +36,8 @@
           "inject": "auth_without_journal",
           "expected_outcome": "OWNER_DECISION_REQUIRED",
           "legal_next_action": "preserve the consumed authorization/budget and deny automatic provider replay",
-          "prohibited": ["provider start", "guessed journal repair", "erase authorization"]
+          "prohibited": ["provider start", "guessed journal repair", "erase authorization"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
         },
         {
           "id": "S-AUTH-START-AUTHORIZED-PREPARED",
@@ -43,7 +45,8 @@
           "inject": "auth_authorized_prepared",
           "expected_outcome": "SAFE_CONTINUE",
           "legal_next_action": "invoke once after exact gates and journal revalidation",
-          "prohibited": ["second authorization identity", "provider replay after launch intent"]
+          "prohibited": ["second authorization identity", "provider replay after launch intent"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
         },
         {
           "id": "S-AUTH-START-LAUNCH-NO-RESULT",
@@ -51,7 +54,8 @@
           "inject": "auth_launch_no_result",
           "expected_outcome": "AMBIGUOUS_NO_REPLAY",
           "legal_next_action": "preserve exact process/workspace/evidence for owner decision",
-          "prohibited": ["automatic provider replay", "fall back to prepared recovery", "fresh replacement delivery"]
+          "prohibited": ["automatic provider replay", "fall back to prepared recovery", "fresh replacement delivery"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
         }
       ]
     },
@@ -62,7 +66,8 @@
       "inject": "start_result",
       "expected_outcome": "AMBIGUOUS_NO_REPLAY",
       "legal_next_action": "preserve exact process/workspace/evidence for owner decision",
-      "prohibited": ["automatic provider replay", "fresh replacement delivery", "terminal promotion"]
+      "prohibited": ["automatic provider replay", "fresh replacement delivery", "terminal promotion"],
+      "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
     },
     {
       "id": "S-ARTIFACT",
@@ -71,7 +76,8 @@
       "inject": "artifact",
       "expected_outcome": "HANDLER_FAILURE_NO_ACK",
       "legal_next_action": "record failure/ambiguity and preserve the same delivery evidence",
-      "prohibited": ["trusted import", "handoff intent", "terminal completion"]
+      "prohibited": ["trusted import", "handoff intent", "terminal completion"],
+      "assertions": ["one_implement", "no_review", "no_terminal", "no_trusted_repo"]
     },
     {
       "id": "S-RESULT-VALIDATE",
@@ -80,7 +86,8 @@
       "inject": "result_validate",
       "expected_outcome": "SAFE_CONTINUE",
       "legal_next_action": "skip provider and run frozen postflight against exact durable workspace",
-      "prohibited": ["provider replay", "change TaskCard verification contract", "broaden allowed paths"]
+      "prohibited": ["provider replay", "change TaskCard verification contract", "broaden allowed paths"],
+      "assertions": ["one_implement", "no_review", "no_terminal", "no_trusted_repo"]
     },
     {
       "id": "S-EFFECT-INTENT",
@@ -89,7 +96,8 @@
       "inject": "effect_intent",
       "expected_outcome": "SAFE_CONTINUE",
       "legal_next_action": "revalidate exact effects and persist one local review intent",
-      "prohibited": ["provider replay", "different trusted commit", "remote Git write"]
+      "prohibited": ["provider replay", "different trusted commit", "remote Git write"],
+      "assertions": ["one_implement", "no_review", "no_terminal", "trusted_repo_exists", "trusted_commit_exists"]
     },
     {
       "id": "S-DUPLICATE",
@@ -102,7 +110,8 @@
           "inject": "duplicate_pre_start",
           "expected_outcome": "SAFE_CONTINUE",
           "legal_next_action": "invoke once after exact gates and journal revalidation",
-          "prohibited": ["new authorization identity", "second prepared journal", "terminal guess"]
+          "prohibited": ["new authorization identity", "second prepared journal", "terminal guess"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
         },
         {
           "id": "S-DUPLICATE-TERMINAL",
@@ -110,7 +119,8 @@
           "inject": "duplicate_terminal",
           "expected_outcome": "TERMINAL_IDEMPOTENT",
           "legal_next_action": "status or exact stop only",
-          "prohibited": ["provider replay", "new Git commit", "terminal rewrite"]
+          "prohibited": ["provider replay", "new Git commit", "terminal rewrite"],
+          "assertions": ["one_implement", "one_review", "terminal_completed", "trusted_commit_exists"]
         }
       ]
     },
@@ -118,10 +128,35 @@
       "id": "S-STATE-DRIFT",
       "boundary": "state_identity_drift",
       "fault": "corrupt checksum or stale/mismatched RunSpec/journal identity",
-      "inject": "state_drift",
-      "expected_outcome": "DENY_BEFORE_PROVIDER",
-      "legal_next_action": "preserve files and diagnose exact run identity",
-      "prohibited": ["provider start", "guessed repair", "terminal promotion"]
+      "subcases": [
+        {
+          "id": "S-STATE-DRIFT-CHECKSUM",
+          "fault": "RunSpec payload drifts without recomputing checksum",
+          "inject": "state_drift",
+          "expected_outcome": "DENY_BEFORE_PROVIDER",
+          "legal_next_action": "preserve files and diagnose exact run identity",
+          "prohibited": ["provider start", "guessed repair", "terminal promotion"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
+        },
+        {
+          "id": "S-STATE-DRIFT-RUNSPEC-RECHECKSUM",
+          "fault": "RunSpec payload identity drifts and checksum is recomputed",
+          "inject": "runspec_rechecksum_drift",
+          "expected_outcome": "DENY_BEFORE_PROVIDER",
+          "legal_next_action": "preserve files and diagnose exact run identity",
+          "prohibited": ["provider start", "guessed repair", "terminal promotion"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
+        },
+        {
+          "id": "S-STATE-DRIFT-JOURNAL-RECHECKSUM",
+          "fault": "InvocationJournal identity drifts and checksum is recomputed",
+          "inject": "journal_rechecksum_drift",
+          "expected_outcome": "DENY_BEFORE_PROVIDER",
+          "legal_next_action": "preserve files and diagnose exact run identity",
+          "prohibited": ["provider start", "guessed repair", "terminal promotion"],
+          "assertions": ["no_provider", "no_terminal", "no_trusted_repo"]
+        }
+      ]
     },
     {
       "id": "S-GIT-DRIFT",
@@ -130,7 +165,8 @@
       "inject": "git_drift",
       "expected_outcome": "DENY_BEFORE_MUTATION",
       "legal_next_action": "preserve both facts for owner decision",
-      "prohibited": ["terminal completion", "handoff rewrite", "provider replay"]
+      "prohibited": ["terminal completion", "handoff rewrite", "provider replay"],
+      "assertions": ["one_implement", "one_review", "no_terminal", "trusted_commit_exists", "trusted_head_drifted"]
     }
   ]
 }
