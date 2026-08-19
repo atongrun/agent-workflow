@@ -54,7 +54,7 @@ SQLite compatibility.
 
 ## Measurements
 
-- Experiment production nonblank/noncomment LOC: `runner.py` 964, `storage.py` 672.
+- Experiment production nonblank/noncomment LOC: `runner.py` 954, `storage.py` 670.
 - Focused test nonblank/noncomment LOC: 685.
 - Storage fixture size: 171 lines.
 - Shared fixture rows executed per backend: 14.
@@ -89,7 +89,12 @@ SQLite compatibility.
 - GitHub CI run `32314268437`: initial publication failed before tests because pinned Ruff required
   import spacing and formatter-normalized layouts in the three new Python files
 - code revision `e2f39602c4ede3c550707b9a848ef5d4cbb721db`: applied only the exact mechanical
-  Ruff changes reported by the Ubuntu and Windows jobs; cross-platform rerun pending
+  Ruff changes reported by the Ubuntu and Windows jobs
+- GitHub CI run `32314492329`: PASS on exact publication head `00baa356`; Ubuntu reported 677
+  passed/5 skipped, Windows 671 passed/11 skipped, and all three installed-wheel jobs plus macOS
+  runtime passed; Ruff reported 198 files formatted on both full-suite platforms
+- Binary Feasibility run `32314492349`: PASS on the same exact head across five targets plus
+  aggregate
 
 ## Review status
 

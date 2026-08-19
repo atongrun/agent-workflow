@@ -34,20 +34,22 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   all eight fault families across 14 machine rows, one RunStore writer, one InvocationJournal API,
   independent implementation Review, green ordinary/Binary CI on pre-final-review head `77c7023`,
   and corrupt authorized-journal outcome repair on `457a336`.
+- [x] Complete RTS-021 with one backend-neutral atomic/SQLite comparison: the same 14 shared rows,
+  four named local windows, 11 storage cases, strict observed-fact eligibility, independent Review,
+  and green ordinary/Binary CI on pre-closeout head `00baa356`.
 - [ ] Compare Python simplification, storage and any native candidate on the same no-model slice;
   make language/store/Coordinator/product-boundary decisions only at the later owner gate.
 
-Current last passed TaskCard gate is RTS-020. PR #102 carries the removable Python shared slice;
-pre-final-review head `77c7023` passed ordinary cross-platform CI and all five Binary Feasibility
-targets plus aggregate after a two-line import-block repair. Repair head `457a336` then closed the
-exact-head Review's corrupt authorized-journal outcome finding for both implement and review. The
-slice proved a smaller Python ownership model credible without claiming installed UX, native
-lifecycle, real provider/Bus/ACK, remote provenance, rework or business parity. RTS-021 is next:
-compare SQLite with the smallest credible atomic-file/journal design behind the same removable
-slice boundary. No Store, language, Coordinator, production default, migration, release or
-destructive action is authorized. See the
+Current last passed TaskCard gate is RTS-021. PR #103 compares checksummed atomic-file and stdlib
+SQLite Stores behind one removable shared slice. Both candidates preserve all 14 Candidate rows and
+remove the same four local ordering windows. SQLite meets its evidence minimum but adds migration,
+locking, backup and platform cost without unique Workflow ownership reduction. Pre-closeout head
+`00baa356` passed ordinary CI run `32314492329` and all five Binary Feasibility targets plus
+aggregate in run `32314492349`. RTS-022 is the next entry-satisfied conditional gate because native
+distribution value remains open; no Store, language, Coordinator, production default, migration,
+release or destructive action is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-020 closeout](docs/tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
+[RTS-021 closeout](docs/tasks/runtime-v2-rts-021-storage-comparison-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 
