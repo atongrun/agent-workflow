@@ -152,7 +152,7 @@ pending.
     "Direct normal-path and fault smoke PASS after first and second REQUEST_CHANGES fixes",
     "Final-review focused direct smoke PASS for corrupt authorized bound journals"
   ],
-  "source_revision": "6454f47 plus pending local final-review repair commit",
+  "source_revision": "457a336315a6549f43d28333f42991c84e18422d",
   "review_status": "pending final independent verdict after REQUEST_CHANGES repair",
   "synthetic_boundaries": [
     "provider intelligence",

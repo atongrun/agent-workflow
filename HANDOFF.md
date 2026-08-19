@@ -74,12 +74,14 @@ CI run `32301184219` and Binary Feasibility run `32301184171` passed every job o
 `2868486`. See the
 [RTS-011 acceptance report](docs/tasks/runtime-v2-rts-011-deterministic-rework-acceptance-implementation-report.md).
 
-RTS-020 then completed the removable Python shared slice on executable head `77c7023`: one
+RTS-020 then completed the removable Python shared slice on repair head `457a336`: one
 implement child, one review child, terminal completion, idempotent replay, read-only status, exact
 local stop and all eight fault families across 14 machine rows. One RunStore writer and one
 InvocationJournal API retained separate authorization, launch, result, Artifact, Git effect,
 handoff and terminal facts. Independent implementation Review passed after two bounded repair
-rounds. Ordinary CI run `32308287706` and Binary Feasibility run `32308287696` passed every job.
+rounds. Pre-final-review head `77c7023` passed ordinary CI run `32308287706` and Binary Feasibility
+run `32308287696`. The first exact-head Review found one corrupt authorized-journal outcome mismatch;
+`457a336` fixed both implement and review authorization states without provider start or state repair.
 See the [RTS-020 closeout](docs/tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
 
 RTS-021 is the next eligible gate: compare SQLite and the smallest credible atomic-file/journal

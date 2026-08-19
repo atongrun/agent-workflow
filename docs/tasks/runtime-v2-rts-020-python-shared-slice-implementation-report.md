@@ -6,7 +6,7 @@ Date: 2026-08-20
 
 TaskCard: [`runtime-v2-rts-020-python-shared-slice.md`](runtime-v2-rts-020-python-shared-slice.md)
 
-Executable slice head: `77c7023b98a7c294a95d501f0a0662eb4d9809e1`
+Executable slice repair head: `457a336315a6549f43d28333f42991c84e18422d`
 
 Pull request: [#102](https://github.com/atongrun/agent-workflow/pull/102)
 
@@ -74,11 +74,18 @@ exact authorization-set validation; concrete one-for-one prohibited-effect asser
 duplicate-key and identity handling; and a credential-minimized child environment. No production
 `src/`, `scripts/`, CLI, schema, state format or CI workflow changed.
 
+The first final exact-head Review on `6454f47` then returned one HIGH finding: a corrupt authorized
+bound journal was safe from provider replay but `run` normalized it as `DENY_BEFORE_PROVIDER`
+instead of the frozen `OWNER_DECISION_REQUIRED`. Repair head `457a336` now maps unreadable bound
+journals in both implement and review authorization states to the owner-required action, preserves
+the consumed authorization and corrupt bytes, and starts no provider. Focused regressions cover
+both roles and prove `status` and `run` return the same outcome without a write.
+
 ## CI and publication evidence
 
 The first publication attempt at `b540e28` failed only two Linux Ruff `I001` import-block checks.
 Commit `77c7023` removed the two extra separator lines without changing behavior. On that exact
-executable head:
+pre-final-review head:
 
 - ordinary CI run
   [`32308287706`](https://github.com/atongrun/agent-workflow/actions/runs/32308287706)

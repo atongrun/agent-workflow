@@ -6,10 +6,11 @@ Status: Active gated repository plan after independent double review. Last passe
 authorizes no production migration, default switch or release action by itself.
 
 RTS-020 passed one-command implement/review/terminal execution and all eight shared fault families
-across 14 machine rows with one RunStore writer and one InvocationJournal API. Exact executable
-head `77c7023` passed ordinary cross-platform CI and all five Binary Feasibility targets plus
-aggregate after a two-line import-block repair. The result keeps a smaller Python ownership model
-credible but does not select Python, atomic files, SQLite, a physical Coordinator or migration.
+across 14 machine rows with one RunStore writer and one InvocationJournal API. Pre-final-review head
+`77c7023` passed ordinary cross-platform CI and all five Binary Feasibility targets plus aggregate
+after a two-line import-block repair. Repair head `457a336` then closed the final Review finding for
+corrupt authorized journals. The result keeps a smaller Python ownership model credible but does
+not select Python, atomic files, SQLite, a physical Coordinator or migration.
 
 RTS-011's narrow Python prerequisite is now regression-locked: each authorized rework unlocks one
 additional review-stage slot while every distinct review delivery remains at input `attempt=1`.
@@ -50,7 +51,7 @@ Basis:
 - Current integration base: `main@bc7a7494a7ae9b2b041d5fde2fe5c1280d3f9d78`
 - Candidate reference basis: RTS-011 executable acceptance head
   `2868486263aaf35814719fb9ab085a5787359408` plus RTS-020 executable slice head
-  `77c7023b98a7c294a95d501f0a0662eb4d9809e1`
+  `457a336315a6549f43d28333f42991c84e18422d`
 - [HANDOFF](../../HANDOFF.md)
 - [ROADMAP](../../ROADMAP.md)
 
@@ -340,8 +341,10 @@ Execution result: **PASS**. The removable experiment completed one implement/rev
 path and all eight shared fault families across 14 machine rows. It retained separate authorization,
 launch, result, Artifact, Git effect, handoff and terminal facts with one RunStore writer and one
 InvocationJournal API. Independent implementation Review passed after two bounded repair rounds;
-ordinary CI and the five-target Binary Feasibility matrix passed on executable head `77c7023`. See
-the [`RTS-020 closeout`](../tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
+ordinary CI and the five-target Binary Feasibility matrix passed on pre-final-review head `77c7023`.
+Repair head `457a336` then closed the exact-head Review's corrupt-journal outcome finding; merge still
+requires green publication-head CI/Binary and independent exact-head Review. See the
+[`RTS-020 closeout`](../tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
 
 Exit criteria:
 

@@ -32,17 +32,20 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 - [x] Promote the contract to `Candidate` after both reference acceptances pass.
 - [x] Complete RTS-020 with one removable Python shared slice: one implement/review normal path,
   all eight fault families across 14 machine rows, one RunStore writer, one InvocationJournal API,
-  independent implementation Review and green ordinary/Binary CI on executable head `77c7023`.
+  independent implementation Review, green ordinary/Binary CI on pre-final-review head `77c7023`,
+  and corrupt authorized-journal outcome repair on `457a336`.
 - [ ] Compare Python simplification, storage and any native candidate on the same no-model slice;
   make language/store/Coordinator/product-boundary decisions only at the later owner gate.
 
 Current last passed TaskCard gate is RTS-020. PR #102 carries the removable Python shared slice;
-its executable head `77c7023` passed ordinary cross-platform CI and all five Binary Feasibility
-targets plus aggregate after a two-line import-block repair. The slice proved a smaller Python
-ownership model credible without claiming installed UX, native lifecycle, real provider/Bus/ACK,
-remote provenance, rework or business parity. RTS-021 is next: compare SQLite with the smallest
-credible atomic-file/journal design behind the same removable slice boundary. No Store, language,
-Coordinator, production default, migration, release or destructive action is authorized. See the
+pre-final-review head `77c7023` passed ordinary cross-platform CI and all five Binary Feasibility
+targets plus aggregate after a two-line import-block repair. Repair head `457a336` then closed the
+exact-head Review's corrupt authorized-journal outcome finding for both implement and review. The
+slice proved a smaller Python ownership model credible without claiming installed UX, native
+lifecycle, real provider/Bus/ACK, remote provenance, rework or business parity. RTS-021 is next:
+compare SQLite with the smallest credible atomic-file/journal design behind the same removable
+slice boundary. No Store, language, Coordinator, production default, migration, release or
+destructive action is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
 [RTS-020 closeout](docs/tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
 
