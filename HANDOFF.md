@@ -34,21 +34,37 @@ the aggregate. Exact-head Review and CI then passed on `e6d3081`; the PR merged,
 integration gate are closed.
 
 RTS-001 changed no Runtime code or external state. Its compiled RunContract handler-binding gap was
-confirmed during RTS-010 entry preparation and is now fixed and regression-locked on draft PR #97:
-the first role gate copies the digest only from a successfully recovered current ledger packet.
-Implementation commit `0f0f3b82aedd5ab10524fe03bd1401ca30135510` passed ordinary CI run
-`32275756310`, Binary Feasibility run `32275756344` after one source-independent GitHub API rate-limit
-rerun, and independent implementation Review with zero findings. The evidence-only publication head
-still requires exact-head CI/Review and merge before RTS-010 may pin or invoke it. The second current
-Python gap remains: the gate cannot authorize the second review after rework under its current
-transition/attempt budget. Other documented gaps cover
+confirmed during RTS-010 entry preparation and fixed by PR #97, merged as
+`38dffae1aeb68c8176dd25719a8bc19b16408199`: the first role gate copies the digest only from a
+successfully recovered current ledger packet. Exact-head ordinary CI, Binary Feasibility and
+independent Review passed before merge.
+
+Two separately frozen RTS-010 authorities then failed closed before any provider invocation. The
+first isolated Windows listener hid the normal Git network configuration by overriding host
+application-data roots; upstream fetch exhausted the transport retry budget without a RunLedger
+authorization. A fresh r2 authority corrected that harness boundary and proved the upstream fetch,
+then exposed a cross-platform immutable-identity defect: Windows `awf run` wrote the TaskCard with
+backslashes while the canonical delivery used `/`. Its ledger sequence, authorized events and
+attempts also remained zero. Neither failed delivery was ACKed, requeued, redispatched, recovered,
+hot-patched or counted as acceptance evidence; their branches, isolated Bus stores, ledgers and
+handler evidence remain retained.
+
+Draft PR #98 fixes only the owner identity source with `Path.as_posix()` and adds a Windows-effective
+regression. Implementation commit `92fb180d788174eb4123ba83cfe9396ffc0b1818` passed ordinary CI run
+`32282971933`, Binary Feasibility run `32282971981` across all five native targets plus aggregate,
+and independent Review with zero findings. The evidence publication head still requires exact-head
+CI/Review and merge. RTS-010 must use another wholly fresh authority pinned to that eventual merge;
+the failed authorities are not recovery inputs.
+
+The second current Python gap remains: the gate cannot authorize the second review after rework
+under its current transition/attempt budget. Other documented gaps cover
 authorization-before-checkpoint, compatibility-route recovery, local-effect reconciliation,
 terminal causality, unshipped terminal labels and cross-host adoption.
 
 The active planned gate is RTS-010: one fresh, genuinely useful, bounded downstream business PASS on
-the current reference. Its downstream TaskCard and unconsumed branch identity are prepared, but the
-TaskCard's Runtime source binding must be advanced to PR #97's eventual merge commit before any
-isolated Bus, listener, event or provider is started.
+the current reference. Its next downstream TaskCard, branch, run, delivery, Bus, state-root and
+profile identities must all be newly frozen and must bind PR #98's eventual merge commit before any
+listener, event or provider is started.
 Do not inspect or operate retained events, and do not infer business scope from pending transport
 state. RTS-011 remains a later disposable scripted-provider rework acceptance. No language, store,
 physical Coordinator, migration, default, release or destructive decision has been made.

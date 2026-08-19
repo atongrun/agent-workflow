@@ -748,7 +748,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         ).stdout.strip()
         packet = ops.build_context_packet(
             run_id=run_id,
-            taskcard=str(card.relative_to(repo)),
+            taskcard=card.relative_to(repo).as_posix(),
             frozen_base=base,
             branch=values["branch"],
             authority_manifest=authority,

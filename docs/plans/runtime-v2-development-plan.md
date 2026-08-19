@@ -6,11 +6,20 @@ Status: Active gated repository plan after independent double review. Last passe
 ADR and authorizes no production migration, default switch or release action by itself.
 
 RTS-010 entry preparation confirmed the Draft's compiled RunContract handler-binding gap before any
-isolated event or provider invocation. PR #97 fixes it by preserving the digest only from a recovered
-current ledger packet. Implementation commit `0f0f3b82aedd5ab10524fe03bd1401ca30135510`
-passed ordinary CI `32275756310`, Binary Feasibility `32275756344` after one external rate-limit
-rerun, and independent Review. Exact-head evidence Review/CI and merge remain the publication gate;
-RTS-010 must pin the eventual merge commit before live acceptance resumes.
+isolated event or provider invocation. PR #97 fixed it by preserving the digest only from a recovered
+current ledger packet and merged as `38dffae1aeb68c8176dd25719a8bc19b16408199` after exact-head
+ordinary CI, Binary Feasibility and independent Review passed.
+
+Two later, separately frozen RTS-010 authorities failed closed before provider invocation. The first
+exposed an isolated Windows harness environment that hid normal Git network configuration. The r2
+authority corrected that boundary, reached the trusted upstream fetch, then exposed Windows/POSIX
+TaskCard separator drift between the initial owner ledger packet and canonical delivery. Both failed
+deliveries remain unacknowledged and preserved, with no requeue, redispatch, recovery or hot patch.
+PR #98 canonicalizes only the owner-produced repository-relative identity and regression-locks it.
+Implementation commit `92fb180d788174eb4123ba83cfe9396ffc0b1818` passed ordinary CI
+`32282971933`, Binary Feasibility `32282971981` on all five native targets plus aggregate, and
+independent Review. Final exact-publication-head CI/Review and merge remain the next gate; another
+wholly fresh RTS-010 authority must pin that eventual merge.
 
 Date: 2026-08-19
 
@@ -195,9 +204,10 @@ isolated identities.
 
 Scope: one genuinely useful bounded downstream business task on `main@0ed7812` or later.
 
-Entry update: the downstream business TaskCard and branch identity are prepared and no Bus,
-listener, event or provider has consumed them. Their Agent Workflow source binding must be advanced
-to PR #97's eventual merge commit before dispatch.
+Entry update: two separately frozen attempts failed closed before provider invocation and are
+retained as evidence only. A third authority must use fresh TaskCard, branch, run, delivery, Bus,
+state-root and profile identities and pin PR #98's eventual merge commit before dispatch. It must
+not recover or operate either failed delivery.
 
 Exit criteria:
 
@@ -626,10 +636,11 @@ rewrite, SQLite store, or physical single Coordinator.**
 ### Next decision point
 
 RTS-001 passed and the Draft is complete enough to enter Phase 1 under the later owner execution
-authorization. RTS-010 preparation is frozen at the pre-live boundary while PR #97 completes its
-exact-head evidence Review/CI and merge; the downstream TaskCard must then pin that exact merge before
-any model, queue, listener, event or downstream business mutation. Do not choose a language, store,
-Coordinator deployment, or production migration at this point.
+authorization. PR #97 is merged. RTS-010 is now frozen at the pre-live boundary while PR #98's
+platform-neutral TaskCard identity fix completes exact-head evidence Review/CI and merge. The next
+downstream TaskCard must pin that exact merge and use wholly fresh authority and transport identities
+before any listener, event or provider starts; the two failed deliveries remain untouched. Do not
+choose a language, store, Coordinator deployment, or production migration at this point.
 
 ## 12. Plan Completion Definition
 
