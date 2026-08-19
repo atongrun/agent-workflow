@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -35,9 +34,7 @@ RUN_ID = f"task-{TASK_ID}"
 
 
 def _git(repo: Path, *args: str) -> str:
-    completed = subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
-    )
+    completed = subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
     return completed.stdout.strip()
 
 
@@ -45,6 +42,17 @@ def _commit(repo: Path, message: str) -> str:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", message)
     return _git(repo, "rev-parse", "HEAD")
+
+
+def _clone_at(source: Path, destination: Path, commit: str) -> Path:
+    subprocess.run(
+        ["git", "clone", "--no-hardlinks", str(source), str(destination)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _git(destination, "checkout", "--detach", commit)
+    return destination
 
 
 def _provenance(base_sha: str, head_sha: str) -> dict[str, object]:
@@ -138,9 +146,7 @@ def _advance(
     phase: str,
     **facts: object,
 ) -> dict[str, object]:
-    return awf_role.advance_recovery_checkpoint(
-        evidence, path, checkpoint, phase, **facts
-    )
+    return awf_role.advance_recovery_checkpoint(evidence, path, checkpoint, phase, **facts)
 
 
 def _provider_checkpoint(
@@ -245,9 +251,7 @@ def _handoff(
     payload_base: dict[str, object],
     provenance: dict[str, object],
 ) -> tuple[dict[str, object], dict[str, object]]:
-    payload = awf_role.build_delivery_payload(
-        evidence.role, event_type, payload_base, evidence
-    )
+    payload = awf_role.build_delivery_payload(evidence.role, event_type, payload_base, evidence)
     outbox = awf_role.prepare_outbox(
         evidence,
         input_context,
@@ -474,7 +478,9 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
         review1_path,
         review1_checkpoint,
         report=review1_report,
-        trusted_repo=repo,
+        trusted_repo=_clone_at(
+            repo, tmp_path / "review1-trusted-repo", implementation_commit
+        ),
         provenance=implementation_provenance,
     )
     rework_payload, review1_checkpoint = _handoff(
@@ -485,7 +491,7 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
         input_context=review1_input,
         checkpoint_path=review1_path,
         checkpoint=review1_checkpoint,
-        action="reviewer.rework",
+        action="reviewer.request_changes",
         source_commit=implementation_commit,
         evidence_commit=implementation_commit,
         to_role="coder",
@@ -513,6 +519,14 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
         rework=True,
         current_stage_evidence_commit=implementation_commit,
     ).allowed
+    rework_evidence = awf_role.RunEvidence(103, "coder", state_root=state_root)
+    unopened_rework_state = [
+        awf_role.delivery_state_path(
+            rework_evidence, kind, str(rework_input["delivery_id"])
+        )
+        for kind in ("checkpoint", "outbox", "inbox")
+    ]
+    assert not any(path.exists() for path in unopened_rework_state)
     before_duplicate = json.loads(counter_path.read_text(encoding="utf-8"))
     duplicate = ledger.pre_invocation_gate(
         event_id=103,
@@ -527,11 +541,9 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
     )
     assert not duplicate.allowed and duplicate.reason == "duplicate_event"
     assert json.loads(counter_path.read_text(encoding="utf-8")) == before_duplicate
+    assert not any(path.exists() for path in unopened_rework_state)
 
-    rework_evidence = awf_role.RunEvidence(103, "coder", state_root=state_root)
-    rework_args = argparse.Namespace(
-        branch=BRANCH, commit=implementation_commit, run_id=RUN_ID
-    )
+    rework_args = argparse.Namespace(branch=BRANCH, commit=implementation_commit, run_id=RUN_ID)
     lineage = awf_role.resolve_fresh_rework_workspace_lineage(
         rework_evidence, rework_args, implementation_provenance
     )
@@ -670,7 +682,7 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
         current_stage_evidence_commit=rework_commit,
     ).allowed
     illegal_attempt = ledger.pre_invocation_gate(
-        event_id=105,
+        event_id=199,
         event_type="task:awf-review-v3",
         role="reviewer",
         delivery_id="awf:" + "e" * 64,
@@ -705,7 +717,7 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
         review2_path,
         review2_checkpoint,
         report=review2_report,
-        trusted_repo=repo,
+        trusted_repo=_clone_at(repo, tmp_path / "review2-trusted-repo", rework_commit),
         provenance=rework_provenance,
     )
     terminal_payload, review2_checkpoint = _handoff(

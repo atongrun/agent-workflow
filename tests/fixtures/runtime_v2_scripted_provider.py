@@ -35,10 +35,12 @@ def _review_report(verdict: str) -> str:
     if verdict == "REQUEST_CHANGES":
         failures = [
             {
-                "path": "runtime-v2-rts011.txt",
-                "line": 1,
-                "severity": "medium",
-                "message": "scripted deterministic rework request",
+                "evidence": {
+                    "kind": "file_line",
+                    "file": "runtime-v2-rts011.txt",
+                    "line": 1,
+                },
+                "required_correction": "apply the scripted deterministic rework",
             }
         ]
         blocked_reason = ""
@@ -88,8 +90,7 @@ def main() -> int:
             "implemented\nreworked\n", encoding="utf-8"
         )
         artifact.write_text(
-            "# ImplementationReport\n\n"
-            "Scripted provider applied the deterministic rework.\n",
+            "# ImplementationReport\n\nScripted provider applied the deterministic rework.\n",
             encoding="utf-8",
         )
     elif args.action == "review-request-changes":
