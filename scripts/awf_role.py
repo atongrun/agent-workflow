@@ -523,9 +523,11 @@ def pre_invocation_gate(
     state_root = evidence.state_dir if evidence is not None else direct_entry_state_root()
     ledger = RunLedger(state_root, run_id)
     frozen_base = a.commit
+    run_contract_sha256 = ""
     if ledger.ledger_path.exists():
         _, current_packet = ledger.recover()
         frozen_base = str(current_packet["frozen_base"])
+        run_contract_sha256 = str(current_packet.get("run_contract_sha256", ""))
     authority_path = Path(
         os.environ.get(
             "AWF_AUTHORITY_MANIFEST",
@@ -556,6 +558,7 @@ def pre_invocation_gate(
         stage=stage,
         current_stage_evidence_commit=a.commit,
         state_root_sha256=state_root_binding(state_root),
+        run_contract_sha256=run_contract_sha256,
     )
     try:
         ledger.initialize(

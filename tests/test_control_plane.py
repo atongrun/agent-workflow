@@ -226,6 +226,60 @@ def test_coder_commit_can_advance_same_run_to_reviewer_before_model(monkeypatch,
     assert packet["current_stage_evidence_commit"] == executor_commit
 
 
+def test_existing_compiled_run_contract_binding_survives_first_role_gate(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
+    state_root = tmp_path / "state"
+    run_id = "task-task-1"
+    contract_sha256 = "sha256:" + "b" * 64
+    authority_path = Path(awf_control_plane.__file__).with_name("authority-manifest.example.json")
+    authority = awf_control_plane.authority_manifest_binding(
+        awf_control_plane.load_authority_manifest(authority_path)
+    )
+    packet = build_context_packet(
+        run_id=run_id,
+        taskcard="docs/task.md",
+        frozen_base="a" * 40,
+        branch="feature/task-1",
+        phase="execute",
+        transition="task:awf-impl-v2",
+        evidence=["docs/implementation.md"],
+        prohibited_actions=["ACK/requeue historical events"],
+        authority_manifest=authority,
+        next_action="run coder preflight",
+        stage="implement",
+        run_contract_sha256=contract_sha256,
+    )
+    RunLedger(state_root, run_id).initialize(
+        packet, stage="implement", max_attempts=1, rework_budget=0
+    )
+    args = Namespace(
+        branch="feature/task-1",
+        card="docs/task.md",
+        commit="a" * 40,
+        report="docs/implementation.md",
+        pull_request="",
+        phase="execute",
+        route_override="",
+        attempt=1,
+        max_attempts=1,
+        rework_budget=0,
+        terminal_state="",
+        input_type="task:awf-impl-v2",
+        delivery_id="coder-delivery",
+        payload_sha256="sha256:coder",
+    )
+
+    decision = awf_role.pre_invocation_gate(
+        args, "coder", awf_role.RunEvidence(101, "coder", state_root=state_root)
+    )
+
+    assert decision is not None and decision.allowed
+    _, recovered_packet = RunLedger(state_root, run_id).recover()
+    assert recovered_packet["run_contract_sha256"] == contract_sha256
+
+
 def test_v3_initial_pr_zero_is_persisted_before_model(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
     args = Namespace(
