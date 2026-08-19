@@ -20,28 +20,26 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 - [x] Integrate PR #96 after final exact-head review/CI. Three bounded macOS arm64 attempts failed at
   the same external GitHub API 403; a later fresh run cleared the block and passed the full matrix.
 - [x] Merge the reviewed/green compiled-handler binding remediation in PR #97 as `38dffae1`.
-- [ ] Merge PR #98's platform-neutral TaskCard identity fix after final exact-head CI/Review, then
-  pin another wholly fresh RTS-010 authority to that exact merge.
-- [ ] Complete RTS-010 with one fresh post-remediation bounded downstream business PASS.
+- [x] Merge PR #98's platform-neutral TaskCard identity fix after final exact-head CI/Review as
+  `d92594d`, with all five Binary Feasibility targets plus aggregate green.
+- [x] Complete RTS-010 with one fresh post-remediation bounded downstream business PASS: exactly one
+  coder and reviewer invocation, terminal PASS, five ACKed isolated events, green CI and merge.
 - [ ] Complete RTS-011 with the disposable deterministic
   `implement -> review -> rework -> review -> terminal` acceptance.
 - [ ] Promote the contract to `Candidate` only after both reference acceptances pass.
 - [ ] Compare Python simplification, storage and any native candidate on the same no-model slice;
   make language/store/Coordinator/product-boundary decisions only at the later owner gate.
 
-Current last passed TaskCard gate is RTS-001; PR #96 merged as
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-010 remains the active gate. PR #97's
-compiled-contract handler-binding correction is merged as `38dffae1`. The first fresh business
-authority then failed at an isolated Windows Git-network harness boundary; a separately frozen r2
-authority corrected that boundary and exposed Windows/POSIX TaskCard identity drift before ledger
-authorization or provider start. Both authorities and their unacknowledged deliveries remain
-preserved and are not recovery or acceptance inputs. PR #98's one-line owner-source canonicalization
-and regression passed implementation-head ordinary CI, all five Binary Feasibility targets plus
-aggregate, and independent Review; exact-publication-head verification and merge remain. The
-currently unreachable second review after rework remains open. No production state, live
-release/default, migration or destructive action was authorized by either remediation. See the
+Current last passed TaskCard gate is RTS-010. PR #98 merged the owner-source canonicalization as
+`d92594d` after exact-head review/CI. A wholly fresh Dousansi authority then completed exactly one
+coder invocation and one Pi reviewer invocation, terminal PASS, five handler-success ACKs, queue
+return to `0/0/0`, exact-head CI and PR #40 merge `dfa7237`. The two earlier failed authorities and
+their unacknowledged deliveries remain preserved and are not recovery or acceptance inputs. The
+currently unreachable second review after rework remains open and must be corrected under a narrow
+TaskCard before RTS-011. No production state, live release/default, migration or destructive action
+was authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-001 report](docs/tasks/runtime-v2-semantic-contract-draft-implementation-report.md).
+[RTS-010 acceptance report](docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 
