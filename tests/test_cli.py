@@ -604,7 +604,8 @@ class TestCLIInspect:
 
 
 def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_path: Path, capsys):
-    card = tmp_path / "card.md"
+    card = tmp_path / "docs" / "tasks" / "card.md"
+    card.parent.mkdir(parents=True)
     card.write_text(
         "## Task ID\n\nDOGFOOD-001\n\n- **Task branch**: `card-branch`\n",
         encoding="utf-8",
@@ -659,7 +660,7 @@ def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_pat
     )
     args = Namespace(
         repo=str(tmp_path),
-        card="card.md",
+        card="docs/tasks/card.md",
         manifest="",
         run_manifest=str(manifest),
         run_contract=str(tmp_path / "run-contract.json"),
@@ -674,6 +675,7 @@ def test_run_uses_owner_manifest_values_and_listener_run_id(monkeypatch, tmp_pat
     assert cli.cmd_run(args) == 0
     assert captured["run_id"] == "task-owner-branch"
     assert captured["packet"]["branch"] == "owner-branch"
+    assert captured["packet"]["taskcard"] == "docs/tasks/card.md"
     assert captured["packet"]["run_contract_sha256"] == "sha256:" + "b" * 64
     assert captured["kwargs"]["rework_budget"] == 4
     assert "run=task-owner-branch" in capsys.readouterr().out
