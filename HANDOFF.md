@@ -64,15 +64,19 @@ retains CI/merge as unrecorded while external GitHub/Git facts prove them; no te
 performed. See the
 [RTS-010 acceptance report](docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md).
 
-The second current Python gap remains: the gate cannot authorize the second review after rework
-under its current transition/attempt budget. Other documented gaps cover
-authorization-before-checkpoint, compatibility-route recovery, local-effect reconciliation,
-terminal causality, unshipped terminal labels and cross-host adoption.
+PR #100 corrects the former second-review transition/attempt-capacity gap. The remaining RTS-011
+work is the full disposable scripted-provider/restart/ACK/terminal acceptance. Other documented
+gaps still cover authorization-before-checkpoint, compatibility-route recovery, local-effect
+reconciliation, terminal causality, unshipped terminal labels and cross-host adoption.
 
 The active planned gate is RTS-011. Before its disposable scripted-provider acceptance can run, a
-narrow TaskCard must regression-lock and correct the currently unreachable second review after
-rework and its attempt budget. Do not inspect or operate retained events, and do not infer business
-scope from pending transport state. No language, store,
+narrow TaskCard had to regression-lock and correct the unreachable second review after rework and
+its attempt budget. PR #100 completed that prerequisite: an authorized rework now unlocks exactly
+one follow-up review-stage slot, while each review delivery remains at `attempt=1`; independent
+Review, ordinary cross-platform CI and the five-target Binary matrix passed. The full RTS-011 gate
+is still open: next run the separate disposable scripted-provider/restart/ACK/terminal acceptance.
+Do not inspect or operate retained events, and do not infer business scope from pending transport
+state. No language, store,
 physical Coordinator, migration, default, release or destructive decision has been made.
 
 ## Current Handoff State: 2026-08-17
