@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 TASK_ID = "runtime-v2-rts-020-python-shared-slice"
 BRANCH = f"codex/{TASK_ID}"
 ALLOWED_DELTA = ["result.txt"]
