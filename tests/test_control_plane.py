@@ -304,10 +304,11 @@ def test_authorized_rework_unlocks_exactly_one_followup_review(tmp_path: Path):
     assert recovered["attempts"] == 4
     assert recovered["reworks"] == 1
     assert recovered["stage_attempts"] == {"implement": 1, "review": 2, "rework": 1}
-    assert [item["attempt"] for item in recovered["events"] if item["stage"] == "review"] == [
-        1,
-        1,
-    ]
+    assert [
+        item["attempt"]
+        for item in recovered["events"]
+        if item.get("status") == "authorized" and item.get("stage") == "review"
+    ] == [1, 1]
     assert [item["to"] for item in recovered["transitions"]] == [
         "implement",
         "review",
@@ -342,7 +343,11 @@ def test_review_from_unbacked_rework_stage_fails_closed(tmp_path: Path):
     recovered, _ = ledger.recover()
     assert recovered["attempts"] == 0
     assert recovered["reworks"] == 0
-    assert recovered["events"] == []
+    assert recovered["stage_attempts"] == {}
+    assert [
+        (item["status"], item["reason"], item["delivery_id"])
+        for item in recovered["events"]
+    ] == [("rejected", "stage_mismatch", "review-without-rework")]
 
 
 def test_role_gate_keeps_each_review_delivery_at_attempt_one(monkeypatch, tmp_path: Path):
