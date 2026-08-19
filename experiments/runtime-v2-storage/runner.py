@@ -43,8 +43,10 @@ GATE_FACT_KEYS = {
     "current_backup_restore",
     "stale_backup_denied",
     "foreign_backup_denied",
+    "restore_active_writer",
     "sqlite_migration",
     "derived_state_safety",
+    "exact_stop",
     "status_byte_readonly",
     "external_boundaries_preserved",
 }

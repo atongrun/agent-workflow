@@ -713,6 +713,13 @@ def test_gate_evaluation_uses_observed_evidence_and_fails_closed(tmp_path: Path)
 
     _call_with_fresh_tmp(
         tmp_path,
+        "restore-active-writer",
+        test_restore_denies_active_writer_without_writing,
+    )
+    facts["restore_active_writer"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
         "migration",
         test_sqlite_migration_is_offline_repeated_and_newer_schema_denied,
     )
@@ -724,6 +731,13 @@ def test_gate_evaluation_uses_observed_evidence_and_fails_closed(tmp_path: Path)
         test_derived_state_cannot_authorize_or_replace_authority,
     )
     facts["derived_state_safety"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "exact-stop",
+        test_exact_stop_denies_active_invocation_and_active_writer,
+    )
+    facts["exact_stop"] = True
 
     evidence = tmp_path / "gate-evidence.json"
     evidence.write_text(
@@ -737,7 +751,7 @@ def test_gate_evaluation_uses_observed_evidence_and_fails_closed(tmp_path: Path)
     assert evaluated["non_boolean_keys"] == []
     assert evaluated["false_facts"] == []
 
-    facts["foreign_backup_denied"] = False
+    facts["restore_active_writer"] = False
     false_evidence = tmp_path / "gate-evidence-false.json"
     false_evidence.write_text(
         json.dumps({"task_id": TASK_ID, "facts": facts}, indent=2, sort_keys=True) + "\n",
@@ -745,7 +759,7 @@ def test_gate_evaluation_uses_observed_evidence_and_fails_closed(tmp_path: Path)
     )
     false_result = _evaluate_gate(false_evidence)
     assert false_result["result"] == "RETAIN_ATOMIC_FILE_BASELINE"
-    assert false_result["false_facts"] == ["foreign_backup_denied"]
+    assert false_result["false_facts"] == ["restore_active_writer"]
 
 
 def _gate_fact_keys() -> set[str]:
@@ -758,8 +772,10 @@ def _gate_fact_keys() -> set[str]:
         "current_backup_restore",
         "stale_backup_denied",
         "foreign_backup_denied",
+        "restore_active_writer",
         "sqlite_migration",
         "derived_state_safety",
+        "exact_stop",
         "status_byte_readonly",
         "external_boundaries_preserved",
     }
