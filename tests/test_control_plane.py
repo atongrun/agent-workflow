@@ -226,6 +226,174 @@ def test_coder_commit_can_advance_same_run_to_reviewer_before_model(monkeypatch,
     assert packet["current_stage_evidence_commit"] == executor_commit
 
 
+def test_authorized_rework_unlocks_exactly_one_followup_review(tmp_path: Path):
+    ledger = make_ledger(tmp_path, budget=1)
+
+    def authorize(
+        event_id: int,
+        event_type: str,
+        role: str,
+        delivery_id: str,
+        stage: str,
+        *,
+        attempt: int = 1,
+        rework: bool = False,
+    ):
+        return ledger.pre_invocation_gate(
+            event_id=event_id,
+            event_type=event_type,
+            role=role,
+            delivery_id=delivery_id,
+            payload_sha256=f"sha256:{delivery_id}",
+            stage=stage,
+            attempt=attempt,
+            rework=rework,
+        )
+
+    assert authorize(1, "task:awf-impl-v2", "coder", "implement-1", "implement").allowed
+    assert authorize(2, "task:awf-review-v2", "reviewer", "review-1", "review").allowed
+    assert authorize(
+        3,
+        "task:awf-rework-v2",
+        "coder",
+        "rework-1",
+        "rework",
+        rework=True,
+    ).allowed
+
+    invalid_attempt = authorize(
+        4,
+        "task:awf-review-v2",
+        "reviewer",
+        "review-attempt-2",
+        "review",
+        attempt=2,
+    )
+    assert not invalid_attempt.allowed and invalid_attempt.reason == "attempt_budget_exceeded"
+
+    second_review = authorize(
+        5,
+        "task:awf-review-v2",
+        "reviewer",
+        "review-2",
+        "review",
+    )
+    assert second_review.allowed
+
+    replay = authorize(5, "task:awf-review-v2", "reviewer", "review-2", "review")
+    assert not replay.allowed and replay.reason == "duplicate_event"
+    third_review = authorize(
+        6,
+        "task:awf-review-v2",
+        "reviewer",
+        "review-3",
+        "review",
+    )
+    assert not third_review.allowed and third_review.reason == "attempt_budget_exceeded"
+    second_rework = authorize(
+        7,
+        "task:awf-rework-v2",
+        "coder",
+        "rework-2",
+        "rework",
+        rework=True,
+    )
+    assert not second_rework.allowed and second_rework.reason == "attempt_budget_exceeded"
+
+    recovered, _ = ledger.recover()
+    assert recovered["attempts"] == 4
+    assert recovered["reworks"] == 1
+    assert recovered["stage_attempts"] == {"implement": 1, "review": 2, "rework": 1}
+    assert [
+        item["attempt"]
+        for item in recovered["events"]
+        if item.get("status") == "authorized" and item.get("stage") == "review"
+    ] == [1, 1]
+    assert [item["to"] for item in recovered["transitions"]] == [
+        "implement",
+        "review",
+        "rework",
+        "review",
+    ]
+
+
+def test_review_from_unbacked_rework_stage_fails_closed(tmp_path: Path):
+    ledger = RunLedger(tmp_path, "run-unbacked-rework")
+    packet = build_context_packet(
+        run_id="run-unbacked-rework",
+        taskcard="docs/task.md",
+        frozen_base="a" * 40,
+        branch="awf/task-1",
+        authority_manifest=AUTHORITY_BINDING,
+        next_action="review",
+        stage="rework",
+    )
+    ledger.initialize(packet, stage="rework", max_attempts=1, rework_budget=1)
+
+    decision = ledger.pre_invocation_gate(
+        event_id=1,
+        event_type="task:awf-review-v2",
+        role="reviewer",
+        delivery_id="review-without-rework",
+        payload_sha256="sha256:review-without-rework",
+        stage="review",
+    )
+
+    assert not decision.allowed and decision.reason == "stage_mismatch"
+    recovered, _ = ledger.recover()
+    assert recovered["attempts"] == 0
+    assert recovered["reworks"] == 0
+    assert recovered.get("stage_attempts", {}) == {}
+    assert [
+        (item["status"], item["reason"], item["delivery_id"]) for item in recovered["events"]
+    ] == [("rejected", "stage_mismatch", "review-without-rework")]
+
+
+def test_role_gate_keeps_each_review_delivery_at_attempt_one(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("AWF_CONTROL_PLANE", "1")
+    state_root = tmp_path / "state"
+    common = {
+        "branch": "feature/task-1",
+        "card": "docs/task.md",
+        "report": "docs/implementation.md",
+        "pull_request": "",
+        "phase": "execute",
+        "route_override": "",
+        "attempt": 1,
+        "max_attempts": 1,
+        "rework_budget": 1,
+        "terminal_state": "",
+        "run_id": "task-task-1",
+    }
+
+    def gate(
+        event_id: int,
+        event_type: str,
+        role: str,
+        delivery_id: str,
+        commit: str,
+    ):
+        args = Namespace(
+            **common,
+            commit=commit,
+            input_type=event_type,
+            delivery_id=delivery_id,
+            payload_sha256=f"sha256:{delivery_id}",
+        )
+        evidence = awf_role.RunEvidence(event_id, role, state_root=state_root)
+        return awf_role.pre_invocation_gate(args, role, evidence)
+
+    assert gate(1, "task:awf-impl-v2", "coder", "implement", "a" * 40).allowed
+    assert gate(2, "task:awf-review-v2", "reviewer", "review-1", "b" * 40).allowed
+    assert gate(3, "task:awf-rework-v2", "coder", "rework", "b" * 40).allowed
+    assert gate(4, "task:awf-review-v2", "reviewer", "review-2", "c" * 40).allowed
+
+    recovered, _ = RunLedger(state_root, "task-task-1").recover()
+    reviews = [event for event in recovered["events"] if event["stage"] == "review"]
+    assert [event["delivery_id"] for event in reviews] == ["review-1", "review-2"]
+    assert [event["attempt"] for event in reviews] == [1, 1]
+
+
 def test_existing_compiled_run_contract_binding_survives_first_role_gate(
     monkeypatch, tmp_path: Path
 ):

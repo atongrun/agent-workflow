@@ -5,6 +5,12 @@ Status: Active gated repository plan after independent double review. Last passe
 active gate. This plan is not an
 ADR and authorizes no production migration, default switch or release action by itself.
 
+RTS-011's narrow Python prerequisite is now regression-locked: each authorized rework unlocks one
+additional review-stage slot while every distinct review delivery remains at input `attempt=1`.
+PR #100 passed independent implementation Review, ordinary cross-platform CI and all five Binary
+Feasibility targets plus aggregate. This does **not** complete RTS-011; the fresh disposable
+scripted-provider/restart/ACK/terminal acceptance remains the next TaskCard.
+
 RTS-010 entry preparation confirmed the Draft's compiled RunContract handler-binding gap before any
 isolated event or provider invocation. PR #97 fixed it by preserving the digest only from a recovered
 current ledger packet and merged as `38dffae1aeb68c8176dd25719a8bc19b16408199` after exact-head
@@ -650,11 +656,10 @@ rewrite, SQLite store, or physical single Coordinator.**
 ### Next decision point
 
 RTS-001 and RTS-010 passed. The Draft remains at Phase 1 because RTS-011 still requires a complete
-deterministic two-review/rework acceptance. The current Python gate cannot authorize
-`rework -> review` and its default review-attempt budget permits only one review; the next legal
-implementation is a narrow regression-locked correction under its own TaskCard, followed by the
-disposable scripted-provider RTS-011 run. Do not choose a language, store, Coordinator deployment,
-or production migration at this point.
+deterministic two-review/rework acceptance. PR #100 regression-locked and corrected the former
+`rework -> review` transition and review-stage capacity hole without raising the per-delivery
+attempt limit. The next legal implementation is the disposable scripted-provider RTS-011 run. Do
+not choose a language, store, Coordinator deployment, or production migration at this point.
 
 ## 12. Plan Completion Definition
 

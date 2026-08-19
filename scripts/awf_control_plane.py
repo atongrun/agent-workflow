@@ -583,7 +583,11 @@ class RunLedger:
                 "review",
                 "rework",
             }
-            review_transition = stage == "review" and current_stage == "implement"
+            authorized_reworks = int(ledger.get("reworks", 0))
+            review_transition = stage == "review" and (
+                current_stage == "implement"
+                or (current_stage == "rework" and authorized_reworks > 0)
+            )
             if stage and current_stage != stage and not rework_transition and not review_transition:
                 return self._deny(
                     "stage_mismatch",
@@ -609,7 +613,10 @@ class RunLedger:
                     payload_sha256,
                     ledger=ledger,
                 )
-            if int(stage_attempts.get(stage, 0)) >= max_attempts:
+            stage_attempt_limit = (
+                max_attempts + authorized_reworks if stage == "review" else max_attempts
+            )
+            if int(stage_attempts.get(stage, 0)) >= stage_attempt_limit:
                 return self._deny(
                     "attempt_budget_exceeded",
                     event_id,

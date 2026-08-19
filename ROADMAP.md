@@ -24,6 +24,9 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   `d92594d`, with all five Binary Feasibility targets plus aggregate green.
 - [x] Complete RTS-010 with one fresh post-remediation bounded downstream business PASS: exactly one
   coder and reviewer invocation, terminal PASS, five ACKed isolated events, green CI and merge.
+- [x] Correct the RTS-011 Python prerequisite so one authorized rework unlocks exactly one
+  follow-up review while distinct review deliveries retain input `attempt=1`; PR #100 passed
+  independent Review, ordinary cross-platform CI and all five Binary Feasibility targets.
 - [ ] Complete RTS-011 with the disposable deterministic
   `implement -> review -> rework -> review -> terminal` acceptance.
 - [ ] Promote the contract to `Candidate` only after both reference acceptances pass.
@@ -35,9 +38,9 @@ Current last passed TaskCard gate is RTS-010. PR #98 merged the owner-source can
 coder invocation and one Pi reviewer invocation, terminal PASS, five handler-success ACKs, queue
 return to `0/0/0`, exact-head CI and PR #40 merge `dfa7237`. The two earlier failed authorities and
 their unacknowledged deliveries remain preserved and are not recovery or acceptance inputs. The
-currently unreachable second review after rework remains open and must be corrected under a narrow
-TaskCard before RTS-011. No production state, live release/default, migration or destructive action
-was authorized. See the
+former second-review authorization hole is corrected under its narrow TaskCard; the disposable
+scripted-provider RTS-011 acceptance remains open. No production state, live release/default,
+migration or destructive action was authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
 [RTS-010 acceptance report](docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md).
 
