@@ -5,7 +5,7 @@ Verdict: BLOCKED
 ## Scope
 
 This placeholder records that the implementation artifact is ready for independent re-review after
-repair commit `803e1d9a01bf09bdaa164967aada06743581080a`. It is not an approval and does not claim
+repair commit `7c7896f0d778b1628c87fb284f2739366494d282`. It is not an approval and does not claim
 that the exact implementation head has passed review.
 
 ## Blocker

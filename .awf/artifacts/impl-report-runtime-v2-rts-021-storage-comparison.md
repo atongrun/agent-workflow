@@ -44,8 +44,8 @@ The focused tests derive this result from observed gate evidence JSON passed to
 `RETAIN_ATOMIC_FILE_BASELINE` if any key is missing, extra, non-boolean, or false. Observed facts
 cover shared equivalence, at least two SQLite-eliminated windows, lock contention, restart,
 corruption, current/stale/foreign backup restore, migration, derived state safety, status
-read-only behavior, and external boundary preservation. This is eligibility evidence for a later
-ADR only; it is not a production Store selection.
+read-only behavior, exact stop, active-writer restore denial, and external boundary preservation.
+This is eligibility evidence for a later ADR only; it is not a production Store selection.
 
 Atomic removes the same four local file-order windows in this experiment by joining logical facts
 inside one locked authority envelope. SQLite buys no unique Workflow ownership reduction here; its
@@ -54,8 +54,8 @@ SQLite compatibility.
 
 ## Measurements
 
-- Experiment production nonblank/noncomment LOC: `runner.py` 962, `storage.py` 672.
-- Focused test nonblank/noncomment LOC: 671.
+- Experiment production nonblank/noncomment LOC: `runner.py` 964, `storage.py` 672.
+- Focused test nonblank/noncomment LOC: 685.
 - Storage fixture size: 171 lines.
 - Shared fixture rows executed per backend: 14.
 - Storage-specific fixture cases: 11.
@@ -81,7 +81,9 @@ SQLite compatibility.
 - direct active-writer restore regression: PASS, offline restore denied for both backends while a
   writer is active with victim authority bytes unchanged
 - direct gate false-negative smoke: PASS, `runner.py evaluate` returns
-  `RETAIN_ATOMIC_FILE_BASELINE` when `foreign_backup_denied` is false
+  `RETAIN_ATOMIC_FILE_BASELINE` when `restore_active_writer` is false
+- direct gate fail-closed smoke: PASS, missing `exact_stop`, extra key, and non-boolean
+  `restore_active_writer` all return `RETAIN_ATOMIC_FILE_BASELINE`
 - manual line-length scan for changed Python files: PASS, zero lines over 100 columns
 - local pytest/Ruff: intentionally not run on Mac per task boundary
 
@@ -92,7 +94,11 @@ Independent review of `70f222f21fa6b50ef811caf8c45f1bd7c03770bc` returned
 and one artifact placeholder finding. Code/test repair commit
 `803e1d9a01bf09bdaa164967aada06743581080a` fixes the HIGH and gate findings. The companion
 ReviewReport remains intentionally marked `BLOCKED` with `PENDING_INDEPENDENT_REVIEW` rather than
-claiming PASS before re-review.
+claiming PASS before re-review. Second-round independent review of
+`ac8dcc898a98d26408cbc70aeba704389ba8e08f` returned one HIGH finding: exact-stop and
+active-writer restore were tested but absent from the required gate facts. Code/test repair commit
+`7c7896f0d778b1628c87fb284f2739366494d282` makes both required observed facts and keeps gate
+evaluation fail-closed.
 
 <!-- awf-implementation-report
 {
@@ -115,6 +121,7 @@ claiming PASS before re-review.
     "direct foreign backup equal/newer regression",
     "direct active-writer restore regression",
     "direct gate false-negative smoke",
+    "direct gate missing/extra/non-boolean fail-closed smoke",
     "manual Python line-length scan"
   ],
   "tests": [
@@ -125,9 +132,11 @@ claiming PASS before re-review.
     "Storage-specific direct helper smoke PASS",
     "Foreign backup restore denial PASS",
     "Active-writer restore denial PASS",
-    "Observed gate evaluation PASS"
+    "Observed gate evaluation PASS",
+    "Exact stop gate fact PASS",
+    "Active-writer restore gate fact PASS"
   ],
-  "source_revision": "803e1d9a01bf09bdaa164967aada06743581080a",
+  "source_revision": "7c7896f0d778b1628c87fb284f2739366494d282",
   "review_status": "PENDING_INDEPENDENT_REVIEW",
   "comparison_result": "SQLITE_MEETS_MINIMUM_GATE",
   "synthetic_boundaries": [
