@@ -86,6 +86,10 @@ SQLite compatibility.
   `restore_active_writer` all return `RETAIN_ATOMIC_FILE_BASELINE`
 - manual line-length scan for changed Python files: PASS, zero lines over 100 columns
 - local pytest/Ruff: intentionally not run on Mac per task boundary
+- GitHub CI run `32314268437`: initial publication failed before tests because pinned Ruff required
+  import spacing and formatter-normalized layouts in the three new Python files
+- code revision `e2f39602c4ede3c550707b9a848ef5d4cbb721db`: applied only the exact mechanical
+  Ruff changes reported by the Ubuntu and Windows jobs; cross-platform rerun pending
 
 ## Review status
 
@@ -138,7 +142,7 @@ confirmed the seven-path frozen scope and exact source revision.
     "Exact stop gate fact PASS",
     "Active-writer restore gate fact PASS"
   ],
-  "source_revision": "7c7896f0d778b1628c87fb284f2739366494d282",
+  "source_revision": "e2f39602c4ede3c550707b9a848ef5d4cbb721db",
   "review_status": "PASS",
   "comparison_result": "SQLITE_MEETS_MINIMUM_GATE",
   "synthetic_boundaries": [
