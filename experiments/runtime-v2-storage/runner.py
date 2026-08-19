@@ -26,7 +26,6 @@ from storage import (
     new_authority,
 )
 
-
 TASK_ID = "runtime-v2-rts-021-storage-comparison"
 BRANCH = f"codex/{TASK_ID}"
 ALLOWED_DELTA = ["result.txt"]
@@ -574,9 +573,7 @@ def _inject_fault(store: Any, fault: str) -> None:
 
         store.mutate(update)
     elif fault == "auth_without_journal":
-        store.mutate(
-            lambda current: _set_auth_phase(current, "implement_authorized", "implement")
-        )
+        store.mutate(lambda current: _set_auth_phase(current, "implement_authorized", "implement"))
     elif fault in {"auth_authorized_prepared", "duplicate_pre_start"}:
         _prepare_implement(store, state)
     elif fault == "auth_launch_no_result":
@@ -697,9 +694,7 @@ def _drift_journal(store: Any) -> None:
     _write_unvalidated_authority(store, state, valid_checksum=True)
 
 
-def _write_unvalidated_authority(
-    store: Any, state: dict[str, Any], valid_checksum: bool
-) -> None:
+def _write_unvalidated_authority(store: Any, state: dict[str, Any], valid_checksum: bool) -> None:
     checksum = digest(state) if valid_checksum else "0" * 64
     if store.backend == "atomic":
         envelope = {"format": FORMAT, "payload": state, "checksum": checksum}
@@ -1017,13 +1012,7 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
     non_boolean = sorted(key for key, value in facts.items() if not isinstance(value, bool))
     false_facts = sorted(key for key in GATE_FACT_KEYS if facts.get(key) is False)
     task_id_matches = evidence.get("task_id") == TASK_ID
-    eligible = (
-        task_id_matches
-        and not missing
-        and not extra
-        and not non_boolean
-        and not false_facts
-    )
+    eligible = task_id_matches and not missing and not extra and not non_boolean and not false_facts
     return {
         "task_id": TASK_ID,
         "evidence_task_id_matches": task_id_matches,

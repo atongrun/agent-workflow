@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).parents[1]
 RUNNER = ROOT / "experiments" / "runtime-v2-storage" / "runner.py"
 PROVIDER = ROOT / "tests" / "fixtures" / "runtime_v2_shared_slice_provider.py"

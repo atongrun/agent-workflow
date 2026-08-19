@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol
 
-
 FORMAT = "awf.runtime-v2-storage-comparison.v1"
 SCHEMA_VERSION = 2
 BUSY_OUTCOME = "AMBIGUOUS_NO_REPLAY"
@@ -184,9 +183,7 @@ def _assert_restore_compatible(
         )
 
 
-def _validate_authorizations(
-    run: dict[str, Any], journals: dict[str, Any], backend: str
-) -> None:
+def _validate_authorizations(run: dict[str, Any], journals: dict[str, Any], backend: str) -> None:
     authorizations = run.get("authorizations")
     if not isinstance(authorizations, list):
         raise StateError(
