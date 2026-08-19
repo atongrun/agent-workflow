@@ -1,18 +1,22 @@
 # `awf.semantic-contract.v1` — Current Python Reference
 
-Status: **Draft**
+Status: **Candidate**
 
-Basis: `main@0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2`
+Extraction basis: `main@0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2`
+
+Candidate evidence basis: `main@463c195c1404331e690c99a0865debb21e0b67c1` plus disposable
+RTS-011 executable acceptance head `2868486263aaf35814719fb9ab085a5787359408`
 
 Maturity rule: this document extracts observed behavior and known safety requirements. It is not a
 production ABI, migration authority, replacement design, or authorization to invoke a provider,
-operate Agent Bus state, change a service, or mutate a remote repository. It may become
-`Candidate` only after RTS-010 and RTS-011; it may become `Frozen` only after the shared-slice,
+operate Agent Bus state, change a service, or mutate a remote repository. RTS-010 and RTS-011 have
+now supplied the two Phase 1 reference acceptances required for `Candidate`. It may become `Frozen`
+only after the shared-slice,
 storage/topology decision, and independent review gates in the Runtime v2 plan.
 
 ## 1. Vocabulary and evidence convention
 
-`MUST`, `MUST NOT`, `MAY`, and `OWNER_ONLY` are normative within this Draft. “Observed” means the
+`MUST`, `MUST NOT`, `MAY`, and `OWNER_ONLY` are normative within this Candidate. “Observed” means the
 current implementation and cited evidence agree. “Hypothesis” is not a current requirement and
 cannot authorize implementation.
 
@@ -41,7 +45,7 @@ route spelling, CLI flag, or storage engine.
 
 ## 3. Workflow transition contract
 
-The Run transition writer is logically singular. This Draft does not select whether it is a
+The Run transition writer is logically singular. This Candidate does not select whether it is a
 physical Coordinator, a process, or a store transaction.
 
 | From | Input and required evidence | To/fact | Automatic? | Denial/terminal rule | Evidence |
@@ -53,7 +57,7 @@ physical Coordinator, a process, or a store transaction.
 | ready decision | exact embedded report, artifacts and PR tuple; durable terminal transition | run `completed` | Yes | Terminal conflict denies; replay of identical terminal is idempotent. | E-TERMINAL-1 |
 | `review` | valid `REQUEST_CHANGES` with deterministic failures and remaining budget | rework handoff intent | Yes | Advisory/style-only findings cannot consume rework; missing lineage/budget denies. | E-METHOD-1, E-REVIEW-1 |
 | `review` or prior rework | exact previous implement delivery/checkpoint/workspace/commit/PR/Git manifest | rework invocation `authorized` | Yes, once per authorized delivery/budget | Any lineage drift or ambiguous prior invocation denies. | E-REWORK-1, E-RUN-2 |
-| `rework` completed | same trusted effect gates as implement | review handoff intent | Required semantic transition; **current reference gap CG-1** | Rework does not create a new unbound workspace/authority chain. Current gate does not yet authorize the required second review. | E-REWORK-1, E-OUTBOX-1, E-RUN-2 |
+| `rework` completed | same trusted effect gates as implement | review handoff intent | Yes, once for the authorized rework | Rework unlocks exactly one additional review-stage slot; both distinct review deliveries still use input `attempt=1`. A second slot or input `attempt>1` denies. | E-REWORK-1, E-OUTBOX-1, E-RUN-2, E-RTS011 |
 | `review` | valid `BLOCKED` with non-empty reason | blocked decision intent | Yes | BLOCKED is distinct from ordinary deterministic failure. | E-METHOD-1, E-REVIEW-1 |
 | blocked decision | exact report/artifact/provenance; durable terminal transition | run `blocked` | Yes | No automatic next task or provider retry. | E-TERMINAL-1 |
 | any nonterminal | explicit fail/cancel/reject decision by the authorized owner | `failed`, `cancelled`, or `rejected` | OWNER_ONLY unless a frozen rule names it | Transport failure or missing evidence cannot silently become a business terminal. | E-RUN-1, E-METHOD-1 |
@@ -127,7 +131,7 @@ MUST deny. [E-RECOVERY-1]
 | coder/reviewer | `outbox_sent` | send command reported success and sent outbox is durable | do not resend; complete exact source inbox if not already complete | E-OUTBOX-1, E-INBOX-1 |
 
 Open question OQ-1: the current checkpoint writes `model_started` immediately before the provider
-wrapper starts the process. A crash in that gap is conservatively ambiguous. The Draft preserves
+wrapper starts the process. A crash in that gap is conservatively ambiguous. The Candidate preserves
 that denial; the shared slice must test whether a future `authorized/prepared/start-observed`
 representation can reduce the gap without permitting duplicate invocation.
 
@@ -262,24 +266,27 @@ Observed facts:
   lifecycle/evidence views. [E-RUN-1, E-RECOVERY-1, E-LIFE-1]
 - One historical three-card PASS exists, but it predates final remediation and contains no rework.
   It is not RTS-010/011 evidence. [E-BUS-2]
-- Deterministic rework lineage is proved in a focused synthetic fixture, not a complete accepted
-  end-to-end loop. [E-REWORK-1]
+- RTS-010 supplies one fresh post-remediation real business PASS with exact provider counts,
+  provenance, terminal, external ACK and queue evidence. [E-RTS010]
+- RTS-011 supplies one complete disposable deterministic rework loop with four real local child
+  processes, durable restart/lineage/handoff/terminal evidence, and explicitly synthetic
+  provider intelligence, transport send/ACK and GitHub provenance. [E-RTS011]
+
+Resolved Phase 1 reference gaps retained as regression cases:
+
+- **CG-1 — resolved by PR #100 plus RTS-011.** One authorized rework now unlocks exactly one
+  follow-up review-stage slot without raising the per-delivery attempt limit; the complete loop,
+  restart, duplicate, lineage-drift, handoff and terminal behaviors are executable regressions.
+  [E-RUN-2, E-REWORK-1, E-RTS011]
+- **CG-2 — resolved by PR #97 and RTS-010.** Handler reconstruction recovers and preserves the
+  immutable compiled-contract SHA from the current ledger packet; fresh real acceptance reached
+  terminal without deleting the binding. [E-RUN-1, E-RUN-2, E-RTS010]
 
 Current reference gaps (mapped faults, not accepted semantics):
 
-- **CG-1 — second review after rework is unreachable.** The gate permits `implement -> review` and
-  entry to rework from implement/review/rework, but its review transition does not accept
-  `rework -> review`. The default per-stage maximum of one also conflicts with two required review
-  invocations. Existing lineage evidence stops after rework authorization/workspace restoration.
-  RTS-011 MUST fix/prove the full loop without erasing durable budgets or stage evidence.
-  [E-RUN-2, E-REWORK-1]
-- **CG-2 — compiled-contract binding is lost at handler packet reconstruction.** `awf run` stores
-  `run_contract_sha256`; the handler rebuilds a packet without it before immutable reinitialization.
-  The first handler therefore appears to deny as identity drift. The fix MUST propagate and verify
-  the existing binding, not remove it. [E-RUN-1, E-RUN-2]
 - **CG-3 — durable recovery is not uniform across providers/routes.** Current v3 OpenCode/Pi paths
   have checkpoints; the Codex reviewer compatibility path does not use the same durable checkpoint,
-  and v1/v2 do not carry all v3 provenance/checkpoint facts. The Draft MUST NOT claim the v3 phase
+  and v1/v2 do not carry all v3 provenance/checkpoint facts. The Candidate MUST NOT claim the v3 phase
   graph covers every existing route/provider. [E-RECOVERY-1]
 - **CG-4 — authorization can precede checkpoint creation.** A crash after RunLedger authorization
   but before a recovery checkpoint/outbox/inbox exists leaves a duplicate with no safe automatic
@@ -353,9 +360,12 @@ Open questions carried to later phases:
 | E-FEEDBACK-1 | `scripts/awf_feedback.py`; `docs/tasks/dogfood-finding-phase-a-implementation-report.md`; `tests/test_status.py::test_business_terminal_keeps_feedback_pending_independent` |
 | E-BUS-1 | `docs/runtime-execution-architecture.md`; `docs/tasks/structured-handler-contract-implementation-report.md`; `tests/test_awf_role.py::test_each_reviewer_route_send_failure_is_nonzero`; handler-success ACK ownership is external to this repository's Runtime code |
 | E-BUS-2 | `docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md`; `docs/tasks/fresh-machine-usability-acceptance-closeout-report.md`; both reports explicitly separate historical business PASS/no-model transport evidence from new authorization |
+| E-RTS010 | `docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md`; fresh post-remediation business PASS with exact provider counts, Git/GitHub provenance, terminal, external ACK and scoped queue evidence |
+| E-RTS011 | `docs/tasks/runtime-v2-rts-011-deterministic-rework-acceptance-implementation-report.md`; `tests/test_runtime_v2_rts011_acceptance.py`; `tests/fixtures/runtime_v2_scripted_provider.py`; PR #100 review-capacity regressions; complete disposable bounded rework acceptance with synthetic external boundaries |
 
-## 13. Draft change control
+## 13. Candidate change control
 
-RTS-010/011 observations may correct this Draft but MUST preserve failed evidence. A correction must
+Phase 2 observations may correct this Candidate but MUST preserve failed evidence. A correction must
 name the old claim, observed counterexample, revised rule, affected fault cases, and whether a new
-fundamental invariant was discovered. No maturity promotion is implied by editing the document.
+fundamental invariant was discovered. Candidate is not Frozen and authorizes no production
+migration, default switch or release action.

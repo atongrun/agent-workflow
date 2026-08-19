@@ -11,9 +11,9 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-010 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-011 is the last passed
 TaskCard gate: the language-neutral
-semantic contract remains `Draft`, its machine-readable fault matrix contains 39 unique cases and
+semantic contract is `Candidate`, its machine-readable fault matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
 record families without hiding external Agent Bus/Git/GitHub/OS/provider truth. Independent Review
 2 returned `PASS` with zero findings. See the
@@ -64,20 +64,20 @@ retains CI/merge as unrecorded while external GitHub/Git facts prove them; no te
 performed. See the
 [RTS-010 acceptance report](docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md).
 
-PR #100 corrects the former second-review transition/attempt-capacity gap. The remaining RTS-011
-work is the full disposable scripted-provider/restart/ACK/terminal acceptance. Other documented
-gaps still cover authorization-before-checkpoint, compatibility-route recovery, local-effect
-reconciliation, terminal causality, unshipped terminal labels and cross-host adoption.
+PR #100 corrected the former second-review transition/attempt-capacity gap. PR #101 then completed
+RTS-011 on one disposable repository and state root: exactly one implement, one rework and two
+review child processes; exact lineage, duplicate/drift denial, same-event durable result recovery,
+outbox/inbox and terminal ordering all passed. Both reviews retained input `attempt=1`. The ACK
+observer, transport send, provider intelligence and GitHub provenance were synthetic and make no
+real-business claim. Independent Review passed after one bounded route/schema correction; ordinary
+CI run `32301184219` and Binary Feasibility run `32301184171` passed every job on executable head
+`2868486`. See the
+[RTS-011 acceptance report](docs/tasks/runtime-v2-rts-011-deterministic-rework-acceptance-implementation-report.md).
 
-The active planned gate is RTS-011. Before its disposable scripted-provider acceptance can run, a
-narrow TaskCard had to regression-lock and correct the unreachable second review after rework and
-its attempt budget. PR #100 completed that prerequisite: an authorized rework now unlocks exactly
-one follow-up review-stage slot, while each review delivery remains at `attempt=1`; independent
-Review, ordinary cross-platform CI and the five-target Binary matrix passed. The full RTS-011 gate
-is still open: next run the separate disposable scripted-provider/restart/ACK/terminal acceptance.
-Do not inspect or operate retained events, and do not infer business scope from pending transport
-state. No language, store,
-physical Coordinator, migration, default, release or destructive decision has been made.
+Phase 1 is complete. The next eligible gate is RTS-020, a separately frozen Python implementation
+of the shared disposable no-model slice and its eight named faults. It is comparative evidence,
+not a choice of Python, store, physical Coordinator or product boundary. Do not inspect or operate
+retained events. No production migration, default, release or destructive decision has been made.
 
 ## Current Handoff State: 2026-08-17
 

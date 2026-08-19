@@ -27,22 +27,21 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 - [x] Correct the RTS-011 Python prerequisite so one authorized rework unlocks exactly one
   follow-up review while distinct review deliveries retain input `attempt=1`; PR #100 passed
   independent Review, ordinary cross-platform CI and all five Binary Feasibility targets.
-- [ ] Complete RTS-011 with the disposable deterministic
+- [x] Complete RTS-011 with the disposable deterministic
   `implement -> review -> rework -> review -> terminal` acceptance.
-- [ ] Promote the contract to `Candidate` only after both reference acceptances pass.
+- [x] Promote the contract to `Candidate` after both reference acceptances pass.
 - [ ] Compare Python simplification, storage and any native candidate on the same no-model slice;
   make language/store/Coordinator/product-boundary decisions only at the later owner gate.
 
-Current last passed TaskCard gate is RTS-010. PR #98 merged the owner-source canonicalization as
-`d92594d` after exact-head review/CI. A wholly fresh Dousansi authority then completed exactly one
-coder invocation and one Pi reviewer invocation, terminal PASS, five handler-success ACKs, queue
-return to `0/0/0`, exact-head CI and PR #40 merge `dfa7237`. The two earlier failed authorities and
-their unacknowledged deliveries remain preserved and are not recovery or acceptance inputs. The
-former second-review authorization hole is corrected under its narrow TaskCard; the disposable
-scripted-provider RTS-011 acceptance remains open. No production state, live release/default,
-migration or destructive action was authorized. See the
+Current last passed TaskCard gate is RTS-011. PR #101 completes the disposable deterministic loop
+with exactly one implement, one rework and two review child processes; exact lineage, restart,
+duplicate/drift denial, outbox/inbox and terminal ordering passed. Synthetic provider, transport/ACK
+and GitHub boundaries are explicit. Independent Review and exact-head ordinary CI/Binary
+Feasibility passed, promoting the 39-case/11-outcome contract to Candidate. RTS-020 is next: the
+Python shared disposable no-model slice, not a language/store/Coordinator choice. No production
+state, live release/default, migration or destructive action was authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-010 acceptance report](docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md).
+[RTS-011 acceptance report](docs/tasks/runtime-v2-rts-011-deterministic-rework-acceptance-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 
