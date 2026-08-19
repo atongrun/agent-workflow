@@ -1,9 +1,16 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-011 / deterministic Python rework acceptance (`PASS`, 2026-08-20)**. Phase 1 is complete and
-the semantic contract is `Candidate`; RTS-020 is the next eligible disposable gate. This plan is
-not an ADR and authorizes no production migration, default switch or release action by itself.
+**RTS-020 / Python shared disposable slice (`PASS`, 2026-08-20)**. The semantic contract remains
+`Candidate`; RTS-021 is the next eligible removable comparison gate. This plan is not an ADR and
+authorizes no production migration, default switch or release action by itself.
+
+RTS-020 passed one-command implement/review/terminal execution and all eight shared fault families
+across 14 machine rows with one RunStore writer and one InvocationJournal API. Pre-final-review head
+`77c7023` passed ordinary cross-platform CI and all five Binary Feasibility targets plus aggregate
+after a two-line import-block repair. Repair head `457a336` then closed the final Review finding for
+corrupt authorized journals. The result keeps a smaller Python ownership model credible but does
+not select Python, atomic files, SQLite, a physical Coordinator or migration.
 
 RTS-011's narrow Python prerequisite is now regression-locked: each authorized rework unlocks one
 additional review-stage slot while every distinct review delivery remains at input `attempt=1`.
@@ -41,9 +48,10 @@ Basis:
 
 - [Original architecture Review](../reviews/2026-08-18-global-architecture-product-simplicity-runtime-rewrite-review.md)
 - [Independent adversarial double review](../reviews/2026-08-19-runtime-v2-adversarial-double-review.md)
-- Current repository truth: `main@0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2`
-- Candidate reference basis: `main@463c195c1404331e690c99a0865debb21e0b67c1` plus RTS-011
-  executable acceptance head `2868486263aaf35814719fb9ab085a5787359408`
+- Current integration base: `main@bc7a7494a7ae9b2b041d5fde2fe5c1280d3f9d78`
+- Candidate reference basis: RTS-011 executable acceptance head
+  `2868486263aaf35814719fb9ab085a5787359408` plus RTS-020 executable slice head
+  `457a336315a6549f43d28333f42991c84e18422d`
 - [HANDOFF](../../HANDOFF.md)
 - [ROADMAP](../../ROADMAP.md)
 
@@ -328,6 +336,15 @@ Constraints:
 - one logical transition writer and one per-invocation journal API;
 - no new facade over current facade, provider registry, scheduler, ORM, or async framework;
 - current external-boundary fixtures reused where applicable.
+
+Execution result: **PASS**. The removable experiment completed one implement/review/terminal normal
+path and all eight shared fault families across 14 machine rows. It retained separate authorization,
+launch, result, Artifact, Git effect, handoff and terminal facts with one RunStore writer and one
+InvocationJournal API. Independent implementation Review passed after two bounded repair rounds;
+ordinary CI and the five-target Binary Feasibility matrix passed on pre-final-review head `77c7023`.
+Repair head `457a336` then closed the exact-head Review's corrupt-journal outcome finding; merge still
+requires green publication-head CI/Binary and independent exact-head Review. See the
+[`RTS-020 closeout`](../tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
 
 Exit criteria:
 
@@ -663,7 +680,8 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Open evidence gaps
 
-- Python versus Rust/Go shared-slice measurements;
+- SQLite versus atomic-file/journal evidence on the same shared slice;
+- conditional Rust/Go shared-slice measurements if later entry criteria are met;
 - SQLite Windows/fault evidence;
 - physical Coordinator recovery model;
 - support-scenario UX decisions;
@@ -671,11 +689,10 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Next decision point
 
-RTS-001, RTS-010 and RTS-011 passed, so the contract is Candidate and Phase 2 may begin. The first
-entry-satisfied card is RTS-020: freeze and execute the Python version of the shared disposable
-no-model slice, using the same eight injected faults and baseline measurements required for later
-comparison. This does not choose Python, a store, a physical Coordinator, a product boundary or a
-production migration.
+RTS-001, RTS-010, RTS-011 and RTS-020 passed, so the contract remains Candidate and Phase 2 may
+continue. The first entry-satisfied card is RTS-021: compare SQLite and the smallest credible
+atomic-file/journal design behind the same disposable shared-slice boundary. This does not choose a
+store, language, physical Coordinator, product boundary or production migration.
 
 ## 12. Plan Completion Definition
 

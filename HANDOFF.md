@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-011 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-020 is the last passed
 TaskCard gate: the language-neutral
 semantic contract is `Candidate`, its machine-readable fault matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -74,10 +74,20 @@ CI run `32301184219` and Binary Feasibility run `32301184171` passed every job o
 `2868486`. See the
 [RTS-011 acceptance report](docs/tasks/runtime-v2-rts-011-deterministic-rework-acceptance-implementation-report.md).
 
-Phase 1 is complete. The next eligible gate is RTS-020, a separately frozen Python implementation
-of the shared disposable no-model slice and its eight named faults. It is comparative evidence,
-not a choice of Python, store, physical Coordinator or product boundary. Do not inspect or operate
-retained events. No production migration, default, release or destructive decision has been made.
+RTS-020 then completed the removable Python shared slice on repair head `457a336`: one
+implement child, one review child, terminal completion, idempotent replay, read-only status, exact
+local stop and all eight fault families across 14 machine rows. One RunStore writer and one
+InvocationJournal API retained separate authorization, launch, result, Artifact, Git effect,
+handoff and terminal facts. Independent implementation Review passed after two bounded repair
+rounds. Pre-final-review head `77c7023` passed ordinary CI run `32308287706` and Binary Feasibility
+run `32308287696`. The first exact-head Review found one corrupt authorized-journal outcome mismatch;
+`457a336` fixed both implement and review authorization states without provider start or state repair.
+See the [RTS-020 closeout](docs/tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
+
+RTS-021 is the next eligible gate: compare SQLite and the smallest credible atomic-file/journal
+design behind the same removable slice API. RTS-020 is comparative evidence, not a choice of
+Python, store, physical Coordinator or product boundary. Do not inspect or operate retained events.
+No production migration, default, release or destructive decision has been made.
 
 ## Current Handoff State: 2026-08-17
 

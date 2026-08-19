@@ -1,0 +1,300 @@
+{
+  "format": "awf.runtime-v2-shared-slice-cases.v1",
+  "maturity": "Candidate",
+  "contract": "docs/runtime-v2-semantic-contract.md",
+  "outcomes": [
+    "SAFE_CONTINUE",
+    "SAFE_IDEMPOTENT_REPLAY",
+    "SAFE_STABLE_RESEND",
+    "DENY_BEFORE_PROVIDER",
+    "AMBIGUOUS_NO_REPLAY",
+    "DENY_BEFORE_MUTATION",
+    "HANDLER_FAILURE_NO_ACK",
+    "TERMINAL_IDEMPOTENT",
+    "TERMINAL_CONFLICT",
+    "OWNER_DECISION_REQUIRED",
+    "EXTERNAL_OBSERVATION_UNKNOWN"
+  ],
+  "cases": [
+    {
+      "id": "S-AUTH-START",
+      "boundary": "authorization_to_process_start",
+      "fault": "crashes across prepared journal, RunStore authorization, launch intent and process-start observation",
+      "subcases": [
+        {
+          "id": "S-AUTH-START-PREPARED",
+          "fault": "prepared journal durable before RunStore authorization",
+          "inject": "auth_prepared_only",
+          "expected_outcome": "DENY_BEFORE_PROVIDER",
+          "legal_next_action": "commit exact RunStore authorization before launch",
+          "prohibited": ["provider start", "treat prepared as launch intent", "guessed authorization"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "no_auth",
+            "journal_implement_prepared_only",
+            "spec_allowed_delta_stable",
+            "no_handoff",
+            "exact_journal_ids",
+            "state_stable_on_status"
+          ]
+        },
+        {
+          "id": "S-AUTH-START-MISSING-JOURNAL",
+          "fault": "RunStore authorization present but the bound journal is missing or corrupt",
+          "inject": "auth_without_journal",
+          "expected_outcome": "OWNER_DECISION_REQUIRED",
+          "legal_next_action": "preserve the consumed authorization/budget and deny automatic provider replay",
+          "prohibited": ["provider start", "guessed journal repair", "erase authorization"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "auth_implement_once",
+            "no_handoff",
+            "implement_journal_absent",
+            "state_stable_on_status",
+            "state_stable_on_rerun"
+          ]
+        },
+        {
+          "id": "S-AUTH-START-AUTHORIZED-PREPARED",
+          "fault": "authorization and prepared journal durable before launch intent",
+          "inject": "auth_authorized_prepared",
+          "expected_outcome": "SAFE_CONTINUE",
+          "legal_next_action": "invoke once after exact gates and journal revalidation",
+          "prohibited": ["second authorization identity", "provider replay after launch intent"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "auth_implement_once",
+            "journal_implement_prepared_only",
+            "no_handoff",
+            "exact_journal_ids",
+            "state_stable_on_rerun"
+          ]
+        },
+        {
+          "id": "S-AUTH-START-LAUNCH-NO-RESULT",
+          "fault": "launch intent durable before process-start/result observation",
+          "inject": "auth_launch_no_result",
+          "expected_outcome": "AMBIGUOUS_NO_REPLAY",
+          "legal_next_action": "preserve exact process/workspace/evidence for owner decision",
+          "prohibited": ["automatic provider replay", "fall back to prepared recovery", "fresh replacement delivery"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "auth_implement_once",
+            "no_handoff",
+            "exact_journal_ids",
+            "journal_state_launch_intent",
+            "state_stable_on_rerun"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S-START-RESULT",
+      "boundary": "process_start_before_result",
+      "fault": "process start observation is durable but result is absent",
+      "inject": "start_result",
+      "expected_outcome": "AMBIGUOUS_NO_REPLAY",
+      "legal_next_action": "preserve exact process/workspace/evidence for owner decision",
+      "prohibited": ["automatic provider replay", "fresh replacement delivery", "terminal promotion"],
+      "assertions": [
+        "no_provider",
+        "no_terminal",
+        "no_trusted_repo",
+        "auth_implement_once",
+        "exact_journal_ids",
+        "journal_state_started",
+        "state_stable_on_rerun"
+      ]
+    },
+    {
+      "id": "S-ARTIFACT",
+      "boundary": "artifact_validation",
+      "fault": "provider exits zero with missing or invalid Artifact",
+      "inject": "artifact",
+      "expected_outcome": "HANDLER_FAILURE_NO_ACK",
+      "legal_next_action": "record failure/ambiguity and preserve the same delivery evidence",
+      "prohibited": ["trusted import", "handoff intent", "terminal completion"],
+      "assertions": [
+        "one_implement",
+        "no_review",
+        "no_terminal",
+        "no_trusted_repo",
+        "auth_implement_once",
+        "no_handoff",
+        "exact_journal_ids"
+      ]
+    },
+    {
+      "id": "S-RESULT-VALIDATE",
+      "boundary": "durable_result_before_validation",
+      "fault": "crash after durable result before validation/import",
+      "inject": "result_validate",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "skip provider and run frozen postflight against exact durable workspace",
+      "prohibited": ["provider replay", "change TaskCard verification contract", "broaden allowed paths"],
+      "assertions": [
+        "one_implement",
+        "no_review",
+        "no_terminal",
+        "no_trusted_repo",
+        "auth_implement_once",
+        "no_handoff",
+        "spec_allowed_delta_stable",
+        "exact_journal_ids",
+        "implement_count_stable_on_rerun"
+      ]
+    },
+    {
+      "id": "S-EFFECT-INTENT",
+      "boundary": "trusted_effect_before_handoff_intent",
+      "fault": "crash after trusted local Git effect before handoff intent",
+      "inject": "effect_intent",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "revalidate exact effects and persist one local review intent",
+      "prohibited": ["provider replay", "different trusted commit", "remote Git write"],
+      "assertions": [
+        "one_implement",
+        "no_review",
+        "no_terminal",
+        "trusted_repo_exists",
+        "trusted_commit_exists",
+        "auth_implement_once",
+        "no_handoff",
+        "spec_allowed_delta_stable",
+        "trusted_remote_absent",
+        "trusted_commit_exact",
+        "exact_journal_ids",
+        "implement_count_stable_on_rerun"
+      ]
+    },
+    {
+      "id": "S-DUPLICATE",
+      "boundary": "duplicate_invocation",
+      "fault": "identical input before provider start and after terminal completion",
+      "subcases": [
+        {
+          "id": "S-DUPLICATE-PRE-START",
+          "fault": "same input redelivered after authorization/prepared and before provider start",
+          "inject": "duplicate_pre_start",
+          "expected_outcome": "SAFE_CONTINUE",
+          "legal_next_action": "invoke once after exact gates and journal revalidation",
+          "prohibited": ["new authorization identity", "second prepared journal", "terminal guess"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "auth_implement_once",
+            "journal_implement_prepared_only",
+            "exact_journal_ids",
+            "state_stable_on_status",
+            "state_stable_on_rerun"
+          ]
+        },
+        {
+          "id": "S-DUPLICATE-TERMINAL",
+          "fault": "same completed input is rerun",
+          "inject": "duplicate_terminal",
+          "expected_outcome": "TERMINAL_IDEMPOTENT",
+          "legal_next_action": "status or exact stop only",
+          "prohibited": ["provider replay", "new Git commit", "terminal rewrite"],
+          "assertions": [
+            "one_implement",
+            "one_review",
+            "terminal_completed",
+            "trusted_commit_exists",
+            "auth_full_once",
+            "trusted_remote_absent",
+            "trusted_commit_exact",
+            "duplicate_rerun_stable",
+            "exact_journal_ids"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S-STATE-DRIFT",
+      "boundary": "state_identity_drift",
+      "fault": "corrupt checksum or stale/mismatched RunSpec/journal identity",
+      "subcases": [
+        {
+          "id": "S-STATE-DRIFT-CHECKSUM",
+          "fault": "RunSpec payload drifts without recomputing checksum",
+          "inject": "state_drift",
+          "expected_outcome": "DENY_BEFORE_PROVIDER",
+          "legal_next_action": "preserve files and diagnose exact run identity",
+          "prohibited": ["provider start", "guessed repair", "terminal promotion"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "no_auth",
+            "state_stable_on_status",
+            "state_stable_on_rerun"
+          ]
+        },
+        {
+          "id": "S-STATE-DRIFT-RUNSPEC-RECHECKSUM",
+          "fault": "RunSpec payload identity drifts and checksum is recomputed",
+          "inject": "runspec_rechecksum_drift",
+          "expected_outcome": "DENY_BEFORE_PROVIDER",
+          "legal_next_action": "preserve files and diagnose exact run identity",
+          "prohibited": ["provider start", "guessed repair", "terminal promotion"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "no_auth",
+            "state_stable_on_status",
+            "state_stable_on_rerun"
+          ]
+        },
+        {
+          "id": "S-STATE-DRIFT-JOURNAL-RECHECKSUM",
+          "fault": "InvocationJournal identity drifts and checksum is recomputed",
+          "inject": "journal_rechecksum_drift",
+          "expected_outcome": "DENY_BEFORE_PROVIDER",
+          "legal_next_action": "preserve files and diagnose exact run identity",
+          "prohibited": ["provider start", "guessed repair", "terminal promotion"],
+          "assertions": [
+            "no_provider",
+            "no_terminal",
+            "no_trusted_repo",
+            "auth_implement_once",
+            "exact_journal_ids",
+            "state_stable_on_status",
+            "state_stable_on_rerun"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S-GIT-DRIFT",
+      "boundary": "git_identity_drift",
+      "fault": "trusted Git/workspace identity changes after review result and before terminal",
+      "inject": "git_drift",
+      "expected_outcome": "DENY_BEFORE_MUTATION",
+      "legal_next_action": "preserve both facts for owner decision",
+      "prohibited": ["terminal completion", "handoff rewrite", "provider replay"],
+      "assertions": [
+        "one_implement",
+        "one_review",
+        "no_terminal",
+        "trusted_commit_exists",
+        "trusted_head_drifted",
+        "auth_full_once",
+        "trusted_remote_absent",
+        "handoff_exact",
+        "implement_count_stable_on_rerun",
+        "state_stable_on_status"
+      ]
+    }
+  ]
+}
