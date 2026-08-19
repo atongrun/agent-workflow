@@ -7,11 +7,11 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-19 Runtime v2 Decision Plan
+## Current Handoff State: 2026-08-20 Runtime v2 Decision Plan
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-001 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-010 is the last passed
 TaskCard gate: the language-neutral
 semantic contract remains `Draft`, its machine-readable fault matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -49,24 +49,30 @@ attempts also remained zero. Neither failed delivery was ACKed, requeued, redisp
 hot-patched or counted as acceptance evidence; their branches, isolated Bus stores, ledgers and
 handler evidence remain retained.
 
-Draft PR #98 fixes only the owner identity source with `Path.as_posix()` and adds a Windows-effective
-regression. Implementation commit `92fb180d788174eb4123ba83cfe9396ffc0b1818` passed ordinary CI run
-`32282971933`, Binary Feasibility run `32282971981` across all five native targets plus aggregate,
-and independent Review with zero findings. The evidence publication head still requires exact-head
-CI/Review and merge. RTS-010 must use another wholly fresh authority pinned to that eventual merge;
-the failed authorities are not recovery inputs.
+PR #98 fixed only the owner identity source with `Path.as_posix()` and added a Windows-effective
+regression. Exact-publication-head ordinary CI and independent Review passed; Binary Feasibility
+passed all five native targets plus aggregate after rerunning one macOS x86_64 Artifact Service
+upload timeout. The PR merged as `d92594dcb2ba48efe2ed62c2f236b629a07f85fe`.
+
+A third wholly fresh authority pinned that merge and completed RTS-010. Dousansi TaskCard
+`dousansi-runtime-v2-rts-010-home-reconsideration-r3-20260820` used a fresh isolated Bus,
+state-root, profiles, run, branch and delivery. Deep Preflight passed, then exactly one Windows
+OpenCode implementation and one Mac Pi review produced downstream commit `f7ef229`, Pi `PASS`,
+terminal `review_passed`, five handler-success ACKs, and final architect/coder/reviewer queues
+`0/0/0`. Downstream PR #40 passed exact-head CI and merged as `dfa7237`. The local terminal ledger
+retains CI/merge as unrecorded while external GitHub/Git facts prove them; no terminal mutation was
+performed. See the
+[RTS-010 acceptance report](docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md).
 
 The second current Python gap remains: the gate cannot authorize the second review after rework
 under its current transition/attempt budget. Other documented gaps cover
 authorization-before-checkpoint, compatibility-route recovery, local-effect reconciliation,
 terminal causality, unshipped terminal labels and cross-host adoption.
 
-The active planned gate is RTS-010: one fresh, genuinely useful, bounded downstream business PASS on
-the current reference. Its next downstream TaskCard, branch, run, delivery, Bus, state-root and
-profile identities must all be newly frozen and must bind PR #98's eventual merge commit before any
-listener, event or provider is started.
-Do not inspect or operate retained events, and do not infer business scope from pending transport
-state. RTS-011 remains a later disposable scripted-provider rework acceptance. No language, store,
+The active planned gate is RTS-011. Before its disposable scripted-provider acceptance can run, a
+narrow TaskCard must regression-lock and correct the currently unreachable second review after
+rework and its attempt budget. Do not inspect or operate retained events, and do not infer business
+scope from pending transport state. No language, store,
 physical Coordinator, migration, default, release or destructive decision has been made.
 
 ## Current Handoff State: 2026-08-17

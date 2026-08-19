@@ -1,8 +1,8 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-001 / Phase 0 Draft TaskCard (`PASS`, 2026-08-19)**, integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-010 is the next active gate. This plan is not an
+**RTS-010 / fresh post-remediation business TaskCard (`PASS`, 2026-08-20)**. RTS-011 is the next
+active gate. This plan is not an
 ADR and authorizes no production migration, default switch or release action by itself.
 
 RTS-010 entry preparation confirmed the Draft's compiled RunContract handler-binding gap before any
@@ -15,13 +15,20 @@ exposed an isolated Windows harness environment that hid normal Git network conf
 authority corrected that boundary, reached the trusted upstream fetch, then exposed Windows/POSIX
 TaskCard separator drift between the initial owner ledger packet and canonical delivery. Both failed
 deliveries remain unacknowledged and preserved, with no requeue, redispatch, recovery or hot patch.
-PR #98 canonicalizes only the owner-produced repository-relative identity and regression-locks it.
-Implementation commit `92fb180d788174eb4123ba83cfe9396ffc0b1818` passed ordinary CI
-`32282971933`, Binary Feasibility `32282971981` on all five native targets plus aggregate, and
-independent Review. Final exact-publication-head CI/Review and merge remain the next gate; another
-wholly fresh RTS-010 authority must pin that eventual merge.
+PR #98 canonicalized only the owner-produced repository-relative identity and regression-locked it.
+Exact-publication-head CI and independent Review passed, all five Binary Feasibility targets plus
+aggregate were green after one bounded macOS x86_64 Artifact Service upload rerun, and the PR merged
+as `d92594dcb2ba48efe2ed62c2f236b629a07f85fe`.
 
-Date: 2026-08-19
+A third wholly fresh authority pinned that exact merge and completed RTS-010. Dousansi TaskCard
+`dousansi-runtime-v2-rts-010-home-reconsideration-r3-20260820` produced exactly one Windows
+OpenCode implementation invocation, one Mac Pi review invocation, trusted commit/PR provenance,
+Pi `PASS`, terminal `review_passed`, five ACKed isolated Bus events, queues back to `0/0/0`, green
+downstream CI, and PR #40 merge `dfa7237b1c52680f38fc2bfeefed3332f4f4ead3`. The two failed
+authorities remain untouched and excluded. See the
+[credential-free acceptance report](../tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md).
+
+Date: 2026-08-20
 
 Basis:
 
@@ -213,11 +220,19 @@ Exit criteria:
 
 - Fresh run, branch, delivery identities, model-call counters, and scoped queue baselines are recorded.
 - Exactly one implement invocation and one reviewer invocation occur on the PASS path.
-- Trusted commit, push, remote SHA, PR tuple, green CI, ReviewReport hashes, terminal decision,
-  handler-success ACK, and scoped queue return agree.
+- Trusted commit, push, remote SHA, PR tuple, green CI, raw-file and canonical-object ReviewReport
+  hashes, terminal decision, handler-success ACK, and scoped queue return form one documented join.
 - No historical/retained delivery is read, ACKed, requeued, recovered, redispatched, or replaced.
 - The first fail-closed boundary is preserved without manual completion.
 - A credential-free acceptance report records evidence and limitations.
+
+Execution result: **PASS**. The r3 authority used fresh TaskCard, branch, run, delivery, Bus,
+state-root and profile identities pinned to `d92594d`. Exactly one coder and one reviewer provider
+start/exit occurred, with no rework. Trusted downstream commit `f7ef229`, PR #40, Pi ReviewReport,
+terminal ledger evidence, the distinct raw-file/canonical-object ReviewReport hashes, five
+handler-success ACKs, final queues `0/0/0`, exact-head CI and merge `dfa7237` form one consistent
+join. The terminal ledger's recorded CI/merge placeholders remain distinct from the live GitHub/Git
+facts and were not mutated. Both earlier failed deliveries remain untouched.
 
 #### RTS-011 — Deterministic rework acceptance on Python
 
@@ -624,7 +639,6 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Open evidence gaps
 
-- post-remediation real business PASS;
 - complete deterministic rework artifact;
 - current authority/fault inventory;
 - Python versus Rust/Go shared-slice measurements;
@@ -635,12 +649,12 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Next decision point
 
-RTS-001 passed and the Draft is complete enough to enter Phase 1 under the later owner execution
-authorization. PR #97 is merged. RTS-010 is now frozen at the pre-live boundary while PR #98's
-platform-neutral TaskCard identity fix completes exact-head evidence Review/CI and merge. The next
-downstream TaskCard must pin that exact merge and use wholly fresh authority and transport identities
-before any listener, event or provider starts; the two failed deliveries remain untouched. Do not
-choose a language, store, Coordinator deployment, or production migration at this point.
+RTS-001 and RTS-010 passed. The Draft remains at Phase 1 because RTS-011 still requires a complete
+deterministic two-review/rework acceptance. The current Python gate cannot authorize
+`rework -> review` and its default review-attempt budget permits only one review; the next legal
+implementation is a narrow regression-locked correction under its own TaskCard, followed by the
+disposable scripted-provider RTS-011 run. Do not choose a language, store, Coordinator deployment,
+or production migration at this point.
 
 ## 12. Plan Completion Definition
 
