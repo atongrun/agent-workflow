@@ -4,7 +4,6 @@
   "task_id": "runtime-v2-rts-021-storage-comparison",
   "shared_fixture": "tests/fixtures/runtime_v2_shared_slice_cases.json",
   "backends": ["atomic", "sqlite"],
-  "deterministic_result": "SQLITE_MEETS_MINIMUM_GATE",
   "named_windows": [
     {
       "id": "W-AUTH",
@@ -119,6 +118,22 @@
       "expected_outcome": "TERMINAL_CONFLICT",
       "legal_next_action": "preserve newer authority; deny stale offline restore",
       "prohibited": ["stale authorization", "stale terminal", "provider start"]
+    },
+    {
+      "id": "ST-BACKUP-FOREIGN-DENY",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "backup_restore_foreign",
+      "expected_outcome": "TERMINAL_CONFLICT",
+      "legal_next_action": "preserve newer authority; deny stale offline restore",
+      "prohibited": ["foreign authorization", "foreign terminal", "provider start"]
+    },
+    {
+      "id": "ST-RESTORE-ACTIVE-WRITER",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "restore_with_active_writer",
+      "expected_outcome": "AMBIGUOUS_NO_REPLAY",
+      "legal_next_action": "preserve exact writer/process evidence for owner decision",
+      "prohibited": ["offline restore while writer active", "current authority rewrite", "provider start"]
     },
     {
       "id": "ST-SQLITE-MIGRATION",

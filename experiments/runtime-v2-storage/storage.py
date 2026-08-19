@@ -22,6 +22,8 @@ FORMAT = "awf.runtime-v2-storage-comparison.v1"
 SCHEMA_VERSION = 2
 BUSY_OUTCOME = "AMBIGUOUS_NO_REPLAY"
 BUSY_ACTION = "preserve exact writer/process evidence for owner decision"
+RESTORE_CONFLICT_OUTCOME = "TERMINAL_CONFLICT"
+RESTORE_CONFLICT_ACTION = "preserve newer authority; deny stale offline restore"
 
 
 class StateError(RuntimeError):
@@ -152,6 +154,34 @@ def validate_authority(value: dict[str, Any], backend: str) -> None:
                 f"{backend} InvocationJournal {invocation_id} invalid",
             )
         _validate_journal(invocation_id, journal, spec, backend)
+
+
+def _restore_identity(value: dict[str, Any]) -> dict[str, Any]:
+    spec = value["spec"]
+    run = value["run"]
+    return {
+        "spec_digest": digest(spec),
+        "run_id": run.get("run_id"),
+        "task_id": run.get("task_id"),
+        "run_spec_digest": run.get("spec_digest"),
+    }
+
+
+def _assert_restore_compatible(
+    backup: dict[str, Any], current: dict[str, Any], backend: str
+) -> None:
+    if _restore_identity(backup) != _restore_identity(current):
+        raise StateError(
+            RESTORE_CONFLICT_OUTCOME,
+            RESTORE_CONFLICT_ACTION,
+            f"{backend} backup identity does not match current authority",
+        )
+    if int(backup["sequence"]) < int(current["sequence"]):
+        raise StateError(
+            RESTORE_CONFLICT_OUTCOME,
+            RESTORE_CONFLICT_ACTION,
+            f"{backend} backup is older than current authority",
+        )
 
 
 def _validate_authorizations(
@@ -361,17 +391,15 @@ class AtomicStore:
         }
 
     def restore(self) -> dict[str, Any]:
-        backup = _read_atomic(self.backup_path, self.backend)
-        if self.path.exists():
-            current = self.read()
-            if int(backup["sequence"]) < int(current["sequence"]):
-                raise StateError(
-                    "TERMINAL_CONFLICT",
-                    "preserve newer authority; deny stale offline restore",
-                    "backup is older than current authority",
-                )
-        _atomic_write(self.path, backup)
-        return backup
+        with _exclusive_file_lock(
+            self.lock_path, {"backend": self.backend, "pid": os.getpid(), "restore": True}
+        ):
+            backup = _read_atomic(self.backup_path, self.backend)
+            if self.path.exists():
+                current = _read_atomic(self.path, self.backend)
+                _assert_restore_compatible(backup, current, self.backend)
+            _atomic_write(self.path, backup)
+            return backup
 
     def delete_derived(self) -> None:
         with contextlib.suppress(FileNotFoundError):
@@ -388,6 +416,68 @@ class AtomicStore:
             self.lock_path, {"backend": self.backend, "pid": os.getpid(), "hold": seconds}
         ):
             time.sleep(seconds)
+
+
+def _read_sqlite_authority(path: Path, backend: str, readonly: bool) -> dict[str, Any]:
+    try:
+        if readonly:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=0.0)
+        else:
+            conn = sqlite3.connect(path, timeout=0.0)
+        conn.row_factory = sqlite3.Row
+        with conn:
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            if version > SCHEMA_VERSION:
+                raise StateError(
+                    "OWNER_DECISION_REQUIRED",
+                    "preserve program and state evidence; use only a compatible schema",
+                    f"sqlite schema v{version} is newer than supported v{SCHEMA_VERSION}",
+                )
+            if version == 1:
+                raise StateError(
+                    "OWNER_DECISION_REQUIRED",
+                    "run offline sqlite migration; status must not migrate",
+                    "sqlite schema v1 requires offline migration",
+                )
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+            if integrity != "ok":
+                raise StateError(
+                    "DENY_BEFORE_PROVIDER",
+                    "preserve files and diagnose exact run identity",
+                    f"sqlite integrity_check failed: {integrity}",
+                )
+            row = conn.execute(
+                "SELECT payload, checksum FROM records WHERE kind = ? AND key = ?",
+                ("authority", "current"),
+            ).fetchone()
+            if row is None:
+                raise StateError(
+                    "EXTERNAL_OBSERVATION_UNKNOWN",
+                    "inspect the exact experiment state root",
+                    "sqlite authority is absent",
+                )
+            payload = loads_json_object(
+                row["payload"],
+                path,
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+            )
+            if row["checksum"] != digest(payload):
+                raise StateError(
+                    "DENY_BEFORE_PROVIDER",
+                    "preserve files and diagnose exact run identity",
+                    "sqlite record checksum mismatch",
+                )
+            validate_authority(payload, backend)
+            return payload
+    except StateError:
+        raise
+    except sqlite3.Error as exc:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            f"sqlite read failed: {exc}",
+        ) from exc
 
 
 class SQLiteStore:
@@ -605,24 +695,18 @@ class SQLiteStore:
         }
 
     def restore(self) -> dict[str, Any]:
+        if self.writer_active():
+            raise WriterBusy("sqlite writer active during offline restore")
         if not self.backup_path.exists():
             raise StateError(
                 "EXTERNAL_OBSERVATION_UNKNOWN",
                 "inspect the exact experiment state root",
                 "sqlite backup is absent",
             )
-        backup = SQLiteStore(self.run_dir / "__restore_probe__")
-        backup.path = self.backup_path
-        backup.backup_path = self.backup_path
-        restored = backup.read()
+        restored = _read_sqlite_authority(self.backup_path, self.backend, readonly=True)
         if self.path.exists():
             current = self.read()
-            if int(restored["sequence"]) < int(current["sequence"]):
-                raise StateError(
-                    "TERMINAL_CONFLICT",
-                    "preserve newer authority; deny stale offline restore",
-                    "backup is older than current authority",
-                )
+            _assert_restore_compatible(restored, current, self.backend)
         shutil.copy2(self.backup_path, self.path)
         return restored
 

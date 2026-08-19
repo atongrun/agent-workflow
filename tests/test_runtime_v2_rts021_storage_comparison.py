@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -120,8 +121,26 @@ def _authority(state_root: Path, backend: str, run_id: str) -> dict[str, Any]:
     return json.loads(row[0])
 
 
+def _authority_bytes(state_root: Path, backend: str, run_id: str) -> bytes:
+    run_dir = state_root / backend / run_id
+    if backend == "atomic":
+        return (run_dir / "authority.json").read_bytes()
+    return (run_dir / "state.db").read_bytes()
+
+
 def _counts(status: dict[str, Any]) -> dict[str, Any]:
     return status["provider_invocation_observation"]["counts"]
+
+
+def _evaluate_gate(evidence_path: Path) -> dict[str, Any]:
+    return json.loads(
+        subprocess.run(
+            [sys.executable, str(RUNNER), "evaluate", "--evidence", str(evidence_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
 
 
 def _assert_shared_assertions(
@@ -230,30 +249,13 @@ def _assert_shared_assertions(
             assert _git(trusted, "rev-parse", "HEAD") == before_head, row["id"]
 
 
-def _derived_gate_result(fixture: dict[str, Any]) -> str:
+def _window_gate_fact(fixture: dict[str, Any]) -> bool:
     sqlite_removed = sum(
         1
         for window in fixture["named_windows"]
         if window["candidates"]["sqlite"]["result"] == "eliminated"
     )
-    required_cases = {
-        "ST-LOCK-CONTENTION",
-        "ST-RESTART-WINDOWS",
-        "ST-CORRUPT-AUTHORITY",
-        "ST-BACKUP-RESTORE-CURRENT",
-        "ST-BACKUP-STALE-DENY",
-        "ST-SQLITE-MIGRATION",
-        "ST-DERIVED-DELETION",
-        "ST-DERIVED-FORGERY",
-        "ST-EXACT-STOP",
-    }
-    case_ids = {case["id"] for case in fixture["storage_cases"]}
-    sqlite_cases = {
-        case["id"] for case in fixture["storage_cases"] if "sqlite" in case["applies_to"]
-    }
-    if sqlite_removed >= 2 and required_cases <= case_ids and "ST-SQLITE-MIGRATION" in sqlite_cases:
-        return "SQLITE_MEETS_MINIMUM_GATE"
-    return "RETAIN_ATOMIC_FILE_BASELINE"
+    return sqlite_removed >= 2
 
 
 def test_storage_fixture_is_strict_and_gate_result_is_derived() -> None:
@@ -273,7 +275,7 @@ def test_storage_fixture_is_strict_and_gate_result_is_derived() -> None:
             assert data["transaction_boundary"]
             assert data["joined_records"]
             assert data["recovery_action"]
-    assert fixture["deterministic_result"] == _derived_gate_result(fixture)
+    assert _window_gate_fact(fixture)
     reported = json.loads(
         subprocess.run(
             [sys.executable, str(RUNNER), "windows"],
@@ -282,7 +284,8 @@ def test_storage_fixture_is_strict_and_gate_result_is_derived() -> None:
             text=True,
         ).stdout
     )
-    assert reported["result"] == _derived_gate_result(fixture)
+    assert "result" not in reported
+    assert set(reported["windows"]) == {"W-AUTH", "W-RESULT", "W-HANDOFF", "W-TERMINAL"}
 
 
 def test_normal_run_status_stop_are_equivalent_and_status_byte_readonly(tmp_path: Path) -> None:
@@ -447,6 +450,106 @@ def test_corruption_backup_restore_and_stale_restore_fail_closed(tmp_path: Path)
         assert stale["legal_next_action"] == "preserve newer authority; deny stale offline restore"
 
 
+def test_foreign_backup_restore_denies_equal_and_newer_sequences_without_writing(
+    tmp_path: Path,
+) -> None:
+    repo = _source_repo(tmp_path)
+    state_root = tmp_path / "state"
+
+    for backend in BACKENDS:
+        donor_id = f"foreign-donor-{backend}"
+        donor_terminal = _cli("run", backend, state_root, donor_id, repo=repo)
+        donor_backup = Path(
+            _cli("maintenance", backend, state_root, donor_id, maintenance="backup")["backup"]
+        )
+        assert donor_terminal["outcome"] == "TERMINAL_IDEMPOTENT"
+
+        equal_victim_id = f"foreign-equal-victim-{backend}"
+        equal_terminal = _cli("run", backend, state_root, equal_victim_id, repo=repo)
+        equal_backup = Path(
+            _cli("maintenance", backend, state_root, equal_victim_id, maintenance="backup")[
+                "backup"
+            ]
+        )
+        shutil.copy2(donor_backup, equal_backup)
+        before_equal_bytes = _authority_bytes(state_root, backend, equal_victim_id)
+        equal_denied = _cli(
+            "maintenance", backend, state_root, equal_victim_id, maintenance="restore"
+        )
+        assert equal_denied["outcome"] == "TERMINAL_CONFLICT"
+        assert "identity" in equal_denied["blocker"]["source"]
+        assert _authority_bytes(state_root, backend, equal_victim_id) == before_equal_bytes
+        assert _counts(_cli("status", backend, state_root, equal_victim_id)) == _counts(
+            equal_terminal
+        )
+
+        newer_victim_id = f"foreign-newer-victim-{backend}"
+        prepared = _cli(
+            "run",
+            backend,
+            state_root,
+            newer_victim_id,
+            repo=repo,
+            fault="auth_authorized_prepared",
+        )
+        victim_backup = Path(
+            _cli("maintenance", backend, state_root, newer_victim_id, maintenance="backup")[
+                "backup"
+            ]
+        )
+        shutil.copy2(donor_backup, victim_backup)
+        before_newer_bytes = _authority_bytes(state_root, backend, newer_victim_id)
+        newer_denied = _cli(
+            "maintenance", backend, state_root, newer_victim_id, maintenance="restore"
+        )
+        assert newer_denied["outcome"] == "TERMINAL_CONFLICT"
+        assert "identity" in newer_denied["blocker"]["source"]
+        assert _authority_bytes(state_root, backend, newer_victim_id) == before_newer_bytes
+        assert _counts(_cli("status", backend, state_root, newer_victim_id)) == _counts(prepared)
+
+
+def test_restore_denies_active_writer_without_writing(tmp_path: Path) -> None:
+    repo = _source_repo(tmp_path)
+    state_root = tmp_path / "state"
+
+    for backend in BACKENDS:
+        run_id = f"restore-busy-{backend}"
+        terminal = _cli("run", backend, state_root, run_id, repo=repo)
+        _cli("maintenance", backend, state_root, run_id, maintenance="backup")
+        before = _authority_bytes(state_root, backend, run_id)
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                str(RUNNER),
+                "maintenance",
+                "--store",
+                backend,
+                "--state-root",
+                str(state_root),
+                "--run-id",
+                run_id,
+                "hold-writer",
+                "--seconds",
+                "1.5",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            time.sleep(0.2)
+            denied = _cli("maintenance", backend, state_root, run_id, maintenance="restore")
+            assert denied["outcome"] == "AMBIGUOUS_NO_REPLAY"
+            assert denied["legal_next_action"] == (
+                "preserve exact writer/process evidence for owner decision"
+            )
+            assert _authority_bytes(state_root, backend, run_id) == before
+            assert _counts(_cli("status", backend, state_root, run_id)) == _counts(terminal)
+        finally:
+            stdout, stderr = holder.communicate(timeout=5)
+            assert holder.returncode == 0, (stdout, stderr)
+
+
 def test_sqlite_migration_is_offline_repeated_and_newer_schema_denied(tmp_path: Path) -> None:
     repo = _source_repo(tmp_path)
     state_root = tmp_path / "state"
@@ -540,3 +643,123 @@ def test_exact_stop_denies_active_invocation_and_active_writer(tmp_path: Path) -
         finally:
             stdout, stderr = holder.communicate(timeout=5)
             assert holder.returncode == 0, (stdout, stderr)
+
+
+def _call_with_fresh_tmp(tmp_path: Path, name: str, fn: Any) -> None:
+    child = tmp_path / name
+    child.mkdir()
+    fn(child)
+
+
+def test_gate_evaluation_uses_observed_evidence_and_fails_closed(tmp_path: Path) -> None:
+    fixture = _read_json_no_duplicate_keys(STORAGE_CASES)
+    facts = {key: False for key in _gate_fact_keys()}
+
+    facts["sqlite_removes_two_or_more_windows"] = _window_gate_fact(fixture)
+
+    windows = json.loads(
+        subprocess.run(
+            [sys.executable, str(RUNNER), "windows"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
+    facts["external_boundaries_preserved"] = (
+        "result" not in windows
+        and "Agent Bus transport/ACK" in windows["external_boundaries"]
+        and "cross-host state ownership" in windows["external_boundaries"]
+    )
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "normal",
+        test_normal_run_status_stop_are_equivalent_and_status_byte_readonly,
+    )
+    facts["status_byte_readonly"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "shared",
+        test_all_shared_rows_match_outcome_action_and_replay_guards,
+    )
+    facts["shared_equivalence"] = True
+
+    _call_with_fresh_tmp(tmp_path, "lock", test_writer_contention_denies_mutation_before_provider)
+    facts["lock_contention"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "restart",
+        test_restart_after_named_windows_recovers_without_replay,
+    )
+    facts["restart_recovery"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "backup",
+        test_corruption_backup_restore_and_stale_restore_fail_closed,
+    )
+    facts["corruption_detection"] = True
+    facts["current_backup_restore"] = True
+    facts["stale_backup_denied"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "foreign",
+        test_foreign_backup_restore_denies_equal_and_newer_sequences_without_writing,
+    )
+    facts["foreign_backup_denied"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "migration",
+        test_sqlite_migration_is_offline_repeated_and_newer_schema_denied,
+    )
+    facts["sqlite_migration"] = True
+
+    _call_with_fresh_tmp(
+        tmp_path,
+        "derived",
+        test_derived_state_cannot_authorize_or_replace_authority,
+    )
+    facts["derived_state_safety"] = True
+
+    evidence = tmp_path / "gate-evidence.json"
+    evidence.write_text(
+        json.dumps({"task_id": TASK_ID, "facts": facts}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    evaluated = _evaluate_gate(evidence)
+    assert evaluated["result"] == "SQLITE_MEETS_MINIMUM_GATE"
+    assert evaluated["missing_keys"] == []
+    assert evaluated["extra_keys"] == []
+    assert evaluated["non_boolean_keys"] == []
+    assert evaluated["false_facts"] == []
+
+    facts["foreign_backup_denied"] = False
+    false_evidence = tmp_path / "gate-evidence-false.json"
+    false_evidence.write_text(
+        json.dumps({"task_id": TASK_ID, "facts": facts}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    false_result = _evaluate_gate(false_evidence)
+    assert false_result["result"] == "RETAIN_ATOMIC_FILE_BASELINE"
+    assert false_result["false_facts"] == ["foreign_backup_denied"]
+
+
+def _gate_fact_keys() -> set[str]:
+    return {
+        "shared_equivalence",
+        "sqlite_removes_two_or_more_windows",
+        "lock_contention",
+        "restart_recovery",
+        "corruption_detection",
+        "current_backup_restore",
+        "stale_backup_denied",
+        "foreign_backup_denied",
+        "sqlite_migration",
+        "derived_state_safety",
+        "status_byte_readonly",
+        "external_boundaries_preserved",
+    }

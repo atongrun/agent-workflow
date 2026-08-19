@@ -34,6 +34,20 @@ SAFE_CHILD_ENV_KEYS = ("LANG", "LC_ALL", "PATH", "PYTHONIOENCODING", "SYSTEMROOT
 AUTHORIZED_JOURNAL_ACTION = (
     "preserve the consumed authorization/budget and deny automatic provider replay"
 )
+GATE_FACT_KEYS = {
+    "shared_equivalence",
+    "sqlite_removes_two_or_more_windows",
+    "lock_contention",
+    "restart_recovery",
+    "corruption_detection",
+    "current_backup_restore",
+    "stale_backup_denied",
+    "foreign_backup_denied",
+    "sqlite_migration",
+    "derived_state_safety",
+    "status_byte_readonly",
+    "external_boundaries_preserved",
+}
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -966,7 +980,6 @@ def _maintenance(args: argparse.Namespace) -> dict[str, Any]:
 def _windows(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "task_id": TASK_ID,
-        "result": "SQLITE_MEETS_MINIMUM_GATE",
         "external_boundaries": [
             "provider execution",
             "Git process and filesystem",
@@ -987,6 +1000,38 @@ def _windows(args: argparse.Namespace) -> dict[str, Any]:
             "backup artifact handling",
             "platform sqlite compatibility",
         ],
+    }
+
+
+def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
+    evidence_path = Path(args.evidence)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    facts = evidence.get("facts")
+    if not isinstance(facts, dict):
+        facts = {}
+    keys = set(facts)
+    missing = sorted(GATE_FACT_KEYS - keys)
+    extra = sorted(keys - GATE_FACT_KEYS)
+    non_boolean = sorted(key for key, value in facts.items() if not isinstance(value, bool))
+    false_facts = sorted(key for key in GATE_FACT_KEYS if facts.get(key) is False)
+    task_id_matches = evidence.get("task_id") == TASK_ID
+    eligible = (
+        task_id_matches
+        and not missing
+        and not extra
+        and not non_boolean
+        and not false_facts
+    )
+    return {
+        "task_id": TASK_ID,
+        "evidence_task_id_matches": task_id_matches,
+        "evidence": str(evidence_path),
+        "result": "SQLITE_MEETS_MINIMUM_GATE" if eligible else "RETAIN_ATOMIC_FILE_BASELINE",
+        "facts": {key: facts.get(key) for key in sorted(GATE_FACT_KEYS)},
+        "missing_keys": missing,
+        "extra_keys": extra,
+        "non_boolean_keys": non_boolean,
+        "false_facts": false_facts,
     }
 
 
@@ -1023,6 +1068,8 @@ def main() -> int:
             )
             command.add_argument("--seconds", type=float, default=1.0)
     sub.add_parser("windows")
+    evaluate = sub.add_parser("evaluate")
+    evaluate.add_argument("--evidence", required=True)
     args = parser.parse_args()
     if args.command == "run":
         result = _run(args)
@@ -1032,8 +1079,10 @@ def main() -> int:
         result = _stop(args)
     elif args.command == "maintenance":
         result = _maintenance(args)
-    else:
+    elif args.command == "windows":
         result = _windows(args)
+    else:
+        result = _evaluate(args)
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return 0
 
