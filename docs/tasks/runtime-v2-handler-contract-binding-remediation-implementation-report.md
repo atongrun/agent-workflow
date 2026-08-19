@@ -1,6 +1,7 @@
 # Runtime v2 compiled handler binding remediation report
 
-Status: Implementation complete; exact-head GitHub CI remains the publication gate.
+Status: Implementation and implementation-head verification `PASS`; the evidence-only publication
+head still requires exact-head GitHub CI and independent Review before merge.
 
 Date: 2026-08-20
 
@@ -47,8 +48,14 @@ continues without a compiled digest.
 - Independent implementation Review: `PASS`, zero findings.
 - Reviewer confirmed the only authority source is the verified current packet and found no stage,
   budget, route, provider, outbox or ACK semantic change.
+- Ordinary GitHub CI run `32275756310` passed the Ubuntu, Windows, macOS and all three
+  installed-wheel jobs on implementation commit `0f0f3b82aedd5ab10524fe03bd1401ca30135510`.
+- Binary Feasibility run `32275756344` passed all five native target cells and the aggregate on the
+  same implementation commit. Its first `native-macos-x86_64` attempt failed while the external
+  GitHub Releases API returned `403 rate limit exceeded` to `science`; the failed job was rerun
+  without a source change and passed. The other four cells had already passed.
 - Local pytest and Ruff were not run because repository policy assigns them to GitHub CI on this
-  Mac. Exact-head CI evidence will be added before merge.
+  Mac. The final evidence-only head remains subject to the same exact-head CI and Review gate.
 
 ## Live-system boundary
 

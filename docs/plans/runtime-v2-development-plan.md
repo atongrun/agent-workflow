@@ -5,6 +5,13 @@ Status: Active gated repository plan after independent double review. Last passe
 `712365b8a462f2c9ca27b461f91125fff344caca`. RTS-010 is the next active gate. This plan is not an
 ADR and authorizes no production migration, default switch or release action by itself.
 
+RTS-010 entry preparation confirmed the Draft's compiled RunContract handler-binding gap before any
+isolated event or provider invocation. PR #97 fixes it by preserving the digest only from a recovered
+current ledger packet. Implementation commit `0f0f3b82aedd5ab10524fe03bd1401ca30135510`
+passed ordinary CI `32275756310`, Binary Feasibility `32275756344` after one external rate-limit
+rerun, and independent Review. Exact-head evidence Review/CI and merge remain the publication gate;
+RTS-010 must pin the eventual merge commit before live acceptance resumes.
+
 Date: 2026-08-19
 
 Basis:
@@ -187,6 +194,10 @@ isolated identities.
 #### RTS-010 — Fresh post-remediation real PASS TaskCard
 
 Scope: one genuinely useful bounded downstream business task on `main@0ed7812` or later.
+
+Entry update: the downstream business TaskCard and branch identity are prepared and no Bus,
+listener, event or provider has consumed them. Their Agent Workflow source binding must be advanced
+to PR #97's eventual merge commit before dispatch.
 
 Exit criteria:
 
@@ -615,10 +626,10 @@ rewrite, SQLite store, or physical single Coordinator.**
 ### Next decision point
 
 RTS-001 passed and the Draft is complete enough to enter Phase 1 under the later owner execution
-authorization. The next planned card is RTS-010, but its fresh live/business TaskCard must still
-satisfy its own entry criteria and scoped authority before any model, queue, remote, or downstream
-mutation. Do not choose a language, store, Coordinator deployment, or production migration at this
-point.
+authorization. RTS-010 preparation is frozen at the pre-live boundary while PR #97 completes its
+exact-head evidence Review/CI and merge; the downstream TaskCard must then pin that exact merge before
+any model, queue, listener, event or downstream business mutation. Do not choose a language, store,
+Coordinator deployment, or production migration at this point.
 
 ## 12. Plan Completion Definition
 
