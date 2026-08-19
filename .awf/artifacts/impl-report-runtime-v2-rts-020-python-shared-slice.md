@@ -103,6 +103,12 @@ Second independent review of `5de57901bc2bf2bf6c9f7939ebb51b6b051985f6` also ret
   launch/started state, exact journal IDs, handoff exactness and rerun/provider-count stability;
 - manual Python line wrapping for changed lines over 100 columns.
 
+Final exact-head independent review of `6454f47` returned `REQUEST_CHANGES` with one HIGH
+finding. This follow-up fixes authorized missing/corrupt bound-journal handling so both
+implement and review authorization states require owner decision before provider launch while
+preserving authorization and byte-stable corrupt evidence. Final independent reviewer verdict is
+pending.
+
 ## Verification at implementation time
 
 - `compile()` for `experiments/runtime-v2-python/runner.py`,
@@ -117,6 +123,8 @@ Second independent review of `5de57901bc2bf2bf6c9f7939ebb51b6b051985f6` also ret
 - second-review direct helper smoke: PASS, adds implement/review/terminal evidence drift,
   authorization erasure/duplicate, duplicate pre-start exact-state and prohibited-effect mapping
   guard checks
+- final-review direct helper smoke: PASS, covers authorized corrupt bound journals,
+  status/run owner-required outcomes, provider-count stability and byte-stable corrupt evidence
 - local pytest/Ruff: intentionally not run on Mac per task boundary
 
 <!-- awf-implementation-report
@@ -135,15 +143,17 @@ Second independent review of `5de57901bc2bf2bf6c9f7939ebb51b6b051985f6` also ret
     "compile() for changed Python files",
     "duplicate-key JSON fixture validation with object_pairs_hook",
     "direct helper smoke in temporary Git repositories",
-    "expanded direct smoke for recovery/no-replay/status-readonly/identity-drift/credential-env checks"
+    "expanded direct smoke for recovery/no-replay/status-readonly/identity-drift/credential-env checks",
+    "final-review direct smoke for authorized corrupt bound-journal owner-required handling"
   ],
   "tests": [
     "Static compile PASS",
     "Fixture duplicate-key validation PASS",
-    "Direct normal-path and fault smoke PASS after REQUEST_CHANGES fixes"
+    "Direct normal-path and fault smoke PASS after first and second REQUEST_CHANGES fixes",
+    "Final-review focused direct smoke PASS for corrupt authorized bound journals"
   ],
-  "source_revision": "b4adae5673e01687c1827bc0f2cd942968e516ae",
-  "review_status": "independent implementation review PASS after two REQUEST_CHANGES repair rounds",
+  "source_revision": "6454f47 plus pending local final-review repair commit",
+  "review_status": "pending final independent verdict after REQUEST_CHANGES repair",
   "synthetic_boundaries": [
     "provider intelligence",
     "delivery observation",

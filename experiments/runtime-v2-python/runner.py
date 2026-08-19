@@ -22,6 +22,9 @@ BRANCH = f"codex/{TASK_ID}"
 ALLOWED_DELTA = ["result.txt"]
 FORMAT = "awf.runtime-v2-python-slice.v1"
 SAFE_CHILD_ENV_KEYS = ("LANG", "LC_ALL", "PATH", "PYTHONIOENCODING", "SYSTEMROOT", "WINDIR")
+AUTHORIZED_JOURNAL_LEGAL_NEXT_ACTION = (
+    "preserve the consumed authorization/budget and deny automatic provider replay"
+)
 
 
 class StateError(RuntimeError):
@@ -611,6 +614,25 @@ def _invoke_provider(
     return journal.result(return_code)
 
 
+def _read_authorized_journal(journal: InvocationJournal) -> dict[str, Any]:
+    if not journal.path.exists():
+        raise StateError(
+            "OWNER_DECISION_REQUIRED",
+            AUTHORIZED_JOURNAL_LEGAL_NEXT_ACTION,
+            "authorized invocation is missing its prepared journal",
+        )
+    try:
+        return journal.read()
+    except StateError as exc:
+        if "InvocationJournal" in exc.source:
+            raise
+        raise StateError(
+            "OWNER_DECISION_REQUIRED",
+            AUTHORIZED_JOURNAL_LEGAL_NEXT_ACTION,
+            f"authorized invocation cannot read its prepared journal: {exc.source}",
+        ) from exc
+
+
 def _prepare_implement(run_dir: Path, spec: dict[str, Any]) -> InvocationJournal:
     journal = _invocation(run_dir, spec, "implement-1", "implement")
     if journal.path.exists():
@@ -877,13 +899,7 @@ def _continue(
             run = store.authorize(run, journal.invocation_id, "implement")
         elif phase == "implement_authorized":
             journal = _invocation(run_dir, spec, "implement-1", "implement")
-            if not journal.path.exists():
-                raise StateError(
-                    "OWNER_DECISION_REQUIRED",
-                    "preserve the consumed authorization/budget and deny automatic provider replay",
-                    "authorized invocation is missing its prepared journal",
-                )
-            payload = journal.read()
+            payload = _read_authorized_journal(journal)
             if payload.get("state") == "prepared":
                 _invoke_provider(journal, spec, "implement", mode=mode)
                 run = store.phase(run, "implement_result")
@@ -942,7 +958,7 @@ def _continue(
             run = store.authorize(run, journal.invocation_id, "review")
         elif phase == "review_authorized":
             journal = _invocation(run_dir, spec, "review-1", "review")
-            payload = journal.read()
+            payload = _read_authorized_journal(journal)
             if payload.get("state") == "prepared":
                 _invoke_provider(journal, spec, "review")
                 run = store.phase(run, "review_result")
@@ -1037,6 +1053,8 @@ def _inject_fault(run_dir: Path, spec: dict[str, Any], fault: str) -> dict[str, 
         journal = _invocation(run_dir, spec, "review-1", "review")
         journal.launch(_provider_argv(spec, run_dir, journal.read(), "review", "normal"), "normal")
         return run
+    if fault == "review_authorized_prepared":
+        return _continue_until_review_authorized(run_dir, spec, run)
     if fault == "review_started_no_result":
         run = _continue_until_review_authorized(run_dir, spec, run)
         journal = _invocation(run_dir, spec, "review-1", "review")

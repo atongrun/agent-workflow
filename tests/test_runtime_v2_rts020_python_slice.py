@@ -16,6 +16,9 @@ TASK_ID = "runtime-v2-rts-020-python-shared-slice"
 BRANCH = f"codex/{TASK_ID}"
 IMPLEMENT_AUTH = [{"invocation_id": "implement-1", "role": "implement"}]
 FULL_AUTH = [*IMPLEMENT_AUTH, {"invocation_id": "review-1", "role": "review"}]
+AUTHORIZED_JOURNAL_LEGAL_NEXT_ACTION = (
+    "preserve the consumed authorization/budget and deny automatic provider replay"
+)
 PROHIBITED_ASSERTION_MAP = {
     "automatic provider replay": ["state_stable_on_rerun"],
     "broaden allowed paths": ["spec_allowed_delta_stable"],
@@ -192,6 +195,40 @@ def _atomic_state(path: Path, payload: dict[str, Any]) -> None:
     temp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
     temp.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temp.replace(path)
+
+
+def _assert_corrupt_authorized_journal_owner_required(
+    state_root: Path,
+    repo: Path,
+    run_id: str,
+    fault: str,
+    journal_name: str,
+    expected_auth: list[dict[str, str]],
+) -> None:
+    prepared = _run_cli(state_root, repo, run_id=run_id, fault=fault)
+    assert prepared["outcome"] == "SAFE_CONTINUE"
+    run_dir = _run_dir(state_root, run_id)
+    before_auth = _state_payload(run_dir, "run.json")["authorizations"]
+    assert before_auth == expected_auth
+
+    journal_path = run_dir / "invocations" / journal_name
+    journal_path.write_text("{", encoding="utf-8")
+    before = _snapshot_bytes(run_dir)
+    before_counts = _counts(prepared)
+
+    status = _status_cli(state_root, run_id=run_id)
+    assert status["outcome"] == "OWNER_DECISION_REQUIRED"
+    assert status["legal_next_action"] == AUTHORIZED_JOURNAL_LEGAL_NEXT_ACTION
+    assert _counts(status) == before_counts
+    assert _state_payload(run_dir, "run.json")["authorizations"] == before_auth
+    assert _snapshot_bytes(run_dir) == before
+
+    rerun = _run_cli(state_root, repo, run_id=run_id)
+    assert rerun["outcome"] == "OWNER_DECISION_REQUIRED"
+    assert rerun["legal_next_action"] == AUTHORIZED_JOURNAL_LEGAL_NEXT_ACTION
+    assert _counts(rerun) == before_counts
+    assert _state_payload(run_dir, "run.json")["authorizations"] == before_auth
+    assert _snapshot_bytes(run_dir) == before
 
 
 def _assert_machine_assertions(
@@ -429,6 +466,28 @@ def test_auth_start_authorized_prepared_recovers_once_after_revalidation(tmp_pat
 
     rerun = _run_cli(state_root, repo, run_id=run_id)
     assert _counts(rerun) == _counts(terminal)
+
+
+def test_corrupt_authorized_journals_require_owner_without_writing(tmp_path: Path) -> None:
+    repo = _source_repo(tmp_path)
+    state_root = tmp_path / "state"
+
+    _assert_corrupt_authorized_journal_owner_required(
+        state_root,
+        repo,
+        "implement-authorized-corrupt-journal",
+        "auth_authorized_prepared",
+        "implement-1.json",
+        IMPLEMENT_AUTH,
+    )
+    _assert_corrupt_authorized_journal_owner_required(
+        state_root,
+        repo,
+        "review-authorized-corrupt-journal",
+        "review_authorized_prepared",
+        "review-1.json",
+        FULL_AUTH,
+    )
 
 
 def test_duplicate_pre_start_keeps_exact_auth_journal_and_provider_state(tmp_path: Path) -> None:
