@@ -1,6 +1,6 @@
 # RTS-001 Runtime v2 Semantic Contract Draft — Implementation Report
 
-Status: **PASS**
+Status: **TaskCard PASS; PR integration `EXTERNAL_BLOCKED`**
 
 ## 1. Outcome and basis
 
@@ -143,3 +143,30 @@ not a remaining finding.
 RTS-001 is closed at Draft maturity. The execution plan may advance to the first next TaskCard whose
 entry criteria are satisfied. Production/default/release/migration/destructive actions remain
 separately gated.
+
+## 9. PR and CI closeout evidence
+
+PR [#96](https://github.com/atongrun/agent-workflow/pull/96) targets `main@0ed7812`. Its exact reviewed
+semantic TaskCard commit is `021e054`; the branch also carries this later evidence-only closeout.
+The ordinary CI suite passed on the semantic commit: Ubuntu tests, Windows tests/recovery,
+macOS runtime, and installed-wheel jobs on Ubuntu, Windows and macOS. Four of five native binary
+matrix jobs also passed.
+
+The remaining `native-macos-arm64` job failed in workflow run `32270007734` on all three bounded
+attempts. Each attempt reached the unchanged `Build the three native candidates` step and failed
+before evaluating this documentation diff with the same external response:
+
+```text
+httpx.HTTPStatusError: Client error '403 rate limit exceeded'
+for url 'https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest'
+```
+
+The final attempt is `run_attempt=3`, job `96126310333`, head
+`021e05400b501c64e9e21b24a311d025dc5b329f`. The same Binary Feasibility workflow was green on
+current `main@0ed7812` in run `32048522567`, and the other four target cells passed on this PR.
+This is classified `EXTERNAL_BLOCKED`, not a Runtime/contract regression.
+
+Legal next action: keep PR #96 open and retry the exact unchanged head only after the external GitHub
+API allowance is available, or repair the unrelated Binary Feasibility download/auth/cache boundary
+under a separately reviewed TaskCard. Do not merge a red gate, modify the frozen RTS-001 scope to
+hide the failure, or start RTS-010 live execution before repository integration closes.

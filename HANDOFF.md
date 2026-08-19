@@ -10,7 +10,8 @@
 ## Current Handoff State: 2026-08-19 Runtime v2 Decision Plan
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
-development plan are now repository evidence. RTS-001 is the last passed gate: the language-neutral
+development plan are preserved on PR #96 pending repository integration. RTS-001 is the last passed
+TaskCard gate: the language-neutral
 semantic contract remains `Draft`, its machine-readable fault matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
 record families without hiding external Agent Bus/Git/GitHub/OS/provider truth. Independent Review
@@ -21,6 +22,15 @@ record families without hiding external Agent Bus/Git/GitHub/OS/provider truth. 
 [inventory](docs/testing/runtime-v2-authority-record-inventory.md), and
 [implementation report](docs/tasks/runtime-v2-semantic-contract-draft-implementation-report.md).
 
+PR #96's exact reviewed semantic TaskCard commit is `021e054`; a later evidence-only commit records
+the integration stop. Ordinary Ubuntu/Windows/macOS and installed-wheel CI passed, as did four of
+five native matrix cells. `native-macos-arm64` failed three bounded attempts
+at the same external GitHub API `403 rate limit exceeded` while resolving the latest
+`python-build-standalone` release; current main's last comparable run was green. The integration
+state is `EXTERNAL_BLOCKED`: keep the PR open, do not merge the red gate, and do not start RTS-010
+live execution. Retry the unchanged head after the external allowance recovers, or use a separate
+TaskCard for the unrelated CI download/auth/cache boundary.
+
 RTS-001 changed no Runtime code or external state. Two current Python correctness gaps are already
 mapped and must not be mistaken for accepted behavior: compiled RunContract SHA binding appears to
 be lost when the handler reconstructs its context packet, and the gate cannot authorize the second
@@ -28,7 +38,7 @@ review after rework under its current transition/attempt budget. Other documente
 authorization-before-checkpoint, compatibility-route recovery, local-effect reconciliation,
 terminal causality, unshipped terminal labels and cross-host adoption.
 
-The next planned gate is RTS-010: one fresh, genuinely useful, bounded downstream business PASS on
+After PR #96 integrates, the next planned gate is RTS-010: one fresh, genuinely useful, bounded downstream business PASS on
 the current reference. It requires a new committed TaskCard and fresh run/branch/delivery identities.
 Do not inspect or operate retained events, and do not infer business scope from pending transport
 state. RTS-011 remains a later disposable scripted-provider rework acceptance. No language, store,

@@ -1,8 +1,9 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-001 / Phase 0 Draft (`PASS`, 2026-08-19)**. It is not an ADR and authorizes no production
-implementation, model invocation, queue operation, migration, or release action by itself.
+**RTS-001 / Phase 0 Draft TaskCard (`PASS`, 2026-08-19)**; PR #96 repository integration is
+`EXTERNAL_BLOCKED` by a repeated unrelated GitHub API rate limit. It is not an ADR and authorizes no
+production implementation, model invocation, queue operation, migration, or release action by itself.
 
 Date: 2026-08-19
 
@@ -138,6 +139,12 @@ Execution result: **PASS**. The Draft, 39-case fault matrix and 28-family invent
 [`RTS-001 implementation report`](../tasks/runtime-v2-semantic-contract-draft-implementation-report.md).
 Independent Review 2 returned `PASS` with zero findings. Current Python correctness gaps remain
 explicit faults for Phase 1; they were not waived or repaired by this documentation gate.
+
+Integration note: PR #96's ordinary cross-platform CI and four of five native cells passed. The
+macOS arm64 native cell failed three bounded attempts at the same external
+`python-build-standalone` GitHub API `403 rate limit exceeded` boundary. Keep the PR open and do not
+start live RTS-010 execution until the exact reviewed head integrates with a green gate or the
+unrelated CI boundary is repaired under a separate TaskCard.
 
 Deliverables:
 
