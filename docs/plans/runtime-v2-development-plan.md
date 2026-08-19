@@ -1,9 +1,9 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-001 / Phase 0 Draft TaskCard (`PASS`, 2026-08-19)**; PR #96's CI gate is green and awaits
-final integration. It is not an ADR and authorizes no production implementation, model invocation,
-queue operation, migration, or release action by itself.
+**RTS-001 / Phase 0 Draft TaskCard (`PASS`, 2026-08-19)**, integrated by PR #96 at merge commit
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-010 is the next active gate. This plan is not an
+ADR and authorizes no production migration, default switch or release action by itself.
 
 Date: 2026-08-19
 
@@ -140,12 +140,12 @@ Execution result: **PASS**. The Draft, 39-case fault matrix and 28-family invent
 Independent Review 2 returned `PASS` with zero findings. Current Python correctness gaps remain
 explicit faults for Phase 1; they were not waived or repaired by this documentation gate.
 
-Integration note: PR #96's ordinary cross-platform CI and four of five native cells passed. The
+Integration note: PR #96's ordinary cross-platform CI and four of five native cells initially passed. The
 macOS arm64 native cell failed three bounded attempts at the same external
 `python-build-standalone` GitHub API `403 rate limit exceeded` boundary. A later evidence-only commit
 triggered fresh runs that passed ordinary CI, all five native cells and the aggregate job, clearing
-the external block without a workflow change. Do not start live RTS-010 execution until the final
-reviewed head integrates.
+the external block without a workflow change. Exact-head Review and CI passed, and PR #96 merged as
+`712365b8a462f2c9ca27b461f91125fff344caca` before RTS-010 preparation began.
 
 Deliverables:
 
