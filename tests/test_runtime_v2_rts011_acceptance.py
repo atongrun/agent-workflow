@@ -478,9 +478,7 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
         review1_path,
         review1_checkpoint,
         report=review1_report,
-        trusted_repo=_clone_at(
-            repo, tmp_path / "review1-trusted-repo", implementation_commit
-        ),
+        trusted_repo=_clone_at(repo, tmp_path / "review1-trusted-repo", implementation_commit),
         provenance=implementation_provenance,
     )
     rework_payload, review1_checkpoint = _handoff(
@@ -521,9 +519,7 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
     ).allowed
     rework_evidence = awf_role.RunEvidence(103, "coder", state_root=state_root)
     unopened_rework_state = [
-        awf_role.delivery_state_path(
-            rework_evidence, kind, str(rework_input["delivery_id"])
-        )
+        awf_role.delivery_state_path(rework_evidence, kind, str(rework_input["delivery_id"]))
         for kind in ("checkpoint", "outbox", "inbox")
     ]
     assert not any(path.exists() for path in unopened_rework_state)
