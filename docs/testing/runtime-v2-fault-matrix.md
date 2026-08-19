@@ -1,22 +1,22 @@
 # Runtime v2 Fault Matrix
 
-Status: **Draft**
+Status: **Candidate**
 
 The normative machine-readable table is
 [`runtime-v2-fault-matrix.json`](runtime-v2-fault-matrix.json). It is bound to
-`main@0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2` and uses evidence/outcome IDs from
-[`awf.semantic-contract.v1`](../runtime-v2-semantic-contract.md).
+the Candidate evidence head `2868486263aaf35814719fb9ab085a5787359408` and uses evidence/outcome
+IDs from [`awf.semantic-contract.v1`](../runtime-v2-semantic-contract.md).
 
-This is a current-reference fault map, not a replacement design. A safe current denial may expose a
-reference correctness gap that Phase 1 must fix; such a case carries `reference_gap`. A later slice
-may reduce a fault window only by preserving or strengthening the normalized result.
+This is a current-reference fault map, not a replacement design. A safe current denial may expose
+a reference correctness gap that a later gate must fix; such a case carries `reference_gap`. A
+later slice may reduce a fault window only by preserving or strengthening the normalized result.
 
 ## File contract
 
 The JSON top level contains exactly:
 
 - `format = awf.runtime-v2-fault-matrix.v1`;
-- `maturity = Draft`;
+- `maturity = Candidate`;
 - the exact Git `basis`;
 - the semantic-contract path;
 - the declared normalized `outcomes`;
@@ -67,33 +67,29 @@ The reviewer checkpoint intentionally omits coder-only postflight/commit/fork ph
 raw persistence/normalization/import and exact PR verification remain distinct facts even where the
 phase names are shared.
 
+## Closed Phase 1 gaps retained as regression cases
+
+1. `F-AUTH-004`: PR #100 and RTS-011 prove the corrected rule: one authorized rework unlocks one
+   additional review-stage slot while both review deliveries retain input `attempt=1`. The case now
+   protects denial of an extra slot or an input attempt greater than one.
+2. `F-RUN-003`: PR #97 and RTS-010 prove end-to-end compiled-contract SHA preservation. The case now
+   protects denial when a handler input actually omits or drifts that immutable binding.
+
 ## Current reference gaps exposed by the matrix
 
-1. `F-AUTH-004`: current `RunLedger.pre_invocation_gate` permits `implement -> review` and
-   `implement|review|rework -> rework`, but its review transition does not accept `rework -> review`.
-   The default per-stage attempt budget is also one, while RTS-011 requires two reviews. Existing
-   focused lineage evidence stops after authorizing/restoring rework. Phase 1 must add the full
-   second-review regression and fix the reference without weakening dedupe/budget semantics.
-2. `F-RUN-003`: `awf run` binds the compiled contract SHA in the initial context packet, while the
-   handler currently rebuilds a packet without propagating that SHA before `RunLedger.initialize`.
-   The immutable-identity check therefore appears to deny the first handler for a compiled run.
-   Phase 1 must prove/fix the end-to-end binding; removing the compiled-contract binding is not an
-   allowed workaround.
-3. Gate authorization consumes stage/attempt/rework budget before later provider/workspace lineage
+1. Gate authorization consumes stage/attempt/rework budget before later provider/workspace lineage
    checks. A later pre-provider failure is not equivalent to an invoked provider, but its durable
    authorization and budget cannot be erased. Recovery must reuse exact same-delivery evidence or
    require an explicit owner decision.
-4. Current code has terminal enum values `failed`, `cancelled`, and `rejected`, but the shipped
+2. Current code has terminal enum values `failed`, `cancelled`, and `rejected`, but the shipped
    architect handler produces only `completed` and `blocked`. Gate-level `rejected` is nonterminal.
    Later acceptance must not infer an automatic terminal transition for the unimplemented cases.
 
-These are mapped known boundaries, not reasons to redefine PASS. RTS-001 can complete only if an
-independent reviewer confirms that no known production fault is missing from either the JSON cases
-or an explicit open question.
+These are mapped known boundaries, not reasons to redefine PASS or weaken Candidate semantics.
 
 ## Static validation
 
-RTS-001 validation must prove:
+Candidate validation must prove:
 
 1. the JSON parses with duplicate-key rejection;
 2. `format`, `maturity`, `basis`, and `contract` are exact;
@@ -103,5 +99,5 @@ RTS-001 validation must prove:
 6. every case has at least one prohibited action and one legal next action;
 7. all current coder/reviewer checkpoint phases appear in the coverage table above.
 
-No live fault is injected by RTS-001. Phase 1/2 fixtures will convert these rows into executable
-language-neutral cases with fresh disposable identities.
+No live fault is injected by this matrix. Phase 2 fixtures will convert the remaining rows into
+executable language-neutral cases with fresh disposable identities.

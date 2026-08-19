@@ -31,8 +31,12 @@ retained event, production/default/release/migration, or destructive surface is 
 - `git diff --check`: PASS
 - independent implementation Review 1: initial `REQUEST_CHANGES` on the outbox action name, fixed
   to production `reviewer.request_changes`, then re-reviewed `PASS` with zero findings;
-- module import was not executed because the local Mac environment intentionally has no pytest;
-  pytest/Ruff and cross-platform behavior remain authoritative GitHub CI evidence.
+- ordinary CI run `32301184219` on executable head `2868486`: PASS on Ubuntu, Windows, macOS
+  runtime and all three installed-wheel jobs; Ubuntu collected 654 tests (`649 passed, 5 skipped`),
+  Windows completed `643 passed, 11 skipped`, Ruff check/format passed;
+- Binary Feasibility run `32301184171`: PASS on Linux x86_64/arm64, macOS x86_64/arm64, Windows
+  x86_64 and aggregate;
+- local Mac pytest/Ruff execution remains intentionally excluded; GitHub CI is authoritative.
 
 <!-- awf-implementation-report
 {
@@ -45,14 +49,16 @@ retained event, production/default/release/migration, or destructive surface is 
   ],
   "commands": [
     "python3 syntax compile() for tests/test_runtime_v2_rts011_acceptance.py and tests/fixtures/runtime_v2_scripted_provider.py",
-    "git diff --check"
+    "git diff --check",
+    "GitHub Actions CI run 32301184219",
+    "GitHub Actions Binary Feasibility run 32301184171"
   ],
   "tests": [
     "Static compile PASS",
     "Independent implementation Review 1 PASS after one deterministic rework",
-    "Focused pytest pending authoritative GitHub CI",
-    "Full pytest and Ruff pending authoritative GitHub CI"
+    "Ordinary cross-platform CI PASS",
+    "Five-target Binary Feasibility plus aggregate PASS"
   ],
-  "source_revision": "d13a1ad plus current CI-format fix"
+  "source_revision": "2868486263aaf35814719fb9ab085a5787359408"
 }
 -->

@@ -1,7 +1,7 @@
 {
   "format": "awf.runtime-v2-fault-matrix.v1",
-  "maturity": "Draft",
-  "basis": "0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2",
+  "maturity": "Candidate",
+  "basis": "2868486263aaf35814719fb9ab085a5787359408",
   "contract": "docs/runtime-v2-semantic-contract.md",
   "outcomes": [
     "SAFE_CONTINUE",
@@ -38,12 +38,11 @@
     {
       "id": "F-RUN-003",
       "boundary": "handler_entry",
-      "fault": "compiled RunContract SHA is present in the run but omitted by the handler-rebuilt context packet",
+      "fault": "compiled RunContract SHA is omitted or drifted at handler entry",
       "expected_outcome": "DENY_BEFORE_PROVIDER",
-      "legal_next_action": "fix the reference binding under a scoped correctness TaskCard before acceptance",
+      "legal_next_action": "preserve the run and diagnose the exact immutable contract binding",
       "prohibited": ["drop the compiled-contract binding from the existing ledger"],
-      "evidence": ["E-RUN-1", "E-RUN-2"],
-      "reference_gap": "Current handler packet construction does not propagate run_contract_sha256."
+      "evidence": ["E-RUN-1", "E-RUN-2", "E-RTS010"]
     },
     {
       "id": "F-PROC-001",
@@ -84,12 +83,11 @@
     {
       "id": "F-AUTH-004",
       "boundary": "rework_to_second_review",
-      "fault": "current gate rejects review after rework and default review attempt budget is already consumed",
+      "fault": "follow-up review uses input attempt greater than one or exceeds the single review-stage slot unlocked by one authorized rework",
       "expected_outcome": "DENY_BEFORE_PROVIDER",
-      "legal_next_action": "repair the current Python reference before RTS-011 and add the full two-review regression",
-      "prohibited": ["claim deterministic rework acceptance", "manually advance stage or budget"],
-      "evidence": ["E-RUN-2", "E-REWORK-1"],
-      "reference_gap": "Current synthetic lineage evidence stops after rework and does not prove the required second review."
+      "legal_next_action": "preserve the recorded denial and require a separately authorized rework before another review slot",
+      "prohibited": ["raise the global per-delivery attempt limit", "manually advance stage or budget"],
+      "evidence": ["E-RUN-2", "E-REWORK-1", "E-RTS011"]
     },
     {
       "id": "F-DUP-001",

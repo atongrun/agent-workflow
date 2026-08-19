@@ -1,15 +1,16 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-010 / fresh post-remediation business TaskCard (`PASS`, 2026-08-20)**. RTS-011 is the next
-active gate. This plan is not an
-ADR and authorizes no production migration, default switch or release action by itself.
+**RTS-011 / deterministic Python rework acceptance (`PASS`, 2026-08-20)**. Phase 1 is complete and
+the semantic contract is `Candidate`; RTS-020 is the next eligible disposable gate. This plan is
+not an ADR and authorizes no production migration, default switch or release action by itself.
 
 RTS-011's narrow Python prerequisite is now regression-locked: each authorized rework unlocks one
 additional review-stage slot while every distinct review delivery remains at input `attempt=1`.
 PR #100 passed independent implementation Review, ordinary cross-platform CI and all five Binary
-Feasibility targets plus aggregate. This does **not** complete RTS-011; the fresh disposable
-scripted-provider/restart/ACK/terminal acceptance remains the next TaskCard.
+Feasibility targets plus aggregate. PR #101 then completed the disposable scripted-provider,
+restart, lineage, handoff and terminal acceptance on executable head `2868486`; external provider
+intelligence, transport/ACK and GitHub boundaries remain explicitly synthetic.
 
 RTS-010 entry preparation confirmed the Draft's compiled RunContract handler-binding gap before any
 isolated event or provider invocation. PR #97 fixed it by preserving the digest only from a recovered
@@ -41,6 +42,8 @@ Basis:
 - [Original architecture Review](../reviews/2026-08-18-global-architecture-product-simplicity-runtime-rewrite-review.md)
 - [Independent adversarial double review](../reviews/2026-08-19-runtime-v2-adversarial-double-review.md)
 - Current repository truth: `main@0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2`
+- Candidate reference basis: `main@463c195c1404331e690c99a0865debb21e0b67c1` plus RTS-011
+  executable acceptance head `2868486263aaf35814719fb9ab085a5787359408`
 - [HANDOFF](../../HANDOFF.md)
 - [ROADMAP](../../ROADMAP.md)
 
@@ -258,8 +261,18 @@ Exit criteria:
 - Duplicate/redelivery before rework does not start another provider.
 - Restart after provider result resumes the same durable state.
 - Required outgoing intent, handler success, ACK observation, inbox completion, and terminal ordering
-  match the Draft contract.
+  match the Candidate contract.
 - The acceptance artifact records which paths are synthetic and makes no real-business claim.
+
+Execution result: **PASS**. PR #101 executes the complete bounded loop with exactly one implement,
+one rework and two review child processes; both distinct reviews retain input `attempt=1`. It
+proves exact lineage, duplicate and drift denial before provider, same-event durable result recovery
+without a second rework process, production outbox/inbox and architect terminal ordering, and an
+idempotent terminal replay. The ACK observer, transport send, provider intelligence and GitHub
+provenance are synthetic by contract. Independent implementation Review passed after one bounded
+route/schema correction. Exact executable-head ordinary CI run `32301184219` and Binary
+Feasibility run `32301184171` passed every job. See the
+[`RTS-011 acceptance report`](../tasks/runtime-v2-rts-011-deterministic-rework-acceptance-implementation-report.md).
 
 Phase 1 exit criteria:
 
@@ -267,6 +280,11 @@ Phase 1 exit criteria:
 - The semantic contract is revised from observed differences and marked `Candidate`, not `Frozen`.
 - No new fundamental safety invariant remains undocumented.
 - Any failure returns the plan to Phase 0/1; it does not authorize a workaround or rewrite.
+
+Phase 1 result: **PASS**. RTS-010 and RTS-011 passed, former gaps CG-1/F-AUTH-004 and
+CG-2/F-RUN-003 are retained as closed regression cases, and no new fundamental invariant was
+discovered. The contract is `Candidate`, not `Frozen`; no language, storage, Coordinator topology,
+production migration, default or release decision follows from this promotion.
 
 ### Phase 2 — Compare Simplification Options on One Shared Slice
 
@@ -645,8 +663,6 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Open evidence gaps
 
-- complete deterministic rework artifact;
-- current authority/fault inventory;
 - Python versus Rust/Go shared-slice measurements;
 - SQLite Windows/fault evidence;
 - physical Coordinator recovery model;
@@ -655,11 +671,11 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Next decision point
 
-RTS-001 and RTS-010 passed. The Draft remains at Phase 1 because RTS-011 still requires a complete
-deterministic two-review/rework acceptance. PR #100 regression-locked and corrected the former
-`rework -> review` transition and review-stage capacity hole without raising the per-delivery
-attempt limit. The next legal implementation is the disposable scripted-provider RTS-011 run. Do
-not choose a language, store, Coordinator deployment, or production migration at this point.
+RTS-001, RTS-010 and RTS-011 passed, so the contract is Candidate and Phase 2 may begin. The first
+entry-satisfied card is RTS-020: freeze and execute the Python version of the shared disposable
+no-model slice, using the same eight injected faults and baseline measurements required for later
+comparison. This does not choose Python, a store, a physical Coordinator, a product boundary or a
+production migration.
 
 ## 12. Plan Completion Definition
 
