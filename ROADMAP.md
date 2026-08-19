@@ -17,8 +17,10 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 - [x] Preserve the owner Review, adversarial double review and gated Runtime v2 development plan.
 - [x] Complete the RTS-001 TaskCard: Draft semantic contract, 39-case machine-readable fault matrix,
   current authority/evidence inventory, static validation and independent Reviewer `PASS`.
-- [ ] Integrate PR #96 after final exact-head review/CI. Three bounded macOS arm64 attempts failed at
+- [x] Integrate PR #96 after final exact-head review/CI. Three bounded macOS arm64 attempts failed at
   the same external GitHub API 403; a later fresh run cleared the block and passed the full matrix.
+- [ ] Merge the reviewed/green compiled-handler binding remediation in PR #97, then pin RTS-010 to
+  that exact merge before any isolated event or provider invocation.
 - [ ] Complete RTS-010 with one fresh post-remediation bounded downstream business PASS.
 - [ ] Complete RTS-011 with the disposable deterministic
   `implement -> review -> rework -> review -> terminal` acceptance.
@@ -26,11 +28,13 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 - [ ] Compare Python simplification, storage and any native candidate on the same no-model slice;
   make language/store/Coordinator/product-boundary decisions only at the later owner gate.
 
-Current last passed TaskCard gate is RTS-001; PR #96's CI gate is green and awaits final integration.
-The Draft records—not waives—the compiled-contract handler
-binding gap and the currently unreachable second review after rework. No Runtime implementation,
-production state, live release/default, migration or destructive action was authorized by this
-documentation gate. See the
+Current last passed TaskCard gate is RTS-001; PR #96 merged as
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-010 preparation is the active next gate.
+The Draft's compiled-contract handler-binding gap is fixed and implementation-head green on PR #97;
+publication still requires exact-head Review/CI and merge. The currently unreachable second review
+after rework remains open. No production state, live release/default, migration or destructive action
+was authorized by this remediation. The only Runtime implementation change is the bounded handler
+binding fix; no other Runtime implementation was authorized by this documentation gate. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
 [RTS-001 report](docs/tasks/runtime-v2-semantic-contract-draft-implementation-report.md).
 

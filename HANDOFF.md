@@ -10,7 +10,8 @@
 ## Current Handoff State: 2026-08-19 Runtime v2 Decision Plan
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
-development plan are preserved on PR #96 pending final repository integration. RTS-001 is the last passed
+development plan are integrated by PR #96 at merge commit
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-001 is the last passed
 TaskCard gate: the language-neutral
 semantic contract remains `Draft`, its machine-readable fault matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -22,25 +23,32 @@ record families without hiding external Agent Bus/Git/GitHub/OS/provider truth. 
 [inventory](docs/testing/runtime-v2-authority-record-inventory.md), and
 [implementation report](docs/tasks/runtime-v2-semantic-contract-draft-implementation-report.md).
 
-PR #96's exact reviewed semantic TaskCard commit is `021e054`; a later evidence-only commit records
-the integration stop. Ordinary Ubuntu/Windows/macOS and installed-wheel CI passed, as did four of
-five native matrix cells. `native-macos-arm64` failed three bounded attempts
+PR #96's exact reviewed semantic TaskCard commit is `021e054`; later evidence-only commits preserve
+the transient integration stop and its clearance. Ordinary Ubuntu/Windows/macOS and installed-wheel
+CI passed. `native-macos-arm64` initially failed three bounded attempts
 at the same external GitHub API `403 rate limit exceeded` while resolving the latest
 `python-build-standalone` release; current main's last comparable run was green. The integration
 state was `EXTERNAL_BLOCKED`. Evidence-only commit `c9130a9` then triggered fresh ordinary and
 Binary Feasibility runs that completed green across all jobs, including all five native cells and
-the aggregate. The block is cleared; require final exact-head Review/CI and merge PR #96 before
-starting RTS-010 live execution.
+the aggregate. Exact-head Review and CI then passed on `e6d3081`; the PR merged, so that block and
+integration gate are closed.
 
-RTS-001 changed no Runtime code or external state. Two current Python correctness gaps are already
-mapped and must not be mistaken for accepted behavior: compiled RunContract SHA binding appears to
-be lost when the handler reconstructs its context packet, and the gate cannot authorize the second
-review after rework under its current transition/attempt budget. Other documented gaps cover
+RTS-001 changed no Runtime code or external state. Its compiled RunContract handler-binding gap was
+confirmed during RTS-010 entry preparation and is now fixed and regression-locked on draft PR #97:
+the first role gate copies the digest only from a successfully recovered current ledger packet.
+Implementation commit `0f0f3b82aedd5ab10524fe03bd1401ca30135510` passed ordinary CI run
+`32275756310`, Binary Feasibility run `32275756344` after one source-independent GitHub API rate-limit
+rerun, and independent implementation Review with zero findings. The evidence-only publication head
+still requires exact-head CI/Review and merge before RTS-010 may pin or invoke it. The second current
+Python gap remains: the gate cannot authorize the second review after rework under its current
+transition/attempt budget. Other documented gaps cover
 authorization-before-checkpoint, compatibility-route recovery, local-effect reconciliation,
 terminal causality, unshipped terminal labels and cross-host adoption.
 
-After PR #96 integrates, the next planned gate is RTS-010: one fresh, genuinely useful, bounded downstream business PASS on
-the current reference. It requires a new committed TaskCard and fresh run/branch/delivery identities.
+The active planned gate is RTS-010: one fresh, genuinely useful, bounded downstream business PASS on
+the current reference. Its downstream TaskCard and unconsumed branch identity are prepared, but the
+TaskCard's Runtime source binding must be advanced to PR #97's eventual merge commit before any
+isolated Bus, listener, event or provider is started.
 Do not inspect or operate retained events, and do not infer business scope from pending transport
 state. RTS-011 remains a later disposable scripted-provider rework acceptance. No language, store,
 physical Coordinator, migration, default, release or destructive decision has been made.
