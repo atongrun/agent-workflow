@@ -15,6 +15,36 @@ PROVIDER = ROOT / "tests" / "fixtures" / "runtime_v2_shared_slice_provider.py"
 CASES = ROOT / "tests" / "fixtures" / "runtime_v2_shared_slice_cases.json"
 TASK_ID = "runtime-v2-rts-020-python-shared-slice"
 BRANCH = f"codex/{TASK_ID}"
+IMPLEMENT_AUTH = [{"invocation_id": "implement-1", "role": "implement"}]
+FULL_AUTH = [*IMPLEMENT_AUTH, {"invocation_id": "review-1", "role": "review"}]
+PROHIBITED_ASSERTION_MAP = {
+    "automatic provider replay": ["state_stable_on_rerun"],
+    "broaden allowed paths": ["spec_allowed_delta_stable"],
+    "change TaskCard verification contract": ["spec_allowed_delta_stable"],
+    "different trusted commit": ["trusted_commit_exact"],
+    "erase authorization": ["auth_implement_once"],
+    "fall back to prepared recovery": ["journal_state_launch_intent"],
+    "fresh replacement delivery": ["state_stable_on_rerun"],
+    "guessed authorization": ["no_auth"],
+    "guessed journal repair": ["implement_journal_absent"],
+    "guessed repair": ["state_stable_on_status"],
+    "handoff intent": ["no_handoff"],
+    "handoff rewrite": ["handoff_exact"],
+    "new Git commit": ["duplicate_rerun_stable"],
+    "new authorization identity": ["auth_implement_once"],
+    "provider replay": ["implement_count_stable_on_rerun", "duplicate_rerun_stable"],
+    "provider replay after launch intent": ["state_stable_on_rerun"],
+    "provider start": ["no_provider"],
+    "remote Git write": ["trusted_remote_absent"],
+    "second authorization identity": ["auth_implement_once"],
+    "second prepared journal": ["exact_journal_ids"],
+    "terminal completion": ["no_terminal"],
+    "terminal guess": ["no_terminal"],
+    "terminal promotion": ["no_terminal"],
+    "terminal rewrite": ["duplicate_rerun_stable"],
+    "treat prepared as launch intent": ["journal_implement_prepared_only"],
+    "trusted import": ["no_trusted_repo"],
+}
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -40,7 +70,9 @@ def _source_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _run_cli(state_root: Path, repo: Path, run_id: str = TASK_ID, fault: str = "") -> dict[str, Any]:
+def _run_cli(
+    state_root: Path, repo: Path, run_id: str = TASK_ID, fault: str = ""
+) -> dict[str, Any]:
     command = [
         sys.executable,
         str(RUNNER),
@@ -131,6 +163,13 @@ def _counts(status: dict[str, Any]) -> dict[str, Any]:
     return status["provider_invocation_observation"]["counts"]
 
 
+def _journal_ids(run_dir: Path) -> list[str]:
+    invocations = run_dir / "invocations"
+    if not invocations.exists():
+        return []
+    return sorted(path.stem for path in invocations.glob("*.json"))
+
+
 def _run_dir(state_root: Path, run_id: str) -> Path:
     return state_root / run_id
 
@@ -156,7 +195,9 @@ def _atomic_state(path: Path, payload: dict[str, Any]) -> None:
     temp.replace(path)
 
 
-def _assert_machine_assertions(state_root: Path, run_id: str, status: dict[str, Any], row: dict[str, Any]) -> None:
+def _assert_machine_assertions(
+    state_root: Path, run_id: str, status: dict[str, Any], row: dict[str, Any]
+) -> None:
     counts = _counts(status)
     run_dir = _run_dir(state_root, run_id)
     trusted = run_dir / "trusted-repo"
@@ -174,17 +215,101 @@ def _assert_machine_assertions(state_root: Path, run_id: str, status: dict[str, 
         assert status["terminal"] is None, row["id"]
     if "terminal_completed" in assertions:
         assert status["terminal"]["outcome"] == "completed", row["id"]
+    if "no_auth" in assertions:
+        assert _state_payload(run_dir, "run.json")["authorizations"] == [], row["id"]
+    if "auth_implement_once" in assertions:
+        assert _state_payload(run_dir, "run.json")["authorizations"] == IMPLEMENT_AUTH, row["id"]
+    if "auth_full_once" in assertions:
+        assert _state_payload(run_dir, "run.json")["authorizations"] == FULL_AUTH, row["id"]
+    if "no_handoff" in assertions:
+        assert _state_payload(run_dir, "run.json")["handoff_intent"] is None, row["id"]
     if "no_trusted_repo" in assertions:
         assert not trusted.exists(), row["id"]
+    if "journal_implement_prepared_only" in assertions:
+        journals = sorted((run_dir / "invocations").glob("*.json"))
+        assert [path.stem for path in journals] == ["implement-1"], row["id"]
+        journal = _state_payload(run_dir, "invocations/implement-1.json")
+        assert journal["state"] == "prepared", row["id"]
+        assert journal["prepared_is_launch_intent"] is False, row["id"]
+        assert journal["launch_intent"] is None, row["id"]
+        assert journal["started"] is None, row["id"]
+        assert journal["result"] is None, row["id"]
+    if "implement_journal_absent" in assertions:
+        assert not (run_dir / "invocations" / "implement-1.json").exists(), row["id"]
+    if "journal_state_launch_intent" in assertions:
+        journal = _state_payload(run_dir, "invocations/implement-1.json")
+        assert journal["state"] == "launch_intent", row["id"]
+        assert journal["launch_intent"] is not None, row["id"]
+        assert journal["started"] is None, row["id"]
+        assert journal["result"] is None, row["id"]
+    if "journal_state_started" in assertions:
+        journal = _state_payload(run_dir, "invocations/implement-1.json")
+        assert journal["state"] == "started", row["id"]
+        assert journal["launch_intent"] is not None, row["id"]
+        assert journal["started"] is not None, row["id"]
+        assert journal["result"] is None, row["id"]
+    if "exact_journal_ids" in assertions:
+        if "auth_full_once" in assertions:
+            assert _journal_ids(run_dir) == ["implement-1", "review-1"], row["id"]
+        elif "implement_journal_absent" in assertions:
+            assert _journal_ids(run_dir) == [], row["id"]
+        else:
+            assert _journal_ids(run_dir) == ["implement-1"], row["id"]
+    if "spec_allowed_delta_stable" in assertions:
+        spec = _state_payload(run_dir, "runspec.json")
+        assert spec["allowed_delta"] == ["result.txt"], row["id"]
+        assert spec["task_id"] == TASK_ID, row["id"]
     if "trusted_repo_exists" in assertions:
         assert trusted.exists(), row["id"]
         assert _git(trusted, "remote") == ""
+    if "trusted_remote_absent" in assertions:
+        assert trusted.exists(), row["id"]
+        assert _git(trusted, "remote") == "", row["id"]
     if "trusted_commit_exists" in assertions:
         assert trusted.exists(), row["id"]
         assert int(_git(trusted, "rev-list", "--count", "HEAD")) >= 2, row["id"]
+    if "trusted_commit_exact" in assertions:
+        run_payload = _state_payload(run_dir, "run.json")
+        assert _git(trusted, "rev-parse", "HEAD") == run_payload["trusted_commit"], row["id"]
+    if "handoff_exact" in assertions:
+        run_payload = _state_payload(run_dir, "run.json")
+        handoff = run_payload["handoff_intent"]
+        assert handoff["trusted_commit"] == run_payload["trusted_commit"], row["id"]
+        assert handoff["trusted_tree"] == run_payload["trusted_tree"], row["id"]
     if "trusted_head_drifted" in assertions:
         run_payload = _state_payload(run_dir, "run.json")
         assert _git(trusted, "rev-parse", "HEAD") != run_payload["trusted_commit"], row["id"]
+
+
+def _assert_replay_assertions(
+    state_root: Path,
+    repo: Path,
+    run_id: str,
+    status: dict[str, Any],
+    row: dict[str, Any],
+) -> None:
+    assertions = set(row["assertions"])
+    if not assertions.intersection(
+        {"state_stable_on_rerun", "implement_count_stable_on_rerun", "duplicate_rerun_stable"}
+    ):
+        return
+    run_dir = _run_dir(state_root, run_id)
+    before = _snapshot_bytes(run_dir)
+    before_counts = _counts(status)
+    before_commit = None
+    trusted = run_dir / "trusted-repo"
+    if trusted.exists():
+        before_commit = _git(trusted, "rev-parse", "HEAD")
+    rerun = _run_cli(state_root, repo, run_id=run_id, fault=row["inject"])
+    if "state_stable_on_rerun" in assertions:
+        assert _snapshot_bytes(run_dir) == before, row["id"]
+    if "implement_count_stable_on_rerun" in assertions:
+        assert _counts(rerun)["implement"] == before_counts["implement"], row["id"]
+    if "duplicate_rerun_stable" in assertions:
+        assert _counts(rerun) == before_counts, row["id"]
+        assert _snapshot_bytes(run_dir) == before, row["id"]
+        assert trusted.exists(), row["id"]
+        assert _git(trusted, "rev-parse", "HEAD") == before_commit, row["id"]
 
 
 def test_normal_run_status_stop_are_local_idempotent_and_unequal_lifecycle(tmp_path: Path) -> None:
@@ -255,6 +380,10 @@ def test_shared_fault_fixture_uses_candidate_outcomes_and_unique_case_ids() -> N
         assert row["legal_next_action"]
         assert row["prohibited"]
         assert row["assertions"]
+        row_assertions = set(row["assertions"])
+        for prohibited in row["prohibited"]:
+            mapped = PROHIBITED_ASSERTION_MAP[prohibited]
+            assert row_assertions.intersection(mapped), (row["id"], prohibited, mapped)
     auth = next(case for case in fixture["cases"] if case["id"] == "S-AUTH-START")
     assert [row["id"] for row in auth["subcases"]] == [
         "S-AUTH-START-PREPARED",
@@ -282,6 +411,7 @@ def test_all_shared_fault_cases_match_outcomes_and_status_is_byte_readonly(tmp_p
         assert status["legal_next_action"] == row["legal_next_action"], row["id"]
         _assert_machine_assertions(state_root, run_id, status, row)
         assert before == after, row["id"]
+        _assert_replay_assertions(state_root, repo, run_id, status, row)
 
 
 def test_auth_start_authorized_prepared_recovers_once_after_revalidation(tmp_path: Path) -> None:
@@ -300,6 +430,28 @@ def test_auth_start_authorized_prepared_recovers_once_after_revalidation(tmp_pat
 
     rerun = _run_cli(state_root, repo, run_id=run_id)
     assert _counts(rerun) == _counts(terminal)
+
+
+def test_duplicate_pre_start_keeps_exact_auth_journal_and_provider_state(tmp_path: Path) -> None:
+    repo = _source_repo(tmp_path)
+    state_root = tmp_path / "state"
+    run_id = "duplicate-pre-start-exact"
+
+    first = _run_cli(state_root, repo, run_id=run_id, fault="duplicate_pre_start")
+    assert first["outcome"] == "SAFE_CONTINUE"
+    run_dir = _run_dir(state_root, run_id)
+    before = _snapshot_bytes(run_dir)
+    before_counts = _counts(first)
+    before_auth = _state_payload(run_dir, "run.json")["authorizations"]
+    before_journal = _state_payload(run_dir, "invocations/implement-1.json")
+
+    second = _run_cli(state_root, repo, run_id=run_id, fault="duplicate_pre_start")
+
+    assert second == first
+    assert _snapshot_bytes(run_dir) == before
+    assert _counts(second) == before_counts == {"calls": [], "implement": 0, "review": 0}
+    assert _state_payload(run_dir, "run.json")["authorizations"] == before_auth
+    assert _state_payload(run_dir, "invocations/implement-1.json") == before_journal
 
 
 def test_ambiguous_launch_and_started_states_never_reinvoke_provider(tmp_path: Path) -> None:
@@ -334,7 +486,9 @@ def test_result_and_effect_recovery_skip_completed_implementer(tmp_path: Path) -
         assert _counts(terminal)["review"] == 1
 
 
-def test_provider_child_environment_is_credential_minimized(tmp_path: Path, monkeypatch: Any) -> None:
+def test_provider_child_environment_is_credential_minimized(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     monkeypatch.setenv("RTS020_SENTINEL_SECRET", "must-not-reach-provider")
     repo = _source_repo(tmp_path)
     state_root = tmp_path / "state"
@@ -361,7 +515,9 @@ def test_review_authorized_journal_states_do_not_replay_unsafely(tmp_path: Path)
         assert rerun["outcome"] == "AMBIGUOUS_NO_REPLAY"
         assert _counts(rerun) == before
 
-    recoverable = _run_cli(state_root, repo, run_id="review-result-recover", fault="review_result_recover")
+    recoverable = _run_cli(
+        state_root, repo, run_id="review-result-recover", fault="review_result_recover"
+    )
     assert recoverable["outcome"] == "SAFE_CONTINUE"
     assert _counts(recoverable)["review"] == 1
     terminal = _run_cli(state_root, repo, run_id="review-result-recover")
@@ -404,7 +560,9 @@ def test_duplicate_key_state_and_artifact_inputs_fail_closed(tmp_path: Path) -> 
     state_dir = _run_dir(state_root, state_id)
     run_path = state_dir / "run.json"
     original = run_path.read_text(encoding="utf-8")
-    run_path.write_text(original.replace('"payload":', '"payload": {}, "payload":', 1), encoding="utf-8")
+    run_path.write_text(
+        original.replace('"payload":', '"payload": {}, "payload":', 1), encoding="utf-8"
+    )
     status = _status_cli(state_root, run_id=state_id)
     assert status["outcome"] == "DENY_BEFORE_PROVIDER"
     assert _counts(status) == {"calls": [], "implement": 0, "review": 0}
@@ -414,7 +572,8 @@ def test_duplicate_key_state_and_artifact_inputs_fail_closed(tmp_path: Path) -> 
     assert interrupted["outcome"] == "SAFE_CONTINUE"
     artifact = _run_dir(state_root, artifact_id) / "artifacts" / "implementation-report.json"
     artifact.write_text(
-        '{"artifact_type":"ImplementationReport","artifact_type":"Other","changed_files":["result.txt"]}',
+        '{"artifact_type":"ImplementationReport","artifact_type":"Other",'
+        '"changed_files":["result.txt"]}',
         encoding="utf-8",
     )
     failed = _run_cli(state_root, repo, run_id=artifact_id)
@@ -458,6 +617,103 @@ def test_launch_argv_drift_and_presence_gaps_fail_closed_without_guessing(tmp_pa
     assert denied["outcome"] == "DENY_BEFORE_PROVIDER"
     assert _snapshot_bytes(missing_run_dir) == before
     assert _run_cli(state_root, repo, run_id=missing_run_id)["outcome"] == "DENY_BEFORE_PROVIDER"
+
+
+def test_phase_evidence_drift_is_joined_before_status_or_continuation(tmp_path: Path) -> None:
+    repo = _source_repo(tmp_path)
+    state_root = tmp_path / "state"
+
+    result_id = "implement-result-journal-drift"
+    _run_cli(state_root, repo, run_id=result_id, fault="result_validate")
+    result_dir = _run_dir(state_root, result_id)
+    result_journal_path = result_dir / "invocations" / "implement-1.json"
+    result_journal = _state_payload(result_dir, "invocations/implement-1.json")
+    result_journal["role"] = "review"
+    _atomic_state(result_journal_path, result_journal)
+    before = _snapshot_bytes(result_dir)
+    denied = _status_cli(state_root, run_id=result_id)
+    assert denied["outcome"] == "DENY_BEFORE_PROVIDER"
+    assert denied["terminal"] is None
+    assert _snapshot_bytes(result_dir) == before
+    assert _run_cli(state_root, repo, run_id=result_id)["outcome"] == "DENY_BEFORE_PROVIDER"
+
+    committed_id = "implement-committed-artifact-drift"
+    _run_cli(state_root, repo, run_id=committed_id, fault="effect_intent")
+    committed_dir = _run_dir(state_root, committed_id)
+    artifact = committed_dir / "artifacts" / "implementation-report.json"
+    artifact_payload = json.loads(artifact.read_text(encoding="utf-8"))
+    artifact_payload["summary"] = "checksum-valid run state but artifact bytes drifted"
+    artifact.write_text(json.dumps(artifact_payload, sort_keys=True) + "\n", encoding="utf-8")
+    before = _snapshot_bytes(committed_dir)
+    denied = _status_cli(state_root, run_id=committed_id)
+    assert denied["outcome"] == "DENY_BEFORE_PROVIDER"
+    assert denied["terminal"] is None
+    assert _snapshot_bytes(committed_dir) == before
+    rerun = _run_cli(state_root, repo, run_id=committed_id)
+    assert rerun["outcome"] == "DENY_BEFORE_PROVIDER"
+    assert _state_payload(committed_dir, "run.json")["handoff_intent"] is None
+
+    review_id = "review-result-journal-drift"
+    _run_cli(state_root, repo, run_id=review_id, fault="review_result_recover")
+    review_dir = _run_dir(state_root, review_id)
+    review_journal_path = review_dir / "invocations" / "review-1.json"
+    review_journal = _state_payload(review_dir, "invocations/review-1.json")
+    review_journal["role"] = "implement"
+    _atomic_state(review_journal_path, review_journal)
+    before = _snapshot_bytes(review_dir)
+    denied = _status_cli(state_root, run_id=review_id)
+    assert denied["outcome"] == "DENY_BEFORE_PROVIDER"
+    assert denied["terminal"] is None
+    assert _snapshot_bytes(review_dir) == before
+    assert _run_cli(state_root, repo, run_id=review_id)["outcome"] == "DENY_BEFORE_PROVIDER"
+
+    terminal_id = "terminal-review-artifact-drift"
+    terminal = _run_cli(state_root, repo, run_id=terminal_id)
+    assert terminal["phase"] == "completed"
+    terminal_dir = _run_dir(state_root, terminal_id)
+    review_artifact = terminal_dir / "artifacts" / "review-report.json"
+    payload = json.loads(review_artifact.read_text(encoding="utf-8"))
+    payload["summary"] = "review bytes drifted after terminal"
+    review_artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    before = _snapshot_bytes(terminal_dir)
+    denied = _status_cli(state_root, run_id=terminal_id)
+    assert denied["outcome"] == "DENY_BEFORE_PROVIDER"
+    assert denied["terminal"] is None
+    assert _snapshot_bytes(terminal_dir) == before
+    assert _run_cli(state_root, repo, run_id=terminal_id)["outcome"] == "DENY_BEFORE_PROVIDER"
+
+
+def test_authorization_erasure_and_duplicates_fail_closed_before_replay(tmp_path: Path) -> None:
+    repo = _source_repo(tmp_path)
+    state_root = tmp_path / "state"
+
+    erased_id = "auth-erased"
+    _run_cli(state_root, repo, run_id=erased_id, fault="auth_authorized_prepared")
+    erased_dir = _run_dir(state_root, erased_id)
+    run_path = erased_dir / "run.json"
+    run_payload = _state_payload(erased_dir, "run.json")
+    run_payload["authorizations"] = []
+    _atomic_state(run_path, run_payload)
+    before = _snapshot_bytes(erased_dir)
+    denied = _status_cli(state_root, run_id=erased_id)
+    assert denied["outcome"] == "DENY_BEFORE_PROVIDER"
+    assert _counts(denied) == {"calls": [], "implement": 0, "review": 0}
+    assert _snapshot_bytes(erased_dir) == before
+    assert _run_cli(state_root, repo, run_id=erased_id)["outcome"] == "DENY_BEFORE_PROVIDER"
+
+    duplicate_id = "auth-duplicate"
+    _run_cli(state_root, repo, run_id=duplicate_id, fault="auth_authorized_prepared")
+    duplicate_dir = _run_dir(state_root, duplicate_id)
+    run_path = duplicate_dir / "run.json"
+    run_payload = _state_payload(duplicate_dir, "run.json")
+    run_payload["authorizations"] = [*IMPLEMENT_AUTH, *IMPLEMENT_AUTH]
+    _atomic_state(run_path, run_payload)
+    before = _snapshot_bytes(duplicate_dir)
+    denied = _status_cli(state_root, run_id=duplicate_id)
+    assert denied["outcome"] == "DENY_BEFORE_PROVIDER"
+    assert _counts(denied) == {"calls": [], "implement": 0, "review": 0}
+    assert _snapshot_bytes(duplicate_dir) == before
+    assert _run_cli(state_root, repo, run_id=duplicate_id)["outcome"] == "DENY_BEFORE_PROVIDER"
 
 
 def test_state_and_git_drift_preserve_evidence_without_terminal_or_provider_replay(

@@ -24,6 +24,8 @@ Real disposable/local evidence:
 - no-remote local Git workspaces and trusted commit/tree revalidation;
 - deterministic fault injection, exact rerun and duplicate checks.
 - checksum-valid identity-drift rejection for RunStore, RunSpec and InvocationJournal bindings;
+- phase evidence joins for implement result/commit, review result and completed terminal status;
+- exact authorization set/content validation before phase projection or continuation;
 - credential-minimized child environment with a sentinel-secret regression.
 
 Synthetic evidence:
@@ -63,8 +65,8 @@ baseline.
 
 ## Measurements
 
-- Experiment production nonblank/noncomment LOC: `runner.py` 1175, provider fixture 74.
-- Fixture/test LOC: shared JSON fixture 172 lines, focused pytest module 399 nonblank/noncomment
+- Experiment production nonblank/noncomment LOC: `runner.py` 1380, provider fixture 74.
+- Fixture/test LOC: shared JSON fixture 300 lines, focused pytest module 636 nonblank/noncomment
   lines.
 - Direct dependencies: Python standard library, repository test dependency `pytest`, local `git`
   executable.
@@ -89,6 +91,18 @@ with four HIGH findings and one MEDIUM finding. This follow-up fixes:
 The review artifact no longer claims an independent PASS. Final verdict is reserved for the next
 independent reviewer.
 
+Second independent review of `5de57901bc2bf2bf6c9f7939ebb51b6b051985f6` also returned
+`REQUEST_CHANGES` with one HIGH finding and one MEDIUM finding. This follow-up fixes:
+
+- implement-result and implement-committed journal/artifact drift joins before status or
+  continuation;
+- review-result and completed-terminal journal/artifact drift joins before SAFE/TERMINAL projection;
+- exact phase-required authorization set/content validation, including erased and duplicate auth
+  failures;
+- one-for-one prohibited-effect mapping to concrete assertion codes, including absent journal,
+  launch/started state, exact journal IDs, handoff exactness and rerun/provider-count stability;
+- manual Python line wrapping for changed lines over 100 columns.
+
 ## Verification at implementation time
 
 - `compile()` for `experiments/runtime-v2-python/runner.py`,
@@ -100,6 +114,9 @@ independent reviewer.
   recovery, ambiguous no-replay, result/effect recovery, state drift, Git drift, review-stage
   durable-result recovery, launch argv drift, presence join, duplicate-key state/artifact and
   sentinel-secret child env checks
+- second-review direct helper smoke: PASS, adds implement/review/terminal evidence drift,
+  authorization erasure/duplicate, duplicate pre-start exact-state and prohibited-effect mapping
+  guard checks
 - local pytest/Ruff: intentionally not run on Mac per task boundary
 
 <!-- awf-implementation-report
@@ -125,8 +142,8 @@ independent reviewer.
     "Fixture duplicate-key validation PASS",
     "Direct normal-path and fault smoke PASS after REQUEST_CHANGES fixes"
   ],
-  "source_revision": "REQUEST_CHANGES follow-up pending Lore commit",
-  "review_status": "REQUEST_CHANGES addressed locally; final PASS reserved for independent reviewer",
+  "source_revision": "second REQUEST_CHANGES follow-up pending Lore commit",
+  "review_status": "two REQUEST_CHANGES rounds addressed locally; final PASS reserved for independent reviewer",
   "synthetic_boundaries": [
     "provider intelligence",
     "delivery observation",

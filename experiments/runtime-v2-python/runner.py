@@ -49,7 +49,9 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
-def _loads_json_object(text: str, path: Path, outcome: str, legal_next_action: str) -> dict[str, Any]:
+def _loads_json_object(
+    text: str, path: Path, outcome: str, legal_next_action: str
+) -> dict[str, Any]:
     def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in pairs:
@@ -300,6 +302,64 @@ def _validate_run_identity(run: dict[str, Any], spec: dict[str, Any]) -> None:
             )
 
 
+def _expected_authorizations(phase: str) -> list[dict[str, str]] | None:
+    implement = {"invocation_id": "implement-1", "role": "implement"}
+    review = {"invocation_id": "review-1", "role": "review"}
+    if phase in {"initialized", "prepared_without_authorization"}:
+        return []
+    if phase in {
+        "implement_authorized",
+        "implement_launch_intent",
+        "implement_started",
+        "implement_result",
+        "implement_committed",
+        "review_handoff_intent",
+    }:
+        return [implement]
+    if phase in {"review_authorized", "review_result", "completed"}:
+        return [implement, review]
+    return None
+
+
+def _validate_authorizations(run: dict[str, Any]) -> None:
+    authorizations = run.get("authorizations")
+    if not isinstance(authorizations, list):
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "RunStore authorizations are not a list",
+        )
+    exact = _expected_authorizations(str(run.get("phase")))
+    if exact is not None and authorizations != exact:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "RunStore authorization set drift",
+        )
+    seen: set[tuple[str, str]] = set()
+    allowed = {("implement-1", "implement"), ("review-1", "review")}
+    for item in authorizations:
+        if not isinstance(item, dict):
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                "RunStore authorization entry is invalid",
+            )
+        pair = (str(item.get("invocation_id")), str(item.get("role")))
+        if pair not in allowed or pair in seen:
+            raise StateError(
+                "DENY_BEFORE_PROVIDER",
+                "preserve files and diagnose exact run identity",
+                "RunStore authorization identity drift",
+            )
+        seen.add(pair)
+
+
+def _validate_run_phase_bindings(run: dict[str, Any], spec: dict[str, Any]) -> None:
+    _validate_run_identity(run, spec)
+    _validate_authorizations(run)
+
+
 def _validate_journal_identity(
     payload: dict[str, Any],
     spec: dict[str, Any],
@@ -419,7 +479,7 @@ class RunStore:
     def load(self) -> dict[str, Any]:
         current = _load_run(self.run_dir)
         if current is not None:
-            _validate_run_identity(current, self.spec)
+            _validate_run_phase_bindings(current, self.spec)
             return current
         if _has_state_files(self.run_dir, excluded={"runspec.json"}):
             raise StateError(
@@ -443,12 +503,12 @@ class RunStore:
         return payload
 
     def save(self, payload: dict[str, Any]) -> dict[str, Any]:
-        _validate_run_identity(payload, self.spec)
+        _validate_run_phase_bindings(payload, self.spec)
         _atomic_write(self.path, payload)
         return payload
 
     def authorize(self, payload: dict[str, Any], invocation_id: str, role: str) -> dict[str, Any]:
-        _validate_run_identity(payload, self.spec)
+        _validate_run_phase_bindings(payload, self.spec)
         journal = _read_envelope(_journal_path(self.run_dir, invocation_id))
         _validate_journal_identity(journal, self.spec, self.run_dir, invocation_id, role)
         if journal.get("state") != "prepared":
@@ -465,7 +525,7 @@ class RunStore:
         return self.save(payload)
 
     def phase(self, payload: dict[str, Any], phase: str, **facts: Any) -> dict[str, Any]:
-        _validate_run_identity(payload, self.spec)
+        _validate_run_phase_bindings(payload, self.spec)
         payload = dict(payload)
         payload["phase"] = phase
         payload.update(facts)
@@ -531,7 +591,9 @@ class InvocationJournal:
         return self.update(state="validated", validated={"artifact_sha256": artifact_sha256})
 
 
-def _invocation(run_dir: Path, spec: dict[str, Any], invocation_id: str, role: str) -> InvocationJournal:
+def _invocation(
+    run_dir: Path, spec: dict[str, Any], invocation_id: str, role: str
+) -> InvocationJournal:
     return InvocationJournal(run_dir, spec, invocation_id, role)
 
 
@@ -570,8 +632,32 @@ def _prepare_review(run_dir: Path, spec: dict[str, Any]) -> InvocationJournal:
 
 
 def _validate_implementation(run_dir: Path, spec: dict[str, Any]) -> tuple[Path, str]:
+    workspace, artifact_sha = _validate_implementation_evidence(run_dir, spec, None, False)
+    journal = _invocation(run_dir, spec, "implement-1", "implement")
+    journal.validated(artifact_sha)
+    return workspace, artifact_sha
+
+
+def _validate_implementation_evidence(
+    run_dir: Path,
+    spec: dict[str, Any],
+    run: dict[str, Any] | None,
+    require_validated: bool,
+) -> tuple[Path, str]:
     journal = _invocation(run_dir, spec, "implement-1", "implement")
     payload = journal.read()
+    if payload.get("state") not in {"result", "validated"}:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "implement journal lacks durable result",
+        )
+    if require_validated and payload.get("state") != "validated":
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "implement journal is not validated",
+        )
     result = payload.get("result") or {}
     if result.get("returncode") != 0:
         raise StateError(
@@ -602,7 +688,19 @@ def _validate_implementation(run_dir: Path, spec: dict[str, Any]) -> tuple[Path,
             "workspace delta does not match allowed paths",
         )
     artifact_sha = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    journal.validated(artifact_sha)
+    validated = payload.get("validated")
+    if validated is not None and validated.get("artifact_sha256") != artifact_sha:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "implement journal artifact hash drift",
+        )
+    if run is not None and run.get("implementation_report_sha256") != artifact_sha:
+        raise StateError(
+            "DENY_BEFORE_MUTATION",
+            "preserve both facts for owner decision",
+            "implementation report hash drift",
+        )
     return workspace, artifact_sha
 
 
@@ -623,8 +721,32 @@ def _import_and_commit(run_dir: Path, spec: dict[str, Any], workspace: Path) -> 
 
 
 def _validate_review(run_dir: Path, spec: dict[str, Any]) -> str:
+    artifact_sha = _validate_review_evidence(run_dir, spec, None, False)
+    journal = _invocation(run_dir, spec, "review-1", "review")
+    journal.validated(artifact_sha)
+    return artifact_sha
+
+
+def _validate_review_evidence(
+    run_dir: Path,
+    spec: dict[str, Any],
+    run: dict[str, Any] | None,
+    require_validated: bool,
+) -> str:
     journal = _invocation(run_dir, spec, "review-1", "review")
     payload = journal.read()
+    if payload.get("state") not in {"result", "validated"}:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "review journal lacks durable result",
+        )
+    if require_validated and payload.get("state") != "validated":
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "review journal is not validated",
+        )
     result = payload.get("result") or {}
     if result.get("returncode") != 0:
         raise StateError(
@@ -641,7 +763,19 @@ def _validate_review(run_dir: Path, spec: dict[str, Any]) -> str:
             "missing normalized PASS ReviewReport",
         )
     artifact_sha = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    journal.validated(artifact_sha)
+    validated = payload.get("validated")
+    if validated is not None and validated.get("artifact_sha256") != artifact_sha:
+        raise StateError(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "review journal artifact hash drift",
+        )
+    if run is not None and run.get("review_report_sha256") != artifact_sha:
+        raise StateError(
+            "DENY_BEFORE_MUTATION",
+            "preserve both facts for owner decision",
+            "review report hash drift",
+        )
     return artifact_sha
 
 
@@ -667,6 +801,40 @@ def _verify_trusted_identity(run_dir: Path, run: dict[str, Any]) -> None:
         )
 
 
+def _validate_implement_result_phase(
+    run_dir: Path, spec: dict[str, Any], run: dict[str, Any]
+) -> None:
+    _validate_run_phase_bindings(run, spec)
+    _validate_implementation_evidence(run_dir, spec, None, False)
+
+
+def _validate_implement_committed_phase(
+    run_dir: Path, spec: dict[str, Any], run: dict[str, Any]
+) -> None:
+    _validate_run_phase_bindings(run, spec)
+    _validate_implementation_evidence(run_dir, spec, run, True)
+    _verify_trusted_identity(run_dir, run)
+
+
+def _validate_review_result_phase(run_dir: Path, spec: dict[str, Any], run: dict[str, Any]) -> None:
+    _validate_run_phase_bindings(run, spec)
+    _validate_implement_committed_phase(run_dir, spec, run)
+    _validate_review_evidence(run_dir, spec, None, False)
+
+
+def _validate_terminal_phase(run_dir: Path, spec: dict[str, Any], run: dict[str, Any]) -> None:
+    _validate_run_phase_bindings(run, spec)
+    _validate_implement_committed_phase(run_dir, spec, run)
+    _validate_review_evidence(run_dir, spec, run, True)
+    terminal = run.get("terminal")
+    if not isinstance(terminal, dict) or terminal.get("outcome") != "completed":
+        raise StateError(
+            "DENY_BEFORE_MUTATION",
+            "preserve both facts for owner decision",
+            "terminal evidence drift",
+        )
+
+
 def _mark_failure(store: RunStore, run: dict[str, Any], error: StateError) -> dict[str, Any]:
     return store.phase(
         run,
@@ -678,7 +846,30 @@ def _mark_failure(store: RunStore, run: dict[str, Any], error: StateError) -> di
     )
 
 
-def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: str = "normal") -> dict[str, Any]:
+def _error_status(run_dir: Path, run_id: str, error: StateError) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "task_id": TASK_ID,
+        "phase": "state_drift",
+        "outcome": error.outcome,
+        "blocker": {"owner": "owner", "source": error.source},
+        "provider_invocation_observation": {
+            "counts": _counter(run_dir),
+            "journals": _journal_observations(run_dir),
+        },
+        "terminal": None,
+        "legal_next_action": error.legal_next_action,
+        "prohibited_actions": ["provider start", "mutation", "guessed repair"],
+    }
+
+
+def _should_persist_failure(error: StateError) -> bool:
+    return error.outcome == "HANDLER_FAILURE_NO_ACK"
+
+
+def _continue(
+    run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: str = "normal"
+) -> dict[str, Any]:
     store = RunStore(run_dir, spec)
     while True:
         phase = run["phase"]
@@ -708,7 +899,8 @@ def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: st
             else:
                 raise StateError(
                     "OWNER_DECISION_REQUIRED",
-                    "preserve program and state evidence; use only a previously proven compatible program",
+                    "preserve program and state evidence; use only a previously proven "
+                    "compatible program",
                     f"unknown implement journal state {payload.get('state')}",
                 )
         elif phase == "implement_launch_intent":
@@ -736,6 +928,7 @@ def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: st
                 trusted_tree=tree,
             )
         elif phase == "implement_committed":
+            _validate_implement_committed_phase(run_dir, spec, run)
             run = store.phase(
                 run,
                 "review_handoff_intent",
@@ -765,10 +958,12 @@ def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: st
             else:
                 raise StateError(
                     "OWNER_DECISION_REQUIRED",
-                    "preserve program and state evidence; use only a previously proven compatible program",
+                    "preserve program and state evidence; use only a previously proven "
+                    "compatible program",
                     f"unknown review journal state {payload.get('state')}",
                 )
         elif phase == "review_result":
+            _validate_review_result_phase(run_dir, spec, run)
             review_sha = _validate_review(run_dir, spec)
             _verify_trusted_identity(run_dir, run)
             run = store.phase(
@@ -782,7 +977,10 @@ def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: st
                 },
             )
             return run
-        elif phase in {"completed", "blocked", "stopped"}:
+        elif phase == "completed":
+            _validate_terminal_phase(run_dir, spec, run)
+            return run
+        elif phase in {"blocked", "stopped"}:
             return run
         elif phase == "prepared_without_authorization":
             raise StateError(
@@ -793,7 +991,8 @@ def _continue(run_dir: Path, spec: dict[str, Any], run: dict[str, Any], mode: st
         else:
             raise StateError(
                 "OWNER_DECISION_REQUIRED",
-                "preserve program and state evidence; use only a previously proven compatible program",
+                "preserve program and state evidence; use only a previously proven compatible "
+                "program",
                 f"unknown phase {phase}",
             )
 
@@ -822,12 +1021,16 @@ def _inject_fault(run_dir: Path, spec: dict[str, Any], fault: str) -> dict[str, 
     if fault == "auth_launch_no_result":
         journal = _prepare_implement(run_dir, spec)
         run = store.authorize(run, journal.invocation_id, "implement")
-        journal.launch(_provider_argv(spec, run_dir, journal.read(), "implement", "normal"), "normal")
+        journal.launch(
+            _provider_argv(spec, run_dir, journal.read(), "implement", "normal"), "normal"
+        )
         return store.phase(run, "implement_launch_intent")
     if fault == "start_result":
         journal = _prepare_implement(run_dir, spec)
         run = store.authorize(run, journal.invocation_id, "implement")
-        journal.launch(_provider_argv(spec, run_dir, journal.read(), "implement", "normal"), "normal")
+        journal.launch(
+            _provider_argv(spec, run_dir, journal.read(), "implement", "normal"), "normal"
+        )
         journal.started(424242)
         return store.phase(run, "implement_started")
     if fault == "review_launch_no_result":
@@ -938,7 +1141,9 @@ def _continue_until_review_authorized(
     return run
 
 
-def _continue_until_review_result(run_dir: Path, spec: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+def _continue_until_review_result(
+    run_dir: Path, spec: dict[str, Any], run: dict[str, Any]
+) -> dict[str, Any]:
     store = RunStore(run_dir, spec)
     while run["phase"] != "review_result":
         if run["phase"] == "initialized":
@@ -1051,9 +1256,16 @@ def _status_from_run(run_dir: Path, run_id: str, run: dict[str, Any] | None) -> 
     legal_next_action = run.get("legal_next_action")
     blocker = run.get("blocker")
     if phase == "completed":
-        outcome = "TERMINAL_IDEMPOTENT"
-        legal_next_action = "status or exact stop only"
-        blocker = None
+        try:
+            spec = _read_envelope(_spec_path(run_dir))
+            _validate_terminal_phase(run_dir, spec, run)
+            outcome = "TERMINAL_IDEMPOTENT"
+            legal_next_action = "status or exact stop only"
+            blocker = None
+        except StateError as exc:
+            outcome = exc.outcome
+            legal_next_action = exc.legal_next_action
+            blocker = {"owner": "owner", "source": exc.source}
     elif phase == "stopped":
         outcome = "TERMINAL_IDEMPOTENT"
         legal_next_action = "none"
@@ -1106,17 +1318,34 @@ def _status_from_run(run_dir: Path, run_id: str, run: dict[str, Any] | None) -> 
             outcome = exc.outcome
             legal_next_action = exc.legal_next_action
             blocker = {"owner": "owner", "source": exc.source}
-    elif phase in {"implement_result", "implement_committed"}:
-        outcome = "SAFE_CONTINUE"
-        legal_next_action = (
-            "skip provider and run frozen postflight against exact durable workspace"
-            if phase == "implement_result"
-            else "revalidate exact effects and persist one local review intent"
-        )
-        blocker = None
+    elif phase == "implement_result":
+        try:
+            spec = _read_envelope(_spec_path(run_dir))
+            _validate_implement_result_phase(run_dir, spec, run)
+            outcome = "SAFE_CONTINUE"
+            legal_next_action = (
+                "skip provider and run frozen postflight against exact durable workspace"
+            )
+            blocker = None
+        except StateError as exc:
+            outcome = exc.outcome
+            legal_next_action = exc.legal_next_action
+            blocker = {"owner": "owner", "source": exc.source}
+    elif phase == "implement_committed":
+        try:
+            spec = _read_envelope(_spec_path(run_dir))
+            _validate_implement_committed_phase(run_dir, spec, run)
+            outcome = "SAFE_CONTINUE"
+            legal_next_action = "revalidate exact effects and persist one local review intent"
+            blocker = None
+        except StateError as exc:
+            outcome = exc.outcome
+            legal_next_action = exc.legal_next_action
+            blocker = {"owner": "owner", "source": exc.source}
     elif phase == "review_result":
         try:
-            _verify_trusted_identity(run_dir, run)
+            spec = _read_envelope(_spec_path(run_dir))
+            _validate_review_result_phase(run_dir, spec, run)
             outcome = "SAFE_CONTINUE"
             legal_next_action = "revalidate exact Git/workspace identity and persist terminal"
             blocker = None
@@ -1128,6 +1357,9 @@ def _status_from_run(run_dir: Path, run_id: str, run: dict[str, Any] | None) -> 
         outcome = outcome or "OWNER_DECISION_REQUIRED"
         legal_next_action = legal_next_action or "preserve evidence for owner decision"
         blocker = blocker or {"owner": "owner", "source": "blocked"}
+    terminal_fact = run.get("terminal")
+    if blocker is not None and outcome in {"DENY_BEFORE_PROVIDER", "DENY_BEFORE_MUTATION"}:
+        terminal_fact = None
     return {
         "run_id": run_id,
         "task_id": run.get("task_id", TASK_ID),
@@ -1139,7 +1371,7 @@ def _status_from_run(run_dir: Path, run_id: str, run: dict[str, Any] | None) -> 
             "counts": _counter(run_dir),
             "journals": _journal_observations(run_dir),
         },
-        "terminal": run.get("terminal"),
+        "terminal": terminal_fact,
         "legal_next_action": legal_next_action,
         "prohibited_actions": [
             "status mutation",
@@ -1172,7 +1404,7 @@ def _status(state_root: Path, run_id: str) -> dict[str, Any]:
             spec = _read_envelope(_spec_path(run_dir))
         run = _load_run(run_dir)
         if run is not None and spec is not None:
-            _validate_run_identity(run, spec)
+            _validate_run_phase_bindings(run, spec)
         return _status_from_run(run_dir, run_id, run)
     except StateError as exc:
         return {
@@ -1208,6 +1440,8 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             try:
                 run = _inject_fault(run_dir, spec, args.fault)
             except StateError as exc:
+                if not _should_persist_failure(exc):
+                    return _error_status(run_dir, args.run_id, exc)
                 store = RunStore(run_dir, spec)
                 run = _load_run(run_dir) or store.load()
                 run = _mark_failure(store, run, exc)
@@ -1216,23 +1450,12 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             try:
                 run = _continue(run_dir, spec, run)
             except StateError as exc:
+                if not _should_persist_failure(exc):
+                    return _error_status(run_dir, args.run_id, exc)
                 run = _mark_failure(store, run, exc)
         return _status(Path(args.state_root), args.run_id)
     except StateError as exc:
-        return {
-            "run_id": args.run_id,
-            "task_id": TASK_ID,
-            "phase": "state_drift",
-            "outcome": exc.outcome,
-            "blocker": {"owner": "owner", "source": exc.source},
-            "provider_invocation_observation": {
-                "counts": _counter(run_dir),
-                "journals": _journal_observations(run_dir),
-            },
-            "terminal": None,
-            "legal_next_action": exc.legal_next_action,
-            "prohibited_actions": ["provider start", "mutation", "guessed repair"],
-        }
+        return _error_status(run_dir, args.run_id, exc)
 
 
 def _stop(args: argparse.Namespace) -> dict[str, Any]:
@@ -1271,7 +1494,11 @@ def _stop(args: argparse.Namespace) -> dict[str, Any]:
             },
             "terminal": None,
             "legal_next_action": exc.legal_next_action,
-            "prohibited_actions": ["cross-run stop", "service-manager claim", "guessed process kill"],
+            "prohibited_actions": [
+                "cross-run stop",
+                "service-manager claim",
+                "guessed process kill",
+            ],
         }
 
 
