@@ -502,6 +502,19 @@ fixtures only. It cannot migrate or dual-write a production handler, read/delete
 invoke providers, touch external truth, or change the default. Production integration remains a
 later seam after RTS-031 passes.
 
+RTS-031 result: **PASS**. One strict checksummed authority envelope and exact writer lock now
+implement the selected Store/journal ports in disposable local state. Candidate ordinary CI
+`32341036671`, automatically triggered Binary Feasibility `32341036800` and independent Gate Review
+passed after repair `2d4576b` closed parent-path symlink/reparse traversal. No production handler,
+legacy representation, external truth, dependency, default or migration boundary changed.
+
+The exact successor is a separately frozen **RTS-032** production provider-renderer seam. It may
+place existing Codex, OpenCode and Pi command construction behind narrow installed Runtime v2
+renderers receiving a fully bound InvocationSpec immediately before the existing spawn boundary.
+The current production authority remains sole; RTS-032 cannot read/write the new Store, dual-write,
+interpret Workflow Stage in a renderer, add a generic provider framework or change fallback/default
+semantics. Later Store adoption remains a distinct gate.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -752,7 +765,7 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Open evidence gaps
 
-- selected Python Core package/interface and production integration evidence;
+- selected Python provider-renderer and later Store-adoption production integration evidence;
 - support-scenario UX decisions;
 - native-launcher supplier/license/compatibility/SBOM/five-target evidence after Phase 3;
 - retained-state/live-dependency audit and per-item Phase 6 closeout.
@@ -762,10 +775,11 @@ rewrite, SQLite store, or physical single Coordinator.**
 RTS-001, RTS-010, RTS-011, RTS-020, RTS-021, RTS-022A, RTS-022B and RTS-024 passed. ADR-0006 selects
 Python refactoring, checksummed atomic-file RunStore/journal, logical single writer and the narrow
 product boundary; the semantic contract is `Frozen`. RTS-030 passed the reversible installed Python
-Core contract/port boundary. The next action is the separately frozen RTS-031 pure local atomic-file
-RunStore/journal implementation TaskCard. No production handler migration or dual write, default
-switch, production state migration, native-launcher acceptance, release, retained-event operation or
-destructive cleanup is authorized.
+Core contract/port boundary and RTS-031 passed the disposable local atomic Store/journal boundary.
+The next action is the separately frozen RTS-032 production provider-renderer seam while current
+state remains sole authority. No Store adoption or dual write, default switch, production state
+migration, native-launcher acceptance, release, retained-event operation or destructive cleanup is
+authorized.
 
 ## 12. Plan Completion Definition
 

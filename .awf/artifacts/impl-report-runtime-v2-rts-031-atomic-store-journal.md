@@ -69,8 +69,9 @@ Repository-policy-safe local checks pass:
 
 The initial independent TaskCard Gate Review found that parent-directory symlinks could redirect a
 valid authority envelope. Source revision `2d4576b9c7ce3f467108a9865ae81d1855cc3912` closes that L3
-finding with the shared guard and focused fixtures above. Exact-head pytest, Ruff, installed-wheel,
-Linux/Windows/macOS filesystem evidence and focused re-review remain candidate-gate owned.
+finding with the shared guard and focused fixtures above. Exact-head ordinary CI `32341036671` and
+Binary Feasibility `32341036800` passed at `082f9ae`; the same Reviewer focused re-review returned
+`PASS`, including authority-file and lock-file redirection smokes.
 
 ## Explicit non-claims
 
@@ -99,8 +100,8 @@ production state; release; or authorize destructive cleanup.
   ],
   "tests": [
     "Local policy-safe static and direct smoke validation PASS",
-    "Candidate CI pending",
-    "Independent TaskCard Gate Review pending"
+    "Exact-head ordinary and Binary CI PASS",
+    "Independent TaskCard Gate Review PASS after one focused L3 repair"
   ],
     "source_revision": "2d4576b9c7ce3f467108a9865ae81d1855cc3912"
 }
