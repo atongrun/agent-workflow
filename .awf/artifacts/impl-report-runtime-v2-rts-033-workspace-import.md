@@ -88,6 +88,7 @@ default, migrate retained/production state, release or authorize destructive cle
     "tests/test_runtime_workspace.py",
     "tests/test_runtime_core_boundary.py",
     "tests/test_runtime_command_boundary.py",
+    "tests/test_awf_role.py",
     ".awf/artifacts/impl-report-runtime-v2-rts-033-workspace-import.md"
   ],
   "commands": [

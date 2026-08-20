@@ -5954,9 +5954,7 @@ def test_prepared_outbox_replay_reconciles_checkpoint_before_send(monkeypatch, t
 def test_process_crash_after_zero_model_exit_recovers_durable_workspace(tmp_path, role):
     evidence = awf_role.RunEvidence(104, role, state_root=tmp_path / "state")
     workspace = evidence.run_dir / "model-workspace-proof"
-    git_dir = workspace / ".git"
-    git_dir.mkdir(parents=True)
-    (git_dir / "HEAD").write_text("ref: refs/heads/proof\n", encoding="utf-8")
+    run("git", "init", "-b", "proof", str(workspace), cwd=evidence.run_dir)
     manifest_sha256 = awf_role.durable_model_manifest_sha256(str(workspace))
     input_context = {
         "key": "input-delivery",
