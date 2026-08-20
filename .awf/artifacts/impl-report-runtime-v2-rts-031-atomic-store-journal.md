@@ -95,6 +95,6 @@ production state; release; or authorize destructive cleanup.
     "Candidate CI pending",
     "Independent TaskCard Gate Review pending"
   ],
-  "source_revision": "467794408dca2980f7602d2f5395e140680ec559"
+  "source_revision": "2a17158e6008f3db4e34ff50f9816f35ada62ac4"
 }
 -->
