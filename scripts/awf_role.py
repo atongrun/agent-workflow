@@ -77,11 +77,10 @@ from awf_taskcard import (
 from agent_workflow import __version__ as AWF_VERSION
 from agent_workflow.runtime import (
     ATTACH_INPUT,
-    ArtifactError,
     CODEX_FINDING_INSTRUCTIONS,
     OPENCODE_FINDING_INSTRUCTIONS,
+    ArtifactError,
     InvocationSpec,
-    PostflightContract as RuntimePostflightContract,
     RenderedInvocation,
     WorkspaceError,
     WorkspaceSpec,
@@ -95,18 +94,33 @@ from agent_workflow.runtime import (
     workspace_manifest_sha256,
 )
 from agent_workflow.runtime import (
+    PostflightContract as RuntimePostflightContract,
+)
+from agent_workflow.runtime import (
     artifact_fact as runtime_artifact_fact,
+)
+from agent_workflow.runtime import (
+    assert_frozen_workspace as runtime_assert_frozen_workspace,
+)
+from agent_workflow.runtime import (
+    assert_workspace_state as runtime_assert_workspace_state,
+)
+from agent_workflow.runtime import (
+    bind_environment as bind_workspace_environment,
+)
+from agent_workflow.runtime import (
+    freeze_workspace as runtime_freeze_workspace,
 )
 from agent_workflow.runtime import (
     normalize_review_envelope as runtime_normalize_review_envelope,
 )
-from agent_workflow.runtime import path_is_denied as runtime_path_is_denied
 from agent_workflow.runtime import (
     parse_postflight_contract as runtime_parse_postflight_contract,
 )
 from agent_workflow.runtime import (
     parse_review_report as runtime_parse_review_report,
 )
+from agent_workflow.runtime import path_is_denied as runtime_path_is_denied
 from agent_workflow.runtime import (
     postflight_result as runtime_postflight_result,
 )
@@ -133,18 +147,6 @@ from agent_workflow.runtime import (
 )
 from agent_workflow.runtime import (
     validate_stage_artifact_contract as runtime_validate_stage_artifact_contract,
-)
-from agent_workflow.runtime import (
-    assert_frozen_workspace as runtime_assert_frozen_workspace,
-)
-from agent_workflow.runtime import (
-    assert_workspace_state as runtime_assert_workspace_state,
-)
-from agent_workflow.runtime import (
-    bind_environment as bind_workspace_environment,
-)
-from agent_workflow.runtime import (
-    freeze_workspace as runtime_freeze_workspace,
 )
 from agent_workflow.state_root import state_root_binding
 

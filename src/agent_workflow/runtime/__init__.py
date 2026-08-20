@@ -19,9 +19,9 @@ from .artifact import (
     compile_run_artifact_contract,
     compile_stage_artifact_contract,
     normalize_review_envelope,
-    path_is_denied,
     parse_postflight_contract,
     parse_review_report,
+    path_is_denied,
     postflight_result,
     resolve_repo_file,
     resolve_review_report_path,
@@ -32,7 +32,6 @@ from .artifact import (
     validate_secret_observation,
     validate_stage_artifact_contract,
 )
-
 from .contracts import (
     INVOCATION_SPEC_FORMAT,
     RUN_SPEC_FORMAT,
