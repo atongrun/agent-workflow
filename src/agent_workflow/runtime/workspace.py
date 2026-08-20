@@ -337,7 +337,9 @@ def workspace_control_sha256(
     environment: tuple[tuple[str, str], ...],
 ) -> str:
     manifest = workspace_manifest(workspace, environment)
-    stable = {key: value for key, value in manifest.items() if key not in {"HEAD", "index-semantic"}}
+    stable = {
+        key: value for key, value in manifest.items() if key not in {"HEAD", "index-semantic"}
+    }
     return _manifest_sha256(stable)
 
 

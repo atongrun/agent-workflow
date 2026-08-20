@@ -45,7 +45,7 @@ Agent Bus ordering, migrate state or change a default.
 
 ## Scope and budgets
 
-- Installed workspace module: 391/440 nonblank/noncomment lines.
+- Installed workspace module: 393/440 nonblank/noncomment lines.
 - Focused workspace tests: 363/780 nonblank/noncomment lines.
 - Production `scripts/awf_role.py`: net -39 nonblank/noncomment lines against `origin/main`
   (budget at most +80).
