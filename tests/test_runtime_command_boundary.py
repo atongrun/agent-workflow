@@ -8,6 +8,7 @@ EXECUTOR = ROOT / "scripts" / "awf_executor.py"
 ROLE_HANDLER = ROOT / "scripts" / "awf_role.py"
 ADAPTERS = ROOT / "scripts" / "agent_adapters"
 RUNTIME_WORKSPACE = ROOT / "src" / "agent_workflow" / "runtime" / "workspace.py"
+RUNTIME_ARTIFACT = ROOT / "src" / "agent_workflow" / "runtime" / "artifact.py"
 
 
 def production_python_files() -> list[Path]:
@@ -49,6 +50,57 @@ def test_installed_workspace_is_the_only_runtime_local_process_boundary():
     assert violations == []
     assert "shell=False" in source
     assert "shell=True" not in source
+
+
+def test_installed_artifact_boundary_has_no_effect_or_authority_escape_hatch():
+    source = RUNTIME_ARTIFACT.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(RUNTIME_ARTIFACT))
+    forbidden_imports = {
+        "subprocess",
+        "socket",
+        "urllib",
+        "requests",
+        "awf_control_plane",
+        "awf_delivery",
+        "awf_executor",
+    }
+    forbidden_calls = {
+        "run",
+        "Popen",
+        "spawn",
+        "send_event",
+        "import_workspace_delta",
+        "commit",
+        "push",
+        "fetch",
+    }
+    violations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".", 1)[0] in forbidden_imports:
+                    violations.append(f"{node.lineno}:import:{alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".", 1)[0] in forbidden_imports:
+                violations.append(f"{node.lineno}:import:{node.module}")
+        elif isinstance(node, ast.Call):
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name in forbidden_calls:
+                violations.append(f"{node.lineno}:call:{name}")
+
+    assert violations == []
+    assert not any(
+        term in source
+        for term in (
+            "RunStore",
+            "InvocationJournal",
+            "WorkflowStage",
+            "agent-bus",
+            "checkpoint",
+            "outbox",
+            "inbox",
+        )
+    )
 
 
 def test_production_code_never_uses_implicit_shell_execution():

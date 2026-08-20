@@ -39,7 +39,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from awf_artifact_contract import ArtifactContractError, validate_stage_artifact_contract
 from awf_control_plane import (
     DEFAULT_ROUTES,
     ControlPlaneDenied,
@@ -78,9 +77,11 @@ from awf_taskcard import (
 from agent_workflow import __version__ as AWF_VERSION
 from agent_workflow.runtime import (
     ATTACH_INPUT,
+    ArtifactError,
     CODEX_FINDING_INSTRUCTIONS,
     OPENCODE_FINDING_INSTRUCTIONS,
     InvocationSpec,
+    PostflightContract as RuntimePostflightContract,
     RenderedInvocation,
     WorkspaceError,
     WorkspaceSpec,
@@ -92,6 +93,46 @@ from agent_workflow.runtime import (
     workspace_control_sha256,
     workspace_manifest,
     workspace_manifest_sha256,
+)
+from agent_workflow.runtime import (
+    artifact_fact as runtime_artifact_fact,
+)
+from agent_workflow.runtime import (
+    normalize_review_envelope as runtime_normalize_review_envelope,
+)
+from agent_workflow.runtime import path_is_denied as runtime_path_is_denied
+from agent_workflow.runtime import (
+    parse_postflight_contract as runtime_parse_postflight_contract,
+)
+from agent_workflow.runtime import (
+    parse_review_report as runtime_parse_review_report,
+)
+from agent_workflow.runtime import (
+    postflight_result as runtime_postflight_result,
+)
+from agent_workflow.runtime import (
+    resolve_repo_file as runtime_resolve_repo_file,
+)
+from agent_workflow.runtime import (
+    resolve_review_report_path as runtime_resolve_review_report_path,
+)
+from agent_workflow.runtime import (
+    scan_secret_text as runtime_scan_secret_text,
+)
+from agent_workflow.runtime import (
+    validate_embedded_review_report as runtime_validate_embedded_review_report,
+)
+from agent_workflow.runtime import (
+    validate_implementation_report as runtime_validate_implementation_report,
+)
+from agent_workflow.runtime import (
+    validate_postflight_paths as runtime_validate_postflight_paths,
+)
+from agent_workflow.runtime import (
+    validate_secret_observation as runtime_validate_secret_observation,
+)
+from agent_workflow.runtime import (
+    validate_stage_artifact_contract as runtime_validate_stage_artifact_contract,
 )
 from agent_workflow.runtime import (
     assert_frozen_workspace as runtime_assert_frozen_workspace,
@@ -1924,7 +1965,7 @@ def recover_postflight_manifest(
         report_files = sorted(Path(workspace).glob(".awf/artifacts/review-report-*.md"))
         matching_report = any(
             isinstance(report_sha, str)
-            and hashlib.sha256(path.read_bytes()).hexdigest() == report_sha
+            and artifact_sha256(path) == report_sha
             for path in report_files
         )
         if (
@@ -2760,43 +2801,19 @@ def executor_commit_message(branch: str, tool: str) -> str:
 
 
 def check_report(report_path: str) -> None:
-    """Validate the trusted ImplementationReport artifact boundary.
-
-    Called by coder after successful model execution but before git writes,
-    and by reviewer after checkout but before model execution.
-    Legacy prose reports remain compatible.  When a machine envelope is
-    present, it is parsed strictly before the imported-tree checkpoint.
-    """
-    if not report_path:
-        die("--report is required; ImplementationReport must exist before commit or review")
-    if not Path(report_path).is_file():
-        die(f"ImplementationReport not found: {report_path}")
+    """Validate an ImplementationReport through the installed Artifact boundary."""
     try:
-        content = Path(report_path).read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        die("ImplementationReport is unreadable")
-    if not content.strip() or "\x00" in content:
-        die("ImplementationReport is empty or contains NUL")
-    envelope = re.findall(
-        r"<!--\s*awf-implementation-report\s*(?:\n\s*)?(\{.*?\})\s*-->",
-        content,
-        re.DOTALL,
-    )
-    if envelope:
-        if len(envelope) != 1:
-            die("ImplementationReport must contain exactly one machine envelope")
-        try:
-            value = json.loads(envelope[0], object_pairs_hook=_unique_json_object)
-        except (json.JSONDecodeError, DuplicateReviewReportKey):
-            die("ImplementationReport machine envelope is malformed")
-        if not isinstance(value, dict) or set(value) != {
-            "summary",
-            "changed_files",
-            "commands",
-            "tests",
-            "source_revision",
-        }:
-            die("ImplementationReport machine envelope has missing or unknown fields")
+        runtime_validate_implementation_report(Path(report_path))
+    except ArtifactError as exc:
+        die(str(exc))
+
+
+def artifact_sha256(path: Path, relative_path: str | None = None) -> str:
+    """Return the Runtime-bound exact raw Artifact digest."""
+    try:
+        return runtime_artifact_fact(path, relative_path).sha256
+    except ArtifactError as exc:
+        die(str(exc))
 
 
 def check_report_tracked_at_head(repo: str, relative_path: str) -> None:
@@ -2811,292 +2828,40 @@ def check_repo_file_tracked_at_head(repo: str, relative_path: str, label: str) -
         die(f"{label} is not tracked by the dispatched commit")
 
 
-_REVIEW_REPORT_RE = re.compile(
-    r"<!--\s*awf-review-report\s*(?:\n\s*)?(\{.*?\})(?:\s*\n\s*|\s*)-->",
-    re.DOTALL,
-)
-_REVIEW_REPORT_FENCED_RE = re.compile(r"```json\s*\n?(.*?)\n?```", re.DOTALL)
-_REVIEW_VERDICTS = {"PASS", "REQUEST_CHANGES", "BLOCKED"}
-_REVIEW_REPORT_MAX_BYTES = 16 * 1024
-_REVIEW_REPORT_KEYS = {"verdict", "deterministic_failures", "blocked_reason"}
-_DIFF_BODY_RE = re.compile(
-    r"(?m)^(?:diff --git |@@ -|--- a/|\+\+\+ b/)|```(?:diff|patch)\s*$",
-    re.IGNORECASE,
-)
-
-
-class DuplicateReviewReportKey(ValueError):
-    """Raised when JSON object pairs contain a duplicate key."""
-
-
-def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise DuplicateReviewReportKey(key)
-        result[key] = value
-    return result
-
-
-_INLINE_REVIEW_REPORT_RE = re.compile(r"<!--\s*awf-review-report\s+(\{.*?\})\s*-->", re.DOTALL)
-
-
 def normalize_machine_review_envelope(workspace: str, report_path: str) -> None:
-    """Normalize a syntactically valid one-line model envelope in-place."""
-    source = resolve_repo_file(workspace, report_path, "ReviewReport")
-    try:
-        markdown = source.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return
-    matches = list(_INLINE_REVIEW_REPORT_RE.finditer(markdown))
-    if len(matches) != 1:
-        return
-    match = matches[0]
-    if "\n" in markdown[match.start() : match.end()].split("{", 1)[0]:
-        return
-    try:
-        machine = json.loads(match.group(1), object_pairs_hook=_unique_json_object)
-    except (json.JSONDecodeError, DuplicateReviewReportKey):
-        return
-    if not isinstance(machine, dict):
-        return
-    canonical = (
-        "<!-- awf-review-report\n"
-        + json.dumps(machine, ensure_ascii=False, indent=2, sort_keys=True)
-        + "\n-->"
-    )
-    updated = markdown[: match.start()] + canonical + markdown[match.end() :]
-    if updated != markdown:
-        source.write_text(updated, encoding="utf-8", newline="\n")
+    """Normalize through the installed Artifact boundary."""
+    runtime_normalize_review_envelope(resolve_repo_file(workspace, report_path, "ReviewReport"))
 
 
 def resolve_review_report_path(repo: str, report_path: str, implementation_report: str) -> Path:
-    """Resolve one explicit repo-relative ReviewReport path without traversal."""
-    if not report_path:
-        die("--review-report is required")
-    if "\\" in report_path or report_path.startswith("/") or ":" in report_path:
-        die("ReviewReport path must be repository-relative and use forward slashes")
-    if ".." in report_path.split("/"):
-        die("ReviewReport path must not contain parent traversal")
-
-    repo_root = Path(repo).resolve()
-    resolved = (repo_root / report_path).resolve()
-    if resolved == repo_root or repo_root not in resolved.parents:
-        die("ReviewReport path escapes the repository")
-
-    implementation_path = Path(implementation_report)
-    if not implementation_path.is_absolute():
-        implementation_path = repo_root / implementation_path
-    if resolved == implementation_path.resolve():
-        die("ReviewReport path must be distinct from ImplementationReport path")
-    return resolved
+    """Resolve through the installed Artifact boundary."""
+    try:
+        return runtime_resolve_review_report_path(Path(repo), report_path, implementation_report)
+    except ArtifactError as exc:
+        die(str(exc))
 
 
 def resolve_repo_file(repo: str, relative_path: str, label: str) -> Path:
-    """Resolve one required repository-relative file path without traversal."""
-    if not relative_path:
-        die(f"--{label.lower().replace(' ', '-')} is required")
-    if "\\" in relative_path or relative_path.startswith("/") or ":" in relative_path:
-        die(f"{label} path must be repository-relative and use forward slashes")
-    if ".." in relative_path.split("/"):
-        die(f"{label} path must not contain parent traversal")
-    repo_root = Path(repo).resolve()
-    resolved = (repo_root / relative_path).resolve()
-    if resolved == repo_root or repo_root not in resolved.parents:
-        die(f"{label} path escapes the repository")
-    return resolved
-
-
-def _validate_deterministic_failure(item: object, index: int) -> dict[str, object]:
-    if not isinstance(item, dict):
-        die(f"deterministic_failures[{index}] must be an object")
-    expected = {"evidence", "required_correction"}
-    if set(item) != expected:
-        die(f"deterministic_failures[{index}] has invalid fields")
-    correction = item["required_correction"]
-    evidence = item["evidence"]
-    if not isinstance(correction, str) or not correction.strip():
-        die(f"deterministic_failures[{index}] requires a correction")
-    if not isinstance(evidence, dict) or not isinstance(evidence.get("kind"), str):
-        die(f"deterministic_failures[{index}] requires structured evidence")
-
-    kind = evidence["kind"]
-    if kind == "criterion":
-        expected_evidence = {"kind", "criterion"}
-        valid = isinstance(evidence.get("criterion"), str) and bool(evidence["criterion"].strip())
-    elif kind == "command":
-        expected_evidence = {"kind", "command", "result"}
-        valid = all(
-            isinstance(evidence.get(key), str) and bool(evidence[key].strip())
-            for key in ("command", "result")
-        )
-    elif kind == "file_line":
-        expected_evidence = {"kind", "file", "line"}
-        file_name = evidence.get("file")
-        line = evidence.get("line")
-        valid = (
-            isinstance(file_name, str)
-            and bool(file_name.strip())
-            and not file_name.startswith("/")
-            and "\\" not in file_name
-            and ".." not in file_name.split("/")
-            and isinstance(line, int)
-            and not isinstance(line, bool)
-            and line > 0
-        )
-    else:
-        die(f"deterministic_failures[{index}] has unknown evidence kind")
-    if set(evidence) != expected_evidence or not valid:
-        die(f"deterministic_failures[{index}] lacks precise evidence")
-    return {"evidence": dict(evidence), "required_correction": correction.strip()}
+    """Resolve through the installed Artifact boundary."""
+    try:
+        return runtime_resolve_repo_file(Path(repo), relative_path, label)
+    except ArtifactError as exc:
+        die(str(exc))
 
 
 def parse_review_report(report_path: Path) -> dict[str, object]:
-    """Validate and normalize a bounded ReviewReport for downstream payloads."""
+    """Validate and normalize through the installed Artifact boundary."""
     try:
-        markdown = report_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        die(f"ReviewReport is missing or unreadable: {report_path}")
-    if not markdown.strip():
-        die("ReviewReport is empty")
-    if _DIFF_BODY_RE.search(markdown):
-        die("ReviewReport must not contain full diff or patch bodies")
-    secret_label = _scan_text(markdown)
-    if secret_label:
-        die(f"ReviewReport contains prohibited {secret_label} material")
-
-    blocks = _REVIEW_REPORT_RE.findall(markdown)
-    if len(blocks) == 1:
-        machine_source = blocks[0]
-    elif len(blocks) == 0:
-        # Older reviewer prompts described the machine object but omitted the
-        # HTML wrapper required by this parser. Accept exactly one fenced
-        # wrapper so completed model output can recover without a second call.
-        fenced = _REVIEW_REPORT_FENCED_RE.findall(markdown)
-        if len(fenced) != 1:
-            die("ReviewReport must contain exactly one awf-review-report object")
-        try:
-            wrapped = json.loads(fenced[0], object_pairs_hook=_unique_json_object)
-        except (json.JSONDecodeError, DuplicateReviewReportKey):
-            die("ReviewReport machine object is malformed or contains duplicate fields")
-        if not isinstance(wrapped, dict) or set(wrapped) != {"awf-review-report"}:
-            die("ReviewReport machine object has missing or unknown fields")
-        machine = wrapped["awf-review-report"]
-        if not isinstance(machine, dict):
-            die("ReviewReport machine object is malformed")
-        data = machine
-        if set(data) != _REVIEW_REPORT_KEYS:
-            die("ReviewReport machine object has missing or unknown fields")
-        return _normalize_review_report(data, markdown)
-    else:
-        die("ReviewReport must contain exactly one awf-review-report object")
-    try:
-        data = json.loads(machine_source, object_pairs_hook=_unique_json_object)
-    except (json.JSONDecodeError, DuplicateReviewReportKey):
-        die("ReviewReport machine object is malformed or contains duplicate fields")
-    if not isinstance(data, dict) or set(data) != _REVIEW_REPORT_KEYS:
-        die("ReviewReport machine object has missing or unknown fields")
-
-    return _normalize_review_report(data, markdown)
-
-
-def _normalize_review_report(data: dict[str, object], markdown: str) -> dict[str, object]:
-    verdict = data["verdict"]
-    if not isinstance(verdict, str) or verdict not in _REVIEW_VERDICTS:
-        die("ReviewReport verdict must be exactly PASS, REQUEST_CHANGES, or BLOCKED")
-    failures = data["deterministic_failures"]
-    if not isinstance(failures, list):
-        die("ReviewReport deterministic_failures must be an array")
-    normalized_failures = [
-        _validate_deterministic_failure(item, index) for index, item in enumerate(failures)
-    ]
-    blocked_reason = data["blocked_reason"]
-    # PASS has no blocking condition, so a model may express that absence as
-    # JSON null. Normalize it before the verdict-specific invariants below;
-    # BLOCKED and REQUEST_CHANGES retain strict string typing.
-    if verdict == "PASS" and blocked_reason is None:
-        blocked_reason = ""
-    elif not isinstance(blocked_reason, str):
-        die("ReviewReport blocked_reason must be a string")
-    blocked_reason = blocked_reason.strip()
-
-    if verdict == "PASS" and normalized_failures:
-        die("PASS ReviewReport cannot contain deterministic failures")
-    if verdict == "REQUEST_CHANGES" and not normalized_failures:
-        die("REQUEST_CHANGES requires deterministic failure evidence")
-    if verdict == "BLOCKED" and not blocked_reason:
-        die("BLOCKED requires an escalation reason")
-    if verdict != "BLOCKED" and blocked_reason:
-        die("blocked_reason is only valid for BLOCKED")
-
-    normalized: dict[str, object] = {
-        "format": "awf.review-report.v1",
-        "verdict": verdict,
-        "deterministic_failures": normalized_failures,
-        "blocked_reason": blocked_reason,
-        "markdown": markdown,
-    }
-    # Match send_event()'s JSON representation so the bound applies to the bytes that
-    # are actually embedded in the downstream payload, including escaped Unicode.
-    encoded = json.dumps(normalized).encode("utf-8")
-    if len(encoded) > _REVIEW_REPORT_MAX_BYTES:
-        die("normalized ReviewReport exceeds 16 KiB")
-    return normalized
+        return runtime_parse_review_report(report_path).review.as_payload()
+    except ArtifactError as exc:
+        die(str(exc))
 
 
 def validate_embedded_review_report(data: object) -> dict[str, object]:
-    """Revalidate the exact normalized ReviewReport carried by a decision event."""
-    expected_keys = {
-        "format",
-        "verdict",
-        "deterministic_failures",
-        "blocked_reason",
-        "markdown",
-    }
-    if not isinstance(data, dict) or set(data) != expected_keys:
-        die("embedded ReviewReport has missing or unknown fields")
-    if data.get("format") != "awf.review-report.v1":
-        die("embedded ReviewReport format is unsupported")
-    markdown = data.get("markdown")
-    if not isinstance(markdown, str) or not markdown.strip():
-        die("embedded ReviewReport markdown is missing")
-    if _DIFF_BODY_RE.search(markdown):
-        die("embedded ReviewReport must not contain full diff or patch bodies")
-    secret_label = _scan_text(markdown)
-    if secret_label:
-        die(f"embedded ReviewReport contains prohibited {secret_label} material")
-    blocks = _REVIEW_REPORT_RE.findall(markdown)
-    if len(blocks) == 1:
-        machine_source = blocks[0]
-    elif len(blocks) == 0:
-        fenced = _REVIEW_REPORT_FENCED_RE.findall(markdown)
-        if len(fenced) != 1:
-            die("embedded ReviewReport must contain exactly one awf-review-report object")
-        try:
-            wrapped = json.loads(fenced[0], object_pairs_hook=_unique_json_object)
-        except (json.JSONDecodeError, DuplicateReviewReportKey):
-            die("embedded ReviewReport machine object is malformed or contains duplicate fields")
-        if not isinstance(wrapped, dict) or set(wrapped) != {"awf-review-report"}:
-            die("embedded ReviewReport machine object has missing or unknown fields")
-        machine = wrapped["awf-review-report"]
-        if not isinstance(machine, dict) or set(machine) != _REVIEW_REPORT_KEYS:
-            die("embedded ReviewReport machine object has missing or unknown fields")
-        normalized = _normalize_review_report(machine, markdown)
-        if normalized != data:
-            die("embedded ReviewReport does not match its normalized machine object")
-        return normalized
-    else:
-        die("embedded ReviewReport must contain exactly one awf-review-report object")
     try:
-        machine = json.loads(machine_source, object_pairs_hook=_unique_json_object)
-    except (json.JSONDecodeError, DuplicateReviewReportKey):
-        die("embedded ReviewReport machine object is malformed or contains duplicate fields")
-    if not isinstance(machine, dict) or set(machine) != _REVIEW_REPORT_KEYS:
-        die("embedded ReviewReport machine object has missing or unknown fields")
-    normalized = _normalize_review_report(machine, markdown)
-    if normalized != data:
-        die("embedded ReviewReport does not match its normalized machine object")
-    return normalized
+        return runtime_validate_embedded_review_report(data).as_payload()
+    except ArtifactError as exc:
+        die(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -3105,7 +2870,7 @@ def validate_embedded_review_report(data: object) -> dict[str, object]:
 
 
 class PostflightContract:
-    """Frozen postflight contract parsed from a TaskCard awf-postflight block."""
+    """List-shaped compatibility view of the immutable Runtime contract."""
 
     def __init__(
         self,
@@ -3129,150 +2894,28 @@ class PostflightContract:
             f"verification_commands={self.verification_commands!r})"
         )
 
-
-_POSTFLIGHT_RE = re.compile(r"<!--\s*awf-postflight\s*\n(.*?)\n\s*-->", re.DOTALL)
-
-# Artifact denylist — paths that always fail even if in allowed_paths.
-_DENY_PREFIXES: tuple[str, ...] = (
-    ".venv/",
-    "venv/",
-    "env/",
-    "__pycache__/",
-    "node_modules/",
-    "dist/",
-    "build/",
-    "coverage/",
-    "htmlcov/",
-)
-_DENY_EXACT: tuple[str, ...] = (
-    "Thumbs.db",
-    ".DS_Store",
-    ".coverage",
-    "coverage.xml",
-)
-_DENY_SUFFIXES: tuple[str, ...] = (
-    ".swp",
-    ".swo",
-    ".swn",
-    ".bak",
-    ".orig",
-    ".pyc",
-    ".pyo",
-    ".log",
-    ".pid",
-    ".egg-info",
-)
-
-
-def _is_env_denied(path: str) -> bool:
-    """True for .env variants that carry secrets, excluding example templates.
-
-    Matches by basename so .env variants at any path depth are detected.
-    """
-    basename = os.path.basename(path)
-    if basename == ".env":
-        return True
-    if basename.startswith(".env."):
-        # Allow documented examples
-        return basename not in (".env.example", ".env.template", ".env.sample")
-    return False
+    def runtime_contract(self) -> RuntimePostflightContract:
+        return RuntimePostflightContract(
+            tuple(self.allowed_paths),
+            tuple(tuple(command) for command in self.verification_commands),
+        )
 
 
 def _path_is_denied(path: str) -> bool:
-    """Check a single repository-relative path against the artifact denylist.
-
-    Directory patterns (e.g. ``node_modules/``, ``.venv/``) are matched at any
-    depth by path component, not only at root.  ``.env`` variants are matched by
-    basename.  Suffix-based patterns match at any depth.
-    """
-    if _is_env_denied(path):
-        return True
-
-    # Match directory prefixes at any depth via path component
-    path_components = path.split("/")
-    for prefix in _DENY_PREFIXES:
-        stripped = prefix.rstrip("/")
-        if stripped in path_components:
-            return True
-
-    if os.path.basename(path) in _DENY_EXACT:
-        return True
-    if path.endswith(_DENY_SUFFIXES):
-        return True
-    # Also deny files inside .egg-info directories
-    if ".egg-info/" in path:
-        return True
-    return False
+    """Compatibility probe delegated to the installed Artifact policy."""
+    return runtime_path_is_denied(path)
 
 
 def parse_postflight_contract(card_path: str) -> PostflightContract:
-    """Parse, validate, and freeze the awf-postflight contract from a TaskCard.
-
-    Must be called before the model runs so that model edits to the card file
-    (which is deliberately absent from ``allowed_paths``) cannot change the
-    contract.
-    """
-    text = Path(card_path).read_text(encoding="utf-8")
-    m = _POSTFLIGHT_RE.search(text)
-    if not m:
-        die("task card has no awf-postflight contract block")
-
+    """Parse through the installed Runtime and retain the legacy list-shaped view."""
     try:
-        data = json.loads(m.group(1))
-    except json.JSONDecodeError as e:
-        die(f"malformed awf-postflight contract: {e}")
-
-    if not isinstance(data, dict):
-        die("awf-postflight contract must be a JSON object")
-
-    # Reject extra keys
-    allowed_keys = {"allowed_paths", "verification_commands"}
-    extra = set(data) - allowed_keys
-    if extra:
-        die(f"unexpected awf-postflight keys: {', '.join(sorted(extra))}")
-
-    # --- allowed_paths ---
-    raw_paths = data.get("allowed_paths", [])
-    if not isinstance(raw_paths, list) or not raw_paths:
-        die("awf-postflight allowed_paths must be a non-empty array")
-
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for p in raw_paths:
-        if not isinstance(p, str) or not p.strip():
-            die(f"invalid allowed_path entry: {p!r}")
-        if "\\" in p:
-            die(f"allowed path must use forward slashes: {p!r}")
-        if p.startswith("/"):
-            die(f"allowed path must be repo-relative (no leading slash): {p!r}")
-        if ":" in p:
-            die(f"allowed path must not be drive-qualified: {p!r}")
-        if ".." in p.split("/"):
-            die(f"allowed path must not contain parent traversal: {p!r}")
-        if p in seen:
-            die(f"duplicate allowed path: {p!r}")
-        seen.add(p)
-        normalized.append(p)
-
-    # --- verification_commands ---
-    raw_cmds = data.get("verification_commands", [])
-    if not isinstance(raw_cmds, list) or not raw_cmds:
-        die("awf-postflight verification_commands must be a non-empty array")
-
-    commands: list[list[str]] = []
-    for i, cmd in enumerate(raw_cmds):
-        if not isinstance(cmd, list) or len(cmd) == 0:
-            die(f"verification_commands[{i}] must be a non-empty array of strings")
-        if not all(isinstance(s, str) for s in cmd):
-            die(f"verification_commands[{i}] must contain only strings")
-        if cmd[0] == "":
-            die(f"verification_commands[{i}] has an empty executable")
-        argv = list(cmd)
-        if argv[0] == "{python}":
-            argv[0] = sys.executable
-        commands.append(argv)
-
-    return PostflightContract(allowed_paths=normalized, verification_commands=commands)
+        contract = runtime_parse_postflight_contract(Path(card_path), sys.executable)
+    except ArtifactError as exc:
+        die(str(exc))
+    return PostflightContract(
+        allowed_paths=list(contract.allowed_paths),
+        verification_commands=[list(command) for command in contract.verification_commands],
+    )
 
 
 def validate_implementation_report_contract(
@@ -3284,12 +2927,12 @@ def validate_implementation_report_contract(
     if not _is_v3(a):
         return
     try:
-        validate_stage_artifact_contract(
+        runtime_validate_stage_artifact_contract(
             card_path=Path(card_path),
             task_id=a.branch.rsplit("/", 1)[-1],
             required_report_path=a.report,
         )
-    except ArtifactContractError as exc:
+    except ArtifactError as exc:
         record(evidence, "contract_preflight_failed", reason=str(exc))
         die(f"implementation artifact contract rejected before model invocation: {exc}")
 
@@ -3373,40 +3016,18 @@ def _collect_delta_paths(repo: str) -> list[str]:
     return paths
 
 
-def run_postflight_delta_gates(repo: str, contract: PostflightContract) -> None:
-    """Enforce allowed paths, artifact denylist, narrow secret scan, and diff check.
+def run_postflight_delta_gates(repo: str, contract: PostflightContract):
+    """Collect local observations and delegate every validation decision.
 
     Must be called after ``run_verifications`` and before ``git add``.
     """
     delta_paths = _collect_delta_paths(repo)
-
-    # 1. Empty set check
-    if not delta_paths:
-        die("postflight: no changes detected after model execution")
-
-    # 2. Allowed-path gate
-    allowed_set = set(contract.allowed_paths)
-    offending: list[str] = []
-    for p in delta_paths:
-        if p not in allowed_set:
-            offending.append(p)
-    if offending:
-        die(
-            "postflight: changed path(s) not in allowed_paths:\n  " + "\n  ".join(sorted(offending))
-        )
-
-    # 3. Artifact denylist gate (checked even if path is allowed)
-    denied: list[str] = []
-    for p in delta_paths:
-        if _path_is_denied(p):
-            denied.append(p)
-    if denied:
-        die("postflight: artifact denylist violation:\n  " + "\n  ".join(sorted(denied)))
-
-    # 4. Narrow secret scan — added lines in tracked diffs + untracked file content
-    _narrow_secret_scan(repo, delta_paths)
-
-    # 5. git diff --check on full HEAD delta (staged + unstaged)
+    runtime_contract = contract.runtime_contract()
+    try:
+        runtime_validate_postflight_paths(runtime_contract, tuple(delta_paths))
+    except ArtifactError as exc:
+        die(str(exc))
+    secret_observation_sha256 = _narrow_secret_scan(repo, delta_paths)
     checked = postflight_git(
         repo,
         "diff",
@@ -3415,8 +3036,12 @@ def run_postflight_delta_gates(repo: str, contract: PostflightContract) -> None:
         "HEAD",
         "--check",
     )
-    if checked.returncode != 0:
-        die("postflight: git diff HEAD --check found whitespace errors")
+    try:
+        return runtime_postflight_result(
+            tuple(delta_paths), secret_observation_sha256, checked.returncode
+        )
+    except ArtifactError as exc:
+        die(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -3424,26 +3049,13 @@ def run_postflight_delta_gates(repo: str, contract: PostflightContract) -> None:
 # ---------------------------------------------------------------------------
 
 
-# High-confidence credential detectors: (label, regex)
-_SECRET_DETECTORS: list[tuple[str, re.Pattern[str]]] = [
-    ("private-key", re.compile(r"-----BEGIN\s+(?:\S+\s+)?PRIVATE\s+KEY-----")),
-    ("credential-url", re.compile(r"https?://[^/:@\s]+:[^/@\s]+@")),
-    ("github-token", re.compile(r"gh[puosr]_[A-Za-z0-9_]{36,}")),
-    ("openai-key", re.compile(r"sk-[A-Za-z0-9]{20,}")),
-    ("aws-access-key", re.compile(r"AKIA[0-9A-Z]{16}")),
-]
-
-
 def _scan_text(text: str) -> str | None:
-    """Return the first matching detector label, or None."""
-    for label, pat in _SECRET_DETECTORS:
-        if pat.search(text):
-            return label
-    return None
+    """Compatibility probe delegated to the installed Artifact policy."""
+    return runtime_scan_secret_text(text)
 
 
-def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> None:
-    """Scan added content from tracked diffs and untracked files for secrets.
+def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> str:
+    """Collect exact secret observations and delegate the validation decision.
 
     Uses the full HEAD→working-tree diff (staged + unstaged) for tracked
     changes and NUL-delimited git output for untracked file discovery.
@@ -3460,6 +3072,7 @@ def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> None
     untracked_out = postflight_git_out(repo, "ls-files", "--others", "--exclude-standard", "-z")
     untracked = {path for path in untracked_out.split("\0") if path}
 
+    tracked_added_lines: list[tuple[str, str]] = []
     for path in delta_paths:
         if path in untracked:
             continue
@@ -3481,11 +3094,10 @@ def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> None
                 in_hunk = True
                 continue
             if in_hunk and line.startswith("+"):
-                label = _scan_text(line[1:])
-                if label:
-                    die(f"postflight secret scan: {label} in {path}")
+                tracked_added_lines.append((path, line[1:]))
 
-    # Untracked regular files.
+    untracked_contents: list[tuple[str, str]] = []
+    unreadable_untracked: list[str] = []
     if untracked_out:
         for path in untracked_out.split("\0"):
             if not path:
@@ -3495,10 +3107,17 @@ def _narrow_secret_scan(repo: str, delta_paths: list[str] | None = None) -> None
                 try:
                     content = Path(full).read_text(encoding="utf-8", errors="replace")
                 except OSError:
-                    die(f"postflight secret scan: unreadable-file in untracked file {path}")
-                label = _scan_text(content)
-                if label:
-                    die(f"postflight secret scan: {label} in untracked file {path}")
+                    unreadable_untracked.append(path)
+                    continue
+                untracked_contents.append((path, content))
+    try:
+        return runtime_validate_secret_observation(
+            tuple(tracked_added_lines),
+            tuple(untracked_contents),
+            tuple(unreadable_untracked),
+        )
+    except ArtifactError as exc:
+        die(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -3699,34 +3318,37 @@ def tool_opencode_exec(
 
 
 def normalize_rework_feedback(raw: str) -> str:
-    """Return bounded reviewer feedback without forwarding report prose or patches."""
-    if len(raw.encode("utf-8")) > _REVIEW_REPORT_MAX_BYTES:
+    """Return bounded validated findings without forwarding report prose."""
+    if len(raw.encode("utf-8")) > 16 * 1024:
         die("review feedback exceeds 16 KiB")
+
+    def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(key)
+            value[key] = item
+        return value
+
     try:
-        data = json.loads(raw, object_pairs_hook=_unique_json_object)
-    except (json.JSONDecodeError, DuplicateReviewReportKey):
+        data = json.loads(raw, object_pairs_hook=unique)
+        normalized = runtime_validate_embedded_review_report(data).as_payload()
+    except (json.JSONDecodeError, ValueError, ArtifactError) as exc:
+        if isinstance(exc, ArtifactError):
+            die(str(exc))
         die("review feedback is malformed or contains duplicate fields")
-    if not isinstance(data, dict) or data.get("format") != "awf.review-report.v1":
-        die("review feedback has an invalid format")
-    verdict = data.get("verdict")
-    failures = data.get("deterministic_failures")
-    blocked_reason = data.get("blocked_reason")
-    if verdict != "REQUEST_CHANGES" or not isinstance(failures, list) or not failures:
+    failures = normalized["deterministic_failures"]
+    if normalized["verdict"] != "REQUEST_CHANGES" or not failures:
         die("rework requires REQUEST_CHANGES with deterministic failures")
-    if not isinstance(blocked_reason, str) or blocked_reason:
-        die("REQUEST_CHANGES feedback cannot contain a blocked reason")
-    normalized_failures = [
-        _validate_deterministic_failure(item, index) for index, item in enumerate(failures)
-    ]
     bounded = {
-        "verdict": verdict,
-        "deterministic_failures": normalized_failures,
+        "verdict": "REQUEST_CHANGES",
+        "deterministic_failures": failures,
         "blocked_reason": "",
     }
     text = json.dumps(bounded, indent=2, sort_keys=True)
-    secret_label = _scan_text(text)
-    if secret_label:
-        die(f"review feedback contains prohibited {secret_label} material")
+    label = runtime_scan_secret_text(text)
+    if label:
+        die(f"review feedback contains prohibited {label} material")
     return text
 
 
@@ -4872,7 +4494,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         if not isinstance(expected_report_sha256, str):
             die("trusted ReviewReport does not match its recovery checkpoint")
         if persisted_report.is_file():
-            if hashlib.sha256(persisted_report.read_bytes()).hexdigest() != expected_report_sha256:
+            if artifact_sha256(persisted_report, a.review_report) != expected_report_sha256:
                 die("trusted ReviewReport does not match its recovery checkpoint")
             # The report is re-imported from the durable model workspace after
             # the trusted PR checkout has restored a clean tree.
@@ -5097,7 +4719,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
             and checkpoint_path is not None
             and recovery_phase == "model_completed"
         ):
-            report_sha256 = hashlib.sha256(review_report_path.read_bytes()).hexdigest()
+            report_sha256 = artifact_sha256(review_report_path, a.review_report)
             checkpoint = advance_recovery_checkpoint(
                 evidence,
                 checkpoint_path,
@@ -5116,7 +4738,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
         if (
             not isinstance(report_sha256, str)
             or not review_report_path.is_file()
-            or hashlib.sha256(review_report_path.read_bytes()).hexdigest() != report_sha256
+            or artifact_sha256(review_report_path, a.review_report) != report_sha256
         ):
             die("trusted ReviewReport does not match its recovery checkpoint")
     else:
@@ -5299,7 +4921,7 @@ def role_architect(a: argparse.Namespace) -> int:
             "artifacts": {
                 "implementation": {
                     "path": a.report,
-                    "sha256": "sha256:" + hashlib.sha256(report_path.read_bytes()).hexdigest(),
+                    "sha256": "sha256:" + artifact_sha256(report_path, a.report),
                 },
                 "review": {
                     "path": a.review_report,
