@@ -1663,7 +1663,7 @@ fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status>
             }
         }
         "implement_launch_intent" => Ok(status(
-            "AMBIGUOUS_NO_REPLAY",
+            "SAFE_CONTINUE",
             "preserve exact process/workspace/evidence for owner decision",
             "implement_launch_intent",
             counts,
