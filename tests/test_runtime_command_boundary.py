@@ -8,6 +8,7 @@ EXECUTOR = ROOT / "scripts" / "awf_executor.py"
 ROLE_HANDLER = ROOT / "scripts" / "awf_role.py"
 ADAPTERS = ROOT / "scripts" / "agent_adapters"
 RUNTIME_WORKSPACE = ROOT / "src" / "agent_workflow" / "runtime" / "workspace.py"
+RUNTIME_APPLICATION = ROOT / "src" / "agent_workflow" / "runtime" / "application.py"
 RUNTIME_ARTIFACT = ROOT / "src" / "agent_workflow" / "runtime" / "artifact.py"
 
 
@@ -30,7 +31,7 @@ def test_only_unified_executor_imports_subprocess():
     assert violations == []
 
 
-def test_installed_workspace_is_the_only_runtime_local_process_boundary():
+def test_installed_application_and_workspace_are_the_only_runtime_local_process_boundaries():
     violations = []
     runtime_package = ROOT / "src" / "agent_workflow" / "runtime"
     for path in sorted(runtime_package.glob("*.py")):
@@ -43,13 +44,14 @@ def test_installed_workspace_is_the_only_runtime_local_process_boundary():
             or (isinstance(node, ast.ImportFrom) and node.module == "subprocess")
             for node in ast.walk(tree)
         )
-        if imports_subprocess and path != RUNTIME_WORKSPACE:
+        if imports_subprocess and path not in {RUNTIME_APPLICATION, RUNTIME_WORKSPACE}:
             violations.append(path.relative_to(ROOT).as_posix())
 
     source = RUNTIME_WORKSPACE.read_text(encoding="utf-8")
+    application = RUNTIME_APPLICATION.read_text(encoding="utf-8")
     assert violations == []
-    assert "shell=False" in source
-    assert "shell=True" not in source
+    assert "shell=False" in source and "shell=False" in application
+    assert "shell=True" not in source and "shell=True" not in application
 
 
 def test_installed_artifact_boundary_has_no_effect_or_authority_escape_hatch():
