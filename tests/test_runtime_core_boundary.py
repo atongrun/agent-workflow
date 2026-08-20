@@ -314,6 +314,7 @@ def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
         ProviderRenderer,
         runtime.ProviderLauncher,
         runtime.StartedProvider,
+        runtime.TransportSender,
     }
     concrete = {
         runtime.AtomicInvocationJournal,
