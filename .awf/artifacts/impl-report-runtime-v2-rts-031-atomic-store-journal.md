@@ -46,8 +46,8 @@ network, migration, default, release or destructive operation.
 
 ## Scope and budgets
 
-Only RTS-031 frozen writable paths changed. The new Store is exactly 650 nonblank/noncomment lines
-against the 650-line limit. The new focused Store fixture is 543 lines against the 900-line limit.
+Only RTS-031 frozen writable paths changed. The new Store is 644 nonblank/noncomment lines against
+the 650-line limit. The new focused Store fixture is 541 lines against the 900-line limit.
 The package remains standard-library only and adds no dependency or second authority family.
 
 ## Verification state
@@ -95,6 +95,6 @@ production state; release; or authorize destructive cleanup.
     "Candidate CI pending",
     "Independent TaskCard Gate Review pending"
   ],
-  "source_revision": "73b7b426becffaf2c3a52abd005235511fa153e6"
+  "source_revision": "467794408dca2980f7602d2f5395e140680ec559"
 }
 -->
