@@ -492,8 +492,7 @@ class LocalTransportBoundary:
                     or incoming.route != envelope.route
                     or incoming.target_role != envelope.target_role
                     or incoming.source_invocation_id != envelope.source_invocation_id
-                    or incoming.source_authorization_sha256
-                    != envelope.source_authorization_sha256
+                    or incoming.source_authorization_sha256 != envelope.source_authorization_sha256
                 )
             )
         if mismatch:

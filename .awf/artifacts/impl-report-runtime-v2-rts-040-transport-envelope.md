@@ -31,7 +31,7 @@ unchanged.
 
 ## Files and budgets
 
-- `src/agent_workflow/runtime/transport.py`: 480 nonblank/noncomment lines (budget: 480).
+- `src/agent_workflow/runtime/transport.py`: 479 nonblank/noncomment lines (budget: 480).
 - `src/agent_workflow/runtime/application.py`: narrow result-identity/rework-binding refinement,
   under the 100-line net budget.
 - `src/agent_workflow/runtime/__init__.py`: explicit installed exports only.
