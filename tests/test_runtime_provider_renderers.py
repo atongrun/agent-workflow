@@ -88,9 +88,7 @@ def test_opencode_coder_matches_legacy_same_fixture(tmp_path: Path, model: str) 
 
 
 @pytest.mark.parametrize("card_attached", [False, True])
-def test_opencode_reviewer_matches_legacy_same_fixture(
-    tmp_path: Path, card_attached: bool
-) -> None:
+def test_opencode_reviewer_matches_legacy_same_fixture(tmp_path: Path, card_attached: bool) -> None:
     card = tmp_path / "task.md"
     report = tmp_path / ".awf" / "review.md"
     legacy = legacy_opencode_review(

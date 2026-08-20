@@ -171,9 +171,7 @@ def test_invocation_spec_is_bound_immutable_and_stage_free(tmp_path: Path) -> No
     with pytest.raises(dataclasses.FrozenInstanceError):
         spec.provider = "codex"  # type: ignore[misc]
 
-    relative_report = InvocationSpec.from_mapping(
-        {**mapping, "report_path": ".awf/impl.md"}
-    )
+    relative_report = InvocationSpec.from_mapping({**mapping, "report_path": ".awf/impl.md"})
     assert relative_report.report_path == ".awf/impl.md"
 
 

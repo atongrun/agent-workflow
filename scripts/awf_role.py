@@ -39,14 +39,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from agent_workflow.runtime import (
-    ATTACH_INPUT,
-    CODEX_FINDING_INSTRUCTIONS,
-    OPENCODE_FINDING_INSTRUCTIONS,
-    InvocationSpec,
-    RenderedInvocation,
-    render_provider_invocation,
-)
 from awf_artifact_contract import ArtifactContractError, validate_stage_artifact_contract
 from awf_control_plane import (
     DEFAULT_ROUTES,
@@ -84,6 +76,14 @@ from awf_taskcard import (
 )
 
 from agent_workflow import __version__ as AWF_VERSION
+from agent_workflow.runtime import (
+    ATTACH_INPUT,
+    CODEX_FINDING_INSTRUCTIONS,
+    OPENCODE_FINDING_INSTRUCTIONS,
+    InvocationSpec,
+    RenderedInvocation,
+    render_provider_invocation,
+)
 from agent_workflow.state_root import state_root_binding
 
 

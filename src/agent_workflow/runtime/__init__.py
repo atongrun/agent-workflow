@@ -14,16 +14,6 @@ from .contracts import (
     RenderedInvocation,
     RunSpec,
 )
-from .renderers import (
-    ATTACH_INPUT,
-    CODEX_FINDING_INSTRUCTIONS,
-    OPENCODE_FINDING_INSTRUCTIONS,
-    PI_FINDING_INSTRUCTIONS,
-    CodexReviewerRenderer,
-    OpenCodeRenderer,
-    PiReviewerRenderer,
-    render_provider_invocation,
-)
 from .ports import (
     AuthorizationCommand,
     DecisionOutcome,
@@ -43,6 +33,16 @@ from .ports import (
     TerminalOutcome,
     ValidationEffect,
     WorkflowStage,
+)
+from .renderers import (
+    ATTACH_INPUT,
+    CODEX_FINDING_INSTRUCTIONS,
+    OPENCODE_FINDING_INSTRUCTIONS,
+    PI_FINDING_INSTRUCTIONS,
+    CodexReviewerRenderer,
+    OpenCodeRenderer,
+    PiReviewerRenderer,
+    render_provider_invocation,
 )
 from .store import (
     AUTHORITY_FORMAT,

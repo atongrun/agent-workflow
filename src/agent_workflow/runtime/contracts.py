@@ -58,9 +58,7 @@ def _multiline_text(name: str, value: object) -> str:
         raise ContractError(f"{name} must be valid UTF-8 text") from exc
     if len(encoded) > _MAX_PROVIDER_INPUT_BYTES:
         raise ContractError(f"{name} exceeds the provider input bound")
-    if any(
-        (ord(char) < 0x20 and char not in "\t\n\r") or ord(char) == 0x7F for char in value
-    ):
+    if any((ord(char) < 0x20 and char not in "\t\n\r") or ord(char) == 0x7F for char in value):
         raise ContractError(f"{name} contains a prohibited control character")
     return value
 
