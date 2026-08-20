@@ -82,15 +82,17 @@ def environment(tmp_path: Path) -> tuple[tuple[str, str], ...]:
     inherited.update(
         {
             "GCM_INTERACTIVE": "Never",
-            "GIT_CONFIG_COUNT": "3",
+            "GIT_CONFIG_COUNT": "4",
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_KEY_0": "core.fsmonitor",
             "GIT_CONFIG_KEY_1": "core.hooksPath",
             "GIT_CONFIG_KEY_2": "credential.helper",
+            "GIT_CONFIG_KEY_3": "core.autocrlf",
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_VALUE_0": "false",
             "GIT_CONFIG_VALUE_1": os.devnull,
             "GIT_CONFIG_VALUE_2": "",
+            "GIT_CONFIG_VALUE_3": "true" if os.name == "nt" else "false",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
             "HOME": str(home.resolve()),
