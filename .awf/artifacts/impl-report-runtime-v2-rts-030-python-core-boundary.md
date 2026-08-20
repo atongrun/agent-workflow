@@ -20,7 +20,9 @@ attempt, state writer, transport or credential registry to a renderer.
 - `StatusReader` exposes only a read-only snapshot with owner, cause, first blocker and one next
   action.
 - `ProviderRenderer` accepts one fully bound `InvocationSpec` and returns structured executable,
-  argv, cwd, stdin and environment values. It has no provider execution or Runtime mutation method.
+  argv, cwd, stdin and environment values. Its canonical digest covers those fields while retaining
+  only stdin digest and length, so journal launch intent never depends on ad hoc object hashing. It
+  has no provider execution or Runtime mutation method.
 - Static AST/source checks forbid operations scripts, bare `awf_*`, `sys.path`, subprocess/network
   modules, third-party dependencies and concrete Store/journal/executor modules in this slice.
 
@@ -30,8 +32,8 @@ Only the RTS-030 frozen writable paths changed. Existing production CLI, handler
 providers, lifecycle, status and legacy representations remain untouched and continue as the sole
 default Runtime. The installed-wheel check adds only an import and package-location assertion.
 
-The package contains 659 nonblank/noncomment lines against the 700-line limit. The two focused test
-modules contain 428 against the 900-line limit. No dependency was added.
+The package contains 679 nonblank/noncomment lines against the 700-line limit. The two focused test
+modules contain 450 against the 900-line limit. No dependency was added.
 
 ## Verification state
 
@@ -44,8 +46,12 @@ Local repository-policy-safe checks pass:
 - line-length and LOC budget checks;
 - `git diff --check`.
 
-Per repository policy, pytest, Ruff and installed-wheel execution are CI-owned. Their results and
-the single independent TaskCard Gate Review will be recorded on the candidate head before closeout.
+Candidate CI run `32335336859` passed full Linux/Windows tests, macOS runtime checks and installed-
+wheel checks on all three platforms after one L1 import-order repair. Binary Feasibility run
+`32335336776` also passed all jobs. The single independent Gate Reviewer then found one L3 launch-
+identity gap: `LaunchIntent` required a rendered-invocation digest without canonical bytes. Repair
+`c9e2c5f` added exact canonical hashing and focused field-drift tests. Focused/full repair CI and the
+same Reviewer's focused re-review remain pending.
 
 ## Explicit non-claims
 
@@ -73,9 +79,10 @@ Runtime v2.
     "git diff --check"
   ],
   "tests": [
-    "Local static and pure-value checks PASS",
-    "Candidate CI and independent Gate Review pending"
+    "Candidate ordinary CI 32335336859 PASS",
+    "Candidate Binary Feasibility 32335336776 PASS",
+    "Independent Gate Review REQUEST_CHANGES; c9e2c5f launch-identity repair pending CI/re-review"
   ],
-  "source_revision": "3fa97188a41fd1f989bedf2e288fe31bd9251ee8"
+  "source_revision": "c9e2c5f1731b8690318420df1b87c35602be5611"
 }
 -->
