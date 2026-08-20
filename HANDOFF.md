@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-032 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-033 is the last passed
 TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
 `Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -149,11 +149,19 @@ authority and recovery path; no Store adoption, dual write, migration, default o
 change occurred. See the
 [RTS-032 closeout](docs/tasks/runtime-v2-rts-032-provider-renderers-implementation-report.md).
 
-The next safe action is a separately frozen RTS-033 isolated-workspace and trusted-import TaskCard.
-It may move only fresh no-remote workspace creation, frozen Git-metadata checks, bounded
-credential-free reads, exact delta serialization and trusted local import behind the installed
-Runtime boundary. It must not adopt/dual-write the RTS-031 Store, change rework lineage or Artifact
-policy, operate remote Git/GitHub state, migrate production state or change defaults.
+RTS-033 then returned `PASS` for the isolated-workspace and trusted local import seam. The installed
+Runtime now owns exact event-contained no-remote preparation, compatible Git-control identity,
+bounded binary-delta serialization and equal-tree trusted import. Independent Review returned PASS
+with zero findings; exact-head ordinary CI `32349631233` and Binary Feasibility `32349631258`
+passed at `75a4630`, including Windows staged-tree provenance. Current
+RunLedger/checkpoint/outbox/inbox/RunEvidence state remains sole production authority. See the
+[RTS-033 closeout](docs/tasks/runtime-v2-rts-033-workspace-import-implementation-report.md).
+
+The next safe action is a separately frozen RTS-034 Artifact validation boundary. It may move only
+the current TaskCard-bound Artifact path/report/size/hash, allowed-path, secret and postflight-result
+validation behind the installed Runtime boundary while preserving outcomes and ordering before
+trusted import. It must not adopt/dual-write the RTS-031 Store, change Artifact policy or rework
+lineage, operate remote Git/GitHub or Bus, migrate production state or change defaults.
 
 ## Current Handoff State: 2026-08-17
 

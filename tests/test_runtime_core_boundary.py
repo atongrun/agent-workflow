@@ -32,6 +32,10 @@ ALLOWED_ABSOLUTE_IMPORTS = {
     "pathlib",
     "re",
     "secrets",
+    "shutil",
+    "stat",
+    "subprocess",
+    "tempfile",
     "typing",
 }
 FORBIDDEN_SOURCE_TERMS = {
@@ -61,6 +65,8 @@ def test_runtime_package_has_one_way_standard_library_dependency_boundary() -> N
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         for term in FORBIDDEN_SOURCE_TERMS:
+            if term == "subprocess" and path.name == "workspace.py":
+                continue
             assert term not in source, (path, term)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -98,6 +104,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "JournalSnapshot",
         "LaunchIntent",
         "ProcessObservation",
+        "PreparedWorkspace",
         "OPENCODE_FINDING_INSTRUCTIONS",
         "OpenCodeRenderer",
         "PI_FINDING_INSTRUCTIONS",
@@ -116,9 +123,23 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "TerminalCommand",
         "TerminalOutcome",
         "ValidationEffect",
+        "WorkspaceDelta",
+        "WorkspaceError",
+        "WorkspaceSpec",
         "WorkflowStage",
         "WriterBusy",
+        "assert_frozen_workspace",
+        "assert_workspace_state",
+        "bind_environment",
+        "freeze_workspace",
+        "import_workspace_delta",
+        "prepare_workspace",
         "render_provider_invocation",
+        "restore_workspace_manifest",
+        "serialize_workspace_delta",
+        "workspace_control_sha256",
+        "workspace_manifest",
+        "workspace_manifest_sha256",
     }
 
 
@@ -202,6 +223,7 @@ def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
         runtime.OpenCodeRenderer,
         runtime.PiReviewerRenderer,
         runtime.StoreError,
+        runtime.WorkspaceError,
         runtime.WriterBusy,
     }
     for value in exported:
