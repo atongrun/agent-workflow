@@ -350,10 +350,10 @@ def test_transition_commands_are_frozen_and_exactly_bound() -> None:
     assert handoff.target_role == "reviewer"
     assert terminal.outcome is TerminalOutcome.COMPLETED
 
-    stop = StopCommand(spec.sha256, spec.run_id, 7)
+    stop = StopCommand(SHA_A, "run-example", 7)
     assert stop.expected_sequence == 7
     with pytest.raises(ContractError):
-        StopCommand(spec.sha256, spec.run_id, -1)
+        StopCommand(SHA_A, "run-example", -1)
     with pytest.raises(dataclasses.FrozenInstanceError):
         authorization.attempt = 2  # type: ignore[misc]
     with pytest.raises((ContractError, ValueError)):
