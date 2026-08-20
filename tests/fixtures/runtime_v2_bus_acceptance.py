@@ -160,7 +160,7 @@ def make_command(spec: RunSpec, scope: str) -> CommandEnvelope:
 
 
 def expected_child_sha256(scope: str, phase: str) -> str:
-    output = digest(f"{scope}:{phase}").encode("ascii") + b"\n"
+    output = digest(f"{scope}:{phase}").encode("ascii")
     return digest(output)
 
 
@@ -171,7 +171,7 @@ def run_child(scope: str, phase: str) -> tuple[str, str]:
         if key.upper() in {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "TEMP", "TMP", "TMPDIR"}
     }
     child_env["PYTHONIOENCODING"] = "utf-8"
-    code = "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())"
+    code = "import hashlib,sys; sys.stdout.write(hashlib.sha256(sys.argv[1].encode()).hexdigest())"
     process = subprocess.Popen(
         [sys.executable, "-I", "-c", code, f"{scope}:{phase}"],
         stdin=subprocess.DEVNULL,
