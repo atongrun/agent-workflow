@@ -102,7 +102,8 @@ One bounded pass means:
 3. one semantic repair candidate changing only the allowed Rust source path;
 4. focused validation, then one exact candidate-head ordinary CI and Binary Feasibility matrix;
 5. one independent TaskCard Gate Review;
-6. focused repair/revalidation/re-review only if the Reviewer finds a concrete L3 defect.
+6. Gate Review returns PASS or the exact stop result for any remaining L3 defect; it cannot
+   authorize a second semantic repair.
 
 A rustfmt, Clippy, compiler, path, evidence-SHA, or wording correction that does not change the
 diagnosed semantics is L1 and does not consume a second semantic repair attempt. The maintainer may
@@ -218,7 +219,7 @@ Python selection, Rust production work, or any default/migration/release action 
 - Candidate/final-head GitHub evidence: one complete required ordinary CI and Binary Feasibility
   matrix, with focused job reruns only for external or L1 failures.
 - Independent Review: frozen TaskCard before seed; one TaskCard Gate Review after candidate; focused
-  re-review only for a concrete Reviewer finding.
+  revalidation/re-review only for the single allowed L1 correction or an external CI rerun.
 
 ## Required output
 
