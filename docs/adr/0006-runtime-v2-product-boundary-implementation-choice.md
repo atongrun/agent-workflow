@@ -22,9 +22,11 @@ the same language-neutral fault fixture. Phase 2 has now completed that comparis
   platform SQLite responsibilities.
 - RTS-022A produced a zero-dependency Rust executable that passed the same 14 rows on Linux
   x86_64/arm64, Windows x86_64 and macOS x86_64/arm64 without invoking Python. Its measured
-  nonblank/noncomment source numerator was 3,471 lines, compared with 1,380 lines for the Python
-  experiment runner. RTS-022B then proved that a fresh maintainer could diagnose and repair one
-  blinded launch-intent ambiguity/no-replay defect in one semantic attempt.
+  nonblank/noncomment source numerator was 3,471 lines. The Python experiment runner measured 1,380
+  lines at pre-final-review head `77c7023` and 1,396 lines at repair head `457a336`; the RTS-020
+  measurement separately records 74 lines for its scripted provider fixture. This correction does
+  not change the comparative size conclusion. RTS-022B then proved that a fresh maintainer could
+  diagnose and repair one blinded launch-intent ambiguity/no-replay defect in one semantic attempt.
 
 The comparison is intentionally asymmetric. Python is the existing production language and has
 evidence across real Codex, OpenCode and Pi process boundaries, Agent Bus delivery/handler-success
