@@ -78,9 +78,7 @@ def make_spec(
     )
 
 
-def initialized_store(
-    root: Path, *, rework_budget: int = 1
-) -> tuple[AtomicRunStore, RunSpec]:
+def initialized_store(root: Path, *, rework_budget: int = 1) -> tuple[AtomicRunStore, RunSpec]:
     spec = make_spec(root, rework_budget=rework_budget)
     store = AtomicRunStore(root, spec.run_id, "writer-rts-031")
     snapshot = store.initialize(spec)

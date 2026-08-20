@@ -140,8 +140,10 @@ def _decode_journal(invocation_id: str, value: object) -> JournalSnapshot:
         "result": ProviderResult,
         "validation_effect": ValidationEffect,
     }
-    facts = {name: None if data[name] is None else _restore(cls, data[name])
-             for name, cls in types.items()}
+    facts = {
+        name: None if data[name] is None else _restore(cls, data[name])
+        for name, cls in types.items()
+    }
     launch, process, result, effect = (facts[name] for name in types)
     if authorization.invocation_id != invocation_id:
         raise _deny(f"journal {invocation_id} identity drift")
@@ -158,10 +160,7 @@ def _decode_journal(invocation_id: str, value: object) -> JournalSnapshot:
         raise _deny(f"journal {invocation_id} process identity drift")
     if effect is not None and effect.result_sha256 != result.result_sha256:
         raise _deny(f"journal {invocation_id} result identity drift")
-    return JournalSnapshot(
-        authorization.run_spec_sha256, invocation_id, authorization.authorization_sha256,
-        authorization.invocation_spec_sha256, launch, process, result, effect,
-    )
+    return JournalSnapshot(*dataclasses.astuple(authorization), launch, process, result, effect)
 
 
 def _capacity(spec: RunSpec, stage: WorkflowStage) -> int:
@@ -317,7 +316,8 @@ def _validate_payload(payload: object) -> _Authority:
     if set(journals) != set(authorizations):
         raise _deny("journal and authorization identities differ")
     observations = sum(
-        value[key] is not None for value in data["journals"].values()
+        value[key] is not None
+        for value in data["journals"].values()
         for key in ("launch_intent", "process_observation", "result")
     )
     if sequence != 1 + len(data["events"]) + observations:
@@ -359,18 +359,19 @@ def _state_root_sha256(path: Path) -> str:
 def _snapshot(authority: _Authority, *, lock_active: bool = False) -> RunSnapshot:
     spec = authority.run_spec
     sequence = authority.payload["sequence"]
+    blocker = None
+    owner = "runtime"
+    outcome = DecisionOutcome.SAFE_CONTINUE
     if authority.terminal is not None:
-        return RunSnapshot(
-            spec.run_id, spec.sha256, sequence, authority.stage,
-            authority.terminal.outcome, DecisionOutcome.TERMINAL_IDEMPOTENT, None,
-            "runtime", "run is terminal", "none",
-        )
-    if lock_active:
-        facts = (
-            "exact writer lock is active", "owner", DecisionOutcome.AMBIGUOUS_NO_REPLAY,
-            "a local authority mutation may be in flight or ambiguous",
-            "preserve exact writer/process evidence for owner decision",
-        )
+        outcome = DecisionOutcome.TERMINAL_IDEMPOTENT
+        cause = "run is terminal"
+        action = "none"
+    elif lock_active:
+        blocker = "exact writer lock is active"
+        owner = "owner"
+        outcome = DecisionOutcome.AMBIGUOUS_NO_REPLAY
+        cause = "a local authority mutation may be in flight or ambiguous"
+        action = "preserve exact writer/process evidence for owner decision"
     else:
         closed = {
             event["command"]["source_invocation_id"]
@@ -378,39 +379,39 @@ def _snapshot(authority: _Authority, *, lock_active: bool = False) -> RunSnapsho
             if event["kind"] in {"handoff", "terminal"}
         }
         current = [
-            item for item in authority.authorizations.values()
+            item
+            for item in authority.authorizations.values()
             if item[0].stage is authority.stage and item[0].invocation_id not in closed
         ]
         if not current:
-            facts = (
-                None, "runtime", DecisionOutcome.SAFE_CONTINUE,
-                f"{authority.stage.value} authorization is required",
-                f"authorize one exact {authority.stage.value} invocation",
-            )
+            cause = f"{authority.stage.value} authorization is required"
+            action = f"authorize one exact {authority.stage.value} invocation"
         else:
             journal = authority.journals[current[-1][0].invocation_id]
             if journal.launch_intent is None:
-                facts = (
-                    None, "runtime", DecisionOutcome.SAFE_CONTINUE,
-                    "the invocation is authorized and has no launch intent",
-                    "launch the exact authorized provider once",
-                )
+                cause = "the invocation is authorized and has no launch intent"
+                action = "launch the exact authorized provider once"
             elif journal.result is None:
-                facts = (
-                    "provider outcome is ambiguous", "owner", DecisionOutcome.AMBIGUOUS_NO_REPLAY,
-                    "launch/process evidence exists without a trusted result",
-                    "preserve exact process/workspace/evidence for owner decision",
-                )
+                blocker = "provider outcome is ambiguous"
+                owner = "owner"
+                outcome = DecisionOutcome.AMBIGUOUS_NO_REPLAY
+                cause = "launch/process evidence exists without a trusted result"
+                action = "preserve exact process/workspace/evidence for owner decision"
             else:
-                facts = (
-                    None, "runtime", DecisionOutcome.SAFE_CONTINUE,
-                    "an exact durable provider result awaits validation",
-                    "validate the exact durable result without provider replay",
-                )
-    blocker, owner, outcome, cause, action = facts
+                cause = "an exact durable provider result awaits validation"
+                action = "validate the exact durable result without provider replay"
+    terminal = None if authority.terminal is None else authority.terminal.outcome
     return RunSnapshot(
-        spec.run_id, spec.sha256, sequence, authority.stage, None,
-        outcome, blocker, owner, cause, action,
+        spec.run_id,
+        spec.sha256,
+        sequence,
+        authority.stage,
+        terminal,
+        outcome,
+        blocker,
+        owner,
+        cause,
+        action,
     )
 
 
@@ -449,9 +450,7 @@ class AtomicRunStore:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         if self.run_dir.is_symlink() or self.run_dir.resolve() != self.run_dir:
             raise _deny("run directory must not traverse a symbolic link")
-        lock = {
-            "format": LOCK_FORMAT, "writer_id": self.writer_id, "nonce": secrets.token_hex(16)
-        }
+        lock = {"format": LOCK_FORMAT, "writer_id": self.writer_id, "nonce": secrets.token_hex(16)}
         token = _canonical_bytes(lock)
         try:
             descriptor = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -546,9 +545,7 @@ class AtomicRunStore:
         authority, _ = self._transaction(transform)
         return _snapshot(authority)
 
-    def authorize(
-        self, command: AuthorizationCommand, fact: JournalAuthorization
-    ) -> RunDecision:
+    def authorize(self, command: AuthorizationCommand, fact: JournalAuthorization) -> RunDecision:
         def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
             if payload is None or authority is None:
                 raise _deny("RunStore must be initialized before authorization")
@@ -598,13 +595,13 @@ class AtomicRunStore:
             encoded = {"kind": kind, "command": _data(command), "effect": _data(effect)}
             for event in payload["events"]:
                 same = event["kind"] == kind and (
-                    kind == "terminal"
-                    or event["command"]["delivery_id"] == command.delivery_id
+                    kind == "terminal" or event["command"]["delivery_id"] == command.delivery_id
                 )
                 if same and event == encoded:
                     outcome = (
                         DecisionOutcome.TERMINAL_IDEMPOTENT
-                        if kind == "terminal" else DecisionOutcome.SAFE_STABLE_RESEND
+                        if kind == "terminal"
+                        else DecisionOutcome.SAFE_STABLE_RESEND
                     )
                     action = "none" if kind == "terminal" else "resend the exact handoff"
                     return payload, (outcome, f"exact {kind} is already durable", action)
@@ -638,9 +635,7 @@ class AtomicRunStore:
     def record_terminal(self, command: TerminalCommand, effect: ValidationEffect) -> RunDecision:
         return self._record_effect("terminal", command, effect)
 
-    def _record_journal_fact(
-        self, invocation_id: str, field: str, fact: object
-    ) -> JournalSnapshot:
+    def _record_journal_fact(self, invocation_id: str, field: str, fact: object) -> JournalSnapshot:
         def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
             if payload is None or authority is None:
                 raise _deny("journal mutation is not legal for current authority")
@@ -707,9 +702,8 @@ class AtomicStatusReader:
         if _identifier("run_id", run_id) != self.run_id:
             raise _deny("status run identity drift")
         authority = _read_authority(self.path)
-        if (
-            authority.payload["run_id"] != self.run_id
-            or authority.payload["state_root_sha256"] != _state_root_sha256(self.state_root)
-        ):
+        if authority.payload["run_id"] != self.run_id or authority.payload[
+            "state_root_sha256"
+        ] != _state_root_sha256(self.state_root):
             raise _deny("status run or state-root identity drift")
         return _snapshot(authority, lock_active=self.lock_path.exists())

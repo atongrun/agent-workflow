@@ -257,9 +257,7 @@ class RunStore(Protocol):
         self, command: AuthorizationCommand, fact: JournalAuthorization
     ) -> RunDecision: ...
 
-    def record_handoff(
-        self, command: HandoffCommand, effect: ValidationEffect
-    ) -> RunDecision: ...
+    def record_handoff(self, command: HandoffCommand, effect: ValidationEffect) -> RunDecision: ...
 
     def record_terminal(
         self, command: TerminalCommand, effect: ValidationEffect
