@@ -1432,16 +1432,14 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
                 )?;
                 validate_implementation_report(&artifact_path(&run_dir, "implementation"))?;
                 revalidate_trusted_repo(&run, &run_dir)?;
+                let trusted_commit = run.get("trusted_commit").cloned().unwrap_or(Json::Null);
                 run = set_field(
                     run,
                     "handoff_intent",
                     Json::object(vec![
                         ("from", Json::string("implement")),
                         ("to", Json::string("review")),
-                        (
-                            "trusted_commit",
-                            run.get("trusted_commit").cloned().unwrap_or(Json::Null),
-                        ),
+                        ("trusted_commit", trusted_commit),
                     ]),
                 );
                 run = set_field(run, "phase", Json::string("review_handoff_intent"));
@@ -2151,13 +2149,11 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             );
             let run = set_field(run, "trusted_commit", Json::string(head));
             let run = set_field(run, "trusted_tree", Json::string(tree));
+            let trusted_commit = run.get("trusted_commit").cloned().unwrap_or(Json::Null);
             let run = set_field(
                 run,
                 "handoff_intent",
-                Json::object(vec![(
-                    "trusted_commit",
-                    run.get("trusted_commit").cloned().unwrap_or(Json::Null),
-                )]),
+                Json::object(vec![("trusted_commit", trusted_commit)]),
             );
             save_run(
                 &run_dir,
@@ -3123,8 +3119,8 @@ pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> R
             }
             require_string_array(row, "assertions_checked", assertions)?;
             require_string_array(row, "prohibited_checked", prohibited)?;
-            require_invocation_ids(row, target, id)?;
-            require_row_provider_counts(row, assertions, target, id)?;
+            require_invocation_ids(row, &target, id)?;
+            require_row_provider_counts(row, assertions, &target, id)?;
             let terminal = row
                 .get("terminal")
                 .and_then(|value| match value {
@@ -3161,7 +3157,7 @@ pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> R
                     "{target} row {id} decision source drift"
                 )));
             }
-            require_concrete_checks(row, assertions, prohibited, target, id)?;
+            require_concrete_checks(row, assertions, prohibited, &target, id)?;
         }
     }
     for target in expected_targets.iter() {

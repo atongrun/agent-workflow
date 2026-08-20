@@ -59,8 +59,9 @@ external local `git` executable.
 
 - Frozen Python denominator: 1,454 nonblank/noncomment lines; 1.5x threshold: 2,181.
 - Runner-only Python denominator: 1,380 nonblank/noncomment lines; 1.5x threshold: 2,070.
-- Rust production numerator under `experiments/runtime-v2-rust/src/`: 3,474 nonblank/noncomment
-  lines (`lib.rs` 3,468, `main.rs` 6) after applying the exact CI-owned rustfmt output.
+- Rust production numerator under `experiments/runtime-v2-rust/src/`: 3,470 nonblank/noncomment
+  lines (`lib.rs` 3,464, `main.rs` 6) after applying the exact CI-owned rustfmt output and
+  the focused ownership/borrowing compile repair.
 - Rust test code: 378 nonblank/noncomment lines after rustfmt.
 - Direct production dependencies: 0.
 - Transitive dependencies: 0.
@@ -227,8 +228,8 @@ Known CI risks before machine validation:
   "review_status": "PASS",
   "preliminary_result": "PENDING_CI",
   "dependency_count": 0,
-  "rust_source_nonblank_noncomment_loc": 3474,
-  "rust_lib_nonblank_noncomment_loc": 3468,
+  "rust_source_nonblank_noncomment_loc": 3470,
+  "rust_lib_nonblank_noncomment_loc": 3464,
   "rust_test_nonblank_noncomment_loc": 378,
   "rust_source_exceeds_2181_threshold": true,
   "named_value_requiring_machine_evidence": "removes Python runtime prerequisite for this disposable shared slice",
