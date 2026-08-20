@@ -87,6 +87,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
     assert set(runtime.__all__) == {
         "INVOCATION_SPEC_FORMAT",
         "RUN_SPEC_FORMAT",
+        "ENVELOPE_FORMAT",
         "AUTHORITY_FORMAT",
         "ATTACH_INPUT",
         "ApplicationError",
@@ -99,6 +100,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "ContractError",
         "CODEX_FINDING_INSTRUCTIONS",
         "CodexReviewerRenderer",
+        "CommandEnvelope",
         "DecisionOutcome",
         "HandoffCommand",
         "InvocationJournal",
@@ -108,6 +110,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "LaunchIntent",
         "LocalRuntimeApplication",
         "LocalStageRequest",
+        "LocalTransportBoundary",
         "NormalizedReviewReport",
         "ProcessObservation",
         "ProcessResult",
@@ -125,6 +128,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "ProviderSelection",
         "RenderedInputFile",
         "RenderedInvocation",
+        "ResultEnvelope",
         "RunDecision",
         "RunArtifactContract",
         "RunSnapshot",
@@ -138,6 +142,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "SubprocessProviderLauncher",
         "TerminalCommand",
         "TerminalOutcome",
+        "TransportError",
         "ValidationEffect",
         "ValidatedReviewArtifact",
         "WorkspaceDelta",
@@ -234,6 +239,46 @@ def test_renderer_surface_has_no_workflow_or_state_mutation_fields() -> None:
     assert "shell" not in rendered_fields
 
 
+def test_transport_boundary_has_no_external_io_or_authority_mutation_surface() -> None:
+    path = PACKAGE / "transport.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    forbidden_imports = {
+        "asyncio",
+        "http",
+        "requests",
+        "socket",
+        "subprocess",
+        "urllib",
+        "websockets",
+    }
+    forbidden_calls = {
+        "authorize",
+        "record_handoff",
+        "record_result",
+        "record_terminal",
+        "send",
+        "send_event",
+        "start",
+    }
+    violations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".", 1)[0] in forbidden_imports:
+                    violations.append(f"{node.lineno}:import:{alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".", 1)[0] in forbidden_imports:
+                violations.append(f"{node.lineno}:import:{node.module}")
+        elif isinstance(node, ast.Call):
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name in forbidden_calls:
+                violations.append(f"{node.lineno}:call:{name}")
+
+    assert violations == []
+    assert "agent-bus" not in source.lower()
+
+
 def test_decision_outcomes_exactly_match_frozen_contract() -> None:
     assert {outcome.value for outcome in DecisionOutcome} == {
         "SAFE_CONTINUE",
@@ -268,6 +313,7 @@ def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
         runtime.CodexReviewerRenderer,
         runtime.ArtifactError,
         runtime.LocalRuntimeApplication,
+        runtime.LocalTransportBoundary,
         runtime.OpenCodeRenderer,
         runtime.PiReviewerRenderer,
         runtime.StoreError,

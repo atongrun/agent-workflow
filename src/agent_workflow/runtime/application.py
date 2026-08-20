@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,7 @@ from .ports import (
 )
 from .renderers import ATTACH_INPUT, render_provider_invocation
 from .store import AtomicRunStore, AtomicStatusReader, StoreError
+from .transport import ResultEnvelope
 from .workspace import (
     WorkspaceDelta,
     WorkspaceError,
@@ -179,7 +181,7 @@ class LocalStageRequest:
     attempt: int
     delivery_id: str
     payload_sha256: str
-    outgoing_delivery_id: str
+    outgoing_target_invocation_id: str
     provider_executable: str
     provider_environment: tuple[tuple[str, str], ...]
     input_text: str
@@ -274,10 +276,18 @@ class LocalRuntimeApplication:
         if snapshot.stage is not request.stage:
             raise _deny_provider("local stage request does not match current Workflow authority")
         lineage = store.pending_handoff()
-        if request.stage is WorkflowStage.REWORK and (
-            lineage is None or _digest(request.input_text.encode()) != lineage.payload_sha256
-        ):
-            raise _deny_provider("rework input does not match deterministic review feedback")
+        if request.stage is WorkflowStage.REWORK:
+            try:
+                rework_payload = json.loads(request.input_text)
+            except json.JSONDecodeError as exc:
+                raise _deny_provider("rework input is not deterministic JSON feedback") from exc
+            deterministic_feedback = json.dumps(rework_payload, indent=2, sort_keys=True)
+            if (
+                request.input_text != deterministic_feedback
+                or lineage is None
+                or _digest(rework_payload) != lineage.payload_sha256
+            ):
+                raise _deny_provider("rework input does not match deterministic review feedback")
         recovery = None
         try:
             recovery = store.journal(request.invocation_id).snapshot()
@@ -582,16 +592,30 @@ class LocalRuntimeApplication:
             fact.sha256,
             effect_sha256,
         )
-        payload_sha256 = _digest(
-            {"source_invocation_id": command.invocation_id, "effect_sha256": effect_sha256}
+        payload = {
+            "source_invocation_id": command.invocation_id,
+            "effect_sha256": effect_sha256,
+        }
+        outgoing = ResultEnvelope.create(
+            run_id=run_spec.run_id,
+            task_id=run_spec.task_id,
+            run_spec_sha256=run_spec.sha256,
+            source_role="coder",
+            target_role="reviewer",
+            route=run_spec.review_route,
+            source_invocation_id=command.invocation_id,
+            source_authorization_sha256=command.authorization_sha256,
+            target_invocation_id=request.outgoing_target_invocation_id,
+            causation_delivery_id=request.delivery_id,
+            payload=payload,
         )
         store.record_handoff(
             HandoffCommand(
                 run_spec.sha256,
                 command.invocation_id,
                 command.authorization_sha256,
-                request.outgoing_delivery_id,
-                payload_sha256,
+                outgoing.delivery_id,
+                outgoing.payload_sha256.removeprefix("sha256:"),
                 run_spec.review_route,
                 "reviewer",
             ),
@@ -638,29 +662,54 @@ class LocalRuntimeApplication:
         payload = validated.review.as_payload()
         verdict = payload["verdict"]
         if verdict == "REQUEST_CHANGES":
-            payload_sha256 = _digest(normalize_rework_feedback(payload).encode())
+            rework_payload = json.loads(normalize_rework_feedback(payload))
+            outgoing = ResultEnvelope.create(
+                run_id=run_spec.run_id,
+                task_id=run_spec.task_id,
+                run_spec_sha256=run_spec.sha256,
+                source_role="reviewer",
+                target_role="coder",
+                route=run_spec.rework_route,
+                source_invocation_id=command.invocation_id,
+                source_authorization_sha256=command.authorization_sha256,
+                target_invocation_id=request.outgoing_target_invocation_id,
+                causation_delivery_id=request.delivery_id,
+                payload=rework_payload,
+            )
             store.record_handoff(
                 HandoffCommand(
                     run_spec.sha256,
                     command.invocation_id,
                     command.authorization_sha256,
-                    request.outgoing_delivery_id,
-                    payload_sha256,
+                    outgoing.delivery_id,
+                    outgoing.payload_sha256.removeprefix("sha256:"),
                     run_spec.rework_route,
                     "coder",
                 ),
                 effect,
             )
             return
-        payload_sha256 = _digest(payload)
         terminal = TerminalOutcome.COMPLETED if verdict == "PASS" else TerminalOutcome.BLOCKED
+        outgoing = ResultEnvelope.create(
+            run_id=run_spec.run_id,
+            task_id=run_spec.task_id,
+            run_spec_sha256=run_spec.sha256,
+            source_role="reviewer",
+            target_role="architect",
+            route=f"result:{terminal.value}",
+            source_invocation_id=command.invocation_id,
+            source_authorization_sha256=command.authorization_sha256,
+            target_invocation_id=request.outgoing_target_invocation_id,
+            causation_delivery_id=request.delivery_id,
+            payload=payload,
+        )
         store.record_terminal(
             TerminalCommand(
                 run_spec.sha256,
                 command.invocation_id,
                 command.authorization_sha256,
-                request.outgoing_delivery_id,
-                payload_sha256,
+                outgoing.delivery_id,
+                outgoing.payload_sha256.removeprefix("sha256:"),
                 terminal,
                 effect_sha256,
             ),
