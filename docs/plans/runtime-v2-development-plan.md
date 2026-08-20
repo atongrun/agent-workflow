@@ -515,6 +515,19 @@ The current production authority remains sole; RTS-032 cannot read/write the new
 interpret Workflow Stage in a renderer, add a generic provider framework or change fallback/default
 semantics. Later Store adoption remains a distinct gate.
 
+RTS-032 result: **PASS**. Closed installed OpenCode coder/reviewer, Codex reviewer and Pi reviewer
+renderers now receive one fully bound `InvocationSpec` and return one canonical
+`RenderedInvocation` at the existing spawn seam. Independent Gate Review returned PASS with zero
+findings. L1 repair `1028eae` updated two monkeypatched test fakes for the reviewed `binding=`
+keyword; exact-head ordinary CI `32345260471` and Binary Feasibility `32345260487` then passed. The
+current RunLedger/checkpoint/outbox/inbox path remains sole production authority.
+
+The exact successor is a separately frozen **RTS-033** isolated-workspace and trusted-import seam.
+It may move fresh no-remote workspace creation, frozen Git-metadata checks, bounded credential-free
+Git reads, exact delta serialization and trusted local import behind a narrow installed Runtime API.
+It cannot adopt/dual-write the RTS-031 Store, change rework lineage or Artifact policy, operate
+remote Git/GitHub state, migrate state, change defaults or add a generic workspace framework.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;

@@ -128,11 +128,17 @@ def test_agent_adapter_renderers_are_pure_operations_modules():
 
 def test_awf_role_tool_wrappers_delegate_rendering():
     tree = ast.parse(ROLE_HANDLER.read_text(encoding="utf-8"), filename=str(ROLE_HANDLER))
+    source = ROLE_HANDLER.read_text(encoding="utf-8")
+    assert "agent_adapters" not in source
     expected_calls = {
-        "tool_opencode_exec": "render_opencode_executor_argv",
-        "tool_opencode_review": "render_opencode_reviewer_argv",
-        "tool_codex_review": "render_codex_reviewer_invocation",
-        "tool_pi_review": "render_pi_reviewer_argv",
+        "tool_opencode_exec": {"_provider_spec", "render_provider_invocation", "spawn_rendered"},
+        "tool_opencode_review": {
+            "_provider_spec",
+            "render_provider_invocation",
+            "spawn_rendered",
+        },
+        "tool_codex_review": {"_provider_spec", "render_provider_invocation", "spawn_rendered"},
+        "tool_pi_review": set(),
     }
     functions = {
         node.name: node
@@ -140,7 +146,7 @@ def test_awf_role_tool_wrappers_delegate_rendering():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
-    for wrapper_name, renderer_name in expected_calls.items():
+    for wrapper_name, renderer_calls in expected_calls.items():
         wrapper = functions[wrapper_name]
         calls = {
             node.func.id
@@ -157,5 +163,23 @@ def test_awf_role_tool_wrappers_delegate_rendering():
             )
         ]
 
-        assert renderer_name in calls
+        assert renderer_calls <= calls
         assert reconstructed_argv == []
+
+    pi_calls = {
+        node.func.id
+        for node in ast.walk(functions["tool_pi_review"])
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "render_pi_reviewer_argv" not in pi_calls
+    nested_invoke = next(
+        node
+        for node in functions["tool_pi_review"].body
+        if isinstance(node, ast.FunctionDef) and node.name == "invoke"
+    )
+    nested_calls = {
+        node.func.id
+        for node in ast.walk(nested_invoke)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert {"_provider_spec", "render_provider_invocation", "spawn_rendered"} <= nested_calls

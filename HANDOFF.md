@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-030 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-032 is the last passed
 TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
 `Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -139,13 +139,21 @@ facts, outgoing intent and terminal behind one exact writer lock. Candidate ordi
 closed parent-path symlink/reparse traversal. No production handler, legacy representation,
 external truth, dependency, default or migration boundary changed.
 
-The next safe action is a separately frozen RTS-032 TaskCard for the production provider-renderer
-seam: place existing Codex/OpenCode/Pi command construction behind narrow installed Runtime v2
-renderers receiving a fully bound InvocationSpec immediately before the existing spawn boundary.
-Current production state remains sole authority; RTS-032 must not read/write the new Store,
-dual-write, interpret Workflow Stage in a renderer, add a generic provider framework or change
-fallback/default behavior. See the
-[RTS-031 closeout](docs/tasks/runtime-v2-rts-031-atomic-store-journal-implementation-report.md).
+RTS-032 then returned `PASS` for the production provider-renderer seam. Closed installed OpenCode
+coder/reviewer, Codex reviewer and Pi reviewer renderers receive one fully bound immutable
+`InvocationSpec` and return one canonical `RenderedInvocation` at the existing spawn boundary.
+Independent Gate Review returned PASS with zero findings. After an L1 test-stub compatibility
+repair, exact-head ordinary CI `32345260471` and Binary Feasibility `32345260487` passed at
+`1028eae`. Current RunLedger/checkpoint/outbox/inbox/RunEvidence state remains the sole production
+authority and recovery path; no Store adoption, dual write, migration, default or provider replay
+change occurred. See the
+[RTS-032 closeout](docs/tasks/runtime-v2-rts-032-provider-renderers-implementation-report.md).
+
+The next safe action is a separately frozen RTS-033 isolated-workspace and trusted-import TaskCard.
+It may move only fresh no-remote workspace creation, frozen Git-metadata checks, bounded
+credential-free reads, exact delta serialization and trusted local import behind the installed
+Runtime boundary. It must not adopt/dual-write the RTS-031 Store, change rework lineage or Artifact
+policy, operate remote Git/GitHub state, migrate production state or change defaults.
 
 ## Current Handoff State: 2026-08-17
 

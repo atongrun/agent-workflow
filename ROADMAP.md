@@ -49,18 +49,21 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   boundary without dual write, default change, representation deletion or launcher work.
 - [x] Complete RTS-031 as a pure local checksummed atomic-file RunStore/per-invocation journal
   implementation behind the selected ports, with no production handler migration or dual write.
+- [x] Complete RTS-032 as the closed installed Codex/OpenCode/Pi provider-renderer seam, preserving
+  current production authority/recovery and passing independent Review plus exact-head CI.
 
-Current last passed TaskCard gate is RTS-031. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
+Current last passed TaskCard gate is RTS-032. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
 checksummed atomic-file RunStore/per-invocation journal, one logical writer and no physical
 Coordinator. The semantic contract and 39-case/11-outcome matrix are Frozen. RTS-030 added strict
 installed Python Core contracts and ports. RTS-031 added the selected disposable local Store and
-journal; ordinary/Binary CI and independent Review passed after one path-integrity repair. Rust
-remains a comparison oracle, RTS-023 does not enter, SQLite is not selected, and launcher work is
-deferred until after the full Phase 3 Python boundary. The next safe action is a separately frozen
-RTS-032 production provider-renderer seam that keeps current production state as sole authority. No
-Store adoption, dual write, default, migration, release, retained-event operation or destructive
-cleanup is authorized. See the [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-031 closeout](docs/tasks/runtime-v2-rts-031-atomic-store-journal-implementation-report.md).
+journal; RTS-032 moved existing provider command rendering behind the installed Runtime boundary
+while leaving current state sole authority. Rust remains a comparison oracle, RTS-023 does not
+enter, SQLite is not selected, and launcher work is deferred until after the full Phase 3 Python
+boundary. The next safe action is a separately frozen RTS-033 isolated-workspace and trusted-import
+seam. No Store adoption, dual write, default, migration, release, retained-event operation or
+destructive cleanup is authorized. See the
+[development plan](docs/plans/runtime-v2-development-plan.md) and
+[RTS-032 closeout](docs/tasks/runtime-v2-rts-032-provider-renderers-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

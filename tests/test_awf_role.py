@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_workflow.runtime import RenderedInputFile, RenderedInvocation
 from agent_workflow.state_root import state_root_binding
 from scripts import awf_executor
 from scripts.agent_adapters.opencode import _FINDING_INSTRUCTIONS as OPENCODE_FINDING_INSTRUCTIONS
@@ -1999,7 +2000,7 @@ def test_coder_runs_model_in_no_remote_workspace_then_trusted_runner_pushes(
     monkeypatch.delenv("AWF_NO_PUSH", raising=False)
     seen: dict[str, str] = {}
 
-    def fake_tool(model_repo, card_file, *_args):
+    def fake_tool(model_repo, card_file, *_args, **_kwargs):
         seen["repo"] = model_repo
         seen["card"] = card_file
         assert Path(model_repo).resolve() != executor.resolve()
@@ -2079,7 +2080,7 @@ def test_isolated_model_commit_fails_before_trusted_checkout_or_remote_changes(
     monkeypatch.setenv("AWF_REPO_DIR", str(executor))
     monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
 
-    def fake_tool(model_repo, _card_file, *_args):
+    def fake_tool(model_repo, _card_file, *_args, **_kwargs):
         model_path = Path(model_repo)
         run("git", "config", "user.name", "Model", cwd=model_path)
         run("git", "config", "user.email", "model@example.invalid", cwd=model_path)
@@ -2350,11 +2351,98 @@ def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
     ]
     assert captured["argv"][-2].startswith("@")
     context_path = Path(captured["argv"][-2][1:])
+    assert context_path == tmp_path / ".awf" / "pi-review-context.md"
     context = context_path.read_text(encoding="utf-8")
     assert "--- Trusted committed diff ---\n\ntrusted diff" in context
     assert "<!-- awf-review-report" in context
     assert "--- TaskCard (acceptance criteria to verify) ---" in context
     assert "against base ref `main`" in captured["argv"][-1]
+
+
+def test_spawn_rendered_rejects_file_input_drift_before_provider(monkeypatch, tmp_path):
+    input_path = tmp_path / ".awf" / "pi-review-context.md"
+    input_path.parent.mkdir(parents=True)
+    input_path.write_bytes(b"existing different bytes")
+    rendered = RenderedInvocation(
+        executable="pi-test",
+        argv=(f"@{input_path}",),
+        cwd=str(tmp_path),
+        environment=(("LANG", "C.UTF-8"),),
+        file_inputs=(RenderedInputFile(str(input_path), b"trusted bytes"),),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "spawn",
+        lambda *args, **kwargs: pytest.fail("file drift must fail before provider spawn"),
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.spawn_rendered(rendered)
+
+    assert input_path.read_bytes() == b"existing different bytes"
+
+
+def test_spawn_rendered_rejects_unbound_environment_or_non_utf8_stdin(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        awf_role,
+        "spawn",
+        lambda *args, **kwargs: pytest.fail("invalid rendered input must fail before spawn"),
+    )
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.spawn_rendered(
+            RenderedInvocation(executable="codex", argv=("exec",), cwd=str(tmp_path))
+        )
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.spawn_rendered(
+            RenderedInvocation(
+                executable="codex",
+                argv=("exec",),
+                cwd=str(tmp_path),
+                stdin=b"\xff",
+                environment=(("LANG", "C.UTF-8"),),
+            )
+        )
+
+
+def test_provider_invocation_binding_is_stable_and_authority_sensitive():
+    args = argparse.Namespace(
+        branch="codex/example",
+        commit="a" * 40,
+        input_type="task:awf-review-v3",
+        run_id="task-example",
+    )
+    context = {
+        "key": "delivery-example",
+        "delivery_id": "delivery-example",
+        "payload_sha256": "b" * 64,
+        "source_event_id": 17,
+    }
+    gate = argparse.Namespace(sequence=3)
+
+    first = awf_role.provider_invocation_binding(
+        args, "reviewer", context, gate, tool="pi", model="provider/model"
+    )
+    assert first == awf_role.provider_invocation_binding(
+        args, "reviewer", context, gate, tool="pi", model="provider/model"
+    )
+    assert first[:3] == ("delivery-example", "task-example", "example")
+    assert len(first[3]) == 64
+    assert first != awf_role.provider_invocation_binding(
+        args,
+        "reviewer",
+        {**context, "delivery_id": "delivery-other"},
+        gate,
+        tool="pi",
+        model="provider/model",
+    )
+    assert first != awf_role.provider_invocation_binding(
+        args,
+        "reviewer",
+        context,
+        argparse.Namespace(sequence=4),
+        tool="pi",
+        model="provider/model",
+    )
 
 
 def test_tool_pi_review_rejects_oversized_trusted_diff_before_model(monkeypatch, tmp_path):
@@ -4265,6 +4353,11 @@ def test_v3_reviewer_ambiguous_model_started_checkpoint_fails_cleanly(
     )
     monkeypatch.setattr(awf_role, "provenance_from_args", lambda *args, **kwargs: provenance)
     monkeypatch.setattr(awf_role, "fetch_and_checkout_pr_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        awf_role,
+        "render_provider_invocation",
+        lambda *args, **kwargs: pytest.fail("ambiguous recovery must not render again"),
+    )
 
     with pytest.raises(SystemExit, match="1"):
         awf_role.role_reviewer(ns)
@@ -5262,6 +5355,11 @@ def test_model_completed_postflight_failure_replays_without_model_or_rework(monk
         awf_role,
         "tool_opencode_exec",
         lambda *args, **kwargs: pytest.fail("postflight replay must not invoke the model"),
+    )
+    monkeypatch.setattr(
+        awf_role,
+        "render_provider_invocation",
+        lambda *args, **kwargs: pytest.fail("completed recovery must not render again"),
     )
     monkeypatch.setattr(awf_role, "verify_upstream_base", lambda *args, **kwargs: None)
     monkeypatch.setattr(

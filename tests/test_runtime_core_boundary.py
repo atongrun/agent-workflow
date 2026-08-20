@@ -82,11 +82,14 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "INVOCATION_SPEC_FORMAT",
         "RUN_SPEC_FORMAT",
         "AUTHORITY_FORMAT",
+        "ATTACH_INPUT",
         "AtomicInvocationJournal",
         "AtomicRunStore",
         "AtomicStatusReader",
         "AuthorizationCommand",
         "ContractError",
+        "CODEX_FINDING_INSTRUCTIONS",
+        "CodexReviewerRenderer",
         "DecisionOutcome",
         "HandoffCommand",
         "InvocationJournal",
@@ -95,9 +98,14 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "JournalSnapshot",
         "LaunchIntent",
         "ProcessObservation",
+        "OPENCODE_FINDING_INSTRUCTIONS",
+        "OpenCodeRenderer",
+        "PI_FINDING_INSTRUCTIONS",
+        "PiReviewerRenderer",
         "ProviderRenderer",
         "ProviderResult",
         "ProviderSelection",
+        "RenderedInputFile",
         "RenderedInvocation",
         "RunDecision",
         "RunSnapshot",
@@ -110,6 +118,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "ValidationEffect",
         "WorkflowStage",
         "WriterBusy",
+        "render_provider_invocation",
     }
 
 
@@ -155,7 +164,14 @@ def test_renderer_surface_has_no_workflow_or_state_mutation_fields() -> None:
         "transport",
         "credentials",
     }
-    assert rendered_fields == {"executable", "argv", "cwd", "stdin", "environment"}
+    assert rendered_fields == {
+        "executable",
+        "argv",
+        "cwd",
+        "stdin",
+        "environment",
+        "file_inputs",
+    }
     assert "shell" not in rendered_fields
 
 
@@ -182,6 +198,9 @@ def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
         runtime.AtomicInvocationJournal,
         runtime.AtomicRunStore,
         runtime.AtomicStatusReader,
+        runtime.CodexReviewerRenderer,
+        runtime.OpenCodeRenderer,
+        runtime.PiReviewerRenderer,
         runtime.StoreError,
         runtime.WriterBusy,
     }

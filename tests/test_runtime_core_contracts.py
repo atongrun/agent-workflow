@@ -18,6 +18,7 @@ from agent_workflow.runtime import (
     ProcessObservation,
     ProviderResult,
     ProviderSelection,
+    RenderedInputFile,
     RenderedInvocation,
     RunSpec,
     TerminalCommand,
@@ -67,11 +68,18 @@ def invocation_mapping(workspace: Path) -> dict[str, object]:
         "role": "coder",
         "provider": "opencode",
         "model": "coder/model",
+        "executable": "opencode",
         "workspace": str(workspace),
         "input_path": str(workspace / "input.md"),
+        "input_text": "bounded provider input\n",
         "report_path": str(workspace / "impl.md"),
-        "provider_args": ["--model", "coder/model"],
-        "environment": {"LANG": "C.UTF-8", "PATH": "/usr/bin"},
+        "provider_args": ["attach-input"],
+        "environment": {
+            "GIT_CONFIG_VALUE_0": "",
+            "LANG": "C.UTF-8",
+            "PATH": "/usr/bin",
+            "ProgramFiles(x86)": "C:\\Program Files (x86)",
+        },
     }
 
 
@@ -150,13 +158,21 @@ def test_invocation_spec_is_bound_immutable_and_stage_free(tmp_path: Path) -> No
     mapping = invocation_mapping(tmp_path)
     spec = InvocationSpec.from_mapping(mapping)
 
-    assert spec.provider_args == ("--model", "coder/model")
-    assert spec.environment == (("LANG", "C.UTF-8"), ("PATH", "/usr/bin"))
+    assert spec.provider_args == ("attach-input",)
+    assert spec.environment == (
+        ("GIT_CONFIG_VALUE_0", ""),
+        ("LANG", "C.UTF-8"),
+        ("PATH", "/usr/bin"),
+        ("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+    )
     assert spec.to_mapping() == mapping
     assert len(spec.sha256) == 64
     assert not ({"stage", "attempt", "rework_budget", "run_store", "journal"} & set(mapping))
     with pytest.raises(dataclasses.FrozenInstanceError):
         spec.provider = "codex"  # type: ignore[misc]
+
+    relative_report = InvocationSpec.from_mapping({**mapping, "report_path": ".awf/impl.md"})
+    assert relative_report.report_path == ".awf/impl.md"
 
 
 def test_invocation_spec_rejects_runtime_authority_or_unbound_paths(tmp_path: Path) -> None:
@@ -173,6 +189,26 @@ def test_invocation_spec_rejects_runtime_authority_or_unbound_paths(tmp_path: Pa
     mapping = invocation_mapping(tmp_path)
     mapping["environment"] = {"PROVIDER_TOKEN": "forbidden"}
     with pytest.raises(ContractError, match="credential-bearing"):
+        InvocationSpec.from_mapping(mapping)
+
+    mapping = invocation_mapping(tmp_path)
+    mapping["environment"] = {"LANG": "bad\0value"}
+    with pytest.raises(ContractError, match="NUL"):
+        InvocationSpec.from_mapping(mapping)
+
+    mapping = invocation_mapping(tmp_path)
+    mapping["environment"] = {f"VALUE_{index}": "x" for index in range(257)}
+    with pytest.raises(ContractError, match="too many"):
+        InvocationSpec.from_mapping(mapping)
+
+    mapping = invocation_mapping(tmp_path)
+    mapping["input_text"] = " \n\t"
+    with pytest.raises(ContractError, match="nonblank"):
+        InvocationSpec.from_mapping(mapping)
+
+    mapping = invocation_mapping(tmp_path)
+    mapping["input_text"] = "x" * (256 * 1024 + 1)
+    with pytest.raises(ContractError, match="input bound"):
         InvocationSpec.from_mapping(mapping)
 
 
@@ -194,12 +230,14 @@ def test_invocation_spec_rejects_provider_role_drift_and_mutable_direct_values(
 
 
 def test_rendered_invocation_is_structured_and_immutable(tmp_path: Path) -> None:
+    input_file = RenderedInputFile(str(tmp_path / "input.md"), b"file input")
     rendered = RenderedInvocation(
         executable="opencode",
         argv=("run", "--model", "coder/model"),
         cwd=str(tmp_path),
         stdin=b"bounded input",
         environment=(("LANG", "C.UTF-8"),),
+        file_inputs=(input_file,),
     )
 
     assert rendered.argv[0] == "run"
@@ -210,15 +248,34 @@ def test_rendered_invocation_is_structured_and_immutable(tmp_path: Path) -> None
     for changed in (
         dataclasses.replace(rendered, executable="codex"),
         dataclasses.replace(rendered, argv=("run", "--quiet")),
-        dataclasses.replace(rendered, cwd=str(tmp_path / "other")),
+        dataclasses.replace(
+            rendered,
+            cwd=str(tmp_path / "other"),
+            file_inputs=(RenderedInputFile(str(tmp_path / "other" / "input.md"), b"file input"),),
+        ),
         dataclasses.replace(rendered, stdin=b"different input"),
         dataclasses.replace(rendered, environment=(("LANG", "en_US.UTF-8"),)),
+        dataclasses.replace(
+            rendered,
+            file_inputs=(RenderedInputFile(str(tmp_path / "input.md"), b"different input"),),
+        ),
+        dataclasses.replace(
+            rendered,
+            file_inputs=(RenderedInputFile(str(tmp_path / "different.md"), b"file input"),),
+        ),
     ):
         assert changed.sha256 != rendered.sha256
     assert rendered.to_mapping()["stdin"] == {
         "sha256": "901e6053aa8c678a9ea555c0225237affac98329538280b6917544b9f61b07c6",
         "length": 13,
     }
+    assert rendered.to_mapping()["file_inputs"] == [
+        {
+            "path": str(tmp_path / "input.md"),
+            "sha256": "a281bfde713d0dc4f126ba63e7702ab573609fe8dabcc08fd5e3ec6cff4a32d8",
+            "length": 10,
+        }
+    ]
     with pytest.raises(dataclasses.FrozenInstanceError):
         rendered.cwd = "/changed"  # type: ignore[misc]
     with pytest.raises(ContractError, match="structured token"):
@@ -229,13 +286,33 @@ def test_rendered_invocation_is_structured_and_immutable(tmp_path: Path) -> None
             argv=("run",),
             cwd=str(tmp_path),
         )
+    multiline = RenderedInvocation(
+        executable="opencode",
+        argv=("bounded\nprovider input",),
+        cwd=str(tmp_path),
+    )
+    assert multiline.argv == ("bounded\nprovider input",)
     with pytest.raises(ContractError, match="control"):
-        RenderedInvocation(executable="opencode", argv=("bad\narg",), cwd=str(tmp_path))
+        RenderedInvocation(executable="opencode", argv=("bad\0arg",), cwd=str(tmp_path))
     with pytest.raises(ContractError, match="immutable tuple"):
         RenderedInvocation(
             executable="opencode",
             argv=["run"],  # type: ignore[arg-type]
             cwd=str(tmp_path),
+        )
+    with pytest.raises(ContractError, match="inside cwd"):
+        RenderedInvocation(
+            executable="opencode",
+            argv=("run",),
+            cwd=str(tmp_path),
+            file_inputs=(RenderedInputFile(str(tmp_path.parent / "outside.md"), b"input"),),
+        )
+    with pytest.raises(ContractError, match="bounded immutable bytes"):
+        RenderedInvocation(
+            executable="codex",
+            argv=("exec",),
+            cwd=str(tmp_path),
+            stdin=b"x" * (256 * 1024 + 1),
         )
 
 
