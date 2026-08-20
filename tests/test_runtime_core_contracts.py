@@ -315,16 +315,16 @@ def test_journal_facts_are_separate_frozen_and_exactly_bound() -> None:
         invocation_id=authorization.invocation_id,
         authorization_sha256=authorization.authorization_sha256,
         invocation_spec_sha256=authorization.invocation_spec_sha256,
-        launch_intent=True,
-        process_observed=True,
-        result_sha256=result.result_sha256,
-        validation_effect_sha256=effect.effect_sha256,
+        launch_intent=launch,
+        process_observation=process,
+        result=result,
+        validation_effect=effect,
     )
 
     assert launch.rendered_invocation_sha256 == rendered.sha256
     assert process.process_identity_sha256 == result.process_identity_sha256
-    assert snapshot.validation_effect_sha256 == effect.effect_sha256
+    assert snapshot.validation_effect == effect
     with pytest.raises(dataclasses.FrozenInstanceError):
-        snapshot.launch_intent = False  # type: ignore[misc]
+        snapshot.launch_intent = None  # type: ignore[misc]
     with pytest.raises(ContractError, match="return_code"):
         dataclasses.replace(result, return_code=True)

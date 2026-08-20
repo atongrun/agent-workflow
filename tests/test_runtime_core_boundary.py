@@ -21,6 +21,9 @@ PACKAGE = ROOT / "src" / "agent_workflow" / "runtime"
 
 ALLOWED_ABSOLUTE_IMPORTS = {
     "__future__",
+    "collections",
+    "contextlib",
+    "copy",
     "dataclasses",
     "enum",
     "hashlib",
@@ -28,6 +31,7 @@ ALLOWED_ABSOLUTE_IMPORTS = {
     "os",
     "pathlib",
     "re",
+    "secrets",
     "typing",
 }
 FORBIDDEN_SOURCE_TERMS = {
@@ -77,6 +81,10 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
     assert set(runtime.__all__) == {
         "INVOCATION_SPEC_FORMAT",
         "RUN_SPEC_FORMAT",
+        "AUTHORITY_FORMAT",
+        "AtomicInvocationJournal",
+        "AtomicRunStore",
+        "AtomicStatusReader",
         "AuthorizationCommand",
         "ContractError",
         "DecisionOutcome",
@@ -96,10 +104,12 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "RunSpec",
         "RunStore",
         "StatusReader",
+        "StoreError",
         "TerminalCommand",
         "TerminalOutcome",
         "ValidationEffect",
         "WorkflowStage",
+        "WriterBusy",
     }
 
 
@@ -107,15 +117,14 @@ def test_ports_expose_no_arbitrary_phase_or_repair_escape_hatch() -> None:
     assert public_protocol_methods(RunStore) == {
         "initialize",
         "authorize",
+        "journal",
         "record_handoff",
         "record_terminal",
     }
     assert public_protocol_methods(InvocationJournal) == {
-        "record_authorization",
         "record_launch_intent",
         "record_process_observation",
         "record_result",
-        "record_validation_effect",
         "snapshot",
     }
     assert public_protocol_methods(StatusReader) == {"snapshot"}
@@ -166,12 +175,17 @@ def test_decision_outcomes_exactly_match_frozen_contract() -> None:
     }
 
 
-def test_package_contains_no_concrete_runtime_or_effect_implementation() -> None:
+def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
     exported = [getattr(runtime, name) for name in runtime.__all__]
     protocols = {RunStore, InvocationJournal, StatusReader, ProviderRenderer}
+    concrete = {
+        runtime.AtomicInvocationJournal,
+        runtime.AtomicRunStore,
+        runtime.AtomicStatusReader,
+        runtime.StoreError,
+        runtime.WriterBusy,
+    }
     for value in exported:
-        if inspect.isclass(value) and value not in protocols:
+        if inspect.isclass(value) and value not in protocols | concrete:
             assert dataclasses.is_dataclass(value) or issubclass(value, (str, ValueError))
-    assert not any(
-        path.name in {"store.py", "journal.py", "executor.py"} for path in PACKAGE.iterdir()
-    )
+    assert not any(path.name in {"journal.py", "executor.py"} for path in PACKAGE.iterdir())
