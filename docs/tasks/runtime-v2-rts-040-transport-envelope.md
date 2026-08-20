@@ -47,7 +47,7 @@ Every envelope binds:
 - stable delivery/idempotency identity derived from canonical immutable metadata and payload bytes;
 - `run_id`, `task_id` and `run_spec_sha256` as opaque correlation/owner-intent identity;
 - exact source/target role and route;
-- source invocation and authorization identity;
+- exact source invocation/authorization plus target invocation identity;
 - a canonical JSON payload plus its prefixed SHA-256; and
 - for a result, the exact causing command delivery ID.
 
@@ -74,8 +74,9 @@ One narrow `LocalTransportBoundary` (or equivalently named value) may compose th
 accepted `LocalRuntimeApplication` without owning transport:
 
 1. Decode and fully validate the command bytes.
-2. Bind exact run/task/RunSpec, role, route, invocation, authorization, delivery and payload identity
-   to the supplied local stage request and current Store-owned expectation.
+2. Bind exact run/task/RunSpec, roles, route, source invocation/authorization, target invocation,
+   delivery and payload identity to the supplied local stage request and current Store-owned
+   expectation.
 3. Reject mismatch before calling `LocalRuntimeApplication.run`, rendering or starting a provider.
 4. On exact input, call the existing application once; it alone applies Workflow Stage,
    authorization, invocation journal, validation, handoff and terminal semantics.
@@ -158,7 +159,8 @@ Phase 4A gate/next-step sections of the Runtime v2 plan, HANDOFF and ROADMAP.
 - [ ] Exactly one versioned command/result envelope family and one canonical strict JSON codec exist;
       deterministic round trips are byte-identical on all platforms.
 - [ ] Stable delivery/idempotency identity binds kind, run/task/RunSpec, exact roles/route, source
-      invocation/authorization, payload hash and result causation; payload mutation changes identity.
+      invocation/authorization, target invocation, payload hash and result causation; payload
+      mutation changes identity.
 - [ ] Top-level envelope fields contain no Workflow Stage/attempt/rework/terminal, Store
       path/state-root, checkpoint/outbox/inbox/ACK or provider-launch authority; opaque payload keys
       are never interpreted as authority by the codec.
