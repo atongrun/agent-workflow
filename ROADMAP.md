@@ -51,19 +51,22 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   implementation behind the selected ports, with no production handler migration or dual write.
 - [x] Complete RTS-032 as the closed installed Codex/OpenCode/Pi provider-renderer seam, preserving
   current production authority/recovery and passing independent Review plus exact-head CI.
+- [x] Complete RTS-033 as the event-contained no-remote workspace, compatible Git-control identity
+  and exact trusted local import seam, preserving sole current production authority.
 
-Current last passed TaskCard gate is RTS-032. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
+Current last passed TaskCard gate is RTS-033. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
 checksummed atomic-file RunStore/per-invocation journal, one logical writer and no physical
 Coordinator. The semantic contract and 39-case/11-outcome matrix are Frozen. RTS-030 added strict
 installed Python Core contracts and ports. RTS-031 added the selected disposable local Store and
 journal; RTS-032 moved existing provider command rendering behind the installed Runtime boundary
-while leaving current state sole authority. Rust remains a comparison oracle, RTS-023 does not
-enter, SQLite is not selected, and launcher work is deferred until after the full Phase 3 Python
-boundary. The next safe action is a separately frozen RTS-033 isolated-workspace and trusted-import
-seam. No Store adoption, dual write, default, migration, release, retained-event operation or
-destructive cleanup is authorized. See the
+while leaving current state sole authority; RTS-033 moved exact isolated-workspace and trusted
+local import effects behind the same boundary without changing recovery or lineage authority. Rust
+remains a comparison oracle, RTS-023 does not enter, SQLite is not selected, and launcher work is
+deferred until after the full Phase 3 Python boundary. The next safe action is a separately frozen
+RTS-034 Artifact validation seam. No Store adoption, dual write, default, migration, release,
+retained-event operation or destructive cleanup is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-032 closeout](docs/tasks/runtime-v2-rts-032-provider-renderers-implementation-report.md).
+[RTS-033 closeout](docs/tasks/runtime-v2-rts-033-workspace-import-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

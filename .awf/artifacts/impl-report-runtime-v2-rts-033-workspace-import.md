@@ -41,6 +41,8 @@ Agent Bus ordering, migrate state or change a default.
 - `tests/test_runtime_workspace.py`
 - `tests/test_runtime_core_boundary.py`
 - `tests/test_runtime_command_boundary.py`
+- `tests/test_awf_role.py`
+- `tests/test_runtime_v2_rts011_acceptance.py`
 - `.awf/artifacts/impl-report-runtime-v2-rts-033-workspace-import.md`
 
 ## Scope and budgets
@@ -66,9 +68,12 @@ Repository-policy-safe local validation passed:
 - exact TaskCard scope, dependency and LOC audits;
 - `git diff --check`.
 
-Per repository policy, local pytest, Ruff and Rust were not run on this Mac. Exact-head ordinary CI,
-installed-wheel/cross-platform jobs and one independent TaskCard Gate Review remain pending at this
-pre-candidate report revision.
+Per repository policy, local pytest, Ruff and Rust were not run on this Mac. Independent TaskCard
+Gate Review passed the semantic candidate `ff7f77f` with zero findings. L1 CI repairs only corrected
+Ruff shape and upgraded legacy tests to real Git/staged-index fixtures; they did not change the
+reviewed Runtime behavior. Exact-head ordinary CI `32349631233` and Binary Feasibility
+`32349631258` then passed at `75a4630`, including Linux/Windows suites, macOS runtime, all three
+installed-wheel jobs, five native cells and five Rust comparison cells.
 
 ## Explicit non-claims
 
@@ -101,8 +106,9 @@ default, migrate retained/production state, release or authorize destructive cle
   ],
   "tests": [
     "Local policy-safe static and disposable Git validation PASS",
-    "Exact-head ordinary CI pending",
-    "Independent TaskCard Gate Review pending"
+    "Exact-head ordinary CI 32349631233 PASS at 75a4630",
+    "Exact-head Binary Feasibility 32349631258 PASS at 75a4630",
+    "Independent TaskCard Gate Review PASS at semantic candidate ff7f77f"
   ],
   "source_revision": "9c2e5f1c6077b1bb7bc2e72d9f0a36d5ec6f13e7"
 }
