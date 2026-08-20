@@ -218,7 +218,7 @@ Known CI risks before reviewer/CI:
     "Source gate scan PASS",
     "Whitespace diff check PASS"
   ],
-  "source_revision": "WORKING_TREE_AFTER_5ea5ea0_PENDING_COMMIT",
+  "source_revision": "b2d815871379097ec54c7bf0de77c1f1fe3d4252",
   "review_status": "PENDING_INDEPENDENT_REVIEW",
   "preliminary_result": "PENDING_CI_AND_INDEPENDENT_REVIEW",
   "dependency_count": 0,
