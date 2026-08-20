@@ -5,15 +5,16 @@ Verdict: `PASS`
 Reason: `TASKCARD_GATE_REVIEW_COMPLETE`
 
 The independent TaskCard Gate Reviewer inspected the frozen TaskCard implementation through exact
-candidate `9309bb6` and returned `PASS` with zero remaining findings. This review establishes the
-static semantic candidate only; GitHub CI still owns Rust compilation, execution, and the native
-five-target evidence matrix.
+semantic candidate `9309bb6` and returned `PASS` with zero remaining findings. GitHub CI later
+compiled and exercised the repaired source on all five required targets and returned the strict
+eligible-for-maintainer-gate aggregate result. A final exact-head review after closeout remains the
+last independent gate for RTS-022A.
 
 Independent review of exact head `5ea5ea0` returned `REQUEST_CHANGES`. The current working tree
-contains a bounded repair plus the lead static recheck follow-up for same-fault redelivery,
+contained a bounded repair plus the lead static recheck follow-up for same-fault redelivery,
 successful-result journal joins, prohibited assertion mapping, exact stop gates, status Git purity,
-row evidence identity facts, run-id namespace validation, and Rust aggregate hardening. It remains
-pending re-review.
+row evidence identity facts, run-id namespace validation, and Rust aggregate hardening. Those
+semantic repairs were subsequently re-reviewed.
 
 Independent re-review of exact candidate `ad263ab` returned one HIGH `REQUEST_CHANGES`: the Rust
 aggregate did not bind the exact fixture injection, decision source, and assertion/prohibited proof
@@ -45,6 +46,12 @@ Required reviewer checks:
 - five-target Binary Feasibility evidence is complete and aggregate fail-closed behavior rejects
   missing/duplicate/malformed/target-drifted evidence.
 
+Machine validation on PR head `3be326378d403b6d5ed098f2589244ac69680abc` passed ordinary CI run
+`32322178827` and Binary Feasibility run `32322178851`. All five Rust jobs passed pinned rustfmt,
+Clippy, release build, 14-row semantics and unrelated-cwd lifecycle; the strict aggregate returned
+`RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE`. This does not select Rust or authorize production,
+default, migration or release work.
+
 <!-- awf-review-report
 {
   "verdict": "PASS",
@@ -52,7 +59,7 @@ Required reviewer checks:
   "task_id": "runtime-v2-rts-022-rust-shared-slice",
   "last_reviewed_head": "9309bb61e0ff754723547851724c23b12029a411",
   "last_review_verdict": "PASS",
-  "reviewer_required": false,
+  "reviewer_required": true,
   "self_pass_claim": false
 }
 -->

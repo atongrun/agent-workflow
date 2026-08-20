@@ -37,19 +37,21 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 - [x] Complete RTS-021 with one backend-neutral atomic/SQLite comparison: the same 14 shared rows,
   four named local windows, 11 storage cases, strict observed-fact eligibility, independent Review,
   and green ordinary/Binary CI on pre-closeout head `00baa356`.
+- [x] Complete RTS-022A with one removable zero-dependency Rust slice: the same 14 shared rows,
+  five native targets, strict aggregate evidence, no Python process, independent semantic Review,
+  and green ordinary/Binary CI on pre-closeout head `3be3263`.
 - [ ] Compare Python simplification, storage and any native candidate on the same no-model slice;
   make language/store/Coordinator/product-boundary decisions only at the later owner gate.
 
-Current last passed TaskCard gate is RTS-021. PR #103 compares checksummed atomic-file and stdlib
-SQLite Stores behind one removable shared slice. Both candidates preserve all 14 Candidate rows and
-remove the same four local ordering windows. SQLite meets its evidence minimum but adds migration,
-locking, backup and platform cost without unique Workflow ownership reduction. Pre-closeout head
-`00baa356` passed ordinary CI run `32314492329` and all five Binary Feasibility targets plus
-aggregate in run `32314492349`. RTS-022 is the next entry-satisfied conditional gate because native
-distribution value remains open; no Store, language, Coordinator, production default, migration,
-release or destructive action is authorized. See the
+Current last passed TaskCard gate is RTS-022A. PR #104 preserves all 14 Candidate rows across five
+native Rust targets with zero dependencies and `python_invoked=false`; its strict aggregate returned
+`RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE`. Pre-closeout head `3be3263` passed ordinary CI run
+`32322178827` and Binary Feasibility run `32322178851`. The 3,471-line numerator exceeds the frozen
+threshold, so the separately frozen RTS-022B maintainer-fault gate is mandatory before RTS-024. No
+Store, language, Coordinator, production default, migration, release or destructive action is
+authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-021 closeout](docs/tasks/runtime-v2-rts-021-storage-comparison-implementation-report.md).
+[RTS-022A closeout](docs/tasks/runtime-v2-rts-022-rust-shared-slice-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

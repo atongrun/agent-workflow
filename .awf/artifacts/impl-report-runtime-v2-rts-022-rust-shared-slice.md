@@ -71,10 +71,13 @@ aggregate parsing, exact writer locking, active-stop denial, status read-only ha
 recovery joins. This is not hidden in tests or CI helpers: all normal control-flow Rust remains
 under `src/`.
 
-The named material value to be proven by machine evidence is removal of the Python runtime
-prerequisite for this disposable shared slice while preserving the Candidate fault semantics. If
-five-target CI cannot prove no-Python execution and full semantic parity, the correct result is a
-Rust stop condition rather than eligibility.
+The named material value is removal of the Python runtime prerequisite for this disposable shared
+slice while preserving the Candidate fault semantics. Exact-head five-target evidence proved
+`python_invoked=false` on every target; the only runtime children were external `git` and the same
+Rust executable acting as the scripted provider. All 14 rows, normal/replay/status/stop gates and
+the strict aggregate passed. This satisfies the TaskCard's measured-prerequisite requirement even
+though the 3,471-line Rust numerator exceeds 2,181. It authorizes only the separate RTS-022B
+independent-maintainer gate, not a Rust selection.
 
 ## Acceptance Inventory
 
@@ -156,6 +159,28 @@ downloads the Linux Rust executable and all five Rust evidence artifacts, then r
 Python-invoking, shell-boundary-drifted, fixture-action-drifted, assertion/prohibited-drifted, or
 incomplete Rust evidence.
 
+## Exact-Head Machine Evidence
+
+PR head `3be326378d403b6d5ed098f2589244ac69680abc` produced GitHub pull-request merge ref
+`aa255dee04438f0a32ead5efe29f60434f36c2af`.
+
+- ordinary CI run `32322178827`: all six jobs passed, including Ruff, full Ubuntu tests, the
+  8m08s Windows recovery/configuration suite, three installed-wheel jobs, and macOS runtime;
+- Binary Feasibility run `32322178851`: all five Rust cells passed pinned rustfmt, Clippy, release
+  build, the complete shared semantic suite, unrelated-cwd lifecycle, executable upload, and
+  credential-free evidence upload;
+- `aggregate-rust-shared-input` passed with exactly five targets and 14 rows, returning
+  `RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE`;
+- every target recorded implement=1, review=1, terminal/idempotent replay, byte-read-only status,
+  exact idle stop, active invocation/writer stop denial, zero direct/transitive dependencies,
+  structured child argv with no shell, external Git required, and `python_invoked=false`;
+- executable sizes were 783,360 to 995,128 bytes; five bounded startup samples were present per
+  target (6-8ms Linux, 20-54ms macOS, and 90-95ms Windows in this run).
+
+The machine evidence is credential-free and short-retention. It proves only this removable local
+slice. It does not prove installed `awf`, release trust, native lifecycle, remote provenance,
+Agent Bus/ACK, cross-host recovery, or production migration.
+
 ## Review Status
 
 Independent review of exact head `5ea5ea0` returned `REQUEST_CHANGES`. This repair addresses:
@@ -185,17 +210,12 @@ Independent review of exact head `5ea5ea0` returned `REQUEST_CHANGES`. This repa
   one-to-one assertion/prohibited proof objects with allowed `proved_by` sets;
 - negative aggregate tests for mutated injection, decision-source, and concrete assertion evidence.
 
-Focused independent TaskCard Gate re-review of exact candidate `9309bb6` returned `PASS` with zero
-remaining findings. The companion ReviewReport records that reviewed semantic candidate; CI and
-cross-platform execution remain pending and no Rust selection is inferred.
-
-Known CI risks before machine validation:
-
-- Rust syntax, rustfmt, clippy, and cross-platform behavior are not locally compiled due to the Mac
-  no-Rust boundary.
-- The zero-dependency strict JSON parser and SHA-256 implementation are statically reviewed here
-  but require GitHub Rust compilation/test evidence.
-- Windows Git/path behavior is covered by workflow design but not locally executed.
+Focused independent TaskCard Gate re-review of exact semantic candidate `9309bb6` returned `PASS`
+with zero remaining findings. Subsequent repairs were limited to CI-owned rustfmt output, five exact
+ownership/borrowing compiler diagnostics, and four narrow Clippy diagnostics; they did not alter
+the reviewed state/fault contract. Exact-head ordinary and five-target machine CI then passed as
+recorded above. One final exact-head TaskCard Gate review remains required after closeout; no Rust
+selection is inferred.
 
 <!-- awf-implementation-report
 {
@@ -222,11 +242,18 @@ Known CI risks before machine validation:
     "Shared fixture JSON parse PASS",
     "Frozen 5-path repair scope PASS",
     "Source gate scan PASS",
-    "Whitespace diff check PASS"
+    "Whitespace diff check PASS",
+    "Ordinary CI 32322178827 PASS",
+    "Five-target Binary Feasibility 32322178851 PASS",
+    "Rust aggregate RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE"
   ],
   "source_revision": "d49f499cbb5f22b7823ed641c5415987a28cbd3a",
   "review_status": "PASS",
-  "preliminary_result": "PENDING_CI",
+  "preliminary_result": "RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE",
+  "ci_head": "3be326378d403b6d5ed098f2589244ac69680abc",
+  "ci_merge_revision": "aa255dee04438f0a32ead5efe29f60434f36c2af",
+  "ordinary_ci_run_id": 32322178827,
+  "binary_feasibility_run_id": 32322178851,
   "dependency_count": 0,
   "rust_source_nonblank_noncomment_loc": 3471,
   "rust_lib_nonblank_noncomment_loc": 3465,
