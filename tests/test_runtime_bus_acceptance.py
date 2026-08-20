@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import tests.fixtures.runtime_v2_bus_acceptance as acceptance
 
 from agent_workflow.runtime import (
     AtomicRunStore,
@@ -17,7 +18,6 @@ from agent_workflow.runtime import (
     ResultEnvelope,
     TransportSendState,
 )
-from tests.fixtures import runtime_v2_bus_acceptance as acceptance
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -45,9 +45,7 @@ def result_fixture(tmp_path: Path):
 
 def test_command_and_result_envelopes_are_canonical_and_causal(tmp_path: Path) -> None:
     root = tmp_path / "state"
-    spec = acceptance.make_spec(
-        REPO, SCOPE, CANDIDATE, acceptance.state_root_binding(root)
-    )
+    spec = acceptance.make_spec(REPO, SCOPE, CANDIDATE, acceptance.state_root_binding(root))
     command = acceptance.make_command(spec, SCOPE)
     noncanonical = json.dumps(json.loads(command.encode()), ensure_ascii=False, indent=2)
     decoded = CommandEnvelope.decode(acceptance.canonical_payload(noncanonical))
@@ -104,7 +102,7 @@ def test_real_sender_port_records_attempt_before_call_and_sent_replay_is_zero(
     replay = dispatcher.dispatch()
     assert replay.outcome is DecisionOutcome.SAFE_IDEMPOTENT_REPLAY
     assert len(calls) == 1
-    authority = (tmp_path / "state" / "runtime-v2" / "runs" / _spec.run_id / "authority.json")
+    authority = tmp_path / "state" / "runtime-v2" / "runs" / _spec.run_id / "authority.json"
     assert b"not-persisted" not in authority.read_bytes()
     assert b"untrusted output" not in authority.read_bytes()
 
@@ -220,9 +218,7 @@ def test_foreign_result_denies_before_result_child(
         ["git", "-C", str(REPO), "rev-parse", "HEAD^{commit}"], text=True
     ).strip()
     root = tmp_path / "state"
-    spec = acceptance.make_spec(
-        REPO, SCOPE, candidate, acceptance.state_root_binding(root)
-    )
+    spec = acceptance.make_spec(REPO, SCOPE, candidate, acceptance.state_root_binding(root))
     command = acceptance.make_command(spec, SCOPE)
     result = acceptance.transition_values(
         spec,

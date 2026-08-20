@@ -78,9 +78,7 @@ def canonical_payload(raw: str) -> bytes:
         raise AcceptanceError("transport payload is not strict JSON") from exc
     if not isinstance(value, dict):
         raise AcceptanceError("transport payload is not an object")
-    return json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-    ).encode()
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
 
 
 def validate_value(value: str, pattern: re.Pattern[str], label: str) -> str:
@@ -202,9 +200,7 @@ def transition_values(
     )
     result_sha256 = digest(f"rts042-result\0{authorization}\0{child_sha256}")
     artifact_sha256 = digest(f"rts042-no-model-artifact\0{command.delivery_id}")
-    effect_sha256 = digest(
-        f"rts042-effect\0{authorization}\0{result_sha256}\0{artifact_sha256}"
-    )
+    effect_sha256 = digest(f"rts042-effect\0{authorization}\0{result_sha256}\0{artifact_sha256}")
     envelope = ResultEnvelope.create(
         run_id=spec.run_id,
         task_id=spec.task_id,
