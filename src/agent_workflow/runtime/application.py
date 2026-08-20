@@ -19,7 +19,7 @@ from .artifact import (
     validate_postflight_paths,
     validate_secret_observation,
 )
-from .contracts import InvocationSpec, RenderedInvocation, RunSpec, _canonical_bytes
+from .contracts import InvocationSpec, RenderedInvocation, RunSpec, _canonical_bytes, _identifier
 from .ports import (
     AuthorizationCommand,
     DecisionOutcome,
@@ -37,7 +37,7 @@ from .ports import (
 )
 from .renderers import ATTACH_INPUT, render_provider_invocation
 from .store import AtomicRunStore, AtomicStatusReader, StoreError
-from .transport import ResultEnvelope
+from .transport import ResultEnvelope, _require_delivery_id
 from .workspace import (
     WorkspaceDelta,
     WorkspaceError,
@@ -194,6 +194,8 @@ class LocalStageRequest:
     postflight: PostflightObservation | None = None
 
     def __post_init__(self) -> None:
+        _require_delivery_id("delivery identity", self.delivery_id)
+        _identifier("outgoing_target_invocation_id", self.outgoing_target_invocation_id)
         if not isinstance(self.stage, WorkflowStage):
             raise TypeError("stage must be a WorkflowStage")
         if self.stage is WorkflowStage.REVIEW and self.postflight is not None:

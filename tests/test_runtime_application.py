@@ -158,12 +158,29 @@ class Fixture:
             if stage is not WorkflowStage.IMPLEMENT
             else None
         )
+        if incoming is None:
+            command = CommandEnvelope.create(
+                run_id=self.spec.run_id,
+                task_id=self.spec.task_id,
+                run_spec_sha256=self.spec.sha256,
+                source_role="architect",
+                target_role="coder",
+                route=self.spec.implement_route,
+                source_invocation_id="owner-dispatch",
+                source_authorization_sha256=digest("owner-dispatch-authorization"),
+                target_invocation_id=f"invoke-{label}",
+                payload={"input_sha256": digest(input_text)},
+            )
         return LocalStageRequest(
             invocation_id=f"invoke-{label}",
             stage=stage,
             attempt=attempt,
-            delivery_id=incoming.delivery_id if incoming else f"delivery-{label}",
-            payload_sha256=incoming.payload_sha256 if incoming else digest(f"payload-{label}"),
+            delivery_id=incoming.delivery_id if incoming else command.delivery_id,
+            payload_sha256=(
+                incoming.payload_sha256
+                if incoming
+                else command.payload_sha256.removeprefix("sha256:")
+            ),
             outgoing_target_invocation_id=outgoing_target or f"invoke-next-{label}",
             provider_executable=str(Path(sys.executable).resolve()),
             provider_environment=self.env,

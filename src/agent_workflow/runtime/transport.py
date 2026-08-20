@@ -1,5 +1,3 @@
-"""Stage-blind transport values and the no-I/O local application receive boundary."""
-
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +17,6 @@ from .ports import (
 from .store import AtomicRunStore
 
 ENVELOPE_FORMAT = "awf.runtime-v2.command-result-envelope.v1"
-_DELIVERY_FORMAT = "awf.runtime-v2.delivery.v1"
 _MAX_ENVELOPE_BYTES = 256 * 1024
 _MAX_JSON_DEPTH = 32
 _MAX_JSON_NODES = 8192
@@ -194,7 +191,7 @@ def _identity_fields(
     causation_delivery_id: str | None,
 ) -> dict[str, object]:
     fields: dict[str, object] = {
-        "format": _DELIVERY_FORMAT,
+        "format": "awf.runtime-v2.delivery.v1",
         "kind": kind,
         "run_id": run_id,
         "task_id": task_id,
@@ -214,6 +211,12 @@ def _identity_fields(
 
 def _delivery_id(**identity: object) -> str:
     return "awfv2:" + hashlib.sha256(_canonical_json(identity)).hexdigest()
+
+
+def _require_delivery_id(name: str, value: object) -> str:
+    if not isinstance(value, str) or _DELIVERY_RE.fullmatch(value) is None:
+        raise TransportError(f"{name} is malformed")
+    return value
 
 
 def _validate_identity(
@@ -241,10 +244,9 @@ def _validate_identity(
     _identifier("target_invocation_id", target_invocation_id)
     if (source_role, target_role) not in _ROLE_PAIRS:
         raise TransportError("envelope role pair is unsupported")
-    if _DELIVERY_RE.fullmatch(delivery_id) is None:
-        raise TransportError("delivery identity is malformed")
-    if causation_delivery_id is not None and _DELIVERY_RE.fullmatch(causation_delivery_id) is None:
-        raise TransportError("result causation identity is malformed")
+    _require_delivery_id("delivery identity", delivery_id)
+    if causation_delivery_id is not None:
+        _require_delivery_id("result causation identity", causation_delivery_id)
     payload_sha256 = _payload_sha256(payload_bytes)
     expected = _delivery_id(
         **_identity_fields(
