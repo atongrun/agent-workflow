@@ -40,6 +40,10 @@ def _git(repo: Path, *args: str) -> str:
 
 def _commit(repo: Path, message: str) -> str:
     _git(repo, "add", "-A")
+    return _commit_staged(repo, message)
+
+
+def _commit_staged(repo: Path, message: str) -> str:
     _git(repo, "commit", "-m", message)
     return _git(repo, "rev-parse", "HEAD")
 
@@ -377,7 +381,7 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
     )
     imported_tree = awf_role.import_model_delta(str(implement_workspace), str(repo))
     control_sha = awf_role.durable_model_control_sha256(str(implement_workspace))
-    implementation_commit = _commit(repo, "trusted scripted implementation")
+    implementation_commit = _commit_staged(repo, "trusted scripted implementation")
     trusted_manifest = awf_role.advance_model_workspace_to_trusted_commit(
         implement_evidence,
         str(implement_workspace),
@@ -602,7 +606,7 @@ def test_rts011_disposable_scripted_provider_restart_acceptance(
 
     rework_tree = awf_role.import_model_delta(restored_workspace, str(repo))
     rework_control_sha = awf_role.durable_model_control_sha256(restored_workspace)
-    rework_commit = _commit(repo, "trusted scripted rework")
+    rework_commit = _commit_staged(repo, "trusted scripted rework")
     rework_manifest = awf_role.advance_model_workspace_to_trusted_commit(
         restarted_evidence,
         restored_workspace,
