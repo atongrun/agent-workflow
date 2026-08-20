@@ -605,6 +605,22 @@ scoped queues `0/0 -> 0/0`. It cannot invoke a model/business handler, touch pro
 deliveries, adopt/dual-write production authority, migrate/change defaults, begin lifecycle or
 launcher work, release or delete compatibility.
 
+RTS-042 evidence result: the first identity, `rts042-live-20260820-01`, remains terminal failed and
+`EXTERNAL_BLOCKED / evidence preserved`; it is never PASS evidence. Agent Bus delivered its command
+to Windows and owned the listener `/fail` transition plus `retry_count=1` after the handler denied
+before its bounded child/Store. Bounded repair `037d514` reads frozen inputs from exact Git blobs and
+passed ordinary CI `32386481057` plus Binary Feasibility `32386481051`. The separately fresh
+`rts042-live-20260820-02` identity is the only successful acceptance: two real child processes
+returned zero, two isolated command/result events were ACKed with retry/error facts zero, the Store
+recorded `attempting -> sent`, and scoped queues converged `0/0 -> 0/0`. No retry, requeue, manual
+ACK, replacement delivery, manufactured completion or third identity occurred.
+
+RTS-043 independent evidence adjudication found that RTS-040, RTS-041 and the sole successful
+RTS-042-02 identity jointly satisfy all five Phase 4A exit criteria without changing the Frozen
+contract or Runtime/Agent Bus ownership. The missing-closeout and tracked-artifact documentation
+findings were repaired, and final focused independent re-review returned `PASS` with no residual
+findings. Phase 4A is closed; no additional live event occurred or is required by this gate.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -870,11 +886,15 @@ renderer, isolated workspace/trusted import and Artifact-validation seams withou
 authority. RTS-035 passed the complete disposable local application composition and closes Phase 3.
 RTS-040 passed the strict Stage-blind command/result envelope and no-I/O receive/preparation
 boundary. RTS-041 passed the Store-owned exact outgoing-intent and bounded Stage-blind adapter
-boundary after its concurrency/stopped-state repair and focused independent re-review. The next
-action is the separately frozen RTS-042 fresh isolated Mac-to-Windows no-model request/result
-acceptance. No production/retained Bus operation, Store adoption or dual write, default switch,
-production state migration, native-launcher acceptance, release, retained-event operation or
-destructive cleanup is authorized.
+boundary after its concurrency/stopped-state repair and focused independent re-review. RTS-042-01
+remains terminal failed, retained and permanently excluded from PASS; RTS-042-02 alone supplies the
+fresh isolated Mac-to-Windows request/result, two child-success, two external ACK and queue
+convergence evidence. RTS-043's independent adjudication found the combined Phase 4A evidence
+semantically complete; final focused re-review passed after documentation-only closeout findings
+were repaired. Phase 4A is closed. The next action is a separately frozen Phase 4B TaskCard. No
+production/retained Bus operation, Store adoption or dual write,
+default switch, production state migration, native-launcher acceptance, release, retained-event
+operation or destructive cleanup is authorized.
 
 ## 12. Plan Completion Definition
 

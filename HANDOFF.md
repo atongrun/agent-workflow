@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-035 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-043 is the last passed
 TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
 `Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -234,6 +234,18 @@ It should perform the one independent Gate Review over the preserved failure, bo
 fresh-success evidence, then either close Phase 4A without another live event or record a concrete
 invariant conflict. It must not create a third acceptance identity, operate retained events, change
 production/default/migration, or begin Phase 4B before that review gate.
+
+RTS-043's independent Gate Review found no semantic or architecture conflict and adjudicated
+RTS-040, RTS-041 and RTS-042 as jointly satisfying all five Phase 4A exit criteria. Its sole
+semantic-review `REQUEST_CHANGES` finding was that the RTS-043 closeout artifacts and gate-status
+updates had not yet been written; a focused packaging finding then required the ignored artifact to
+be explicitly tracked. Both documentation-only findings are closed, and final focused re-review
+returned `PASS`. The closeout records that `rts042-live-20260820-01` remains
+terminal failed, `EXTERNAL_BLOCKED / evidence preserved`, and can never be future PASS evidence;
+`rts042-live-20260820-02` is the only successful acceptance. No retry, requeue, manual ACK,
+replacement delivery, manufactured completion or third identity occurred. Phase 4A is closed. The
+next safe action is a separately frozen Phase 4B TaskCard; no lifecycle implementation is authorized
+inside this closeout.
 
 ## Current Handoff State: 2026-08-17
 

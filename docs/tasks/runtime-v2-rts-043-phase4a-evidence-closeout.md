@@ -85,20 +85,20 @@ The independent Reviewer must answer with exact file/line or immutable run evide
 
 ## Exit criteria
 
-- [ ] Independent Gate Reviewer returns `PASS`, or all evidence-backed documentation findings are
+- [x] Independent Gate Reviewer returns `PASS`, or all evidence-backed documentation findings are
       repaired and a focused independent re-review returns `PASS`.
-- [ ] The closeout report maps all five Phase 4A exit criteria to RTS-040/041/042 evidence and names
+- [x] The closeout report maps all five Phase 4A exit criteria to RTS-040/041/042 evidence and names
       any remaining limitation without semantic inflation.
-- [ ] The report states that RTS-042-01 remains `EXTERNAL_BLOCKED`, is retained, and is never future
+- [x] The report states that RTS-042-01 remains `EXTERNAL_BLOCKED`, is retained, and is never future
       PASS evidence.
-- [ ] The report states that RTS-042-02 is the only successful live acceptance and proves exactly
+- [x] The report states that RTS-042-02 is the only successful live acceptance and proves exactly
       two ACKed events, two zero-exit child processes, `attempting -> sent`, and `0/0 -> 0/0`.
-- [ ] No retry/requeue/manual ACK/replacement/manufactured completion or third identity occurred.
-- [ ] Frozen contract semantics, Agent Bus ownership and Runtime product boundary are unchanged.
-- [ ] Changed paths are documentation/evidence only and remain inside this card's writable scope.
-- [ ] `git diff --check`, credential/path scan and exact-head documentation checks pass.
-- [ ] HANDOFF, ROADMAP and the authoritative plan name Phase 4A closed only after Reviewer PASS.
-- [ ] The next action is a separately frozen Phase 4B TaskCard, not lifecycle implementation in
+- [x] No retry/requeue/manual ACK/replacement/manufactured completion or third identity occurred.
+- [x] Frozen contract semantics, Agent Bus ownership and Runtime product boundary are unchanged.
+- [x] Changed paths are documentation/evidence only and remain inside this card's writable scope.
+- [x] `git diff --check`, credential/path scan and exact-head documentation checks pass.
+- [x] HANDOFF, ROADMAP and the authoritative plan name Phase 4A closed only after Reviewer PASS.
+- [x] The next action is a separately frozen Phase 4B TaskCard, not lifecycle implementation in
       this card.
 
 ## Failure handling
