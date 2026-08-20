@@ -1,24 +1,32 @@
-# `awf.semantic-contract.v1` — Current Python Reference
+# `awf.semantic-contract.v1` — Runtime v2 Core Semantics
 
-Status: **Candidate**
+Status: **Candidate — RTS-024 decision review candidate**
 
 Extraction basis: `main@0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2`
 
 Candidate evidence basis: `main@463c195c1404331e690c99a0865debb21e0b67c1` plus disposable
 RTS-011 executable acceptance head `2868486263aaf35814719fb9ab085a5787359408`
 
+Phase 2 comparison basis: `main@a43b9be1e7f25f9035b9b4c5302f8c78dee527c3`, containing the
+RTS-020 Python shared slice, RTS-021 atomic/SQLite comparison, RTS-022A Rust shared slice and
+RTS-022B independent maintainer gate. RTS-024 owner intent is recorded by
+[ADR-0006](adr/0006-runtime-v2-product-boundary-implementation-choice.md).
+
 Maturity rule: this document extracts observed behavior and known safety requirements. It is not a
 production ABI, migration authority, replacement design, or authorization to invoke a provider,
 operate Agent Bus state, change a service, or mutate a remote repository. RTS-010 and RTS-011 have
-now supplied the two Phase 1 reference acceptances required for `Candidate`. It may become `Frozen`
-only after the shared-slice,
-storage/topology decision, and independent review gates in the Runtime v2 plan.
+now supplied the two Phase 1 reference acceptances required for `Candidate`, and RTS-020 through
+RTS-022B supplied the Phase 2 comparison evidence. The owner selected Python refactoring, a
+checksummed atomic-file RunStore/per-invocation journal, one logical writer without a physical
+Coordinator, and a later bounded native-launcher candidate. This document remains `Candidate` until
+the independent architecture and adversarial review gates pass.
 
 ## 1. Vocabulary and evidence convention
 
-`MUST`, `MUST NOT`, `MAY`, and `OWNER_ONLY` are normative within this Candidate. “Observed” means the
-current implementation and cited evidence agree. “Hypothesis” is not a current requirement and
-cannot authorize implementation.
+`MUST`, `MUST NOT`, `MAY`, and `OWNER_ONLY` are normative within this decision candidate.
+“Observed” means the current implementation and cited evidence agree. “Selected” means accepted by
+the owner for the later implementation boundary but not yet implemented by this document.
+“Hypothesis” is not a current requirement and cannot authorize implementation.
 
 Evidence IDs are declared in section 12. Each normative table row cites at least one ID. The
 machine-readable fault matrix uses the same IDs and the outcome IDs declared in section 10.
@@ -45,8 +53,10 @@ route spelling, CLI flag, or storage engine.
 
 ## 3. Workflow transition contract
 
-The Run transition writer is logically singular. This Candidate does not select whether it is a
-physical Coordinator, a process, or a store transaction.
+The Run transition writer is logically singular and is selected as one RunStore writer/API. It is
+not a physical always-on Coordinator. A worker, provider renderer, Agent Bus handler or derived
+status reader cannot bypass this writer or directly modify Workflow authority. [E-RTS020,
+E-RTS021, E-RTS024]
 
 | From | Input and required evidence | To/fact | Automatic? | Denial/terminal rule | Evidence |
 |---|---|---|---|---|---|
@@ -109,7 +119,42 @@ Rules:
 4. A non-zero exit is evidence of failure, not authorization to retry the same delivery. [E-RECOVERY-1]
 5. Runtime/Bus/Git/GitHub/OS facts never become one “success” boolean. [E-STATUS-1, E-BUS-1]
 
-## 5. Current checkpoint, result, outbox, inbox, terminal, and ACK boundaries
+### 4.1 Selected local authority interface
+
+The selected Phase 3 boundary uses a checksummed atomic-file RunStore and one per-invocation journal
+API. These are logical interfaces, not a frozen path layout or Python class ABI. [E-RTS020,
+E-RTS021, E-RTS024]
+
+- An immutable compiled RunSpec binds run, TaskCard, role, route, attempt/rework budget, provider,
+  workspace and provenance identities before authorization.
+- The RunStore owns Workflow Stage, authorization, exact local outgoing intent and terminal facts
+  through one logical writer and exact writer identity/locking.
+- One journal per invocation durably preserves authorization, launch intent/process observation,
+  provider result, Artifact validation, trusted local effect and recovery facts without collapsing
+  them into one status enum.
+- The selected Core MUST NOT reproduce legacy checkpoint/outbox/inbox files as a second Workflow
+  authority graph or dual-write old and new authority. It MUST preserve their separately observable
+  semantic facts until Phase 6 deletion gates prove a replacement and no live dependency.
+- Derived status/cache data is deletable and reconstructable. Missing, stale, corrupt, foreign or
+  conflicting authority denies and cannot authorize repair, provider start, handoff or terminal.
+- Local atomicity cannot include provider execution, Agent Bus delivery/ACK, Git/GitHub, OS/native
+  manager facts or another host.
+- Each Codex, OpenCode or Pi renderer receives a fully bound `InvocationSpec`, uses structured
+  argv/stdin/file boundaries, understands no Workflow Stage and cannot mutate Runtime state. No
+  generic provider framework is selected.
+
+Python refactoring is the selected production implementation route. Rust remains a passing
+comparison oracle, Go fallback does not enter, SQLite is not selected, and a native launcher is a
+later distribution candidate only after the Python package/application boundary is accepted.
+[E-RTS020, E-RTS021, E-RTS022A, E-RTS022B, E-RTS024]
+
+## 5. Reference checkpoint, result, outbox, inbox, terminal, and ACK boundaries
+
+This section names current compatibility representations because they carry the evidence from which
+the stable facts were extracted. Their filenames and phase spellings are not the selected Runtime v2
+storage ABI. Phase 3 must express the same facts through the RunStore/journal interfaces before any
+Phase 6 per-item deletion; it may not dual-write both authority graphs. [E-RECOVERY-1, E-RTS020,
+E-RTS024]
 
 ### 5.1 Recovery checkpoint phases
 
@@ -131,7 +176,7 @@ MUST deny. [E-RECOVERY-1]
 | coder/reviewer | `outbox_sent` | send command reported success and sent outbox is durable | do not resend; complete exact source inbox if not already complete | E-OUTBOX-1, E-INBOX-1 |
 
 Open question OQ-1: the current checkpoint writes `model_started` immediately before the provider
-wrapper starts the process. A crash in that gap is conservatively ambiguous. The Candidate preserves
+wrapper starts the process. A crash in that gap is conservatively ambiguous. The contract preserves
 that denial; the shared slice must test whether a future `authorized/prepared/start-observed`
 representation can reduce the gap without permitting duplicate invocation.
 
@@ -197,6 +242,9 @@ Configured, installed, running, connected and dispatch-capable are orthogonal ob
   Unknown or live mismatched identity preserves evidence and denies. [E-LIFE-2]
 - Lifecycle code MUST NOT read business payloads or ACK/requeue/recover/dispatch deliveries.
   Handler checkpoint/outbox/inbox and Bus semantics remain independent. [E-LIFE-1]
+- Runtime v2 retains native lifecycle only for exact process/incarnation safety required by local
+  Workflow operation and stop. It MUST NOT expand into a generic Host, scheduler or plugin manager.
+  [E-RTS024]
 
 OQ-3: current exact lifecycle identity spans multiple persistent records. Consolidation is a target
 hypothesis; no record may be deleted until a replacement fixture proves the same exact-stop and
@@ -208,7 +256,7 @@ Status is a read-only projection over lifecycle, run ledger, delivery records, w
 Git/GitHub, queue observations and independent Feedback state. [E-STATUS-1]
 
 - Status MAY label a fact `unknown`, `unavailable`, `stale`, `not_recorded`, `blocked`, `active`, or
-  terminal and name one legal next action.
+  terminal and MUST identify the first blocker, its owner/cause and one legal next action.
 - Status MUST NOT ACK, requeue, recover, redispatch, flush Feedback, mutate lifecycle, invoke a
   provider, or turn a stale/cache observation into authorization.
 - An active run's displayed `next_action` may be copied from the authority-owned context packet.
@@ -219,6 +267,14 @@ Git/GitHub, queue observations and independent Feedback state. [E-STATUS-1]
 - Automatic recovery is limited to exact same-identity checkpoint/outbox/inbox paths enumerated in
   section 5. Ambiguous provider invocation, conflicting terminal, unknown provenance, incompatible
   state/schema, historical delivery, and destructive migration are OWNER_ONLY decisions.
+
+The steady-state operator path is `awf run`, `awf status`, `awf stop`. Internal record names are not
+normal-path concepts. `init`, `doctor`, read-only debug/explain and exact-target admin/recovery remain
+explicit support surfaces; they cannot turn status into mutation or hide ambiguity. [E-RTS024]
+
+Feedback is an optional compatibility utility outside the steady-state path. Its state cannot affect
+business terminal or ACK authority, and its retain/externalize/delete choice remains a later
+per-item closeout. [E-FEEDBACK-1, E-RTS024]
 
 Feedback capture failure is best-effort only after a valid report has been safely stripped and
 validated. A malformed reserved Finding envelope or a failure to separate it from the business
@@ -271,6 +327,14 @@ Observed facts:
 - RTS-011 supplies one complete disposable deterministic rework loop with four real local child
   processes, durable restart/lineage/handoff/terminal evidence, and explicitly synthetic
   provider intelligence, transport send/ACK and GitHub provenance. [E-RTS011]
+- RTS-020 supplies one removable Python shared slice over all 14 comparison rows with one RunStore
+  writer, one InvocationJournal API, no new dependency and the smallest measured candidate
+  implementation. [E-RTS020]
+- RTS-021 shows atomic and SQLite Stores preserve the same 14 rows and remove the same four local
+  ordering windows; SQLite removes no unique Workflow ownership boundary. [E-RTS021]
+- RTS-022A/B show a zero-dependency Rust slice preserves the same 14 rows on five targets and is
+  repairable by a fresh maintainer in one bounded attempt. This is disposable comparison evidence,
+  not production-boundary parity. [E-RTS022A, E-RTS022B]
 
 Resolved Phase 1 reference gaps retained as regression cases:
 
@@ -286,7 +350,7 @@ Current reference gaps (mapped faults, not accepted semantics):
 
 - **CG-3 — durable recovery is not uniform across providers/routes.** Current v3 OpenCode/Pi paths
   have checkpoints; the Codex reviewer compatibility path does not use the same durable checkpoint,
-  and v1/v2 do not carry all v3 provenance/checkpoint facts. The Candidate MUST NOT claim the v3 phase
+  and v1/v2 do not carry all v3 provenance/checkpoint facts. The contract MUST NOT claim the v3 phase
   graph covers every existing route/provider. [E-RECOVERY-1]
 - **CG-4 — authorization can precede checkpoint creation.** A crash after RunLedger authorization
   but before a recovery checkpoint/outbox/inbox exists leaves a duplicate with no safe automatic
@@ -307,14 +371,18 @@ Current reference gaps (mapped faults, not accepted semantics):
 - **CG-8 — local durable state has no safe cross-host adoption protocol.** Moving a logical role to
   another machine cannot silently adopt its old checkpoint/outbox/inbox/workspace. [E-RECOVERY-1]
 
-Hypotheses requiring later gates:
+Resolved Phase 2 decisions:
 
-- Python cannot be simplified enough.
-- Rust or Go materially reduces ownership or distribution cost.
-- SQLite removes enough named local fault windows to justify migration.
-- A physical always-on Coordinator is needed.
-- One compiled RunSpec or four state classes are sufficient.
-- `run/status/stop` removes user decisions rather than hiding support complexity.
+- Python refactoring is the selected production implementation route. Rust remains a valid
+  comparison oracle, and Go fallback does not enter. [E-RTS020, E-RTS022A, E-RTS022B, E-RTS024]
+- The Store is a checksummed atomic-file RunStore plus per-invocation journal API. SQLite remains
+  valid experiment evidence but is not selected. [E-RTS021, E-RTS024]
+- Workflow has one logical transition writer/API without a physical always-on Coordinator.
+  Cross-host facts remain external and require exact adoption validation. [E-RTS024]
+- `run/status/stop` is the steady-state golden path plus explicit support surfaces, not the entire
+  operator or administration surface. [E-RTS024]
+- Native distribution remains one later bounded launcher/relocatable-CPython candidate after the
+  Phase 3 Python package/application boundary is stable; it has not passed. [E-RTS024]
 
 Open questions carried to later phases:
 
@@ -332,6 +400,8 @@ Open questions carried to later phases:
   alone cannot be promoted to ACK or Workflow completion.
 - OQ-9 current run IDs are task/branch-leaf-derived rather than repository-qualified; collision in a
   shared state root safely denies as identity drift but leaves a multi-project UX decision.
+- OQ-10 the selected native launcher/runtime/application ABI, CPython supplier, license, SBOM,
+  installation layout and five-target evidence remain deliberately deferred until after Phase 3.
 
 ## 12. Evidence catalog
 
@@ -362,10 +432,21 @@ Open questions carried to later phases:
 | E-BUS-2 | `docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md`; `docs/tasks/fresh-machine-usability-acceptance-closeout-report.md`; both reports explicitly separate historical business PASS/no-model transport evidence from new authorization |
 | E-RTS010 | `docs/tasks/runtime-v2-rts-010-fresh-pass-acceptance-report.md`; fresh post-remediation business PASS with exact provider counts, Git/GitHub provenance, terminal, external ACK and scoped queue evidence |
 | E-RTS011 | `docs/tasks/runtime-v2-rts-011-deterministic-rework-acceptance-implementation-report.md`; `tests/test_runtime_v2_rts011_acceptance.py`; `tests/fixtures/runtime_v2_scripted_provider.py`; PR #100 review-capacity regressions; complete disposable bounded rework acceptance with synthetic external boundaries |
+| E-RTS020 | `docs/tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md`; one removable Python RunStore/InvocationJournal slice over 14 shared rows, normal path, idempotent replay, read-only status and exact local stop |
+| E-RTS021 | `docs/tasks/runtime-v2-rts-021-storage-comparison-implementation-report.md`; atomic/SQLite same-fixture comparison proving the same four local ordering-window reductions and unequal operational ownership |
+| E-RTS022A | `docs/tasks/runtime-v2-rts-022-rust-shared-slice-implementation-report.md`; zero-dependency Rust same-fixture slice on five native targets with explicitly bounded/synthetic external evidence |
+| E-RTS022B | `docs/tasks/runtime-v2-rts-022-maintainer-fault-gate-implementation-report.md`; one blinded launch-intent ambiguity fault independently diagnosed and repaired in one bounded attempt |
+| E-RTS024 | `docs/adr/0006-runtime-v2-product-boundary-implementation-choice.md`; owner-accepted Python/atomic/logical-writer/product-boundary decision, pending independent review until Frozen promotion |
 
-## 13. Candidate change control
+## 13. Decision review and change control
 
-Phase 2 observations may correct this Candidate but MUST preserve failed evidence. A correction must
-name the old claim, observed counterexample, revised rule, affected fault cases, and whether a new
-fundamental invariant was discovered. Candidate is not Frozen and authorizes no production
-migration, default switch or release action.
+Before Frozen promotion, an independent architecture review and a separate independent adversarial
+review MUST both return `PASS` on this exact decision candidate and ADR-0006. A repair must preserve
+failed evidence, name the affected claim and receive focused re-review from the affected Reviewer.
+
+After both reviews pass, the document status and normative fault-matrix maturity may become
+`Frozen`; no normalized outcome, prohibited effect or external owner changes during that mechanical
+promotion. Frozen authorizes only separately approved Phase 3 Python TaskCards. It is not a
+production ABI, state migration, default switch, launcher acceptance, release action, retained-event
+operation or destructive cleanup authority. Any later semantic change requires a new owner-approved
+ADR/TaskCard with explicit compatibility and evidence consequences.
