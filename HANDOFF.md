@@ -213,6 +213,28 @@ scoped queues `0/0 -> 0/0`, and preserve exact identity. It must not invoke a mo
 handler, touch production or retained events, adopt/dual-write production authority, change
 defaults, migrate state, begin lifecycle/launcher work, release or delete compatibility.
 
+RTS-042 is currently **EXTERNAL_BLOCKED / evidence preserved**, not accepted. The first isolated
+identity delivered its command to Windows, where the handler failed closed before its bounded
+child and before Store initialization. Agent Bus then owned the `/fail` transition and atomically
+wrote `retry_count=1`; no result event existed. Read-only diagnosis proved that both hosts had the
+same Git HEAD but the fixture hashed platform-normalized working-tree Markdown bytes, so Windows
+CRLF conversion split the immutable RunSpec. The failed event/database/log/state remains retained
+and was not retried, requeued, ACKed, replaced, deleted or counted as PASS.
+
+Bounded repair `037d514` derives the two frozen document hashes from exact candidate Git blobs.
+Ordinary CI `32386481057` and Binary Feasibility `32386481051` passed exact head. One separately
+owner-authorized identity then completed the real Mac-to-Windows command and Windows-to-Mac result:
+two bounded children returned zero, the Store recorded `attempting -> sent`, two isolated events
+were ACKed with zero retry/error facts, and scoped queues converged `0/0 -> 0/0`. Its exact resources
+were safely removed; all failed-identity roots were confirmed retained afterward. This validates
+the local fixture RCA but does not retroactively promote the failed identity or the TaskCard.
+
+The next safe TaskCard is an event-free **RTS-043 Phase 4A evidence adjudication and closeout**.
+It should perform the one independent Gate Review over the preserved failure, bounded repair and
+fresh-success evidence, then either close Phase 4A without another live event or record a concrete
+invariant conflict. It must not create a third acceptance identity, operate retained events, change
+production/default/migration, or begin Phase 4B before that review gate.
+
 ## Current Handoff State: 2026-08-17
 
 The final fresh-machine no-model usability gate is green. The original benchmark's disposable

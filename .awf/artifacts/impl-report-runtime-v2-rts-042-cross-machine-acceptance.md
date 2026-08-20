@@ -81,11 +81,10 @@ retained. No production process or service command was issued.
 
 ## Gate consequence
 
-RTS-042 is not complete, Phase 4A is not passed, and no TaskCard Gate Review, Phase 4B start,
-production adoption, migration, default switch, launcher, release or cleanup is authorized. The
-zero event-level retry budget prevents diagnosing by replaying or replacing this delivery. Any
-fresh attempt requires a separately frozen identity and explicit owner authorization; the retained
-failed event must never contribute to a future PASS.
+The failed `rts042-live-20260820-01` identity remains `EXTERNAL_BLOCKED / evidence preserved` and
+can never contribute to a PASS. The owner separately authorized one fresh identity after a bounded
+root-cause repair; its result is recorded below. That continuation does not rewrite, retry, replace,
+ACK, requeue, delete or reclassify event `1` from the failed identity.
 
 ## Root-cause analysis and classification
 
@@ -128,3 +127,47 @@ focused regression, and leaves production code unchanged. Per the owner's diagno
 the recommended next TaskCard/gate is exactly one fresh isolated acceptance identity,
 `rts042-live-20260820-02`, after exact-head CI. The failed `-01` identity remains permanently
 `EXTERNAL_BLOCKED / evidence preserved` regardless of the continuation outcome.
+
+## Owner-authorized fresh validation
+
+Repair candidate `037d514787cbf3a4b5b7852a6bae53d1b20f32ba` passed exact-head ordinary CI
+run `32386481057`, including Ruff, Linux/macOS/Windows tests and all three installed-wheel jobs.
+Binary Feasibility run `32386481051` passed all five native cells, all five retained Rust oracle
+cells and both aggregates. The fixture is exactly 450 nonblank/noncomment lines, its frozen budget;
+the test module is 258. No production or Core path changed.
+
+The independently fresh `rts042-live-20260820-02` identity used a new isolated Bus/database/port,
+three new credentials, new Mac and Windows checkouts/environments, new state/evidence roots, two
+new listeners and two new deliveries. It did not reuse or modify any `-01` resource. Baseline and
+final payload-blind coder/reviewer counts were both `0/0`.
+
+Credential-safe joined facts:
+
+- candidate `037d514787cbf3a4b5b7852a6bae53d1b20f32ba`; Agent Bus
+  `6ca8f2812be0286607bbbe3f14cc51783637b0b5`;
+- RunSpec SHA-256 `65f77997abf1162b6012c3ad8e0ef131b0afa4a4e97b0f519ebd4c29b016841d`;
+- command event `1`, delivery
+  `awfv2:e3f6aaa1184512154007638d47f4a070231f157b009db379248b1578f3070c1b`;
+- result event `2`, delivery
+  `awfv2:39e72b8cb7343e67e1a5a0ef527367e35d13a0d8521567b02716d22925aec5eb`;
+- both handler children returned zero; target and source agreed on result-envelope SHA-256
+  `17c4d939fc59c41bf2ffbb6aad1f08da088fde309795bcd9c0b9426f58346128`;
+- the single Windows authority reached sequence `8` with one authorization, launch intent,
+  process observation, result and validation effect, followed by one handoff and exact
+  `attempting -> sent` transport observations; no writer lock remained; and
+- the isolated database contained exactly those two records, both `acked`, with retry total zero,
+  no last error and zero pending/delivered/failed records.
+
+The exact fresh Bus process was stopped only after PID/cwd/port validation. Mac, Windows and VPS
+fresh-success roots and scoped helpers were then deleted after exact path and symlink/reparse
+inventory; absence checks passed on all three hosts. The retained `-01` Mac, Windows and VPS roots,
+database, logs and evidence were separately confirmed present after cleanup.
+
+This validation confirms the root-cause classification and bounded repair. It does not convert the
+original failed delivery into acceptance evidence or silently promote RTS-042. Current task status
+remains **EXTERNAL_BLOCKED / evidence preserved**. The recommended next TaskCard is a narrow,
+event-free **RTS-043 Phase 4A evidence adjudication and closeout**: independently review the
+preserved `-01` failure classification, the Git-blob repair and the `-02` success evidence; either
+close Phase 4A without another live event or record a concrete invariant conflict. It must not
+retry either identity, create a third acceptance event set, change production/default/migration,
+or begin Phase 4B before that review gate.
