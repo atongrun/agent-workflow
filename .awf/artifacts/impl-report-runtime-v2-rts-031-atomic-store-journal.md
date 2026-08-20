@@ -31,6 +31,8 @@ never authorize takeover, repair or replay.
   terminal projects `TERMINAL_IDEMPOTENT`.
 - Status reads only the validated owner envelope and exact lock presence. It never writes, repairs,
   migrates, deletes, invokes a provider or guesses recovery.
+- A shared state-root path guard rejects symlink or reparse traversal at `runtime-v2`, `runs`, the
+  exact run directory, authority file and writer lock before reads or mutation setup.
 
 ## Focused fixture surface
 
@@ -38,16 +40,17 @@ The disposable tests cover the full implement -> review -> rework -> review -> t
 exact and conflicting authorization/journal/handoff/terminal replay; Stage, attempt and rework
 budgets; launch/process/result ambiguity; initialization and writer identity; checksum, duplicate
 key, newer schema, rechecksummed semantic/sequence/ordering drift; missing/foreign/symlink
-authority; stale and conflicting locks; injected replacement failure; temporary evidence; and
-byte-for-byte denial/status stability.
+authority; redirected Runtime path components across status, journal and mutation entry points;
+stale and conflicting locks; injected replacement failure; temporary evidence; and byte-for-byte
+denial/status stability.
 
 Tests perform no provider process, Agent Bus, Git/GitHub, OS manager, production/legacy state,
 network, migration, default, release or destructive operation.
 
 ## Scope and budgets
 
-Only RTS-031 frozen writable paths changed. The new Store is 644 nonblank/noncomment lines against
-the 650-line limit. The new focused Store fixture is 541 lines against the 900-line limit.
+Only RTS-031 frozen writable paths changed. The new Store is 650 nonblank/noncomment lines against
+the 650-line limit. The new focused Store fixture is 574 lines against the 900-line limit.
 The package remains standard-library only and adds no dependency or second authority family.
 
 ## Verification state
@@ -58,12 +61,16 @@ Repository-policy-safe local checks pass:
 - direct source-tree smoke through exact authorization, launch, process, result and handoff;
 - direct full implement/review/rework/review/completed route with 21 exact replacements;
 - normalized recovery-outcome and terminal exact-replay smoke;
+- nine direct path-integrity smokes spanning three entry points and all three Runtime directory
+  components;
 - import/dependency, generated-file, forbidden-representation and changed-path scans;
 - LOC and line-length budgets;
 - `git diff --check`.
 
-Pytest, Ruff, installed-wheel and Linux/Windows/macOS filesystem evidence remain candidate-CI owned.
-One independent TaskCard Gate Review remains required before closeout.
+The initial independent TaskCard Gate Review found that parent-directory symlinks could redirect a
+valid authority envelope. Source revision `2d4576b9c7ce3f467108a9865ae81d1855cc3912` closes that L3
+finding with the shared guard and focused fixtures above. Exact-head pytest, Ruff, installed-wheel,
+Linux/Windows/macOS filesystem evidence and focused re-review remain candidate-gate owned.
 
 ## Explicit non-claims
 
@@ -95,6 +102,6 @@ production state; release; or authorize destructive cleanup.
     "Candidate CI pending",
     "Independent TaskCard Gate Review pending"
   ],
-  "source_revision": "2a17158e6008f3db4e34ff50f9816f35ada62ac4"
+    "source_revision": "2d4576b9c7ce3f467108a9865ae81d1855cc3912"
 }
 -->
