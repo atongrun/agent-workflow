@@ -621,3 +621,39 @@ def test_authority_symlink_is_never_followed(tmp_path: Path) -> None:
     with pytest.raises(StoreError, match="symbolic link"):
         AtomicStatusReader(tmp_path, spec.run_id).snapshot(spec.run_id)
     assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("operation", ["status", "journal", "mutation"])
+@pytest.mark.parametrize("component_name", ["runtime-v2", "runs", "run-id"])
+def test_runtime_path_symlink_denies_every_store_entry(
+    tmp_path: Path, operation: str, component_name: str
+) -> None:
+    if os.name == "nt":
+        pytest.skip("symlink creation is not an unprivileged Windows fixture")
+    state_root = tmp_path / operation
+    store, spec = initialized_store(state_root)
+    _, journal = authorize(store, spec, WorkflowStage.IMPLEMENT, f"linked-{operation}", 1)
+    components = {
+        "runtime-v2": store.state_root / "runtime-v2",
+        "runs": store.run_dir.parent,
+        "run-id": store.run_dir,
+    }
+    component = components[component_name]
+    target = tmp_path / f"real-{operation}-{component_name}"
+    authority_suffix = store.path.relative_to(component)
+    lock_suffix = store.lock_path.relative_to(component)
+    component.rename(target)
+    component.symlink_to(target, target_is_directory=True)
+    authority = target / authority_suffix
+    before = authority.read_bytes()
+
+    with pytest.raises(StoreError, match="symbolic link or reparse point") as caught:
+        if operation == "status":
+            AtomicStatusReader(state_root, spec.run_id).snapshot(spec.run_id)
+        elif operation == "journal":
+            journal.snapshot()
+        else:
+            store.initialize(spec)
+    assert caught.value.outcome is DecisionOutcome.DENY_BEFORE_PROVIDER
+    assert authority.read_bytes() == before
+    assert not (target / lock_suffix).exists()

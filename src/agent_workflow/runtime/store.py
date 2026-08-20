@@ -79,6 +79,28 @@ def _deny(cause: str) -> StoreError:
     )
 
 
+def _bind_paths(owner: Any, state_root: Path | str, run_id: str) -> None:
+    candidate = Path(state_root).expanduser()
+    if candidate.is_symlink():
+        raise _deny("state root must not be a symbolic link")
+    owner.state_root, owner.run_id = candidate.resolve(), _identifier("run_id", run_id)
+    owner.run_dir = owner.state_root / "runtime-v2" / "runs" / owner.run_id
+    owner.path = owner.run_dir / "authority.json"
+    owner.lock_path = owner.run_dir / "authority.lock"
+
+
+def _guard_path(state_root: Path, path: Path) -> None:
+    try:
+        relative = path.relative_to(state_root)
+    except ValueError as exc:
+        raise _deny("Runtime path escapes the selected state root") from exc
+    current = state_root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink() or (current.exists() and current.resolve() != current):
+            raise _deny("Runtime path must not traverse a symbolic link or reparse point")
+
+
 def _strict_object(value: object, name: str, keys: frozenset[str]) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or frozenset(value) != keys:
         raise _deny(f"{name} fields are invalid")
@@ -325,9 +347,8 @@ def _validate_payload(payload: object) -> _Authority:
     return _Authority(dict(data), spec, stage, terminal, authorizations, journals)
 
 
-def _read_authority(path: Path) -> _Authority:
-    if path.is_symlink():
-        raise _deny("authority file must not be a symbolic link")
+def _read_authority(state_root: Path, path: Path) -> _Authority:
+    _guard_path(state_root, path)
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
@@ -421,15 +442,8 @@ def _decision(outcome: DecisionOutcome, cause: str, next_action: str, sequence: 
 
 class AtomicRunStore:
     def __init__(self, state_root: Path | str, run_id: str, writer_id: str) -> None:
-        candidate = Path(state_root).expanduser()
-        if candidate.exists() and candidate.is_symlink():
-            raise _deny("state root must not be a symbolic link")
-        self.state_root = candidate.resolve()
-        self.run_id = _identifier("run_id", run_id)
+        _bind_paths(self, state_root, run_id)
         self.writer_id = _identifier("writer_id", writer_id)
-        self.run_dir = self.state_root / "runtime-v2" / "runs" / self.run_id
-        self.path = self.run_dir / "authority.json"
-        self.lock_path = self.run_dir / "authority.lock"
 
     def _verify_binding(self, authority: _Authority) -> None:
         payload = authority.payload
@@ -441,15 +455,17 @@ class AtomicRunStore:
             raise _deny("run, state-root, or writer identity drift")
 
     def _read(self) -> _Authority:
-        authority = _read_authority(self.path)
+        authority = _read_authority(self.state_root, self.path)
         self._verify_binding(authority)
         return authority
 
     @contextlib.contextmanager
     def _writer_lock(self) -> Iterator[bytes]:
+        _guard_path(self.state_root, self.run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        if self.run_dir.is_symlink() or self.run_dir.resolve() != self.run_dir:
-            raise _deny("run directory must not traverse a symbolic link")
+        _guard_path(self.state_root, self.run_dir)
+        _guard_path(self.state_root, self.path)
+        _guard_path(self.state_root, self.lock_path)
         lock = {"format": LOCK_FORMAT, "writer_id": self.writer_id, "nonce": secrets.token_hex(16)}
         token = _canonical_bytes(lock)
         try:
@@ -689,21 +705,15 @@ class AtomicInvocationJournal:
 
 class AtomicStatusReader:
     def __init__(self, state_root: Path | str, run_id: str) -> None:
-        candidate = Path(state_root).expanduser()
-        if candidate.exists() and candidate.is_symlink():
-            raise _deny("state root must not be a symbolic link")
-        self.state_root = candidate.resolve()
-        self.run_id = _identifier("run_id", run_id)
-        self.run_dir = self.state_root / "runtime-v2" / "runs" / self.run_id
-        self.path = self.run_dir / "authority.json"
-        self.lock_path = self.run_dir / "authority.lock"
+        _bind_paths(self, state_root, run_id)
 
     def snapshot(self, run_id: str) -> RunSnapshot:
         if _identifier("run_id", run_id) != self.run_id:
             raise _deny("status run identity drift")
-        authority = _read_authority(self.path)
+        authority = _read_authority(self.state_root, self.path)
         if authority.payload["run_id"] != self.run_id or authority.payload[
             "state_root_sha256"
         ] != _state_root_sha256(self.state_root):
             raise _deny("status run or state-root identity drift")
+        _guard_path(self.state_root, self.lock_path)
         return _snapshot(authority, lock_active=self.lock_path.exists())
