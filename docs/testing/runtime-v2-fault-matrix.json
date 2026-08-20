@@ -1,7 +1,7 @@
 {
   "format": "awf.runtime-v2-fault-matrix.v1",
-  "maturity": "Candidate",
-  "basis": "2868486263aaf35814719fb9ab085a5787359408",
+  "maturity": "Frozen",
+  "basis": "5da55fda62119eec01844e5d6c52f91d5dd187ba",
   "contract": "docs/runtime-v2-semantic-contract.md",
   "outcomes": [
     "SAFE_CONTINUE",

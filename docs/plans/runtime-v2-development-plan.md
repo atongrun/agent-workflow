@@ -1,9 +1,10 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-022B / independent Rust maintainer fault gate (`RUST_MAINTAINER_GATE_PASS`, 2026-08-20)**.
-The semantic contract remains `Candidate`; RTS-024 is now `OWNER_DECISION_REQUIRED`. This plan is
-not an ADR and authorizes no production migration, default switch or release action by itself.
+**RTS-024 / product-boundary and implementation choice (`PYTHON + NATIVE LAUNCHER`, 2026-08-20)**.
+ADR-0006 is accepted and the semantic contract/fault matrix are `Frozen` after independent
+Architecture and Adversarial Review PASS. Phase 3 enters through a separately frozen RTS-030
+TaskCard. This plan authorizes no production migration, default switch or release action by itself.
 
 RTS-020 passed one-command implement/review/terminal execution and all eight shared fault families
 across 14 machine rows with one RunStore writer and one InvocationJournal API. Pre-final-review head
@@ -437,6 +438,15 @@ Exit criteria:
 
 #### RTS-024 — Implementation-choice decision
 
+Execution result: **PASS — `PYTHON + NATIVE LAUNCHER`**. The owner selected Python refactoring,
+checksummed atomic-file RunStore plus a per-invocation journal API, and one logical transition writer
+without a physical always-on Coordinator. Rust remains a comparison oracle, RTS-023 does not enter,
+SQLite is not selected, and the native launcher remains a later bounded distribution candidate.
+ADR-0006 records the narrow Runtime Core/product boundary, evidence asymmetry, rejected alternatives,
+rollback and fallback. Independent Architecture Review passed; Adversarial Review passed after one
+focused LOC evidence correction. The semantic contract and 39-case/11-outcome matrix are `Frozen`.
+See the [RTS-024 closeout](../tasks/runtime-v2-rts-024-decision-implementation-report.md).
+
 Decision outcomes:
 
 - **PYTHON REFACTOR:** Python meets semantics/UX and native distribution is not a current requirement.
@@ -457,12 +467,27 @@ Phase 2 exit criteria:
 - Semantic contract is marked `Frozen` only after independent architecture and adversarial review.
 - No production Runtime v2 implementation begins on a conditional, tied, or undocumented result.
 
+All Phase 2 exit criteria are closed by ADR-0006, the same-fixture comparison, owner acceptance and
+the two independent PASS reviews. Frozen promotion changed no normalized outcome or external owner.
+
 ### Phase 3 — Build the Selected Local Runtime Boundary
 
 Dependencies: Phase 2 explicit GO and owner-approved TaskCards.
 
-This phase applies to the selected Python, Python/launcher, Rust, Go, or reduced-scope outcome. It does
-not assume a rewrite.
+The selected route is Python refactoring. The native launcher is not part of this phase and cannot
+bind an ABI until the Python package/application boundary passes.
+
+#### RTS-030 — Selected Python Core interfaces and package boundary
+
+First entry-satisfied Phase 3 TaskCard. Define one enforceable installed-package boundary for the
+Frozen immutable RunSpec, fully bound InvocationSpec, logical RunStore writer and per-invocation
+journal interfaces. Lock renderer purity and status read-only behavior with selected-boundary tests
+before migrating any production handler path. The card may add an isolated Python Core package and
+tests, but cannot dual-write, delete legacy representations, change the default, implement the native
+launcher, touch Agent Bus transport or migrate production state.
+
+RTS-030 must be independently reversible and must name the exact first production integration seam
+for its successor rather than combining all Phase 3 behavior in one PR.
 
 Deliverables:
 
@@ -714,20 +739,18 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Open evidence gaps
 
-- SQLite versus atomic-file/journal evidence on the same shared slice;
-- conditional Rust/Go shared-slice measurements if later entry criteria are met;
-- SQLite Windows/fault evidence;
-- physical Coordinator recovery model;
+- selected Python Core package/interface and production integration evidence;
 - support-scenario UX decisions;
-- owner product-boundary ADR and retained-state audit.
+- native-launcher supplier/license/compatibility/SBOM/five-target evidence after Phase 3;
+- retained-state/live-dependency audit and per-item Phase 6 closeout.
 
 ### Next decision point
 
-RTS-001, RTS-010, RTS-011, RTS-020, RTS-021, RTS-022A and RTS-022B passed, so the contract remains
-Candidate and Phase 2 has reached RTS-024. The next action is `OWNER_DECISION_REQUIRED`: accept one
-written product-boundary and implementation-choice ADR using the shared comparison evidence. No
-language, Store, physical Coordinator, product boundary, semantic freeze or production migration is
-selected by the preceding gates.
+RTS-001, RTS-010, RTS-011, RTS-020, RTS-021, RTS-022A, RTS-022B and RTS-024 passed. ADR-0006 selects
+Python refactoring, checksummed atomic-file RunStore/journal, logical single writer and the narrow
+product boundary; the semantic contract is `Frozen`. The next action is the separately frozen
+RTS-030 Phase 3 TaskCard. No default switch, production state migration, native-launcher acceptance,
+release, retained-event operation or destructive cleanup is authorized.
 
 ## 12. Plan Completion Definition
 

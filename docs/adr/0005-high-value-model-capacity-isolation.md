@@ -1,6 +1,7 @@
 # ADR-0005: High-Value Model Capacity Isolation
 
-**Status:** Accepted
+**Status:** Accepted; Runtime boundary amended by
+[ADR-0006](0006-runtime-v2-product-boundary-implementation-choice.md)
 **Date:** 2026-07-18
 
 ## Context

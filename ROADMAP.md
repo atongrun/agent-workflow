@@ -42,16 +42,21 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   and green ordinary/Binary CI on pre-closeout head `3be3263`.
 - [x] Complete RTS-022B with one blinded Candidate fault, one fresh independent maintainer, one
   semantic repair, exact seeded/candidate five-target evidence, and independent Gate Review PASS.
-- [ ] Compare Python simplification, storage and any native candidate on the same no-model slice;
-  make language/store/Coordinator/product-boundary decisions only at the later owner gate.
+- [x] Complete RTS-024 with the same-fixture comparison and owner decision: Python refactor,
+  checksummed atomic-file RunStore/journal, logical single writer, narrow product boundary and later
+  bounded native-launcher candidate; freeze the contract after Architecture and Adversarial PASS.
+- [ ] Complete RTS-030 as the first independently reversible Phase 3 Python Core interface/package
+  boundary without dual write, default change, representation deletion or launcher work.
 
-Current last passed TaskCard gate is RTS-022B. One fresh maintainer restored a blinded Candidate
-launch-intent ambiguity/no-replay fault in one semantic attempt; exact seeded and candidate
-five-target evidence plus independent Gate Review passed. RTS-023 does not enter. RTS-024 is now
-`OWNER_DECISION_REQUIRED` for one product-boundary and implementation-choice ADR. No Store,
-language, Coordinator, semantic freeze, production default, migration, release or destructive
-action is authorized. See the [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-022B closeout](docs/tasks/runtime-v2-rts-022-maintainer-fault-gate-implementation-report.md).
+Current last passed TaskCard gate is RTS-024. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
+checksummed atomic-file RunStore/per-invocation journal, one logical writer and no physical
+Coordinator. Independent Architecture Review passed; Adversarial Review passed after one focused
+LOC evidence correction. The semantic contract and 39-case/11-outcome matrix are Frozen. Rust
+remains a comparison oracle, RTS-023 does not enter, SQLite is not selected, and launcher work is
+deferred until after the Phase 3 Python boundary. RTS-030 is next. No production default, migration,
+release, retained-event operation or destructive cleanup is authorized. See the
+[development plan](docs/plans/runtime-v2-development-plan.md) and
+[RTS-024 closeout](docs/tasks/runtime-v2-rts-024-decision-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

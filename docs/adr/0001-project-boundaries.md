@@ -1,6 +1,7 @@
 # ADR-0001: Project Boundaries
 
-**Status:** Amended by [ADR-0005](0005-high-value-model-capacity-isolation.md)
+**Status:** Amended by [ADR-0005](0005-high-value-model-capacity-isolation.md) and
+[ADR-0006](0006-runtime-v2-product-boundary-implementation-choice.md)
 **Date:** 2026-07-07
 **Last amended:** 2026-07-18
 
