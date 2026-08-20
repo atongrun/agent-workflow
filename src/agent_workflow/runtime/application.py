@@ -260,6 +260,8 @@ class LocalRuntimeApplication:
 
     def stop(self, run_spec: RunSpec) -> RunSnapshot:
         snapshot = self.status(run_spec.run_id)
+        if snapshot.stopped:
+            return snapshot
         store = AtomicRunStore(self.state_root, run_spec.run_id, self.writer_id)
         store.record_stop(StopCommand(run_spec.sha256, run_spec.run_id, snapshot.sequence))
         return self.status(run_spec.run_id)

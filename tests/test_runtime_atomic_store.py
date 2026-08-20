@@ -671,7 +671,7 @@ def test_local_stop_denies_ambiguous_process_and_preserves_terminal(tmp_path: Pa
     )
     assert stopped.terminal is TerminalOutcome.COMPLETED
     assert stopped.stopped is True
-    assert store.path.read_bytes() == before
+    assert store.path.read_bytes() == before[store.path.relative_to(tmp_path).as_posix()]
 
 
 def test_authority_symlink_is_never_followed(tmp_path: Path) -> None:
