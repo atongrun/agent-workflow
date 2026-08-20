@@ -104,6 +104,7 @@ to a successor TaskCard after these dependency/immutability tests pass.
 - `src/agent_workflow/runtime/ports.py`
 - `tests/test_runtime_core_boundary.py`
 - `tests/test_runtime_core_contracts.py`
+- `tests/verify_installed_wheel.py` (only the isolated import proof for `agent_workflow.runtime`)
 - `.awf/artifacts/impl-report-runtime-v2-rts-030-python-core-boundary.md`
 - `.awf/artifacts/review-report-runtime-v2-rts-030-python-core-boundary.md`
 
@@ -114,7 +115,8 @@ Phase 3 gate/next-step sections of the Runtime v2 plan, HANDOFF and ROADMAP.
 ## Out of scope
 
 - Modification of existing production `src/agent_workflow/*.py`, `scripts/`, schemas, CLI, facade,
-  node/lifecycle, status, provider adapters, package metadata, CI workflows or state formats.
+  node/lifecycle, status, provider adapters, package metadata, CI workflows or state formats. The
+  sole exception is the allowed installed-wheel import assertion in `tests/verify_installed_wheel.py`.
 - A concrete atomic-file RunStore/journal implementation, legacy adapter, handler integration,
   provider invocation, workspace/Git implementation, Agent Bus envelope or cross-machine behavior.
 - Editing the Frozen contract, ADR-0006, comparison experiments/fixtures/evidence or Rust paths.
@@ -176,6 +178,7 @@ Phase 3 gate/next-step sections of the Runtime v2 plan, HANDOFF and ROADMAP.
     "src/agent_workflow/runtime/ports.py",
     "tests/test_runtime_core_boundary.py",
     "tests/test_runtime_core_contracts.py",
+    "tests/verify_installed_wheel.py",
     ".awf/artifacts/impl-report-runtime-v2-rts-030-python-core-boundary.md",
     ".awf/artifacts/review-report-runtime-v2-rts-030-python-core-boundary.md"
   ],
