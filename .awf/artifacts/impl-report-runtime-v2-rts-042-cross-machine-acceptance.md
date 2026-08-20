@@ -86,3 +86,45 @@ production adoption, migration, default switch, launcher, release or cleanup is 
 zero event-level retry budget prevents diagnosing by replaying or replacing this delivery. Any
 fresh attempt requires a separately frozen identity and explicit owner authorization; the retained
 failed event must never contribute to a future PASS.
+
+## Root-cause analysis and classification
+
+Read-only retained-state diagnosis closed the causal chain without replaying the delivery:
+
+- Agent Bus delivered event `1` to the Windows coder listener. The listener launched the child
+  handler process, which exited `2` after about `0.2s` with the fixture's credential-safe
+  `AcceptanceError` marker.
+- The handler did not launch its bounded proof child. The disposable state root contains no
+  `authority.json`, journal, authorization, launch intent, provider result, validation effect,
+  outgoing intent or transport-send observation. No target evidence exists.
+- No result event was generated. Therefore no result was lost, rejected by the Mac consumer or
+  left unreconciled by the local Runtime.
+- The Windows Agent Bus listener called its normal `/events/1/fail` endpoint after the handler's
+  nonzero return. The isolated Bus server's `record_failure` transaction incremented the prior
+  count from zero to one and, because the listener was explicitly bounded to
+  `max_event_attempts=1`, wrote terminal `status=failed`, `retry_count=1` and the last-error fact.
+  Neither Runtime v2 nor the fixture wrote that Bus retry count.
+
+Both hosts were on the exact same candidate Git commit, yet their working-tree byte hashes differed:
+
+| Frozen input | Git blob / Mac SHA-256 | Windows working-tree SHA-256 | Windows CRLF lines |
+| --- | --- | --- | ---: |
+| TaskCard | `e0653b3442e3795e2ac3219d1de561e9e0528eb43ea1af613a42a0d5884f63b2` | `271ab8109bda79f19eae6f502fa2f7d8a251a150f1b21669cc23b1a53448039f` | 223 |
+| Frozen semantic contract | `b54e55bd1cd7471b26d359eb8b630d330adadb8dea1b09378321658b7e31404b` | `c094043a99e3abf3c03f05cc2ee4bc0be7163b9527e44f0f21550db11ad37d36` | 453 |
+
+The Windows Git blob bytes hash exactly to the Mac values. `make_spec` had read host-normalized
+working-tree bytes, so Mac and Windows independently constructed different immutable RunSpec
+identities. The command was rejected at exact-envelope comparison before the proof child and Store.
+
+Failure classification: **(e) acceptance fixture**, specifically an L2 cross-platform
+provenance-glue defect. Transport delivery succeeded; remote handler execution started and
+failed closed before its bounded child; result return and local Runtime reconciliation never
+began. This does not require or justify a Runtime authority, Agent Bus, ACK, ordering or Frozen
+boundary change.
+
+The bounded repair reads the two frozen inputs from their exact candidate Git blobs rather than
+the platform-normalized checkout, retains the same RunSpec fields and SHA-256 semantics, adds one
+focused regression, and leaves production code unchanged. Per the owner's diagnostic continuation,
+the recommended next TaskCard/gate is exactly one fresh isolated acceptance identity,
+`rts042-live-20260820-02`, after exact-head CI. The failed `-01` identity remains permanently
+`EXTERNAL_BLOCKED / evidence preserved` regardless of the continuation outcome.

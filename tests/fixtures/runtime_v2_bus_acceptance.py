@@ -35,13 +35,11 @@ from agent_workflow.runtime import (
 )
 
 EVIDENCE_FORMAT = "awf.runtime-v2.bus-acceptance-evidence.v1"
-COMMAND_EVENT = "control:awfv2-command-v1"
-RESULT_EVENT = "control:awfv2-result-v1"
+COMMAND_EVENT, RESULT_EVENT = "control:awfv2-command-v1", "control:awfv2-result-v1"
 TASK_CARD = "docs/tasks/runtime-v2-rts-042-cross-machine-acceptance.md"
 SEMANTIC_CONTRACT = "docs/runtime-v2-semantic-contract.md"
 TASK_BRANCH = "codex/runtime-v2-rts-042-cross-machine-acceptance"
-_SCOPE_RE = re.compile(r"[a-z0-9][a-z0-9-]{7,39}")
-_SHA_RE = re.compile(r"[0-9a-f]{40,64}")
+_SCOPE_RE, _SHA_RE = re.compile(r"[a-z0-9][a-z0-9-]{7,39}"), re.compile(r"[0-9a-f]{40,64}")
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 
@@ -110,17 +108,25 @@ def verify_repo(repo: Path, candidate_sha: str) -> None:
         raise AcceptanceError("candidate repository HEAD does not match the frozen SHA")
 
 
+def frozen_blob(repo: Path, candidate_sha: str, relative: str) -> bytes:
+    try:
+        blob = subprocess.check_output(
+            ["git", "-C", str(repo.resolve()), "show", f"{candidate_sha}:{relative}"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise AcceptanceError("frozen contract input is unavailable") from exc
+    if not blob or len(blob) > 256 * 1024:
+        raise AcceptanceError("frozen contract input is unavailable")
+    return blob
+
+
 def make_spec(repo: Path, scope: str, candidate_sha: str, root_binding: str) -> RunSpec:
     validate_value(scope, _SCOPE_RE, "acceptance scope")
     validate_value(candidate_sha, _SHA_RE, "candidate SHA")
     validate_value(root_binding, _DIGEST_RE, "state-root binding")
-    card = repo.resolve() / TASK_CARD
-    contract = repo.resolve() / SEMANTIC_CONTRACT
-    try:
-        card_sha256 = digest(card.read_bytes())
-        contract_sha256 = digest(contract.read_bytes())
-    except OSError as exc:
-        raise AcceptanceError("frozen contract input is unavailable") from exc
+    card_sha256 = digest(frozen_blob(repo, candidate_sha, TASK_CARD))
+    contract_sha256 = digest(frozen_blob(repo, candidate_sha, SEMANTIC_CONTRACT))
     return RunSpec(
         run_id=f"task-rts042-{scope}",
         task_id=f"rts042-{scope}",

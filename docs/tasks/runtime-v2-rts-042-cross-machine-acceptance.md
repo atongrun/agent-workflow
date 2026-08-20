@@ -204,6 +204,24 @@ the Phase 4A gate/next-step sections of the Runtime v2 plan, HANDOFF and ROADMAP
 - ImplementationReport and independent ReviewReport;
 - closeout naming exactly one separately frozen Phase 4B native-lifecycle gate.
 
+## Owner-authorized diagnostic continuation
+
+The first live identity, `rts042-live-20260820-01`, is permanently
+`EXTERNAL_BLOCKED`. Its command event, failure count, database, logs, state and host evidence stay
+retained and may never be retried, requeued, ACKed, replaced, deleted or counted as a PASS.
+
+Read-only diagnosis proved a local acceptance-fixture identity defect: the two hosts checked out the
+same Git commit, but `make_spec` hashed host-normalized working-tree Markdown bytes. Windows CRLF
+conversion therefore changed both TaskCard and semantic-contract SHA-256 values and rejected the
+otherwise exact command before child launch or Store initialization. This is classified as an L2
+fixture/provenance-glue defect; it does not change the Frozen contract, Runtime authority, Agent Bus
+contract, ACK semantics or distributed ordering.
+
+The owner authorizes exactly one continuation identity, `rts042-live-20260820-02`, after the fixture
+derives those hashes from exact frozen Git blob bytes and focused/exact-head validation passes. The
+continuation must create a new isolated Bus/database, credentials, state roots, checkouts,
+listeners, deliveries and events. It inherits every original stop rule and has no retry budget.
+
 <!-- awf-postflight
 {
   "allowed_paths": [

@@ -21,7 +21,9 @@ from tests.fixtures import runtime_v2_bus_acceptance as acceptance
 
 REPO = Path(__file__).resolve().parents[1]
 SCOPE = "rts042-focused-001"
-CANDIDATE = "a" * 40
+CANDIDATE = subprocess.check_output(
+    ["git", "-C", str(REPO), "rev-parse", "HEAD^{commit}"], text=True
+).strip()
 
 
 def fake_bus(tmp_path: Path) -> Path:
@@ -40,6 +42,29 @@ def result_fixture(tmp_path: Path):
         root, spec, command, output, acceptance.digest("child-process")
     )
     return root, spec, command, store, intent
+
+
+def test_run_spec_hashes_frozen_git_blobs_not_host_checkout_bytes(tmp_path: Path) -> None:
+    spec = acceptance.make_spec(
+        REPO, SCOPE, CANDIDATE, acceptance.state_root_binding(tmp_path / "state")
+    )
+
+    assert spec.task_card_sha256 == acceptance.digest(
+        subprocess.check_output(
+            ["git", "-C", str(REPO), "show", f"{CANDIDATE}:{acceptance.TASK_CARD}"]
+        )
+    )
+    assert spec.semantic_contract_sha256 == acceptance.digest(
+        subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(REPO),
+                "show",
+                f"{CANDIDATE}:{acceptance.SEMANTIC_CONTRACT}",
+            ]
+        )
+    )
 
 
 def test_command_and_result_envelopes_are_canonical_and_causal(tmp_path: Path) -> None:
