@@ -2238,9 +2238,16 @@ fn make_source_repo(root: &Path) -> Result<PathBuf> {
     Ok(repo)
 }
 
-fn fixture_rows(
-    fixture: &Json,
-) -> Result<Vec<(String, String, String, String, Vec<String>, Vec<String>)>> {
+type FixtureRow = (
+    String,
+    String,
+    String,
+    String,
+    Vec<String>,
+    Vec<String>,
+);
+
+fn fixture_rows(fixture: &Json) -> Result<Vec<FixtureRow>> {
     if get_string(fixture, "format")? != FIXTURE_FORMAT
         || get_string(fixture, "maturity")? != "Candidate"
         || get_string(fixture, "contract")? != CONTRACT_PATH
@@ -2270,7 +2277,7 @@ fn fixture_rows(
     Ok(rows)
 }
 
-fn fixture_row(row: &Json) -> Result<(String, String, String, String, Vec<String>, Vec<String>)> {
+fn fixture_row(row: &Json) -> Result<FixtureRow> {
     let assertions = row
         .get("assertions")
         .and_then(Json::as_array)
@@ -2600,6 +2607,7 @@ fn status_git_readonly_gate(state: &Path, repo: &Path, run_id: &str) -> Result<b
     Ok(denied && before == after)
 }
 
+#[allow(clippy::too_many_arguments)] // The signature mirrors the frozen evidence inputs.
 fn check_assertions(
     state: &Path,
     repo: &Path,
@@ -3421,6 +3429,7 @@ fn require_string_array(value: &Json, key: &str, expected: &[String]) -> Result<
     }
 }
 
+#[allow(clippy::format_collect)] // Keep the zero-dependency SHA-256 encoder explicit and local.
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
