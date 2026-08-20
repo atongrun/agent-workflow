@@ -8,8 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import tests.fixtures.runtime_v2_bus_acceptance as acceptance
 
+import tests.fixtures.runtime_v2_bus_acceptance as acceptance
 from agent_workflow.runtime import (
     AtomicRunStore,
     CommandEnvelope,
