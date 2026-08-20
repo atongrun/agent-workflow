@@ -167,6 +167,20 @@ def test_review_report_normalization_and_embedded_revalidation_are_exact(tmp_pat
         validate_embedded_review_report(changed)
 
 
+def test_review_payload_normalizes_crlf_while_artifact_fact_binds_raw_bytes(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "review.md"
+    raw = review_markdown("PASS").replace("\n", "\r\n").encode("utf-8")
+    report.write_bytes(raw)
+
+    validated = parse_review_report(report, ".awf/artifacts/review.md")
+
+    assert "\r" not in validated.review.as_payload()["markdown"]
+    assert validated.artifact.size == len(raw)
+    assert validated.artifact.sha256 == hashlib.sha256(raw).hexdigest()
+
+
 def test_review_report_preserves_deterministic_request_changes_evidence(tmp_path: Path) -> None:
     failure = {
         "evidence": {"kind": "file_line", "file": "src/runtime.py", "line": 17},

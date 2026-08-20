@@ -486,7 +486,7 @@ def parse_review_report(path: Path, relative_path: str | None = None) -> Validat
     source = Path(path)
     try:
         raw = source.read_bytes()
-        markdown = raw.decode("utf-8")
+        markdown = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     except (OSError, UnicodeError) as exc:
         raise ArtifactError(f"ReviewReport is missing or unreadable: {path}") from exc
     if not markdown.strip():
