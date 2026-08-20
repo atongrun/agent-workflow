@@ -15,6 +15,7 @@ from agent_workflow.runtime.artifact import (
     compile_review_report_path,
     compile_run_artifact_contract,
     compile_stage_artifact_contract,
+    normalize_rework_feedback,
     normalize_review_envelope,
     parse_postflight_contract,
     parse_review_report,
@@ -178,6 +179,26 @@ def test_review_report_preserves_deterministic_request_changes_evidence(tmp_path
 
     assert payload["deterministic_failures"] == [failure]
     assert payload["blocked_reason"] == ""
+
+
+def test_rework_projection_drops_review_prose_without_relaxing_embedded_validation() -> None:
+    failure = {
+        "evidence": {"kind": "criterion", "criterion": "AC-7"},
+        "required_correction": "preserve the exact Artifact fact",
+    }
+    payload = {
+        "format": "awf.review-report.v1",
+        "verdict": "REQUEST_CHANGES",
+        "deterministic_failures": [failure],
+        "blocked_reason": "",
+        "markdown": "review prose must not reach the executor",
+    }
+
+    assert json.loads(normalize_rework_feedback(payload))["deterministic_failures"] == [
+        failure,
+    ]
+    with pytest.raises(ArtifactError, match="exactly one"):
+        validate_embedded_review_report(payload)
 
 
 @pytest.mark.parametrize(

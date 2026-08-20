@@ -146,6 +146,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "compile_stage_artifact_contract",
         "freeze_workspace",
         "import_workspace_delta",
+        "normalize_rework_feedback",
         "normalize_review_envelope",
         "parse_postflight_contract",
         "parse_review_report",

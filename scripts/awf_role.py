@@ -112,6 +112,9 @@ from agent_workflow.runtime import (
     freeze_workspace as runtime_freeze_workspace,
 )
 from agent_workflow.runtime import (
+    normalize_rework_feedback as runtime_normalize_rework_feedback,
+)
+from agent_workflow.runtime import (
     normalize_review_envelope as runtime_normalize_review_envelope,
 )
 from agent_workflow.runtime import (
@@ -3333,24 +3336,11 @@ def normalize_rework_feedback(raw: str) -> str:
 
     try:
         data = json.loads(raw, object_pairs_hook=unique)
-        normalized = runtime_validate_embedded_review_report(data).as_payload()
+        return runtime_normalize_rework_feedback(data)
     except (json.JSONDecodeError, ValueError, ArtifactError) as exc:
         if isinstance(exc, ArtifactError):
             die(str(exc))
         die("review feedback is malformed or contains duplicate fields")
-    failures = normalized["deterministic_failures"]
-    if normalized["verdict"] != "REQUEST_CHANGES" or not failures:
-        die("rework requires REQUEST_CHANGES with deterministic failures")
-    bounded = {
-        "verdict": "REQUEST_CHANGES",
-        "deterministic_failures": failures,
-        "blocked_reason": "",
-    }
-    text = json.dumps(bounded, indent=2, sort_keys=True)
-    label = runtime_scan_secret_text(text)
-    if label:
-        die(f"review feedback contains prohibited {label} material")
-    return text
 
 
 def tool_codex_review(

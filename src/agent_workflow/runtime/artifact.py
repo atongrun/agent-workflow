@@ -205,19 +205,17 @@ def compile_run_artifact_contract(
     if taskcard_path in allowed_paths:
         raise ArtifactError("frozen TaskCard must not be model-writable in allowed_paths")
 
-    expected_implementation = compile_implementation_report_path(task_id)
-    expected_review = compile_review_report_path(task_id)
     _validate_repo_relative_path(
         implementation_report_path, field="RunManifest ImplementationReport", artifact_only=True
     )
     _validate_repo_relative_path(
         review_report_path, field="RunManifest ReviewReport", artifact_only=True
     )
-    if implementation_report_path != expected_implementation:
+    if implementation_report_path != compile_implementation_report_path(task_id):
         raise ArtifactError(
             "RunManifest ImplementationReport does not match compiled task identity"
         )
-    if review_report_path != expected_review:
+    if review_report_path != compile_review_report_path(task_id):
         raise ArtifactError("RunManifest ReviewReport does not match compiled task identity")
     declared_implementation = [
         path for path in allowed_paths if Path(path).name.startswith("impl-report-")
@@ -529,6 +527,27 @@ def validate_embedded_review_report(data: object) -> NormalizedReviewReport:
     if normalized.as_payload() != data:
         raise ArtifactError("embedded ReviewReport does not match its normalized machine object")
     return normalized
+
+
+def normalize_rework_feedback(data: object) -> str:
+    if not isinstance(data, dict) or data.get("format") != "awf.review-report.v1":
+        raise ArtifactError("review feedback has an invalid format")
+    verdict, failures = data.get("verdict"), data.get("deterministic_failures")
+    if verdict != "REQUEST_CHANGES" or not isinstance(failures, list) or not failures:
+        raise ArtifactError("rework requires REQUEST_CHANGES with deterministic failures")
+    blocked_reason = data.get("blocked_reason")
+    if not isinstance(blocked_reason, str) or blocked_reason:
+        raise ArtifactError("REQUEST_CHANGES feedback cannot contain a blocked reason")
+    normalized = [_review_failure(item, index) for index, item in enumerate(failures)]
+    text = json.dumps(
+        {"verdict": verdict, "deterministic_failures": normalized, "blocked_reason": ""},
+        indent=2,
+        sort_keys=True,
+    )
+    label = scan_secret_text(text)
+    if label:
+        raise ArtifactError(f"review feedback contains prohibited {label} material")
+    return text
 
 
 def path_is_denied(path: str) -> bool:
