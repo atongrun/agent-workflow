@@ -325,6 +325,7 @@ def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
         runtime.LocalRuntimeApplication,
         runtime.LocalTransportBoundary,
         runtime.OpenCodeRenderer,
+        runtime.OutgoingIntentDispatcher,
         runtime.PiReviewerRenderer,
         runtime.StoreError,
         runtime.SubprocessProviderLauncher,

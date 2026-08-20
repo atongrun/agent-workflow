@@ -187,7 +187,7 @@ def test_outgoing_intent_is_exact_canonical_result_envelope() -> None:
         dataclasses.replace(intent, envelope_sha256=digest("drift"))
     with pytest.raises(ValueError):
         dataclasses.replace(intent, envelope_json=intent.envelope_json + " ")
-    with pytest.raises(ValueError, match="target_role"):
+    with pytest.raises(ValueError, match="canonical result envelope"):
         dataclasses.replace(intent, target_role="coder")
 
 
