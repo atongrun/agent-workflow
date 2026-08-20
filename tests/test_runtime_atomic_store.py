@@ -25,6 +25,7 @@ from agent_workflow.runtime import (
     RunSpec,
     RunStore,
     StatusReader,
+    StopCommand,
     StoreError,
     TerminalCommand,
     TerminalOutcome,
@@ -95,6 +96,7 @@ def authorize(
     attempt: int,
 ) -> tuple[AuthorizationCommand, AtomicInvocationJournal]:
     role = "reviewer" if stage is WorkflowStage.REVIEW else "coder"
+    incoming = store.pending_handoff()
     command = AuthorizationCommand(
         run_spec_sha256=spec.sha256,
         invocation_id=f"invoke-{label}",
@@ -102,8 +104,8 @@ def authorize(
         stage=stage,
         role=role,
         attempt=attempt,
-        delivery_id=f"delivery-{label}",
-        payload_sha256=digest(f"payload-{label}"),
+        delivery_id=incoming.delivery_id if incoming else f"delivery-{label}",
+        payload_sha256=incoming.payload_sha256 if incoming else digest(f"payload-{label}"),
     )
     fact = JournalAuthorization(
         run_spec_sha256=spec.sha256,
@@ -251,7 +253,7 @@ def test_full_implement_review_rework_review_terminal_route(tmp_path: Path) -> N
     final = AtomicStatusReader(tmp_path, spec.run_id).snapshot(spec.run_id)
     assert final.terminal is TerminalOutcome.COMPLETED
     assert final.outcome is DecisionOutcome.TERMINAL_IDEMPOTENT
-    assert final.next_action == "none"
+    assert final.next_action == "status or exact stop only"
 
     before = store.path.read_bytes()
     replay = store.record_terminal(command, review_two_effect)
@@ -268,7 +270,7 @@ def test_recovery_status_never_guesses_provider_replay(tmp_path: Path) -> None:
     ready = status.snapshot(spec.run_id)
     assert ready.first_blocker is None
     assert ready.outcome is DecisionOutcome.SAFE_CONTINUE
-    assert ready.next_action == "launch the exact authorized provider once"
+    assert ready.next_action == "invoke once after exact gates and journal revalidation"
     assert files(tmp_path) == before
 
     launch = LaunchIntent(command.authorization_sha256, digest("rendered-recover"))
@@ -293,7 +295,9 @@ def test_recovery_status_never_guesses_provider_replay(tmp_path: Path) -> None:
     recoverable = status.snapshot(spec.run_id)
     assert recoverable.first_blocker is None
     assert recoverable.outcome is DecisionOutcome.SAFE_CONTINUE
-    assert recoverable.next_action == "validate the exact durable result without provider replay"
+    assert recoverable.next_action == (
+        "skip provider and run frozen postflight against exact durable workspace"
+    )
 
 
 def test_exact_journal_and_handoff_replays_are_stable(tmp_path: Path) -> None:
@@ -530,7 +534,7 @@ def test_duplicate_keys_new_schema_and_writer_drift_fail_closed(tmp_path: Path) 
 
     store.path.write_text(valid + "\n", encoding="utf-8")
     envelope = load_envelope(store)
-    envelope["payload"]["schema_version"] = 2
+    envelope["payload"]["schema_version"] = 3
     rechecksum(envelope)
     write_envelope(store, envelope)
     newer = store.path.read_bytes()
@@ -606,7 +610,68 @@ def test_unsupported_and_conflicting_terminal_preserve_exact_authority(tmp_path:
     with pytest.raises(StoreError) as caught:
         store.record_terminal(conflicting, effect)
     assert caught.value.outcome is DecisionOutcome.TERMINAL_CONFLICT
-    assert store.path.read_bytes() == before
+
+
+def test_exact_local_stop_is_single_writer_idempotent_and_blocks_mutation(tmp_path: Path) -> None:
+    store, spec = initialized_store(tmp_path)
+    initial = AtomicStatusReader(tmp_path, spec.run_id).snapshot(spec.run_id)
+    command = StopCommand(spec.sha256, spec.run_id, initial.sequence)
+
+    decision = store.record_stop(command)
+    assert decision.outcome is DecisionOutcome.SAFE_CONTINUE
+    stopped = AtomicStatusReader(tmp_path, spec.run_id).snapshot(spec.run_id)
+    assert stopped.stopped is True
+    assert stopped.terminal is None
+    assert stopped.outcome is DecisionOutcome.OWNER_DECISION_REQUIRED
+    assert stopped.first_blocker == "run is locally stopped"
+
+    before = files(tmp_path)
+    replay = store.record_stop(command)
+    assert replay.outcome is DecisionOutcome.SAFE_IDEMPOTENT_REPLAY
+    assert files(tmp_path) == before
+
+    changed = dataclasses.replace(command, expected_sequence=command.expected_sequence + 1)
+    with pytest.raises(StoreError, match="stop identity conflicts"):
+        store.record_stop(changed)
+    with pytest.raises(StoreError, match="illegal after local stop"):
+        authorize(store, spec, WorkflowStage.IMPLEMENT, "after-stop", 1)
+    assert files(tmp_path) == before
+
+
+def test_local_stop_denies_ambiguous_process_and_preserves_terminal(tmp_path: Path) -> None:
+    store, spec = initialized_store(tmp_path)
+    command, journal = authorize(store, spec, WorkflowStage.IMPLEMENT, "ambiguous-stop", 1)
+    journal.record_launch_intent(LaunchIntent(command.authorization_sha256, digest("rendered")))
+    before = files(tmp_path)
+    snapshot = AtomicStatusReader(tmp_path, spec.run_id).snapshot(spec.run_id)
+    with pytest.raises(StoreError) as caught:
+        store.record_stop(StopCommand(spec.sha256, spec.run_id, snapshot.sequence))
+    assert caught.value.outcome is DecisionOutcome.AMBIGUOUS_NO_REPLAY
+    assert files(tmp_path) == before
+
+    terminal_store, terminal_spec = initialized_store(tmp_path / "terminal")
+    review, review_journal = authorize(
+        terminal_store, terminal_spec, WorkflowStage.IMPLEMENT, "stop-implement", 1
+    )
+    effect = complete_provider(review_journal, review, "stop-implement")
+    handoff(terminal_store, terminal_spec, review, effect, "stop-review")
+    review, review_journal = authorize(
+        terminal_store, terminal_spec, WorkflowStage.REVIEW, "stop-review", 1
+    )
+    effect = complete_provider(review_journal, review, "stop-review")
+    terminal(terminal_store, terminal_spec, review, effect)
+    final = AtomicStatusReader(tmp_path / "terminal", terminal_spec.run_id).snapshot(
+        terminal_spec.run_id
+    )
+    terminal_store.record_stop(
+        StopCommand(terminal_spec.sha256, terminal_spec.run_id, final.sequence)
+    )
+    stopped = AtomicStatusReader(tmp_path / "terminal", terminal_spec.run_id).snapshot(
+        terminal_spec.run_id
+    )
+    assert stopped.terminal is TerminalOutcome.COMPLETED
+    assert stopped.stopped is True
+    assert store.path.read_bytes() == before[store.path.relative_to(tmp_path).as_posix()]
 
 
 def test_authority_symlink_is_never_followed(tmp_path: Path) -> None:

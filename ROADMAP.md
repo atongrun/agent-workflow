@@ -55,21 +55,25 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   and exact trusted local import seam, preserving sole current production authority.
 - [x] Complete RTS-034 as the installed TaskCard/report identity, strict report/raw-Artifact and
   postflight-decision seam, preserving sole current production authority and recovery.
+- [x] Complete RTS-035 as the disposable selected local `run/status/stop` application composition,
+  with full PASS/rework/BLOCKED paths, all shared faults and no production/default adoption.
 
-Current last passed TaskCard gate is RTS-034. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
-checksummed atomic-file RunStore/per-invocation journal, one logical writer and no physical
-Coordinator. The semantic contract and 39-case/11-outcome matrix are Frozen. RTS-030 added strict
+Current last passed TaskCard gate is RTS-035, and Phase 3 is complete. ADR-0006 selects
+`PYTHON + NATIVE LAUNCHER` with a checksummed atomic-file RunStore/per-invocation journal, one
+logical writer and no physical Coordinator. The semantic contract and 39-case/11-outcome matrix
+are Frozen. RTS-030 added strict
 installed Python Core contracts and ports. RTS-031 added the selected disposable local Store and
 journal; RTS-032 moved existing provider command rendering behind the installed Runtime boundary
 while leaving current state sole authority; RTS-033 moved exact isolated-workspace and trusted
 local import effects behind the same boundary; RTS-034 moved Artifact validation and exact raw facts
-without changing recovery or lineage authority. Rust remains a comparison oracle, RTS-023 does not
-enter, SQLite is not selected, and launcher work is deferred until after the full Phase 3 Python
-boundary. The next safe action is a separately frozen RTS-035 selected local Workflow application
-composition boundary using newly created disposable state. No Store adoption, dual write, default,
-migration, release, retained-event operation or destructive cleanup is authorized. See the
+without changing recovery or lineage authority; RTS-035 composes those seams through one disposable
+local application and exact Store writer. Rust remains a comparison oracle, RTS-023 does not enter,
+SQLite is not selected, and launcher work remains deferred. The next safe action is a separately
+frozen RTS-040 Phase 4A Stage-blind command/result envelope using disposable no-model state. No
+production/retained Bus operation, Store adoption, dual write, default, migration, release,
+retained-event operation or destructive cleanup is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-034 closeout](docs/tasks/runtime-v2-rts-034-artifact-validation-implementation-report.md).
+[RTS-035 closeout](docs/tasks/runtime-v2-rts-035-local-application-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

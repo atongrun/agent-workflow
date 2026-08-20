@@ -65,7 +65,7 @@ def test_runtime_package_has_one_way_standard_library_dependency_boundary() -> N
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         for term in FORBIDDEN_SOURCE_TERMS:
-            if term == "subprocess" and path.name == "workspace.py":
+            if term == "subprocess" and path.name in {"application.py", "workspace.py"}:
                 continue
             assert term not in source, (path, term)
         for node in ast.walk(tree):
@@ -89,6 +89,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "RUN_SPEC_FORMAT",
         "AUTHORITY_FORMAT",
         "ATTACH_INPUT",
+        "ApplicationError",
         "ArtifactError",
         "ArtifactFact",
         "AtomicInvocationJournal",
@@ -105,9 +106,13 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "JournalAuthorization",
         "JournalSnapshot",
         "LaunchIntent",
+        "LocalRuntimeApplication",
+        "LocalStageRequest",
         "NormalizedReviewReport",
         "ProcessObservation",
+        "ProcessResult",
         "PostflightContract",
+        "PostflightObservation",
         "PostflightResult",
         "PreparedWorkspace",
         "OPENCODE_FINDING_INSTRUCTIONS",
@@ -115,6 +120,7 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "PI_FINDING_INSTRUCTIONS",
         "PiReviewerRenderer",
         "ProviderRenderer",
+        "ProviderLauncher",
         "ProviderResult",
         "ProviderSelection",
         "RenderedInputFile",
@@ -125,8 +131,11 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "RunSpec",
         "RunStore",
         "StatusReader",
+        "StartedProvider",
         "StageArtifactContract",
+        "StopCommand",
         "StoreError",
+        "SubprocessProviderLauncher",
         "TerminalCommand",
         "TerminalOutcome",
         "ValidationEffect",
@@ -175,7 +184,9 @@ def test_ports_expose_no_arbitrary_phase_or_repair_escape_hatch() -> None:
         "initialize",
         "authorize",
         "journal",
+        "pending_handoff",
         "record_handoff",
+        "record_stop",
         "record_terminal",
     }
     assert public_protocol_methods(InvocationJournal) == {
@@ -241,16 +252,26 @@ def test_decision_outcomes_exactly_match_frozen_contract() -> None:
 
 def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
     exported = [getattr(runtime, name) for name in runtime.__all__]
-    protocols = {RunStore, InvocationJournal, StatusReader, ProviderRenderer}
+    protocols = {
+        RunStore,
+        InvocationJournal,
+        StatusReader,
+        ProviderRenderer,
+        runtime.ProviderLauncher,
+        runtime.StartedProvider,
+    }
     concrete = {
         runtime.AtomicInvocationJournal,
         runtime.AtomicRunStore,
         runtime.AtomicStatusReader,
+        runtime.ApplicationError,
         runtime.CodexReviewerRenderer,
         runtime.ArtifactError,
+        runtime.LocalRuntimeApplication,
         runtime.OpenCodeRenderer,
         runtime.PiReviewerRenderer,
         runtime.StoreError,
+        runtime.SubprocessProviderLauncher,
         runtime.WorkspaceError,
         runtime.WriterBusy,
     }

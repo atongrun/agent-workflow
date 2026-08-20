@@ -19,6 +19,12 @@ from .contracts import (
 )
 
 
+def _workspace_manifest(value: str) -> None:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise ContractError("workspace_manifest_sha256 must be a prefixed SHA-256")
+    _sha256("workspace_manifest_sha256", value.removeprefix("sha256:"))
+
+
 class WorkflowStage(str, Enum):
     IMPLEMENT = "implement"
     REVIEW = "review"
@@ -114,6 +120,18 @@ class TerminalCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class StopCommand:
+    run_spec_sha256: str
+    run_id: str
+    expected_sequence: int
+
+    def __post_init__(self) -> None:
+        _sha256("run_spec_sha256", self.run_spec_sha256)
+        _identifier("run_id", self.run_id)
+        _nonnegative_integer("expected_sequence", self.expected_sequence)
+
+
+@dataclass(frozen=True, slots=True)
 class RunDecision:
     outcome: DecisionOutcome
     owner: str
@@ -137,6 +155,7 @@ class RunSnapshot:
     sequence: int
     stage: WorkflowStage | None
     terminal: TerminalOutcome | None
+    stopped: bool
     outcome: DecisionOutcome
     first_blocker: str | None
     owner: str
@@ -151,6 +170,8 @@ class RunSnapshot:
             raise ContractError("stage must be a WorkflowStage or None")
         if self.terminal is not None and not isinstance(self.terminal, TerminalOutcome):
             raise ContractError("terminal must be a TerminalOutcome or None")
+        if not isinstance(self.stopped, bool):
+            raise ContractError("stopped must be a boolean")
         if not isinstance(self.outcome, DecisionOutcome):
             raise ContractError("outcome must be a DecisionOutcome")
         if self.first_blocker is not None:
@@ -166,12 +187,14 @@ class JournalAuthorization:
     invocation_id: str
     authorization_sha256: str
     invocation_spec_sha256: str
+    workspace_manifest_sha256: str = "sha256:" + "0" * 64
 
     def __post_init__(self) -> None:
         _sha256("run_spec_sha256", self.run_spec_sha256)
         _identifier("invocation_id", self.invocation_id)
         _sha256("authorization_sha256", self.authorization_sha256)
         _sha256("invocation_spec_sha256", self.invocation_spec_sha256)
+        _workspace_manifest(self.workspace_manifest_sha256)
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +223,7 @@ class ProviderResult:
     process_identity_sha256: str
     return_code: int
     result_sha256: str
+    workspace_manifest_sha256: str = "sha256:" + "0" * 64
 
     def __post_init__(self) -> None:
         _sha256("authorization_sha256", self.authorization_sha256)
@@ -207,6 +231,7 @@ class ProviderResult:
         if isinstance(self.return_code, bool) or not isinstance(self.return_code, int):
             raise ContractError("return_code must be an integer")
         _sha256("result_sha256", self.result_sha256)
+        _workspace_manifest(self.workspace_manifest_sha256)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +254,7 @@ class JournalSnapshot:
     invocation_id: str
     authorization_sha256: str
     invocation_spec_sha256: str
+    workspace_manifest_sha256: str
     launch_intent: LaunchIntent | None
     process_observation: ProcessObservation | None
     result: ProviderResult | None
@@ -239,6 +265,7 @@ class JournalSnapshot:
         _identifier("invocation_id", self.invocation_id)
         _sha256("authorization_sha256", self.authorization_sha256)
         _sha256("invocation_spec_sha256", self.invocation_spec_sha256)
+        _workspace_manifest(self.workspace_manifest_sha256)
         for name, value, expected in (
             ("launch_intent", self.launch_intent, LaunchIntent),
             ("process_observation", self.process_observation, ProcessObservation),
@@ -262,6 +289,10 @@ class RunStore(Protocol):
     def record_terminal(
         self, command: TerminalCommand, effect: ValidationEffect
     ) -> RunDecision: ...
+
+    def record_stop(self, command: StopCommand) -> RunDecision: ...
+
+    def pending_handoff(self) -> HandoffCommand | None: ...
 
     def journal(self, invocation_id: str) -> InvocationJournal: ...
 

@@ -557,6 +557,21 @@ transition path, `run/status/stop`, mutation-free status and exact stop. It cann
 legacy authority, become the default, operate transport/remote/lifecycle truth, migrate state or
 delete compatibility.
 
+RTS-035 result: **PASS**. One installed disposable `LocalRuntimeApplication` composes the accepted
+RunSpec, atomic Store/journal, closed renderers, isolated workspace/trusted import and Artifact
+policy behind `run`, read-only `status` and exact local `stop`. Complete PASS, bounded deterministic
+rework/second-review/PASS and BLOCKED paths plus all 14 shared fault rows passed. Independent Gate
+Review found zero issues at `9d34532`; exact-head ordinary CI `32363592197` and Binary Feasibility
+`32363592149` passed. Current production authority/defaults remain unchanged.
+
+Phase 3 is complete. The exact successor is a separately frozen **RTS-040 Phase 4A command/result
+envelope boundary**. It may define one versioned Stage-blind Agent Bus command/result envelope and
+stable idempotency identity around the accepted local application, starting with disposable
+no-model fixtures. It cannot change Agent Bus transport ownership, touch production/retained
+events, claim external ACK from local state, dual-write or migrate authority, change defaults, add
+a physical Coordinator/scheduler, begin launcher work, release or delete compatibility. Fresh
+isolated cross-machine acceptance remains a later Phase 4A gate after the local envelope passes.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -819,10 +834,11 @@ Python refactoring, checksummed atomic-file RunStore/journal, logical single wri
 product boundary; the semantic contract is `Frozen`. RTS-030 passed the reversible installed Python
 Core contract/port boundary; RTS-031 through RTS-034 passed the disposable Store/journal, production
 renderer, isolated workspace/trusted import and Artifact-validation seams without changing current
-authority. The next action is the separately frozen RTS-035 selected local Workflow application
-composition boundary in newly created disposable state. No Store adoption or dual write, default
-switch, production state migration, native-launcher acceptance, release, retained-event operation
-or destructive cleanup is authorized.
+authority. RTS-035 passed the complete disposable local application composition and closes Phase 3.
+The next action is the separately frozen RTS-040 Phase 4A Stage-blind command/result envelope in
+disposable no-model state. No production/retained Bus operation, Store adoption or dual write,
+default switch, production state migration, native-launcher acceptance, release, retained-event
+operation or destructive cleanup is authorized.
 
 ## 12. Plan Completion Definition
 

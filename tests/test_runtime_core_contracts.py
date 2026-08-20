@@ -21,6 +21,7 @@ from agent_workflow.runtime import (
     RenderedInputFile,
     RenderedInvocation,
     RunSpec,
+    StopCommand,
     TerminalCommand,
     TerminalOutcome,
     ValidationEffect,
@@ -348,6 +349,11 @@ def test_transition_commands_are_frozen_and_exactly_bound() -> None:
 
     assert handoff.target_role == "reviewer"
     assert terminal.outcome is TerminalOutcome.COMPLETED
+
+    stop = StopCommand(SHA_A, "run-example", 7)
+    assert stop.expected_sequence == 7
+    with pytest.raises(ContractError):
+        StopCommand(SHA_A, "run-example", -1)
     with pytest.raises(dataclasses.FrozenInstanceError):
         authorization.attempt = 2  # type: ignore[misc]
     with pytest.raises((ContractError, ValueError)):
@@ -392,6 +398,7 @@ def test_journal_facts_are_separate_frozen_and_exactly_bound() -> None:
         invocation_id=authorization.invocation_id,
         authorization_sha256=authorization.authorization_sha256,
         invocation_spec_sha256=authorization.invocation_spec_sha256,
+        workspace_manifest_sha256=authorization.workspace_manifest_sha256,
         launch_intent=launch,
         process_observation=process,
         result=result,

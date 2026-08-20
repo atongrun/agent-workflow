@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-034 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-035 is the last passed
 TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
 `Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -165,11 +165,21 @@ Feasibility `32355614216` passed after one external GitHub API 403 single-job re
 RunLedger/checkpoint/outbox/inbox/RunEvidence remains sole production authority. See the
 [RTS-034 closeout](docs/tasks/runtime-v2-rts-034-artifact-validation-implementation-report.md).
 
-The next safe action is a separately frozen RTS-035 selected local Workflow application composition
-boundary. It may compose the accepted Runtime APIs only in newly created disposable state to prove
-the complete local transition path, `run/status/stop`, mutation-free status and exact stop. It must
-not read or dual-write legacy authority, become the default, operate transport/remote/lifecycle
-truth, migrate state or delete compatibility.
+RTS-035 then returned `PASS` for the selected disposable local application boundary. One installed
+`LocalRuntimeApplication` composes the accepted RunSpec, atomic Store/journal, closed renderers,
+isolated workspace/trusted import and Artifact policy behind `run`, read-only `status` and exact
+local `stop`. All legal PASS, bounded rework/second-review/PASS and BLOCKED paths plus the 14 shared
+fault rows passed. Independent Gate Review found zero issues at `9d34532`; ordinary CI
+`32363592197` and Binary Feasibility `32363592149` passed. The Windows candidate failure was closed
+by binding the fixture to existing platform `core.autocrlf` semantics without weakening
+`git diff --check`. Current production authority/defaults remain unchanged. See the
+[RTS-035 closeout](docs/tasks/runtime-v2-rts-035-local-application-implementation-report.md).
+
+Phase 3 is complete. The next safe action is a separately frozen RTS-040 Phase 4A Stage-blind
+command/result envelope boundary. It may begin only with disposable no-model state and must keep
+Agent Bus send, handler success and ACK as external observations. It must not operate production or
+retained events, dual-write/migrate authority, change defaults, begin native-launcher work, release
+or delete compatibility. Fresh isolated cross-machine acceptance remains a later Phase 4A gate.
 
 ## Current Handoff State: 2026-08-17
 

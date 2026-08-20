@@ -26,6 +26,7 @@ from .ports import (
     ProviderResult,
     RunDecision,
     RunSnapshot,
+    StopCommand,
     TerminalCommand,
     TerminalOutcome,
     ValidationEffect,
@@ -34,7 +35,7 @@ from .ports import (
 
 AUTHORITY_FORMAT = "awf.runtime-v2.atomic-authority.v1"
 LOCK_FORMAT = "awf.runtime-v2.atomic-writer-lock.v1"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _PAYLOAD_KEYS = frozenset(
     "schema_version run_spec run_spec_sha256 run_id state_root_sha256 writer_id "
     "sequence events journals".split()
@@ -69,6 +70,7 @@ class _Authority:
     run_spec: RunSpec
     stage: WorkflowStage
     terminal: TerminalCommand | None
+    stopped: StopCommand | None
     authorizations: dict[str, tuple[AuthorizationCommand, JournalAuthorization]]
     journals: dict[str, JournalSnapshot]
 
@@ -234,24 +236,34 @@ def _validate_payload(payload: object) -> _Authority:
 
     stage = WorkflowStage.IMPLEMENT
     terminal: TerminalCommand | None = None
+    stopped: StopCommand | None = None
     authorizations: dict[str, tuple[AuthorizationCommand, JournalAuthorization]] = {}
     counts = {item: 0 for item in WorkflowStage}
     deliveries: set[str] = set()
     handed_off: set[str] = set()
+    incoming: HandoffCommand | None = None
     for raw_event in data["events"]:
-        if terminal is not None:
-            raise _deny("authority contains an event after terminal")
         if not isinstance(raw_event, Mapping):
             raise _deny("authority event is invalid")
         kind = raw_event.get("kind")
+        if stopped is not None or (terminal is not None and kind != "stop"):
+            raise _deny("authority contains an event after terminal or stop")
         if kind == "authorization":
             event = _strict_object(
                 raw_event, "authorization event", frozenset({"kind", "command", "fact"})
             )
             command = _restore(AuthorizationCommand, event["command"])
             fact = _restore(JournalAuthorization, event["fact"])
-            if command.invocation_id in authorizations or command.delivery_id in deliveries:
+            if command.invocation_id in authorizations:
                 raise _deny("authorization identity is reused")
+            if incoming is None:
+                if command.delivery_id in deliveries:
+                    raise _deny("authorization delivery identity is reused")
+            elif (
+                command.delivery_id != incoming.delivery_id
+                or command.payload_sha256 != incoming.payload_sha256
+            ):
+                raise _deny("authorization does not consume the exact incoming handoff")
             if command.stage is not stage:
                 raise _deny("authorization Stage does not match current authority")
             expected_role = "reviewer" if stage is WorkflowStage.REVIEW else "coder"
@@ -268,20 +280,30 @@ def _validate_payload(payload: object) -> _Authority:
             ):
                 raise _deny("authorization command and journal binding drift")
             journal = journals.get(command.invocation_id)
-            if journal is None or (
+            if journal is None:
+                raise StoreError(
+                    DecisionOutcome.OWNER_DECISION_REQUIRED,
+                    "authorized invocation journal is absent",
+                    "preserve the consumed authorization/budget and deny automatic provider replay",
+                    owner="owner",
+                )
+            if (
                 journal.run_spec_sha256,
                 journal.invocation_id,
                 journal.authorization_sha256,
                 journal.invocation_spec_sha256,
+                journal.workspace_manifest_sha256,
             ) != (
                 fact.run_spec_sha256,
                 fact.invocation_id,
                 fact.authorization_sha256,
                 fact.invocation_spec_sha256,
+                fact.workspace_manifest_sha256,
             ):
-                raise _deny("authorization journal is absent or conflicting")
+                raise _deny("authorization journal identity conflicts")
             authorizations[command.invocation_id] = (command, fact)
             deliveries.add(command.delivery_id)
+            incoming = None
         elif kind == "handoff":
             event = _strict_object(
                 raw_event, "handoff event", frozenset({"kind", "command", "effect"})
@@ -306,6 +328,7 @@ def _validate_payload(payload: object) -> _Authority:
             stage = _next_stage(spec, stage, command)
             handed_off.add(command.source_invocation_id)
             deliveries.add(command.delivery_id)
+            incoming = command
         elif kind == "terminal":
             event = _strict_object(
                 raw_event, "terminal event", frozenset({"kind", "command", "effect"})
@@ -333,6 +356,21 @@ def _validate_payload(payload: object) -> _Authority:
                 raise _deny("terminal lineage or validation drift")
             terminal = command
             deliveries.add(command.delivery_id)
+        elif kind == "stop":
+            event = _strict_object(raw_event, "stop event", frozenset({"kind", "command"}))
+            command = _restore(StopCommand, event["command"])
+            if (
+                command.run_spec_sha256 != spec.sha256
+                or command.run_id != spec.run_id
+                or command.expected_sequence != data["sequence"] - 1
+            ):
+                raise _deny("stop identity or sequence drift")
+            if any(
+                journal.launch_intent is not None and journal.result is None
+                for journal in journals.values()
+            ):
+                raise _deny("stop cannot follow an ambiguous provider invocation")
+            stopped = command
         else:
             raise _deny("authority event kind is unknown")
     if set(journals) != set(authorizations):
@@ -344,7 +382,7 @@ def _validate_payload(payload: object) -> _Authority:
     )
     if sequence != 1 + len(data["events"]) + observations:
         raise _deny("authority sequence does not match durable transitions")
-    return _Authority(dict(data), spec, stage, terminal, authorizations, journals)
+    return _Authority(dict(data), spec, stage, terminal, stopped, authorizations, journals)
 
 
 def _read_authority(state_root: Path, path: Path) -> _Authority:
@@ -386,7 +424,13 @@ def _snapshot(authority: _Authority, *, lock_active: bool = False) -> RunSnapsho
     if authority.terminal is not None:
         outcome = DecisionOutcome.TERMINAL_IDEMPOTENT
         cause = "run is terminal"
-        action = "none"
+        action = "status or exact stop only"
+    elif authority.stopped is not None:
+        blocker = "run is locally stopped"
+        owner = "owner"
+        outcome = DecisionOutcome.OWNER_DECISION_REQUIRED
+        cause = "the exact local application stop is durable"
+        action = "use exact-target support to inspect or resume"
     elif lock_active:
         blocker = "exact writer lock is active"
         owner = "owner"
@@ -411,7 +455,7 @@ def _snapshot(authority: _Authority, *, lock_active: bool = False) -> RunSnapsho
             journal = authority.journals[current[-1][0].invocation_id]
             if journal.launch_intent is None:
                 cause = "the invocation is authorized and has no launch intent"
-                action = "launch the exact authorized provider once"
+                action = "invoke once after exact gates and journal revalidation"
             elif journal.result is None:
                 blocker = "provider outcome is ambiguous"
                 owner = "owner"
@@ -420,7 +464,7 @@ def _snapshot(authority: _Authority, *, lock_active: bool = False) -> RunSnapsho
                 action = "preserve exact process/workspace/evidence for owner decision"
             else:
                 cause = "an exact durable provider result awaits validation"
-                action = "validate the exact durable result without provider replay"
+                action = "skip provider and run frozen postflight against exact durable workspace"
     terminal = None if authority.terminal is None else authority.terminal.outcome
     return RunSnapshot(
         spec.run_id,
@@ -428,6 +472,7 @@ def _snapshot(authority: _Authority, *, lock_active: bool = False) -> RunSnapsho
         sequence,
         authority.stage,
         terminal,
+        authority.stopped is not None,
         outcome,
         blocker,
         owner,
@@ -565,6 +610,8 @@ class AtomicRunStore:
         def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
             if payload is None or authority is None:
                 raise _deny("RunStore must be initialized before authorization")
+            if authority.stopped is not None:
+                raise _deny("new authorization is illegal after local stop")
             existing = authority.authorizations.get(command.invocation_id)
             if existing is not None:
                 if existing == (command, fact):
@@ -586,7 +633,7 @@ class AtomicRunStore:
             return payload, (
                 DecisionOutcome.SAFE_CONTINUE,
                 "authorization and journal identity are durable",
-                "launch the exact authorized provider once",
+                "invoke once after exact gates and journal revalidation",
             )
 
         authority, result = self._transaction(transform)
@@ -599,6 +646,15 @@ class AtomicRunStore:
             raise _deny("invocation is not authorized")
         return AtomicInvocationJournal(self, invocation_id)
 
+    def pending_handoff(self) -> HandoffCommand | None:
+        authority = self._read()
+        if authority.terminal is not None or authority.stage is WorkflowStage.IMPLEMENT:
+            return None
+        for event in reversed(authority.payload["events"]):
+            if event["kind"] == "handoff":
+                return _restore(HandoffCommand, event["command"])
+        raise _deny("current Stage has no exact incoming handoff")
+
     def _record_effect(
         self,
         kind: str,
@@ -608,6 +664,8 @@ class AtomicRunStore:
         def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
             if payload is None or authority is None:
                 raise _deny("RunStore is absent")
+            if authority.stopped is not None:
+                raise _deny(f"{kind} is illegal after local stop")
             encoded = {"kind": kind, "command": _data(command), "effect": _data(effect)}
             for event in payload["events"]:
                 same = event["kind"] == kind and (
@@ -651,10 +709,51 @@ class AtomicRunStore:
     def record_terminal(self, command: TerminalCommand, effect: ValidationEffect) -> RunDecision:
         return self._record_effect("terminal", command, effect)
 
+    def record_stop(self, command: StopCommand) -> RunDecision:
+        def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
+            if payload is None or authority is None:
+                raise _deny("RunStore is absent")
+            if authority.stopped is not None:
+                if authority.stopped == command:
+                    return payload, (
+                        DecisionOutcome.SAFE_IDEMPOTENT_REPLAY,
+                        "exact local application stop is already durable",
+                        "none",
+                    )
+                raise _deny("local application stop identity conflicts")
+            if (
+                command.run_spec_sha256 != authority.run_spec.sha256
+                or command.run_id != authority.run_spec.run_id
+                or command.expected_sequence != payload["sequence"]
+            ):
+                raise _deny("local application stop identity or sequence drift")
+            if any(
+                journal.launch_intent is not None and journal.result is None
+                for journal in authority.journals.values()
+            ):
+                raise StoreError(
+                    DecisionOutcome.AMBIGUOUS_NO_REPLAY,
+                    "provider outcome is ambiguous; local stop cannot guess process identity",
+                    "preserve exact process/workspace/evidence for owner decision",
+                    owner="owner",
+                )
+            payload["events"].append({"kind": "stop", "command": _data(command)})
+            return payload, (
+                DecisionOutcome.SAFE_CONTINUE,
+                "exact local application stop is durable",
+                "none",
+            )
+
+        authority, result = self._transaction(transform)
+        assert result is not None
+        return _decision(*result, authority.payload["sequence"])
+
     def _record_journal_fact(self, invocation_id: str, field: str, fact: object) -> JournalSnapshot:
         def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
             if payload is None or authority is None:
                 raise _deny("journal mutation is not legal for current authority")
+            if authority.stopped is not None:
+                raise _deny("journal mutation is illegal after local stop")
             journal = payload["journals"].get(invocation_id)
             if journal is None:
                 raise _deny("authorized journal is absent")
