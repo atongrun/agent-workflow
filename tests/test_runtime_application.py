@@ -145,9 +145,11 @@ class Fixture:
                 else ("result.txt",)
             )
             postflight = PostflightObservation(paths)
-        incoming = AtomicRunStore(
-            self.state, self.spec.run_id, "writer-local-fixture"
-        ).pending_handoff() if stage is not WorkflowStage.IMPLEMENT else None
+        incoming = (
+            AtomicRunStore(self.state, self.spec.run_id, "writer-local-fixture").pending_handoff()
+            if stage is not WorkflowStage.IMPLEMENT
+            else None
+        )
         return LocalStageRequest(
             invocation_id=f"invoke-{label}",
             stage=stage,
@@ -189,9 +191,7 @@ def local_runtime(tmp_path: Path) -> Fixture:
         "verification_commands": [["{python}", "-c", "raise SystemExit(0)"]],
     }
     card.write_text(
-        "# Local fixture\n\n<!-- awf-postflight\n"
-        + json.dumps(payload, indent=2)
-        + "\n-->\n",
+        "# Local fixture\n\n<!-- awf-postflight\n" + json.dumps(payload, indent=2) + "\n-->\n",
         encoding="utf-8",
     )
     git(repo, "add", card_path.as_posix())
@@ -277,9 +277,12 @@ def test_installed_application_completes_pass_and_replay_is_byte_stable(
     local_runtime: Fixture,
 ) -> None:
     fixture = local_runtime
-    assert fixture.app.run(
-        fixture.spec, fixture.request(WorkflowStage.IMPLEMENT, "implement", 1)
-    ).stage is WorkflowStage.REVIEW
+    assert (
+        fixture.app.run(
+            fixture.spec, fixture.request(WorkflowStage.IMPLEMENT, "implement", 1)
+        ).stage
+        is WorkflowStage.REVIEW
+    )
     review = fixture.request(WorkflowStage.REVIEW, "review", 1)
     final = fixture.app.run(fixture.spec, review)
 
@@ -310,9 +313,7 @@ def test_installed_application_completes_one_bounded_rework(
         fixture.spec,
         fixture.request(WorkflowStage.REWORK, "rework", 1),
     )
-    final = fixture.app.run(
-        fixture.spec, fixture.request(WorkflowStage.REVIEW, "review-two", 2)
-    )
+    final = fixture.app.run(fixture.spec, fixture.request(WorkflowStage.REVIEW, "review-two", 2))
 
     assert final.terminal is TerminalOutcome.COMPLETED
     assert fixture.launcher.calls == [
@@ -396,9 +397,10 @@ def test_exact_local_stop_is_idempotent_and_denies_future_run(local_runtime: Fix
     assert stopped.stopped
     assert stopped.outcome is DecisionOutcome.OWNER_DECISION_REQUIRED
     assert fixture.app.stop(fixture.spec) == stopped
-    assert fixture.app.run(
-        fixture.spec, fixture.request(WorkflowStage.IMPLEMENT, "after-stop", 1)
-    ) == stopped
+    assert (
+        fixture.app.run(fixture.spec, fixture.request(WorkflowStage.IMPLEMENT, "after-stop", 1))
+        == stopped
+    )
     assert fixture.launcher.calls == []
     assert files(fixture.state) == before
 
@@ -573,18 +575,18 @@ def test_all_shared_fault_rows_execute_against_installed_application(
         assert fixture.launcher.calls == ["invoke-implement", "invoke-review"]
     elif case_id.startswith("S-STATE-DRIFT"):
         if case_id == "S-STATE-DRIFT-CHECKSUM":
-            AtomicRunStore(
-                fixture.state, fixture.spec.run_id, "writer-local-fixture"
-            ).initialize(fixture.spec)
+            AtomicRunStore(fixture.state, fixture.spec.run_id, "writer-local-fixture").initialize(
+                fixture.spec
+            )
             mutate_authority(
                 fixture,
                 lambda payload: payload.__setitem__("run_id", "run-drift"),
                 rechecksum=False,
             )
         elif case_id == "S-STATE-DRIFT-RUNSPEC-RECHECKSUM":
-            AtomicRunStore(
-                fixture.state, fixture.spec.run_id, "writer-local-fixture"
-            ).initialize(fixture.spec)
+            AtomicRunStore(fixture.state, fixture.spec.run_id, "writer-local-fixture").initialize(
+                fixture.spec
+            )
             mutate_authority(
                 fixture,
                 lambda payload: payload["run_spec"].__setitem__(

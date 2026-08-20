@@ -30,7 +30,7 @@ defaults, migration and release behavior are unchanged.
 
 ## Validation and budgets
 
-- `application.py`: 698 nonblank/noncomment lines (budget 700).
+- `application.py`: 690 nonblank/noncomment lines (budget 700).
 - Focused application test plus scripted provider: below 1,100 nonblank/noncomment lines.
 - `contracts.py`/`ports.py`/`store.py` combined refinement remains below 180 net
   nonblank/noncomment lines; no dependency or persistent family was added.

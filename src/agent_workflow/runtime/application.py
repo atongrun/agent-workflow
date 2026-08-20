@@ -688,16 +688,12 @@ class LocalRuntimeApplication:
                 )
 
     @staticmethod
-    def _delta_paths(
-        workspace: str, environment: tuple[tuple[str, str], ...]
-    ) -> tuple[str, ...]:
+    def _delta_paths(workspace: str, environment: tuple[tuple[str, str], ...]) -> tuple[str, ...]:
         completed = _git(workspace, environment, "diff", "--cached", "--name-only", "-z", "HEAD")
         if completed.returncode != 0:
             raise _deny_mutation("workspace delta path observation failed")
         try:
-            paths = tuple(
-                item.decode("utf-8") for item in completed.stdout.split(b"\0") if item
-            )
+            paths = tuple(item.decode("utf-8") for item in completed.stdout.split(b"\0") if item)
         except UnicodeError as exc:
             raise _deny_mutation("workspace delta path is not UTF-8") from exc
         return paths
@@ -707,9 +703,7 @@ class LocalRuntimeApplication:
         head_tree = _git_text(
             request.trusted_repo, request.provider_environment, "rev-parse", "HEAD^{tree}"
         )
-        index_tree = _git_text(
-            request.trusted_repo, request.provider_environment, "write-tree"
-        )
+        index_tree = _git_text(request.trusted_repo, request.provider_environment, "write-tree")
         if head_tree == delta.model_tree:
             return _git_text(
                 request.trusted_repo, request.provider_environment, "rev-parse", "HEAD"
@@ -738,9 +732,7 @@ class LocalRuntimeApplication:
         )
         if completed.returncode != 0:
             raise _deny_mutation("trusted local commit failed")
-        commit = _git_text(
-            request.trusted_repo, request.provider_environment, "rev-parse", "HEAD"
-        )
+        commit = _git_text(request.trusted_repo, request.provider_environment, "rev-parse", "HEAD")
         tree = _git_text(
             request.trusted_repo, request.provider_environment, "rev-parse", "HEAD^{tree}"
         )
