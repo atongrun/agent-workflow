@@ -184,7 +184,9 @@ Independent review of exact head `5ea5ea0` returned `REQUEST_CHANGES`. This repa
   one-to-one assertion/prohibited proof objects with allowed `proved_by` sets;
 - negative aggregate tests for mutated injection, decision-source, and concrete assertion evidence.
 
-The companion ReviewReport remains intentionally `BLOCKED` with `PENDING_INDEPENDENT_REVIEW`.
+Focused independent TaskCard Gate re-review of exact candidate `9309bb6` returned `PASS` with zero
+remaining findings. The companion ReviewReport records that reviewed semantic candidate; CI and
+cross-platform execution remain pending and no Rust selection is inferred.
 
 Known CI risks before reviewer/CI:
 
@@ -222,7 +224,7 @@ Known CI risks before reviewer/CI:
     "Whitespace diff check PASS"
   ],
   "source_revision": "4177e71b76dcfd21c5ade00e4f9c4bdbead44127",
-  "review_status": "PENDING_INDEPENDENT_REVIEW",
+  "review_status": "PASS",
   "preliminary_result": "PENDING_CI_AND_INDEPENDENT_REVIEW",
   "dependency_count": 0,
   "rust_source_nonblank_noncomment_loc": 3292,
