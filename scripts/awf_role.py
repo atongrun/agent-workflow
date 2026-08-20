@@ -84,10 +84,6 @@ from agent_workflow.runtime import (
     RenderedInvocation,
     WorkspaceError,
     WorkspaceSpec,
-    assert_frozen_workspace as runtime_assert_frozen_workspace,
-    assert_workspace_state as runtime_assert_workspace_state,
-    bind_environment as bind_workspace_environment,
-    freeze_workspace as runtime_freeze_workspace,
     import_workspace_delta,
     prepare_workspace,
     render_provider_invocation,
@@ -96,6 +92,18 @@ from agent_workflow.runtime import (
     workspace_control_sha256,
     workspace_manifest,
     workspace_manifest_sha256,
+)
+from agent_workflow.runtime import (
+    assert_frozen_workspace as runtime_assert_frozen_workspace,
+)
+from agent_workflow.runtime import (
+    assert_workspace_state as runtime_assert_workspace_state,
+)
+from agent_workflow.runtime import (
+    bind_environment as bind_workspace_environment,
+)
+from agent_workflow.runtime import (
+    freeze_workspace as runtime_freeze_workspace,
 )
 from agent_workflow.state_root import state_root_binding
 

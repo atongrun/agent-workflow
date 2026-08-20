@@ -398,8 +398,7 @@ def test_installed_workspace_has_closed_commands_and_wrappers_only_delegate() ->
     assert "from scripts" not in source
     assert "import scripts" not in source
     assert all(
-        parameter.kind
-        not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+        parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
         for name in public
         for parameter in inspect.signature(getattr(workspace_module, name)).parameters.values()
     )
