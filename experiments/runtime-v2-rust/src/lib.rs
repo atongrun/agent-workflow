@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fmt::{Display, Formatter};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -16,7 +17,7 @@ const IMPLEMENT_ID: &str = "implement-1";
 const REVIEW_ID: &str = "review-1";
 const ALLOWED_DELTA: &str = "result.txt";
 
-type Result<T> = std::result::Result<T, AwfError>;
+pub type Result<T> = std::result::Result<T, AwfError>;
 
 #[derive(Debug, Clone)]
 pub struct AwfError {
@@ -441,14 +442,51 @@ fn write_envelope(path: &Path, payload: Json) -> Result<()> {
             .unwrap_or("state"),
         std::process::id()
     ));
-    fs::write(&temp, pretty_json(&envelope(payload)) + "\n").map_err(io_error)?;
+    {
+        let mut file = fs::File::create(&temp).map_err(io_error)?;
+        file.write_all((pretty_json(&envelope(payload)) + "\n").as_bytes())
+            .map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+    }
     fs::rename(temp, path).map_err(io_error)?;
+    if let Ok(parent_file) = fs::File::open(parent) {
+        let _ = parent_file.sync_all();
+    }
     Ok(())
 }
 
 fn read_trusted_json(path: &Path) -> Result<Json> {
     let text = fs::read_to_string(path).map_err(io_error)?;
     parse_json(&text)
+}
+
+fn write_trusted_json_atomic(path: &Path, payload: &Json) -> Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        AwfError::new(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "path has no parent",
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(io_error)?;
+    let temp = path.with_file_name(format!(
+        "{}.tmp-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("trusted-json"),
+        std::process::id()
+    ));
+    {
+        let mut file = fs::File::create(&temp).map_err(io_error)?;
+        file.write_all((pretty_json(payload) + "\n").as_bytes())
+            .map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+    }
+    fs::rename(temp, path).map_err(io_error)?;
+    if let Ok(parent_file) = fs::File::open(parent) {
+        let _ = parent_file.sync_all();
+    }
+    Ok(())
 }
 
 fn read_envelope(path: &Path) -> Result<Json> {
@@ -487,6 +525,24 @@ fn run_dir(state: &Path, run_id: &str) -> PathBuf {
     state.join(run_id)
 }
 
+fn validate_run_id(run_id: &str) -> Result<()> {
+    let valid = !run_id.is_empty()
+        && run_id != "."
+        && run_id != ".."
+        && run_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if valid {
+        Ok(())
+    } else {
+        Err(AwfError::new(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            "run_id escapes the exact run namespace",
+        ))
+    }
+}
+
 fn spec_path(run_dir: &Path) -> PathBuf {
     run_dir.join("runspec.json")
 }
@@ -505,6 +561,10 @@ fn counter_path(run_dir: &Path) -> PathBuf {
     run_dir.join("provider-counts.json")
 }
 
+fn writer_lock_path(run_dir: &Path) -> PathBuf {
+    run_dir.join("writer.lock")
+}
+
 fn artifact_path(run_dir: &Path, role: &str) -> PathBuf {
     run_dir
         .join("artifacts")
@@ -517,6 +577,41 @@ fn workspace_path(run_dir: &Path, invocation_id: &str) -> PathBuf {
 
 fn trusted_repo_path(run_dir: &Path) -> PathBuf {
     run_dir.join("trusted-repo")
+}
+
+struct WriterLock {
+    path: PathBuf,
+    token: String,
+}
+
+impl WriterLock {
+    fn acquire(run_dir: &Path, run_id: &str, purpose: &str) -> Result<Self> {
+        fs::create_dir_all(run_dir).map_err(io_error)?;
+        let path = writer_lock_path(run_dir);
+        let token = format!("{run_id}:{purpose}:{}:{}", std::process::id(), now_id());
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| {
+                AwfError::new(
+                    "OWNER_DECISION_REQUIRED",
+                    "preserve active writer evidence before mutation",
+                    format!("writer lock unavailable: {error}"),
+                )
+            })?;
+        file.write_all(token.as_bytes()).map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+        Ok(Self { path, token })
+    }
+}
+
+impl Drop for WriterLock {
+    fn drop(&mut self) {
+        if fs::read_to_string(&self.path).ok().as_deref() == Some(self.token.as_str()) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String> {
@@ -742,6 +837,150 @@ fn validate_journal(journal: &Json, spec: &Json, run_dir: &Path, invocation_id: 
     Ok(())
 }
 
+fn validate_successful_journal_result(
+    journal: &Json,
+    spec: &Json,
+    run_dir: &Path,
+    invocation_id: &str,
+    role: &str,
+) -> Result<()> {
+    validate_journal(journal, spec, run_dir, invocation_id, role)?;
+    if !matches!(get_string(journal, "state")?.as_str(), "result" | "validated") {
+        return Err(AwfError::new(
+            "DENY_BEFORE_PROVIDER",
+            "preserve files and diagnose exact run identity",
+            format!("{invocation_id} journal does not hold a durable result"),
+        ));
+    }
+    let launch_intent = journal
+        .get("launch_intent")
+        .and_then(Json::as_object)
+        .ok_or_else(|| {
+            AwfError::new(
+                "HANDLER_FAILURE_NO_ACK",
+                "record failure/ambiguity and preserve the same delivery evidence",
+                format!("{invocation_id} launch intent is missing or corrupt"),
+            )
+        })?;
+    if launch_intent.get("no_shell") != Some(&Json::Bool(true)) {
+        return Err(AwfError::new(
+            "HANDLER_FAILURE_NO_ACK",
+            "record failure/ambiguity and preserve the same delivery evidence",
+            format!("{invocation_id} launch intent shell boundary drift"),
+        ));
+    }
+    let expected_argv = provider_argv(spec, run_dir, journal, "normal")?
+        .into_iter()
+        .map(|arg| Json::string(arg.to_string_lossy().to_string()))
+        .collect::<Vec<_>>();
+    if launch_intent.get("mode") != Some(&Json::string("normal"))
+        || launch_intent.get("argv") != Some(&Json::array(expected_argv))
+    {
+        return Err(AwfError::new(
+            "HANDLER_FAILURE_NO_ACK",
+            "record failure/ambiguity and preserve the same delivery evidence",
+            format!("{invocation_id} launch intent argv drift"),
+        ));
+    }
+    if journal.get("started") != Some(&Json::Bool(true)) {
+        return Err(AwfError::new(
+            "HANDLER_FAILURE_NO_ACK",
+            "record failure/ambiguity and preserve the same delivery evidence",
+            format!("{invocation_id} start fact is missing"),
+        ));
+    }
+    let result = journal
+        .get("result")
+        .and_then(Json::as_object)
+        .ok_or_else(|| {
+            AwfError::new(
+                "HANDLER_FAILURE_NO_ACK",
+                "record failure/ambiguity and preserve the same delivery evidence",
+                format!("{invocation_id} journal result is missing or corrupt"),
+            )
+        })?;
+    let success = matches!(result.get("exit_code"), Some(Json::Number(code)) if code == "0")
+        && matches!(result.get("stdout_bytes"), Some(Json::Number(_)))
+        && matches!(result.get("stderr_bytes"), Some(Json::Number(_)));
+    if success {
+        Ok(())
+    } else {
+        Err(AwfError::new(
+            "HANDLER_FAILURE_NO_ACK",
+            "record failure/ambiguity and preserve the same delivery evidence",
+            format!("{invocation_id} journal result is not successful"),
+        ))
+    }
+}
+
+fn journal_with_launch_intent(
+    spec: &Json,
+    run_dir: &Path,
+    journal: Json,
+    mode: &str,
+) -> Result<Json> {
+    let argv = provider_argv(spec, run_dir, &journal, mode)?;
+    let argv = Json::array(
+        argv.iter()
+            .map(|arg| Json::string(arg.to_string_lossy().to_string()))
+            .collect(),
+    );
+    let journal = set_field(journal, "state", Json::string("launch_intent"));
+    Ok(set_field(
+        journal,
+        "launch_intent",
+        Json::object(vec![
+            ("argv", argv),
+            ("mode", Json::string(mode)),
+            ("no_shell", Json::Bool(true)),
+        ]),
+    ))
+}
+
+fn journal_with_started(spec: &Json, run_dir: &Path, journal: Json, mode: &str) -> Result<Json> {
+    let journal = journal_with_launch_intent(spec, run_dir, journal, mode)?;
+    let journal = set_field(journal, "state", Json::string("started"));
+    Ok(set_field(journal, "started", Json::Bool(true)))
+}
+
+fn successful_journal_from_prepared(
+    spec: &Json,
+    run_dir: &Path,
+    prepared: Json,
+    mode: &str,
+) -> Result<Json> {
+    let prepared = journal_with_started(spec, run_dir, prepared, mode)?;
+    let prepared = set_field(prepared, "state", Json::string("result"));
+    Ok(set_field(
+        prepared,
+        "result",
+        Json::object(vec![
+            ("exit_code", Json::Number("0".to_string())),
+            ("stdout_bytes", Json::Number("0".to_string())),
+            ("stderr_bytes", Json::Number("0".to_string())),
+        ]),
+    ))
+}
+
+fn nonzero_journal_from_prepared(
+    spec: &Json,
+    run_dir: &Path,
+    prepared: Json,
+    mode: &str,
+) -> Result<Json> {
+    let prepared = journal_with_started(spec, run_dir, prepared, mode)?;
+    let prepared = set_field(prepared, "state", Json::string("result"));
+    Ok(set_field(
+        prepared,
+        "result",
+        Json::object(vec![
+            ("exit_code", Json::Number("1".to_string())),
+            ("stdout_bytes", Json::Number("0".to_string())),
+            ("stderr_bytes", Json::Number("0".to_string())),
+        ]),
+    ))
+}
+
 fn save_journal(run_dir: &Path, invocation_id: &str, journal: Json) -> Result<()> {
     write_envelope(&journal_path(run_dir, invocation_id), journal)
 }
@@ -855,48 +1094,70 @@ fn invoke_provider(spec: &Json, run_dir: &Path, invocation_id: &str, mode: &str)
     Ok(())
 }
 
-fn counter(run_dir: &Path) -> Json {
+fn counter(run_dir: &Path) -> Result<Json> {
     let path = counter_path(run_dir);
     if path.exists() {
-        read_trusted_json(&path).unwrap_or_else(|_| Json::object(vec![]))
+        validate_counter(read_trusted_json(&path)?)
     } else {
-        Json::object(vec![
-            ("implement", Json::Number("0".to_string())),
-            ("review", Json::Number("0".to_string())),
-            ("calls", Json::array(Vec::new())),
-        ])
+        Ok(zero_counter())
     }
 }
 
-fn counter_number(value: &Json, key: &str) -> u64 {
-    value
-        .get(key)
-        .and_then(Json::as_str)
-        .and_then(|value| value.parse().ok())
-        .or_else(|| match value.get(key) {
-            Some(Json::Number(number)) => number.parse().ok(),
-            _ => None,
-        })
-        .unwrap_or(0)
+fn zero_counter() -> Json {
+    Json::object(vec![
+        ("implement", Json::Number("0".to_string())),
+        ("review", Json::Number("0".to_string())),
+        ("calls", Json::array(Vec::new())),
+    ])
+}
+
+fn validate_counter(value: Json) -> Result<Json> {
+    let implement = counter_number(&value, "implement")?;
+    let review = counter_number(&value, "review")?;
+    let calls = value
+        .get("calls")
+        .and_then(Json::as_array)
+        .ok_or_else(|| parse_error("provider counter calls is not an array"))?;
+    let mut implement_calls = 0u64;
+    let mut review_calls = 0u64;
+    for item in calls {
+        match item.as_str() {
+            Some("implement") => implement_calls += 1,
+            Some("review") => review_calls += 1,
+            _ => return Err(parse_error("provider counter contains an invalid call role")),
+        }
+    }
+    if implement == implement_calls && review == review_calls {
+        Ok(value)
+    } else {
+        Err(parse_error("provider counter calls do not match role totals"))
+    }
+}
+
+fn counter_number(value: &Json, key: &str) -> Result<u64> {
+    match value.get(key) {
+        Some(Json::Number(number)) => number
+            .parse()
+            .map_err(|_| parse_error(format!("provider counter {key} is not u64"))),
+        _ => Err(parse_error(format!(
+            "provider counter {key} is not a JSON number"
+        ))),
+    }
 }
 
 fn write_counter(path: &Path, role: &str) -> Result<()> {
     let mut value = if path.exists() {
-        read_trusted_json(path)?
+        validate_counter(read_trusted_json(path)?)?
     } else {
-        Json::object(vec![
-            ("implement", Json::Number("0".to_string())),
-            ("review", Json::Number("0".to_string())),
-            ("calls", Json::array(Vec::new())),
-        ])
+        zero_counter()
     };
-    let implement = counter_number(&value, "implement");
-    let review = counter_number(&value, "review");
+    let implement = counter_number(&value, "implement")?;
+    let review = counter_number(&value, "review")?;
     let mut calls = value
         .get("calls")
         .and_then(Json::as_array)
         .map(|items| items.to_vec())
-        .unwrap_or_default();
+        .ok_or_else(|| parse_error("provider counter calls is not an array"))?;
     calls.push(Json::string(role));
     value = set_field(
         value,
@@ -909,10 +1170,7 @@ fn write_counter(path: &Path, role: &str) -> Result<()> {
         Json::Number((review + if role == "review" { 1 } else { 0 }).to_string()),
     );
     value = set_field(value, "calls", Json::array(calls));
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(io_error)?;
-    }
-    fs::write(path, pretty_json(&value) + "\n").map_err(io_error)
+    write_trusted_json_atomic(path, &value)
 }
 
 fn validate_implementation_report(path: &Path) -> Result<()> {
@@ -985,7 +1243,6 @@ fn revalidate_trusted_repo(run: &Json, run_dir: &Path) -> Result<()> {
             "missing trusted Git identity",
         ));
     }
-    configure_repo(&repo)?;
     if git_head(&repo)? != expected_head.unwrap() || git_tree(&repo)? != expected_tree.unwrap() {
         return Err(AwfError::new(
             "DENY_BEFORE_MUTATION",
@@ -1003,8 +1260,22 @@ fn revalidate_trusted_repo(run: &Json, run_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn revalidate_completed(run: &Json, spec: &Json, run_dir: &Path) -> Result<()> {
+    validate_run(run, spec)?;
+    let implement = read_journal(run_dir, IMPLEMENT_ID)?;
+    validate_successful_journal_result(&implement, spec, run_dir, IMPLEMENT_ID, "implement")?;
+    validate_implementation_report(&artifact_path(run_dir, "implementation"))?;
+    let review = read_journal(run_dir, REVIEW_ID)?;
+    validate_successful_journal_result(&review, spec, run_dir, REVIEW_ID, "review")?;
+    validate_review_report(&artifact_path(run_dir, "review"))?;
+    revalidate_trusted_repo(run, run_dir)?;
+    Ok(())
+}
+
 pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
+    validate_run_id(run_id)?;
     let run_dir = run_dir(state, run_id);
+    let _lock = WriterLock::acquire(&run_dir, run_id, "run")?;
     let spec = ensure_spec(&run_dir, repo, run_id)?;
     let mut run = match load_run(&run_dir)? {
         Some(run) => run,
@@ -1017,7 +1288,10 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
     validate_run(&run, &spec)?;
     for _ in 0..20 {
         match phase(&run)?.as_str() {
-            "completed" => return status_slice(state, repo, run_id),
+            "completed" => {
+                revalidate_completed(&run, &spec, &run_dir)?;
+                return status_slice(state, repo, run_id);
+            }
             "initialized" => {
                 let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
                 save_journal(&run_dir, IMPLEMENT_ID, journal)?;
@@ -1040,13 +1314,55 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
                 ));
             }
             "implement_authorized" => {
-                invoke_provider(&spec, &run_dir, IMPLEMENT_ID, "normal")?;
+                let journal = read_journal(&run_dir, IMPLEMENT_ID).map_err(|_| {
+                    AwfError::new(
+                        "OWNER_DECISION_REQUIRED",
+                        "preserve the consumed authorization/budget and deny automatic provider replay",
+                        "authorized implement is missing its bound journal",
+                    )
+                })?;
+                validate_journal(&journal, &spec, &run_dir, IMPLEMENT_ID, "implement")?;
+                match get_string(&journal, "state")?.as_str() {
+                    "prepared" => invoke_provider(&spec, &run_dir, IMPLEMENT_ID, "normal")?,
+                    "launch_intent" | "started" => {
+                        return Err(AwfError::new(
+                            "AMBIGUOUS_NO_REPLAY",
+                            "preserve exact process/workspace/evidence for owner decision",
+                            "implement launch/start already recorded",
+                        ));
+                    }
+                    "result" | "validated" => {
+                        validate_successful_journal_result(
+                            &journal,
+                            &spec,
+                            &run_dir,
+                            IMPLEMENT_ID,
+                            "implement",
+                        )?;
+                        validate_implementation_report(&artifact_path(&run_dir, "implementation"))?;
+                    }
+                    other => {
+                        return Err(AwfError::new(
+                            "DENY_BEFORE_PROVIDER",
+                            "preserve files and diagnose exact run identity",
+                            format!("invalid implement recovery state {other}"),
+                        ));
+                    }
+                }
                 run = set_field(run, "phase", Json::string("implement_result"));
                 save_run(&run_dir, run.clone())?;
             }
             "implement_result" => {
+                let journal = read_journal(&run_dir, IMPLEMENT_ID)?;
+                validate_successful_journal_result(
+                    &journal,
+                    &spec,
+                    &run_dir,
+                    IMPLEMENT_ID,
+                    "implement",
+                )?;
                 validate_implementation_report(&artifact_path(&run_dir, "implementation"))?;
-                let mut journal = read_journal(&run_dir, IMPLEMENT_ID)?;
+                let mut journal = journal;
                 journal = set_field(journal, "state", Json::string("validated"));
                 journal = set_field(journal, "validated", Json::Bool(true));
                 save_journal(&run_dir, IMPLEMENT_ID, journal)?;
@@ -1057,6 +1373,15 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
                 save_run(&run_dir, run.clone())?;
             }
             "implement_committed" => {
+                let journal = read_journal(&run_dir, IMPLEMENT_ID)?;
+                validate_successful_journal_result(
+                    &journal,
+                    &spec,
+                    &run_dir,
+                    IMPLEMENT_ID,
+                    "implement",
+                )?;
+                validate_implementation_report(&artifact_path(&run_dir, "implementation"))?;
                 revalidate_trusted_repo(&run, &run_dir)?;
                 run = set_field(
                     run,
@@ -1078,14 +1403,56 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
                 save_run(&run_dir, run.clone())?;
             }
             "review_authorized" => {
-                invoke_provider(&spec, &run_dir, REVIEW_ID, "normal")?;
+                let journal = read_journal(&run_dir, REVIEW_ID).map_err(|_| {
+                    AwfError::new(
+                        "OWNER_DECISION_REQUIRED",
+                        "preserve the consumed authorization/budget and deny automatic provider replay",
+                        "authorized review is missing its bound journal",
+                    )
+                })?;
+                validate_journal(&journal, &spec, &run_dir, REVIEW_ID, "review")?;
+                match get_string(&journal, "state")?.as_str() {
+                    "prepared" => invoke_provider(&spec, &run_dir, REVIEW_ID, "normal")?,
+                    "launch_intent" | "started" => {
+                        return Err(AwfError::new(
+                            "AMBIGUOUS_NO_REPLAY",
+                            "preserve exact process/workspace/evidence for owner decision",
+                            "review launch/start already recorded",
+                        ));
+                    }
+                    "result" | "validated" => {
+                        validate_successful_journal_result(
+                            &journal,
+                            &spec,
+                            &run_dir,
+                            REVIEW_ID,
+                            "review",
+                        )?;
+                        validate_review_report(&artifact_path(&run_dir, "review"))?;
+                    }
+                    other => {
+                        return Err(AwfError::new(
+                            "DENY_BEFORE_PROVIDER",
+                            "preserve files and diagnose exact run identity",
+                            format!("invalid review recovery state {other}"),
+                        ));
+                    }
+                }
                 run = set_field(run, "phase", Json::string("review_result"));
                 save_run(&run_dir, run.clone())?;
             }
             "review_result" => {
+                let journal = read_journal(&run_dir, REVIEW_ID)?;
+                validate_successful_journal_result(
+                    &journal,
+                    &spec,
+                    &run_dir,
+                    REVIEW_ID,
+                    "review",
+                )?;
                 validate_review_report(&artifact_path(&run_dir, "review"))?;
                 revalidate_trusted_repo(&run, &run_dir)?;
-                let mut journal = read_journal(&run_dir, REVIEW_ID)?;
+                let mut journal = journal;
                 journal = set_field(journal, "state", Json::string("validated"));
                 journal = set_field(journal, "validated", Json::Bool(true));
                 save_journal(&run_dir, REVIEW_ID, journal)?;
@@ -1122,9 +1489,12 @@ pub struct Status {
 impl Status {
     fn to_json(&self) -> Json {
         Json::object(vec![
-            ("outcome", Json::string(&self.outcome)),
-            ("legal_next_action", Json::string(&self.legal_next_action)),
-            ("phase", Json::string(&self.phase)),
+            ("outcome", Json::string(self.outcome.clone())),
+            (
+                "legal_next_action",
+                Json::string(self.legal_next_action.clone()),
+            ),
+            ("phase", Json::string(self.phase.clone())),
             ("provider_counts", self.provider_counts.clone()),
             ("terminal", Json::Bool(self.terminal)),
             ("trusted_repo", Json::Bool(self.trusted_repo)),
@@ -1133,6 +1503,7 @@ impl Status {
 }
 
 pub fn status_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
+    validate_run_id(run_id)?;
     let run_dir = run_dir(state, run_id);
     let before = tree_bytes(&run_dir);
     let result = status_slice_inner(state, repo, run_id);
@@ -1149,7 +1520,7 @@ pub fn status_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
 
 fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
     let run_dir = run_dir(state, run_id);
-    let counts = counter(&run_dir);
+    let counts = counter(&run_dir)?;
     let trusted_repo = trusted_repo_path(&run_dir).join(".git").exists();
     let spec_path = spec_path(&run_dir);
     if !spec_path.exists() {
@@ -1178,14 +1549,17 @@ fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status>
     };
     validate_run(&run, &spec)?;
     match phase(&run)?.as_str() {
-        "completed" => Ok(status(
-            "TERMINAL_IDEMPOTENT",
-            "status or exact stop only",
-            "completed",
-            counts,
-            true,
-            trusted_repo,
-        )),
+        "completed" => {
+            revalidate_completed(&run, &spec, &run_dir)?;
+            Ok(status(
+                "TERMINAL_IDEMPOTENT",
+                "status or exact stop only",
+                "completed",
+                counts,
+                true,
+                trusted_repo,
+            ))
+        }
         "prepared_without_authorization" => Ok(status(
             "DENY_BEFORE_PROVIDER",
             "commit exact RunStore authorization before launch",
@@ -1209,14 +1583,42 @@ fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status>
                 }
             };
             validate_journal(&journal, &spec, &run_dir, IMPLEMENT_ID, "implement")?;
-            Ok(status(
-                "SAFE_CONTINUE",
-                "invoke once after exact gates and journal revalidation",
-                "implement_authorized",
-                counts,
-                false,
-                trusted_repo,
-            ))
+            match get_string(&journal, "state")?.as_str() {
+                "prepared" => Ok(status(
+                    "SAFE_CONTINUE",
+                    "invoke once after exact gates and journal revalidation",
+                    "implement_authorized",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+                "launch_intent" | "started" => Ok(status(
+                    "AMBIGUOUS_NO_REPLAY",
+                    "preserve exact process/workspace/evidence for owner decision",
+                    "implement_authorized",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+                "result" | "validated" => Ok(status(
+                    match validate_successful_journal_result(
+                        &journal,
+                        &spec,
+                        &run_dir,
+                        IMPLEMENT_ID,
+                        "implement",
+                    ) {
+                        Ok(()) => "SAFE_CONTINUE",
+                        Err(err) => return Err(err),
+                    },
+                    "skip provider and run frozen postflight against exact durable workspace",
+                    "implement_authorized",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+                other => Err(parse_error(format!("invalid implement journal state {other}"))),
+            }
         }
         "implement_launch_intent" => Ok(status(
             "AMBIGUOUS_NO_REPLAY",
@@ -1234,25 +1636,46 @@ fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status>
             false,
             trusted_repo,
         )),
-        "implement_result" => match validate_implementation_report(&artifact_path(&run_dir, "implementation")) {
-            Ok(()) => Ok(status(
-                "SAFE_CONTINUE",
-                "skip provider and run frozen postflight against exact durable workspace",
-                "implement_result",
-                counts,
-                false,
-                trusted_repo,
-            )),
-            Err(_) => Ok(status(
-                "HANDLER_FAILURE_NO_ACK",
-                "record failure/ambiguity and preserve the same delivery evidence",
-                "implement_result",
-                counts,
-                false,
-                trusted_repo,
-            )),
-        },
+        "implement_result" => {
+            let journal = read_journal(&run_dir, IMPLEMENT_ID)?;
+            match (
+                validate_successful_journal_result(
+                    &journal,
+                    &spec,
+                    &run_dir,
+                    IMPLEMENT_ID,
+                    "implement",
+                ),
+                validate_implementation_report(&artifact_path(&run_dir, "implementation")),
+            ) {
+                (Ok(()), Ok(())) => Ok(status(
+                    "SAFE_CONTINUE",
+                    "skip provider and run frozen postflight against exact durable workspace",
+                    "implement_result",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+                _ => Ok(status(
+                    "HANDLER_FAILURE_NO_ACK",
+                    "record failure/ambiguity and preserve the same delivery evidence",
+                    "implement_result",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+            }
+        }
         "implement_committed" => {
+            let journal = read_journal(&run_dir, IMPLEMENT_ID)?;
+            validate_successful_journal_result(
+                &journal,
+                &spec,
+                &run_dir,
+                IMPLEMENT_ID,
+                "implement",
+            )?;
+            validate_implementation_report(&artifact_path(&run_dir, "implementation"))?;
             revalidate_trusted_repo(&run, &run_dir)?;
             Ok(status(
                 "SAFE_CONTINUE",
@@ -1271,15 +1694,61 @@ fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status>
             false,
             trusted_repo,
         )),
-        "review_authorized" => Ok(status(
-            "SAFE_CONTINUE",
-            "invoke review once after exact gates and journal revalidation",
-            "review_authorized",
-            counts,
-            false,
-            trusted_repo,
-        )),
+        "review_authorized" => {
+            let journal = match read_journal(&run_dir, REVIEW_ID) {
+                Ok(journal) => journal,
+                Err(_) => {
+                    return Ok(status(
+                        "OWNER_DECISION_REQUIRED",
+                        "preserve the consumed authorization/budget and deny automatic provider replay",
+                        "review_authorized",
+                        counts,
+                        false,
+                        trusted_repo,
+                    ));
+                }
+            };
+            validate_journal(&journal, &spec, &run_dir, REVIEW_ID, "review")?;
+            match get_string(&journal, "state")?.as_str() {
+                "prepared" => Ok(status(
+                    "SAFE_CONTINUE",
+                    "invoke review once after exact gates and journal revalidation",
+                    "review_authorized",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+                "launch_intent" | "started" => Ok(status(
+                    "AMBIGUOUS_NO_REPLAY",
+                    "preserve exact process/workspace/evidence for owner decision",
+                    "review_authorized",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+                "result" | "validated" => Ok(status(
+                    match validate_successful_journal_result(
+                        &journal,
+                        &spec,
+                        &run_dir,
+                        REVIEW_ID,
+                        "review",
+                    ) {
+                        Ok(()) => "SAFE_CONTINUE",
+                        Err(err) => return Err(err),
+                    },
+                    "write terminal completion after exact report and Git revalidation",
+                    "review_authorized",
+                    counts,
+                    false,
+                    trusted_repo,
+                )),
+                other => Err(parse_error(format!("invalid review journal state {other}"))),
+            }
+        }
         "review_result" => {
+            let journal = read_journal(&run_dir, REVIEW_ID)?;
+            validate_successful_journal_result(&journal, &spec, &run_dir, REVIEW_ID, "review")?;
             validate_review_report(&artifact_path(&run_dir, "review"))?;
             revalidate_trusted_repo(&run, &run_dir)?;
             Ok(status(
@@ -1346,7 +1815,9 @@ fn collect_tree_bytes(root: &Path, path: &Path, result: &mut BTreeMap<String, Ve
 }
 
 pub fn stop_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
+    validate_run_id(run_id)?;
     let run_dir = run_dir(state, run_id);
+    let _lock = WriterLock::acquire(&run_dir, run_id, "stop")?;
     let mut run = load_run(&run_dir)?.ok_or_else(|| {
         AwfError::new(
             "DENY_BEFORE_PROVIDER",
@@ -1355,6 +1826,13 @@ pub fn stop_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
         )
     })?;
     let current = status_slice(state, repo, run_id)?;
+    if active_invocation(&run_dir)? {
+        return Err(AwfError::new(
+            "OWNER_DECISION_REQUIRED",
+            "preserve active invocation/writer evidence before stopping",
+            "active invocation is recorded",
+        ));
+    }
     if !matches!(phase(&run)?.as_str(), "completed") {
         return Err(AwfError::new(
             "OWNER_DECISION_REQUIRED",
@@ -1439,8 +1917,13 @@ fn arg_value(args: &[String], name: &str) -> Result<String> {
 }
 
 pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Result<()> {
+    validate_run_id(run_id)?;
     let run_dir = run_dir(state, run_id);
     fs::create_dir_all(&run_dir).map_err(io_error)?;
+    if spec_path(&run_dir).exists() || run_path(&run_dir).exists() {
+        let _ = status_slice(state, repo, run_id);
+        return Ok(());
+    }
     let spec = compiled_spec(repo, run_id)?;
     write_envelope(&spec_path(&run_dir), spec.clone())?;
     let base = new_run(&spec)?;
@@ -1459,27 +1942,34 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             save_run(&run_dir, set_field(run, "phase", Json::string("implement_authorized")))?;
         }
         "auth_launch_no_result" => {
-            let journal = set_field(
+            let journal = journal_with_launch_intent(
+                &spec,
+                &run_dir,
                 prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?,
-                "state",
-                Json::string("launch_intent"),
-            );
-            save_journal(&run_dir, IMPLEMENT_ID, set_field(journal, "launch_intent", Json::Bool(true)))?;
+                "normal",
+            )?;
+            save_journal(&run_dir, IMPLEMENT_ID, journal)?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
             save_run(&run_dir, set_field(run, "phase", Json::string("implement_launch_intent")))?;
         }
         "start_result" => {
-            let journal = set_field(
+            let journal = journal_with_started(
+                &spec,
+                &run_dir,
                 prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?,
-                "state",
-                Json::string("started"),
-            );
-            save_journal(&run_dir, IMPLEMENT_ID, set_field(journal, "started", Json::Bool(true)))?;
+                "normal",
+            )?;
+            save_journal(&run_dir, IMPLEMENT_ID, journal)?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
             save_run(&run_dir, set_field(run, "phase", Json::string("implement_started")))?;
         }
         "artifact" => {
-            save_journal(&run_dir, IMPLEMENT_ID, prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?)?;
+            let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                successful_journal_from_prepared(&spec, &run_dir, journal, "normal")?,
+            )?;
             write_counter(&counter_path(&run_dir), "implement")?;
             fs::create_dir_all(artifact_path(&run_dir, "implementation").parent().unwrap()).map_err(io_error)?;
             fs::write(artifact_path(&run_dir, "implementation"), "{\"artifact\":\"invalid\"}\n").map_err(io_error)?;
@@ -1487,14 +1977,38 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             save_run(&run_dir, set_field(run, "phase", Json::string("implement_result")))?;
         }
         "result_validate" => {
-            save_journal(&run_dir, IMPLEMENT_ID, prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?)?;
+            let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
+            save_journal(&run_dir, IMPLEMENT_ID, journal.clone())?;
             provider_main(&provider_args(&run_dir, "implement", "normal")?)?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                successful_journal_from_prepared(&spec, &run_dir, journal, "normal")?,
+            )?;
+            let run = add_authorization(base, IMPLEMENT_ID, "implement");
+            save_run(&run_dir, set_field(run, "phase", Json::string("implement_result")))?;
+        }
+        "nonzero_result_with_valid_artifact" => {
+            let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
+            save_journal(&run_dir, IMPLEMENT_ID, journal.clone())?;
+            provider_main(&provider_args(&run_dir, "implement", "normal")?)?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                nonzero_journal_from_prepared(&spec, &run_dir, journal, "normal")?,
+            )?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
             save_run(&run_dir, set_field(run, "phase", Json::string("implement_result")))?;
         }
         "effect_intent" => {
-            save_journal(&run_dir, IMPLEMENT_ID, prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?)?;
+            let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
+            save_journal(&run_dir, IMPLEMENT_ID, journal.clone())?;
             provider_main(&provider_args(&run_dir, "implement", "normal")?)?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                successful_journal_from_prepared(&spec, &run_dir, journal, "normal")?,
+            )?;
             let (head, tree) = create_trusted_repo(&run_dir)?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
             let run = set_field(run, "trusted_commit", Json::string(head));
@@ -1526,19 +2040,31 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             save_run(&run_dir, set_field(run, "phase", Json::string("implement_authorized")))?;
         }
         "git_drift" => {
+            let implement_journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
             save_journal(
                 &run_dir,
                 IMPLEMENT_ID,
-                prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?,
+                implement_journal.clone(),
             )?;
             provider_main(&provider_args(&run_dir, "implement", "normal")?)?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                successful_journal_from_prepared(&spec, &run_dir, implement_journal, "normal")?,
+            )?;
             let (head, tree) = create_trusted_repo(&run_dir)?;
+            let review_journal = prepared_journal(&spec, &run_dir, REVIEW_ID, "review")?;
             save_journal(
                 &run_dir,
                 REVIEW_ID,
-                prepared_journal(&spec, &run_dir, REVIEW_ID, "review")?,
+                review_journal.clone(),
             )?;
             provider_main(&provider_args(&run_dir, "review", "normal")?)?;
+            save_journal(
+                &run_dir,
+                REVIEW_ID,
+                successful_journal_from_prepared(&spec, &run_dir, review_journal, "normal")?,
+            )?;
             let run = add_authorization(
                 add_authorization(base, IMPLEMENT_ID, "implement"),
                 REVIEW_ID,
@@ -1559,6 +2085,25 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             fs::write(trusted.join(ALLOWED_DELTA), "drift\n").map_err(io_error)?;
             git(&trusted, &["add", ALLOWED_DELTA])?;
             git(&trusted, &["commit", "-m", "Drift trusted effect"])?;
+        }
+        "review_missing_journal" => {
+            let implement_journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
+            save_journal(&run_dir, IMPLEMENT_ID, implement_journal.clone())?;
+            provider_main(&provider_args(&run_dir, "implement", "normal")?)?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                successful_journal_from_prepared(&spec, &run_dir, implement_journal, "normal")?,
+            )?;
+            let (head, tree) = create_trusted_repo(&run_dir)?;
+            let run = add_authorization(
+                add_authorization(base, IMPLEMENT_ID, "implement"),
+                REVIEW_ID,
+                "review",
+            );
+            let run = set_field(run, "trusted_commit", Json::string(head));
+            let run = set_field(run, "trusted_tree", Json::string(tree));
+            save_run(&run_dir, set_field(run, "phase", Json::string("review_authorized")))?;
         }
         _ => return Err(parse_error(format!("unknown inject {inject}"))),
     }
@@ -1604,7 +2149,9 @@ fn make_source_repo(root: &Path) -> Result<PathBuf> {
     Ok(repo)
 }
 
-fn fixture_rows(fixture: &Json) -> Result<Vec<(String, String, String, Vec<String>, Vec<String>)>> {
+fn fixture_rows(
+    fixture: &Json,
+) -> Result<Vec<(String, String, String, String, Vec<String>, Vec<String>)>> {
     if get_string(fixture, "format")? != FIXTURE_FORMAT
         || get_string(fixture, "maturity")? != "Candidate"
         || get_string(fixture, "contract")? != CONTRACT_PATH
@@ -1634,7 +2181,7 @@ fn fixture_rows(fixture: &Json) -> Result<Vec<(String, String, String, Vec<Strin
     Ok(rows)
 }
 
-fn fixture_row(row: &Json) -> Result<(String, String, String, Vec<String>, Vec<String>)> {
+fn fixture_row(row: &Json) -> Result<(String, String, String, String, Vec<String>, Vec<String>)> {
     let assertions = row
         .get("assertions")
         .and_then(Json::as_array)
@@ -1661,15 +2208,32 @@ fn fixture_row(row: &Json) -> Result<(String, String, String, Vec<String>, Vec<S
         get_string(row, "id")?,
         get_string(row, "inject")?,
         get_string(row, "expected_outcome")?,
+        get_string(row, "legal_next_action")?,
         assertions,
         prohibited,
     ))
 }
 
-pub fn verify_fixture(fixture_path: &Path, state_root: &Path, repo_arg: &Path, target: &str) -> Result<Json> {
+pub fn verify_fixture(
+    fixture_path: &Path,
+    state_root: &Path,
+    repo_arg: &Path,
+    target: &str,
+    rustc_version: &str,
+    cargo_version: &str,
+    toolchain: &str,
+) -> Result<Json> {
+    let actual_target = actual_target();
+    if target != actual_target {
+        return Err(parse_error(format!(
+            "requested target {target} did not match actual target {actual_target}"
+        )));
+    }
     let fixture = read_trusted_json(fixture_path)?;
     let rows = fixture_rows(&fixture)?;
     parse_json("{\"a\":1,\"a\":2}").err().ok_or_else(|| parse_error("duplicate JSON smoke did not fail"))?;
+    let source_repo_arg = repo_arg.canonicalize().map_err(io_error)?;
+    let source_revision = git_head(&source_repo_arg)?;
     let root = state_root.join(format!("rts022 verify {}", now_id()));
     fs::create_dir_all(&root).map_err(io_error)?;
     let source_repo = make_source_repo(&root)?;
@@ -1681,13 +2245,24 @@ pub fn verify_fixture(fixture_path: &Path, state_root: &Path, repo_arg: &Path, t
     let normal = run_slice(&normal_state, &source_repo, "normal")?;
     let status_before = tree_bytes(&run_dir(&normal_state, "normal"));
     let completed_status = status_slice(&normal_state, &source_repo, "normal")?;
-    let normal_counts_before = counter(&run_dir(&normal_state, "normal"));
+    let normal_counts_before = counter(&run_dir(&normal_state, "normal"))?;
     run_slice(&normal_state, &source_repo, "normal")?;
-    let normal_counts_after = counter(&run_dir(&normal_state, "normal"));
+    let normal_counts_after = counter(&run_dir(&normal_state, "normal"))?;
     let status_after = tree_bytes(&run_dir(&normal_state, "normal"));
-    stop_slice(&normal_state, &source_repo, "normal")?;
+    let status_git_readonly = status_git_readonly_gate(&normal_state, &source_repo, "normal")?;
+    let active_writer_stop_denied = active_writer_stop_gate(&normal_state, &source_repo, "normal")?;
+    let stop_ok = stop_slice(&normal_state, &source_repo, "normal").is_ok();
+    let active_invocation_state = root.join("active-invocation-state");
+    inject_case(
+        &active_invocation_state,
+        &source_repo,
+        "active-invocation",
+        "auth_launch_no_result",
+    )?;
+    let active_invocation_stop_denied =
+        stop_slice(&active_invocation_state, &source_repo, "active-invocation").is_err();
     let mut row_evidence = Vec::new();
-    for (id, inject, expected, assertions, prohibited) in rows {
+    for (id, inject, expected, expected_action, assertions, prohibited) in rows {
         let case_state = root.join(format!("case-{id}"));
         inject_case(&case_state, &source_repo, &id, &inject)?;
         let bytes_before = tree_bytes(&run_dir(&case_state, &id));
@@ -1697,7 +2272,7 @@ pub fn verify_fixture(fixture_path: &Path, state_root: &Path, repo_arg: &Path, t
                 outcome: err.outcome,
                 legal_next_action: err.legal_next_action,
                 phase: "error".to_string(),
-                provider_counts: counter(&run_dir(&case_state, &id)),
+                provider_counts: counter(&run_dir(&case_state, &id))?,
                 terminal: false,
                 trusted_repo: trusted_repo_path(&run_dir(&case_state, &id)).exists(),
             },
@@ -1706,20 +2281,48 @@ pub fn verify_fixture(fixture_path: &Path, state_root: &Path, repo_arg: &Path, t
         if status.outcome != expected {
             return Err(parse_error(format!("{id} outcome drift: {}", status.outcome)));
         }
+        if status.legal_next_action != expected_action {
+            return Err(parse_error(format!(
+                "{id} legal next action drift: {}",
+                status.legal_next_action
+            )));
+        }
         let checks = check_assertions(
             &case_state,
             &source_repo,
             &id,
+            &inject,
             &assertions,
             &prohibited,
             &bytes_before,
             &bytes_after_status,
         )?;
         row_evidence.push(Json::object(vec![
-            ("case_id", Json::string(id)),
+            ("task_id", Json::string(TASK_ID)),
+            ("case_id", Json::string(id.clone())),
+            ("run_id", Json::string(id.clone())),
             ("inject", Json::string(inject)),
-            ("outcome", Json::string(status.outcome)),
-            ("legal_next_action", Json::string(status.legal_next_action)),
+            ("outcome", Json::string(status.outcome.clone())),
+            ("legal_next_action", Json::string(expected_action)),
+            (
+                "invocation_ids",
+                Json::array(
+                    on_disk_invocation_ids(&run_dir(&case_state, &id))?
+                        .into_iter()
+                        .map(Json::string)
+                        .collect(),
+                ),
+            ),
+            ("provider_counts", status.provider_counts.clone()),
+            ("terminal", Json::Bool(status.terminal)),
+            (
+                "decision_owner",
+                Json::string(decision_owner(&expected, &status.phase)),
+            ),
+            (
+                "decision_source",
+                Json::string(decision_source(&expected, &status.phase)),
+            ),
             (
                 "assertions_checked",
                 Json::array(assertions.into_iter().map(Json::string).collect()),
@@ -1731,48 +2334,157 @@ pub fn verify_fixture(fixture_path: &Path, state_root: &Path, repo_arg: &Path, t
     let startup_samples = startup_samples(&normal_state, &source_repo)?;
     env::set_current_dir(original_cwd).map_err(io_error)?;
     let exe = env::current_exe().map_err(io_error)?;
+    let child_inventory = child_inventory(&run_dir(&normal_state, "normal"))?;
+    let child_argv_no_shell = launch_intents_no_shell(&run_dir(&normal_state, "normal"))?;
+    let python_invoked = child_inventory.iter().any(|child| {
+        let child = child.to_ascii_lowercase();
+        child.contains("python")
+    });
     let evidence = Json::object(vec![
         ("format", Json::string("awf.runtime-v2-rust-evidence.v1")),
         ("target", Json::string(target)),
-        ("actual_target", Json::string(target)),
+        ("actual_target", Json::string(actual_target)),
+        ("source_revision", Json::string(source_revision)),
+        ("rustc_version", Json::string(rustc_version)),
+        ("cargo_version", Json::string(cargo_version)),
+        ("toolchain", Json::string(toolchain)),
         ("case_count", Json::Number("14".to_string())),
         ("case_rows", Json::array(row_evidence)),
-        ("normal_outcome", Json::string(normal.outcome)),
-        ("completed_status_outcome", Json::string(completed_status.outcome)),
+        ("normal_outcome", Json::string(normal.outcome.clone())),
+        (
+            "completed_status_outcome",
+            Json::string(completed_status.outcome.clone()),
+        ),
+        ("normal_run_completed", Json::Bool(normal.terminal)),
+        ("status_ok", Json::Bool(completed_status.outcome == "TERMINAL_IDEMPOTENT")),
+        (
+            "completed_replay_ok",
+            Json::Bool(normal_counts_before == normal_counts_after),
+        ),
+        ("stop_ok", Json::Bool(stop_ok)),
+        ("active_writer_stop_denied", Json::Bool(active_writer_stop_denied)),
+        (
+            "active_invocation_stop_denied",
+            Json::Bool(active_invocation_stop_denied),
+        ),
+        ("no_stale_lock_cleanup", Json::Bool(active_writer_stop_denied)),
+        ("status_git_readonly", Json::Bool(status_git_readonly)),
         ("completed_replay_provider_counts_stable", Json::Bool(normal_counts_before == normal_counts_after)),
         ("status_byte_readonly", Json::Bool(status_before == status_after)),
         ("provider_counts", normal_counts_after),
-        ("runtime_child_executables", Json::array(vec![Json::string("self-provider"), Json::string("git")])),
-        ("child_argv_no_shell", Json::Bool(true)),
-        ("python_invoked", Json::Bool(false)),
-        ("git_prerequisite", Json::Bool(git(repo_arg, &["--version"]).is_ok())),
+        (
+            "runtime_child_executables",
+            Json::array(child_inventory.into_iter().map(Json::string).collect()),
+        ),
+        ("child_argv_no_shell", Json::Bool(child_argv_no_shell)),
+        ("python_invoked", Json::Bool(python_invoked)),
+        ("git_prerequisite", Json::Bool(git(&source_repo_arg, &["--version"]).is_ok())),
         ("executable_size_bytes", Json::Number(fs::metadata(&exe).map_err(io_error)?.len().to_string())),
         ("executable_sha256", Json::string(sha256_file(&exe)?)),
         ("startup_samples_ms", Json::array(startup_samples.into_iter().map(|n| Json::Number(n.to_string())).collect())),
         ("direct_dependency_count", Json::Number("0".to_string())),
         ("transitive_dependency_count", Json::Number("0".to_string())),
         ("direct_dependencies", Json::array(Vec::new())),
+        ("dependencies_complete", Json::Bool(true)),
         ("preliminary_result", Json::string("RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE")),
     ]);
     Ok(evidence)
+}
+
+fn actual_target() -> String {
+    match (env::consts::OS, env::consts::ARCH) {
+        ("linux", "x86_64") => "linux-x86_64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("windows", "x86_64") => "windows-x86_64",
+        ("macos", "x86_64") => "macos-x86_64",
+        ("macos", "aarch64") => "macos-arm64",
+        (os, arch) => return format!("{os}-{arch}"),
+    }
+    .to_string()
+}
+
+fn child_inventory(run_dir: &Path) -> Result<Vec<String>> {
+    let mut children = BTreeSet::new();
+    children.insert("git".to_string());
+    for invocation_id in [IMPLEMENT_ID, REVIEW_ID] {
+        let path = journal_path(run_dir, invocation_id);
+        if path.exists() {
+            let journal = read_journal(run_dir, invocation_id)?;
+            if let Some(argv) = journal
+                .get("launch_intent")
+                .and_then(|intent| intent.get("argv"))
+                .and_then(Json::as_array)
+            {
+                if let Some(exe) = argv.first().and_then(Json::as_str) {
+                    let name = Path::new(exe)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(exe)
+                        .to_string();
+                    children.insert(name);
+                }
+            }
+        }
+    }
+    Ok(children.into_iter().collect())
+}
+
+fn launch_intents_no_shell(run_dir: &Path) -> Result<bool> {
+    for invocation_id in [IMPLEMENT_ID, REVIEW_ID] {
+        let journal = read_journal(run_dir, invocation_id)?;
+        let no_shell = journal
+            .get("launch_intent")
+            .and_then(|intent| intent.get("no_shell"))
+            == Some(&Json::Bool(true));
+        if !no_shell {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn active_writer_stop_gate(state: &Path, repo: &Path, run_id: &str) -> Result<bool> {
+    let dir = run_dir(state, run_id);
+    let lock = writer_lock_path(&dir);
+    fs::write(&lock, "foreign-writer-lock").map_err(io_error)?;
+    let before = fs::read(&lock).map_err(io_error)?;
+    let denied = stop_slice(state, repo, run_id).is_err();
+    let after = fs::read(&lock).map_err(io_error)?;
+    let preserved = before == after && lock.exists();
+    fs::remove_file(&lock).map_err(io_error)?;
+    Ok(denied && preserved)
+}
+
+fn status_git_readonly_gate(state: &Path, repo: &Path, run_id: &str) -> Result<bool> {
+    let dir = run_dir(state, run_id);
+    let trusted = trusted_repo_path(&dir);
+    git(&trusted, &["remote", "add", "dummy", "https://example.invalid/nope.git"])?;
+    let config = trusted.join(".git").join("config");
+    let before = fs::read(&config).map_err(io_error)?;
+    let denied = status_slice(state, repo, run_id).is_err();
+    let after = fs::read(&config).map_err(io_error)?;
+    git(&trusted, &["remote", "remove", "dummy"])?;
+    Ok(denied && before == after)
 }
 
 fn check_assertions(
     state: &Path,
     repo: &Path,
     run_id: &str,
+    inject: &str,
     assertions: &[String],
     prohibited: &[String],
     before: &BTreeMap<String, Vec<u8>>,
     after_status: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Json> {
     let dir = run_dir(state, run_id);
-    let counts = counter(&dir);
-    let implement = counter_number(&counts, "implement");
-    let review = counter_number(&counts, "review");
+    let counts = counter(&dir)?;
+    let implement = counter_number(&counts, "implement")?;
+    let review = counter_number(&counts, "review")?;
     let run = load_run(&dir)?.unwrap_or_else(|| Json::object(vec![]));
     let trusted = trusted_repo_path(&dir);
     let mut checks = Vec::new();
+    let mut assertion_passes = BTreeSet::new();
     for assertion in assertions {
         let pass = match assertion.as_str() {
             "no_provider" => implement == 0 && review == 0,
@@ -1828,60 +2540,48 @@ fn check_assertions(
                 .is_some(),
             "exact_journal_ids" => exact_journal_ids(&dir),
             "state_stable_on_status" => before == after_status,
-            "state_stable_on_rerun" => before == after_status,
+            "state_stable_on_rerun" => {
+                rerun_observation_on_copy(state, repo, run_id, inject, RerunMode::StatusRedelivery)?
+                    .bytes_same
+            }
             "implement_count_stable_on_rerun" | "duplicate_rerun_stable" => {
-                rerun_check_on_copy(state, repo, run_id, true)?
+                let observed =
+                    rerun_observation_on_copy(state, repo, run_id, inject, RerunMode::RunReplay)?;
+                if assertion == "duplicate_rerun_stable" {
+                    observed.bytes_same && observed.all_counts_same && observed.trusted_head_same
+                } else {
+                    observed.implement_count_same
+                }
             }
             other => return Err(parse_error(format!("unmapped assertion {other}"))),
         };
         if !pass {
             return Err(parse_error(format!("{run_id} assertion failed: {assertion}")));
         }
+        assertion_passes.insert(assertion.clone());
         checks.push(Json::object(vec![
-            ("assertion", Json::string(assertion)),
+            ("assertion", Json::string(assertion.clone())),
             ("pass", Json::Bool(true)),
         ]));
     }
     for item in prohibited {
-        let pass = match item.as_str() {
-            "provider start" | "automatic provider replay" | "provider replay" => {
-                implement <= 1 && review <= 1
-            }
-            "treat prepared as launch intent" => {
-                journal_state(&dir, IMPLEMENT_ID) != Some("launch_intent".to_string())
-            }
-            "guessed authorization"
-            | "second authorization identity"
-            | "new authorization identity"
-            | "second prepared journal" => {
-                auth_count(&run, "implement") <= 1 && auth_count(&run, "review") <= 1
-            }
-            "guessed journal repair" | "erase authorization" | "guessed repair" => true,
-            "provider replay after launch intent"
-            | "fall back to prepared recovery"
-            | "fresh replacement delivery" => true,
-            "trusted import" => !trusted.exists(),
-            "handoff intent" | "handoff rewrite" => {
-                run.get("handoff_intent").is_none()
-                    || run.get("handoff_intent") == Some(&Json::Null)
-                    || item == "handoff rewrite"
-            }
-            "terminal completion" | "terminal promotion" | "terminal guess" | "terminal rewrite" => {
-                run.get("terminal").is_none()
-                    || run.get("terminal") == Some(&Json::Null)
-                    || item == "terminal rewrite"
-            }
-            "change TaskCard verification contract"
-            | "broaden allowed paths"
-            | "different trusted commit"
-            | "remote Git write"
-            | "new Git commit" => true,
-            other => return Err(parse_error(format!("unmapped prohibited item {other}"))),
-        };
-        if !pass {
-            return Err(parse_error(format!("{run_id} prohibited effect occurred: {item}")));
+        let mapped = prohibited_assertion_map(item)?;
+        let proved = mapped
+            .iter()
+            .any(|assertion| assertion_passes.contains(*assertion));
+        if !proved {
+            return Err(parse_error(format!(
+                "{run_id} prohibited item {item:?} lacks a concrete assertion proof"
+            )));
         }
-        checks.push(Json::object(vec![("prohibited", Json::string(item)), ("pass", Json::Bool(true))]));
+        checks.push(Json::object(vec![
+            ("prohibited", Json::string(item.clone())),
+            ("pass", Json::Bool(true)),
+            (
+                "proved_by",
+                Json::array(mapped.iter().copied().map(Json::string).collect()),
+            ),
+        ]));
     }
     Ok(Json::array(checks))
 }
@@ -1901,7 +2601,78 @@ fn journal_state(run_dir: &Path, invocation_id: &str) -> Option<String> {
         .and_then(|journal| get_string(&journal, "state").ok())
 }
 
-fn rerun_check_on_copy(state: &Path, repo: &Path, run_id: &str, provider_count_only: bool) -> Result<bool> {
+fn active_invocation(run_dir: &Path) -> Result<bool> {
+    for invocation_id in [IMPLEMENT_ID, REVIEW_ID] {
+        let path = journal_path(run_dir, invocation_id);
+        if path.exists() {
+            let journal = read_journal(run_dir, invocation_id)?;
+            let state = get_string(&journal, "state")?;
+            if matches!(state.as_str(), "launch_intent" | "started") {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn prohibited_assertion_map(item: &str) -> Result<&'static [&'static str]> {
+    match item {
+        "provider start" => Ok(&["no_provider"]),
+        "treat prepared as launch intent" => Ok(&["journal_implement_prepared_only"]),
+        "guessed authorization" => Ok(&["no_auth"]),
+        "guessed journal repair" => Ok(&["implement_journal_absent"]),
+        "erase authorization" => Ok(&["auth_implement_once"]),
+        "provider replay after launch intent" => {
+            Ok(&["journal_state_launch_intent", "state_stable_on_rerun"])
+        }
+        "fall back to prepared recovery" => {
+            Ok(&["journal_state_launch_intent", "state_stable_on_rerun"])
+        }
+        "fresh replacement delivery" => Ok(&["exact_journal_ids", "state_stable_on_rerun"]),
+        "trusted import" => Ok(&["no_trusted_repo"]),
+        "handoff intent" => Ok(&["no_handoff"]),
+        "terminal completion" => Ok(&["no_terminal"]),
+        "second authorization identity" => Ok(&["auth_implement_once"]),
+        "second prepared journal" => Ok(&["exact_journal_ids"]),
+        "terminal guess" => Ok(&["no_terminal"]),
+        "provider replay" => Ok(&["implement_count_stable_on_rerun", "duplicate_rerun_stable"]),
+        "new Git commit" => Ok(&["duplicate_rerun_stable", "trusted_commit_exact"]),
+        "terminal rewrite" => Ok(&["duplicate_rerun_stable"]),
+        "guessed repair" => Ok(&["state_stable_on_status", "state_stable_on_rerun"]),
+        "terminal promotion" => Ok(&["no_terminal"]),
+        "change TaskCard verification contract" => Ok(&["spec_allowed_delta_stable"]),
+        "broaden allowed paths" => Ok(&["spec_allowed_delta_stable"]),
+        "different trusted commit" => Ok(&["trusted_commit_exact"]),
+        "remote Git write" => Ok(&["trusted_remote_absent"]),
+        "new authorization identity" => Ok(&["auth_implement_once"]),
+        "automatic provider replay" => {
+            Ok(&["no_provider", "implement_count_stable_on_rerun", "duplicate_rerun_stable"])
+        }
+        "handoff rewrite" => Ok(&["handoff_exact", "state_stable_on_status"]),
+        other => Err(parse_error(format!("unmapped prohibited item {other}"))),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RerunMode {
+    StatusRedelivery,
+    RunReplay,
+}
+
+struct RerunObservation {
+    bytes_same: bool,
+    implement_count_same: bool,
+    all_counts_same: bool,
+    trusted_head_same: bool,
+}
+
+fn rerun_observation_on_copy(
+    state: &Path,
+    repo: &Path,
+    run_id: &str,
+    inject: &str,
+    mode: RerunMode,
+) -> Result<RerunObservation> {
     let source = run_dir(state, run_id);
     let copy_state = state.with_file_name(format!(
         "{}-rerun-copy-{}",
@@ -1914,14 +2685,32 @@ fn rerun_check_on_copy(state: &Path, repo: &Path, run_id: &str, provider_count_o
     let copy_run = run_dir(&copy_state, run_id);
     copy_dir_all(&source, &copy_run)?;
     let before = tree_bytes(&copy_run);
-    let before_count = counter(&copy_run);
-    let _ = run_slice(&copy_state, repo, run_id);
+    let before_count = counter(&copy_run)?;
+    let before_head = trusted_head_optional(&copy_run);
+    match mode {
+        RerunMode::StatusRedelivery => inject_case(&copy_state, repo, run_id, inject)?,
+        RerunMode::RunReplay => {
+            let _ = run_slice(&copy_state, repo, run_id);
+        }
+    }
     let after = tree_bytes(&copy_run);
-    let after_count = counter(&copy_run);
-    if provider_count_only {
-        Ok(counter_number(&before_count, "implement") == counter_number(&after_count, "implement"))
+    let after_count = counter(&copy_run)?;
+    let after_head = trusted_head_optional(&copy_run);
+    Ok(RerunObservation {
+        bytes_same: before == after,
+        implement_count_same: counter_number(&before_count, "implement")?
+            == counter_number(&after_count, "implement")?,
+        all_counts_same: before_count == after_count,
+        trusted_head_same: before_head == after_head,
+    })
+}
+
+fn trusted_head_optional(run_dir: &Path) -> Option<String> {
+    let repo = trusted_repo_path(run_dir);
+    if repo.exists() {
+        git_head(&repo).ok()
     } else {
-        Ok(before == after)
+        None
     }
 }
 
@@ -1941,20 +2730,90 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn exact_journal_ids(run_dir: &Path) -> bool {
-    for (id, role) in [(IMPLEMENT_ID, "implement"), (REVIEW_ID, "review")] {
-        let path = journal_path(run_dir, id);
-        if path.exists() {
-            let Ok(journal) = read_envelope(&path) else {
-                return false;
-            };
-            if get_string(&journal, "invocation_id").ok().as_deref() != Some(id)
-                || get_string(&journal, "role").ok().as_deref() != Some(role)
-            {
-                return false;
-            }
+    let invocations = run_dir.join("invocations");
+    if !invocations.exists() {
+        return true;
+    }
+    let Ok(entries) = fs::read_dir(&invocations) else {
+        return false;
+    };
+    let mut seen = BTreeSet::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Ok(file_type) = entry.file_type() else {
+            return false;
+        };
+        if !file_type.is_file() {
+            return false;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            return false;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            return false;
+        };
+        if !matches!(stem, IMPLEMENT_ID | REVIEW_ID) || !seen.insert(stem.to_string()) {
+            return false;
         }
     }
     true
+}
+
+fn on_disk_invocation_ids(run_dir: &Path) -> Result<Vec<String>> {
+    let invocations = run_dir.join("invocations");
+    if !invocations.exists() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(&invocations).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        if !entry.file_type().map_err(io_error)?.is_file() {
+            return Err(parse_error("invocation identity entry is not a file"));
+        }
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            return Err(parse_error("invocation identity entry is not a json file"));
+        }
+        ids.push(
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| parse_error("invocation identity is not utf-8"))?
+                .to_string(),
+        );
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+fn decision_owner(outcome: &str, phase: &str) -> &'static str {
+    match outcome {
+        "OWNER_DECISION_REQUIRED" => "owner",
+        "HANDLER_FAILURE_NO_ACK" => "handler",
+        "AMBIGUOUS_NO_REPLAY" => "owner",
+        "TERMINAL_IDEMPOTENT" => "runtime",
+        "SAFE_CONTINUE" => {
+            if phase.contains("authorized") {
+                "runtime-provider-gate"
+            } else {
+                "runtime"
+            }
+        }
+        _ => "runtime",
+    }
+}
+
+fn decision_source(outcome: &str, phase: &str) -> String {
+    match outcome {
+        "OWNER_DECISION_REQUIRED" | "AMBIGUOUS_NO_REPLAY" => {
+            format!("{phase}:journal-gate")
+        }
+        "HANDLER_FAILURE_NO_ACK" => format!("{phase}:handler-result-gate"),
+        "TERMINAL_IDEMPOTENT" => "completed:terminal-fact".to_string(),
+        _ => format!("{phase}:runtime-gate"),
+    }
 }
 
 fn startup_samples(state: &Path, repo: &Path) -> Result<Vec<u128>> {
@@ -1988,6 +2847,330 @@ fn startup_samples(state: &Path, repo: &Path) -> Result<Vec<u128>> {
 fn sha256_file(path: &Path) -> Result<String> {
     let bytes = fs::read(path).map_err(io_error)?;
     Ok(to_hex(&sha256(&bytes)))
+}
+
+pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> Result<Json> {
+    let fixture = read_trusted_json(fixture_path)?;
+    let expected_rows = fixture_rows(&fixture)?;
+    let expected_targets = [
+        "linux-x86_64",
+        "linux-arm64",
+        "windows-x86_64",
+        "macos-x86_64",
+        "macos-arm64",
+    ];
+    let mut seen_targets = BTreeSet::new();
+    let mut source_revision: Option<String> = None;
+    let mut files = Vec::new();
+    for entry in fs::read_dir(input).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        if entry.path().extension().and_then(|ext| ext.to_str()) == Some("json") {
+            files.push(entry.path());
+        }
+    }
+    for file in files {
+        let evidence = read_trusted_json(&file)?;
+        if get_string(&evidence, "format")? != "awf.runtime-v2-rust-evidence.v1" {
+            return Err(parse_error(format!("{} evidence format drift", file.display())));
+        }
+        let target = get_string(&evidence, "target")?;
+        if !expected_targets.contains(&target.as_str()) {
+            return Err(parse_error(format!("unexpected target {target}")));
+        }
+        if !seen_targets.insert(target.clone()) {
+            return Err(parse_error(format!("duplicate target {target}")));
+        }
+        if get_string(&evidence, "actual_target")? != target {
+            return Err(parse_error(format!("{target} actual target drift")));
+        }
+        let revision = get_string(&evidence, "source_revision")?;
+        if revision.is_empty() {
+            return Err(parse_error(format!("{target} source revision missing")));
+        }
+        match &source_revision {
+            Some(expected) if expected != &revision => {
+                return Err(parse_error(format!("{target} source revision drift")));
+            }
+            None => source_revision = Some(revision),
+            _ => {}
+        }
+        if get_string(&evidence, "toolchain")? != "1.85.1" {
+            return Err(parse_error(format!("{target} toolchain drift")));
+        }
+        if get_string(&evidence, "rustc_version")?.is_empty()
+            || get_string(&evidence, "cargo_version")?.is_empty()
+        {
+            return Err(parse_error(format!("{target} Rust tool version missing")));
+        }
+        require_bool(&evidence, "child_argv_no_shell", true)?;
+        require_bool(&evidence, "python_invoked", false)?;
+        require_bool(&evidence, "git_prerequisite", true)?;
+        require_bool(&evidence, "normal_run_completed", true)?;
+        require_bool(&evidence, "status_ok", true)?;
+        require_bool(&evidence, "completed_replay_ok", true)?;
+        require_bool(&evidence, "stop_ok", true)?;
+        require_bool(&evidence, "active_writer_stop_denied", true)?;
+        require_bool(&evidence, "active_invocation_stop_denied", true)?;
+        require_bool(&evidence, "no_stale_lock_cleanup", true)?;
+        require_bool(&evidence, "status_git_readonly", true)?;
+        require_bool(&evidence, "completed_replay_provider_counts_stable", true)?;
+        require_bool(&evidence, "status_byte_readonly", true)?;
+        if get_string(&evidence, "normal_outcome")? != "TERMINAL_IDEMPOTENT"
+            || get_string(&evidence, "completed_status_outcome")? != "TERMINAL_IDEMPOTENT"
+        {
+            return Err(parse_error(format!("{target} normal/status outcome drift")));
+        }
+        require_number(&evidence, "direct_dependency_count", "0")?;
+        require_number(&evidence, "transitive_dependency_count", "0")?;
+        require_bool(&evidence, "dependencies_complete", true)?;
+        require_number(&evidence, "case_count", "14")?;
+        require_provider_counts(&evidence, &target)?;
+        require_child_inventory(&evidence, &target)?;
+        if get_string(&evidence, "preliminary_result")?
+            != "RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE"
+        {
+            return Err(parse_error(format!("{target} preliminary result drift")));
+        }
+        let sha = get_string(&evidence, "executable_sha256")?;
+        if sha.len() != 64 || !sha.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Err(parse_error(format!("{target} executable SHA-256 drift")));
+        }
+        let samples = evidence
+            .get("startup_samples_ms")
+            .and_then(Json::as_array)
+            .ok_or_else(|| parse_error(format!("{target} startup samples missing")))?;
+        if samples.len() != 5 {
+            return Err(parse_error(format!("{target} startup sample count drift")));
+        }
+        let rows = evidence
+            .get("case_rows")
+            .and_then(Json::as_array)
+            .ok_or_else(|| parse_error(format!("{target} case rows missing")))?;
+        if rows.len() != expected_rows.len() {
+            return Err(parse_error(format!("{target} case row count drift")));
+        }
+        let mut seen_rows = BTreeSet::new();
+        for (id, _inject, outcome, action, assertions, prohibited) in &expected_rows {
+            let row = rows
+                .iter()
+                .find(|row| row.get("case_id").and_then(Json::as_str) == Some(id.as_str()))
+                .ok_or_else(|| parse_error(format!("{target} missing row {id}")))?;
+            if !seen_rows.insert(id.clone()) {
+                return Err(parse_error(format!("{target} duplicate row {id}")));
+            }
+            if get_string(row, "outcome")? != outcome.as_str()
+                || get_string(row, "legal_next_action")? != action.as_str()
+            {
+                return Err(parse_error(format!("{target} row {id} semantic drift")));
+            }
+            if get_string(row, "task_id")? != TASK_ID || get_string(row, "run_id")? != id.as_str() {
+                return Err(parse_error(format!("{target} row {id} identity drift")));
+            }
+            require_string_array(row, "assertions_checked", assertions)?;
+            require_string_array(row, "prohibited_checked", prohibited)?;
+            require_invocation_ids(row, target, id)?;
+            require_row_provider_counts(row, assertions, target, id)?;
+            let terminal = row
+                .get("terminal")
+                .and_then(|value| match value {
+                    Json::Bool(value) => Some(*value),
+                    _ => None,
+                })
+                .ok_or_else(|| parse_error(format!("{target} row {id} terminal missing")))?;
+            if assertions.iter().any(|assertion| assertion == "terminal_completed") && !terminal {
+                return Err(parse_error(format!("{target} row {id} terminal fact missing")));
+            }
+            if assertions.iter().any(|assertion| assertion == "no_terminal") && terminal {
+                return Err(parse_error(format!("{target} row {id} terminal fact drift")));
+            }
+            let owner = get_string(row, "decision_owner")?;
+            let owner_ok = match outcome.as_str() {
+                "OWNER_DECISION_REQUIRED" | "AMBIGUOUS_NO_REPLAY" => owner == "owner",
+                "HANDLER_FAILURE_NO_ACK" => owner == "handler",
+                "TERMINAL_IDEMPOTENT" => owner == "runtime",
+                "SAFE_CONTINUE" => owner == "runtime" || owner == "runtime-provider-gate",
+                _ => false,
+            };
+            if !owner_ok {
+                return Err(parse_error(format!("{target} row {id} decision owner drift")));
+            }
+            let source = get_string(row, "decision_source")?;
+            if source.is_empty() || source.contains('/') || source.contains('\\') {
+                return Err(parse_error(format!("{target} row {id} decision source drift")));
+            }
+            let concrete = row
+                .get("concrete_checks")
+                .and_then(Json::as_array)
+                .ok_or_else(|| parse_error(format!("{target} row {id} missing concrete checks")))?;
+            if concrete.len() != assertions.len() + prohibited.len() {
+                return Err(parse_error(format!("{target} row {id} concrete check count drift")));
+            }
+            for check in concrete {
+                require_bool(check, "pass", true)?;
+            }
+        }
+    }
+    for target in expected_targets.iter() {
+        if !seen_targets.contains(*target) {
+            return Err(parse_error(format!("missing target {target}")));
+        }
+    }
+    let summary = Json::object(vec![
+        ("format", Json::string("awf.runtime-v2-rust-aggregate.v1")),
+        (
+            "targets",
+            Json::array(expected_targets.iter().copied().map(Json::string).collect()),
+        ),
+        ("case_count", Json::Number("14".to_string())),
+        (
+            "source_revision",
+            Json::string(source_revision.unwrap_or_default()),
+        ),
+        (
+            "result",
+            Json::string("RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE"),
+        ),
+    ]);
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    fs::write(output, pretty_json(&summary) + "\n").map_err(io_error)?;
+    Ok(summary)
+}
+
+fn require_bool(value: &Json, key: &str, expected: bool) -> Result<()> {
+    match value.get(key) {
+        Some(Json::Bool(actual)) if *actual == expected => Ok(()),
+        _ => Err(parse_error(format!("{key} boolean drift"))),
+    }
+}
+
+fn require_number(value: &Json, key: &str, expected: &str) -> Result<()> {
+    match value.get(key) {
+        Some(Json::Number(actual)) if actual == expected => Ok(()),
+        _ => Err(parse_error(format!("{key} number drift"))),
+    }
+}
+
+fn require_provider_counts(evidence: &Json, target: &str) -> Result<()> {
+    let counts = evidence
+        .get("provider_counts")
+        .ok_or_else(|| parse_error(format!("{target} provider counts missing")))?;
+    require_number(counts, "implement", "1")?;
+    require_number(counts, "review", "1")?;
+    let calls = counts
+        .get("calls")
+        .and_then(Json::as_array)
+        .ok_or_else(|| parse_error(format!("{target} provider calls missing")))?;
+    let calls = calls
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| parse_error(format!("{target} provider call is not string")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if calls == ["implement".to_string(), "review".to_string()] {
+        Ok(())
+    } else {
+        Err(parse_error(format!("{target} provider calls drift")))
+    }
+}
+
+fn require_child_inventory(evidence: &Json, target: &str) -> Result<()> {
+    let children = evidence
+        .get("runtime_child_executables")
+        .and_then(Json::as_array)
+        .ok_or_else(|| parse_error(format!("{target} child inventory missing")))?;
+    let children = children
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| parse_error(format!("{target} child inventory item is not string")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let has_git = children.iter().any(|child| child == "git" || child == "git.exe");
+    let has_self = children
+        .iter()
+        .any(|child| child == "runtime-v2-rust" || child == "runtime-v2-rust.exe");
+    let has_python = children
+        .iter()
+        .any(|child| child.to_ascii_lowercase().contains("python"));
+    if children.len() == 2 && has_git && has_self && !has_python {
+        Ok(())
+    } else {
+        Err(parse_error(format!("{target} child inventory drift")))
+    }
+}
+
+fn require_invocation_ids(row: &Json, target: &str, id: &str) -> Result<()> {
+    let ids = row
+        .get("invocation_ids")
+        .and_then(Json::as_array)
+        .ok_or_else(|| parse_error(format!("{target} row {id} invocation ids missing")))?;
+    let mut seen = BTreeSet::new();
+    for item in ids {
+        let item = item
+            .as_str()
+            .ok_or_else(|| parse_error(format!("{target} row {id} invocation id is not string")))?;
+        if !matches!(item, IMPLEMENT_ID | REVIEW_ID) || !seen.insert(item.to_string()) {
+            return Err(parse_error(format!("{target} row {id} invocation id drift")));
+        }
+    }
+    Ok(())
+}
+
+fn require_row_provider_counts(
+    row: &Json,
+    assertions: &[String],
+    target: &str,
+    id: &str,
+) -> Result<()> {
+    let counts = row
+        .get("provider_counts")
+        .ok_or_else(|| parse_error(format!("{target} row {id} provider counts missing")))?;
+    let counts = validate_counter(counts.clone())?;
+    let implement = counter_number(&counts, "implement")?;
+    let review = counter_number(&counts, "review")?;
+    for assertion in assertions {
+        match assertion.as_str() {
+            "no_provider" if implement != 0 || review != 0 => {
+                return Err(parse_error(format!("{target} row {id} provider count drift")));
+            }
+            "one_implement" if implement != 1 => {
+                return Err(parse_error(format!("{target} row {id} implement count drift")));
+            }
+            "one_review" if review != 1 => {
+                return Err(parse_error(format!("{target} row {id} review count drift")));
+            }
+            "no_review" if review != 0 => {
+                return Err(parse_error(format!("{target} row {id} review count drift")));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn require_string_array(value: &Json, key: &str, expected: &[String]) -> Result<()> {
+    let actual = value
+        .get(key)
+        .and_then(Json::as_array)
+        .ok_or_else(|| parse_error(format!("{key} missing")))?;
+    let actual = actual
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| parse_error(format!("{key} item is not string")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(parse_error(format!("{key} drift")))
+    }
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -2120,6 +3303,9 @@ pub fn main_entry() -> Result<()> {
                 &PathBuf::from(arg_value(&args, "--state")?),
                 &PathBuf::from(arg_value(&args, "--repo")?),
                 &arg_value(&args, "--target")?,
+                &arg_value(&args, "--rustc-version").unwrap_or_else(|_| "unknown".to_string()),
+                &arg_value(&args, "--cargo-version").unwrap_or_else(|_| "unknown".to_string()),
+                &arg_value(&args, "--toolchain").unwrap_or_else(|_| "1.85.1".to_string()),
             )?;
             if let Ok(output) = arg_value(&args, "--evidence") {
                 if let Some(parent) = Path::new(&output).parent() {
@@ -2141,9 +3327,26 @@ pub fn main_entry() -> Result<()> {
                 ]))
             );
         }
+        Some("aggregate") => {
+            let summary = aggregate_evidence(
+                &PathBuf::from(arg_value(&args, "--input")?),
+                &PathBuf::from(arg_value(&args, "--fixture")?),
+                &PathBuf::from(arg_value(&args, "--output")?),
+            )?;
+            println!("{}", pretty_json(&summary));
+        }
+        Some("inspect-journal-ids") => {
+            let run_id = arg_value(&args, "--run-id")?;
+            validate_run_id(&run_id)?;
+            let dir = run_dir(&PathBuf::from(arg_value(&args, "--state")?), &run_id);
+            if !exact_journal_ids(&dir) {
+                return Err(parse_error("extra or malformed invocation identity"));
+            }
+            println!("{}", pretty_json(&Json::object(vec![("exact_journal_ids", Json::Bool(true))])));
+        }
         _ => {
             return Err(parse_error(
-                "usage: runtime-v2-rust run|status|stop|inject|verify|measure",
+                "usage: runtime-v2-rust run|status|stop|inject|verify|measure|aggregate|inspect-journal-ids",
             ))
         }
     }
