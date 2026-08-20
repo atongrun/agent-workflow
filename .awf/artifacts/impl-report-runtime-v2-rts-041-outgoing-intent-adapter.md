@@ -51,8 +51,11 @@ No local fact means downstream acceptance, handler success, ACK or exactly-once 
 - Scope audit contains only frozen RTS-041 paths and no tracked generated/build/mass-formatting or
   unrelated repository changes.
 
-Exact-head full pytest/Ruff/installed-wheel/cross-platform and Binary Feasibility evidence remains
-the candidate CI gate; local macOS intentionally did not install or run pytest/Ruff.
+Exact candidate `dde018a` ordinary CI `32373020432` passed Ruff, the full Linux suite (855 tests),
+the Windows recovery/configuration suite, macOS runtime, resource/workflow/distribution validation
+and all installed-wheel jobs. Exact candidate Binary Readiness `32373020410` passed every native,
+retained Rust-comparison and aggregate job. Local macOS intentionally did not install or run
+pytest/Ruff.
 
 ## Fault coverage
 
