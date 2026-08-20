@@ -1,10 +1,9 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-022A / Rust shared slice (`RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE`, 2026-08-20)**.
-The semantic contract remains `Candidate`; the separately frozen RTS-022B independent-maintainer
-fault gate is next. This plan is not an ADR and authorizes no production migration, default switch
-or release action by itself.
+**RTS-022B / independent Rust maintainer fault gate (`RUST_MAINTAINER_GATE_PASS`, 2026-08-20)**.
+The semantic contract remains `Candidate`; RTS-024 is now `OWNER_DECISION_REQUIRED`. This plan is
+not an ADR and authorizes no production migration, default switch or release action by itself.
 
 RTS-020 passed one-command implement/review/terminal execution and all eight shared fault families
 across 14 machine rows with one RunStore writer and one InvocationJournal API. Pre-final-review head
@@ -23,6 +22,12 @@ no Python process and exact run/status/replay/stop evidence. Its 3,471-line prod
 exceeds the frozen 2,181 threshold, but machine evidence proves the named Python-runtime
 prerequisite is absent for this removable slice. This authorizes only RTS-022B; it does not select
 Rust or change the production Python Runtime.
+
+RTS-022B then proved a fresh maintainer could diagnose and repair one blinded durable-launch-intent
+fault from the frozen contract, existing tests and five-target CI logs in one semantic attempt.
+Seeded Binary Feasibility failed the same existing row on all five Rust targets after successful
+format/lint/build; candidate ordinary CI `32324509595`, Binary Feasibility `32324509603` and
+independent Gate Review passed. This completes Rust experiment evidence but does not select Rust.
 
 RTS-011's narrow Python prerequisite is now regression-locked: each authorized rework unlocks one
 additional review-stage slot while every distinct review delivery remains at input `attempt=1`.
@@ -413,6 +418,11 @@ shared suite and exact lifecycle, direct/transitive dependency counts were zero,
 recorded `python_invoked=false`. Because the Rust numerator is 3,471 lines, the separate RTS-022B
 maintainer-fault gate remains mandatory before RTS-024.
 
+RTS-022B returned `RUST_MAINTAINER_GATE_PASS`: a fresh maintainer restored one blinded
+launch-intent ambiguity/no-replay projection in one semantic repair, with exact seeded/candidate
+five-target evidence and independent Review. RTS-023 therefore does not enter; RTS-024 owns the
+still-open product/language/storage/topology decision.
+
 #### RTS-023 — Go slice, conditional fallback
 
 Run the same shared slice once if Rust stops for Rust-specific build, dependency, ownership, or team
@@ -713,11 +723,11 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Next decision point
 
-RTS-001, RTS-010, RTS-011, RTS-020, RTS-021 and RTS-022A passed, so the contract remains Candidate
-and Phase 2 may continue. RTS-022B is the next gate: one separately frozen independent-maintainer
-fault diagnosis/repair card. A PASS proceeds to RTS-024; a Rust-specific stop may make RTS-023
-entry-eligible only if native value remains. This does not choose Rust, a Store, physical
-Coordinator, product boundary or production migration.
+RTS-001, RTS-010, RTS-011, RTS-020, RTS-021, RTS-022A and RTS-022B passed, so the contract remains
+Candidate and Phase 2 has reached RTS-024. The next action is `OWNER_DECISION_REQUIRED`: accept one
+written product-boundary and implementation-choice ADR using the shared comparison evidence. No
+language, Store, physical Coordinator, product boundary, semantic freeze or production migration is
+selected by the preceding gates.
 
 ## 12. Plan Completion Definition
 
