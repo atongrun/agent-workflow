@@ -2238,14 +2238,7 @@ fn make_source_repo(root: &Path) -> Result<PathBuf> {
     Ok(repo)
 }
 
-type FixtureRow = (
-    String,
-    String,
-    String,
-    String,
-    Vec<String>,
-    Vec<String>,
-);
+type FixtureRow = (String, String, String, String, Vec<String>, Vec<String>);
 
 fn fixture_rows(fixture: &Json) -> Result<Vec<FixtureRow>> {
     if get_string(fixture, "format")? != FIXTURE_FORMAT
