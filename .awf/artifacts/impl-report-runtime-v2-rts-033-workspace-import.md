@@ -102,6 +102,6 @@ default, migrate retained/production state, release or authorize destructive cle
     "Exact-head ordinary CI pending",
     "Independent TaskCard Gate Review pending"
   ],
-  "source_revision": "9c2e5f1db604d620f1ea5cf8df39067f92da6046"
+  "source_revision": "9c2e5f1c6077b1bb7bc2e72d9f0a36d5ec6f13e7"
 }
 -->
