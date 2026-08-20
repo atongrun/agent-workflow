@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .contracts import (
     ContractError,
@@ -17,6 +17,9 @@ from .contracts import (
     _sha256,
     _strict_text,
 )
+
+if TYPE_CHECKING:
+    from .outgoing import OutgoingIntent, OutgoingStatus, TransportSendObservation
 
 
 def _workspace_manifest(value: str) -> None:
@@ -284,15 +287,23 @@ class RunStore(Protocol):
         self, command: AuthorizationCommand, fact: JournalAuthorization
     ) -> RunDecision: ...
 
-    def record_handoff(self, command: HandoffCommand, effect: ValidationEffect) -> RunDecision: ...
+    def record_handoff(
+        self, command: HandoffCommand, effect: ValidationEffect, intent: OutgoingIntent
+    ) -> RunDecision: ...
 
     def record_terminal(
-        self, command: TerminalCommand, effect: ValidationEffect
+        self, command: TerminalCommand, effect: ValidationEffect, intent: OutgoingIntent
     ) -> RunDecision: ...
 
     def record_stop(self, command: StopCommand) -> RunDecision: ...
 
     def pending_handoff(self) -> HandoffCommand | None: ...
+
+    def pending_outgoing(self) -> OutgoingIntent | None: ...
+
+    def outgoing_status(self) -> OutgoingStatus: ...
+
+    def record_send_observation(self, fact: TransportSendObservation) -> RunDecision: ...
 
     def journal(self, invocation_id: str) -> InvocationJournal: ...
 
@@ -311,6 +322,8 @@ class InvocationJournal(Protocol):
 @runtime_checkable
 class StatusReader(Protocol):
     def snapshot(self, run_id: str) -> RunSnapshot: ...
+
+    def outgoing(self, run_id: str) -> OutgoingStatus: ...
 
 
 @runtime_checkable

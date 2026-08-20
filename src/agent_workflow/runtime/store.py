@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import ContractError, RunSpec, _canonical_bytes, _identifier, _sha256
+from .outgoing import (
+    OutgoingIntent,
+    OutgoingStatus,
+    TransportSendObservation,
+    TransportSendState,
+)
 from .ports import (
     AuthorizationCommand,
     DecisionOutcome,
@@ -35,7 +41,7 @@ from .ports import (
 
 AUTHORITY_FORMAT = "awf.runtime-v2.atomic-authority.v1"
 LOCK_FORMAT = "awf.runtime-v2.atomic-writer-lock.v1"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _PAYLOAD_KEYS = frozenset(
     "schema_version run_spec run_spec_sha256 run_id state_root_sha256 writer_id "
     "sequence events journals".split()
@@ -73,6 +79,8 @@ class _Authority:
     stopped: StopCommand | None
     authorizations: dict[str, tuple[AuthorizationCommand, JournalAuthorization]]
     journals: dict[str, JournalSnapshot]
+    outgoing: dict[str, OutgoingIntent]
+    send_observations: dict[str, TransportSendObservation]
 
 
 def _deny(cause: str) -> StoreError:
@@ -150,6 +158,8 @@ def _restore(cls: type[Any], value: object) -> Any:
             data["stage"] = WorkflowStage(data["stage"])
         elif cls is TerminalCommand:
             data["outcome"] = TerminalOutcome(data["outcome"])
+        elif cls is TransportSendObservation:
+            data["state"] = TransportSendState(data["state"])
         return cls(**data)
     except (ContractError, TypeError, ValueError) as exc:
         raise _deny(f"{cls.__name__} is invalid: {exc}") from exc
@@ -202,6 +212,36 @@ def _next_stage(spec: RunSpec, stage: WorkflowStage, command: HandoffCommand) ->
     raise _deny("handoff route or target is illegal for the current Workflow Stage")
 
 
+def _validate_outgoing(
+    spec: RunSpec,
+    command: HandoffCommand | TerminalCommand,
+    intent: OutgoingIntent,
+    source: AuthorizationCommand,
+) -> None:
+    envelope = intent.envelope
+    mismatch = (
+        intent.run_spec_sha256 != spec.sha256
+        or envelope.run_id != spec.run_id
+        or envelope.task_id != spec.task_id
+        or command.run_spec_sha256 != intent.run_spec_sha256
+        or command.delivery_id != intent.delivery_id
+        or command.payload_sha256 != envelope.payload_sha256.removeprefix("sha256:")
+        or command.source_invocation_id != envelope.source_invocation_id
+        or command.source_authorization_sha256 != envelope.source_authorization_sha256
+        or envelope.causation_delivery_id != source.delivery_id
+    )
+    if isinstance(command, HandoffCommand):
+        mismatch = mismatch or (
+            command.route != intent.route or command.target_role != intent.target_role
+        )
+    else:
+        mismatch = mismatch or (
+            intent.target_role != "architect" or intent.route != f"result:{command.outcome.value}"
+        )
+    if mismatch:
+        raise _deny("outgoing intent does not match the exact transition and source delivery")
+
+
 def _validate_payload(payload: object) -> _Authority:
     data = _strict_object(payload, "authority payload", _PAYLOAD_KEYS)
     if data["schema_version"] != SCHEMA_VERSION:
@@ -242,11 +282,13 @@ def _validate_payload(payload: object) -> _Authority:
     deliveries: set[str] = set()
     handed_off: set[str] = set()
     incoming: HandoffCommand | None = None
+    outgoing: dict[str, OutgoingIntent] = {}
+    send_observations: dict[str, TransportSendObservation] = {}
     for raw_event in data["events"]:
         if not isinstance(raw_event, Mapping):
             raise _deny("authority event is invalid")
         kind = raw_event.get("kind")
-        if stopped is not None or (terminal is not None and kind != "stop"):
+        if stopped is not None or (terminal is not None and kind not in {"transport_send", "stop"}):
             raise _deny("authority contains an event after terminal or stop")
         if kind == "authorization":
             event = _strict_object(
@@ -306,10 +348,11 @@ def _validate_payload(payload: object) -> _Authority:
             incoming = None
         elif kind == "handoff":
             event = _strict_object(
-                raw_event, "handoff event", frozenset({"kind", "command", "effect"})
+                raw_event, "handoff event", frozenset({"kind", "command", "effect", "intent"})
             )
             command = _restore(HandoffCommand, event["command"])
             effect = _restore(ValidationEffect, event["effect"])
+            intent = _restore(OutgoingIntent, event["intent"])
             source = authorizations.get(command.source_invocation_id)
             journal = journals.get(command.source_invocation_id)
             if source is None or journal is None or journal.result is None:
@@ -325,16 +368,19 @@ def _validate_payload(payload: object) -> _Authority:
                 or journal.validation_effect != effect
             ):
                 raise _deny("handoff lineage or validation drift")
+            _validate_outgoing(spec, command, intent, source[0])
             stage = _next_stage(spec, stage, command)
             handed_off.add(command.source_invocation_id)
             deliveries.add(command.delivery_id)
+            outgoing[command.delivery_id] = intent
             incoming = command
         elif kind == "terminal":
             event = _strict_object(
-                raw_event, "terminal event", frozenset({"kind", "command", "effect"})
+                raw_event, "terminal event", frozenset({"kind", "command", "effect", "intent"})
             )
             command = _restore(TerminalCommand, event["command"])
             effect = _restore(ValidationEffect, event["effect"])
+            intent = _restore(OutgoingIntent, event["intent"])
             source = authorizations.get(command.source_invocation_id)
             journal = journals.get(command.source_invocation_id)
             if source is None or journal is None or journal.result is None:
@@ -354,8 +400,31 @@ def _validate_payload(payload: object) -> _Authority:
                 or journal.validation_effect != effect
             ):
                 raise _deny("terminal lineage or validation drift")
+            _validate_outgoing(spec, command, intent, source[0])
             terminal = command
             deliveries.add(command.delivery_id)
+            outgoing[command.delivery_id] = intent
+        elif kind == "transport_send":
+            event = _strict_object(raw_event, "transport send event", frozenset({"kind", "fact"}))
+            fact = _restore(TransportSendObservation, event["fact"])
+            intent = outgoing.get(fact.delivery_id)
+            if (
+                intent is None
+                or fact.run_spec_sha256 != spec.sha256
+                or fact.envelope_sha256 != intent.envelope_sha256
+            ):
+                raise _deny("transport observation does not match a Store-owned outgoing intent")
+            previous = send_observations.get(fact.delivery_id)
+            if previous is None:
+                if fact.state is not TransportSendState.ATTEMPTING:
+                    raise _deny("transport result precedes its durable attempting observation")
+            elif (
+                previous.state is not TransportSendState.ATTEMPTING
+                or previous.attempt_id != fact.attempt_id
+                or fact.state not in {TransportSendState.AMBIGUOUS, TransportSendState.SENT}
+            ):
+                raise _deny("transport observation history conflicts or regresses")
+            send_observations[fact.delivery_id] = fact
         elif kind == "stop":
             event = _strict_object(raw_event, "stop event", frozenset({"kind", "command"}))
             command = _restore(StopCommand, event["command"])
@@ -382,7 +451,17 @@ def _validate_payload(payload: object) -> _Authority:
     )
     if sequence != 1 + len(data["events"]) + observations:
         raise _deny("authority sequence does not match durable transitions")
-    return _Authority(dict(data), spec, stage, terminal, stopped, authorizations, journals)
+    return _Authority(
+        dict(data),
+        spec,
+        stage,
+        terminal,
+        stopped,
+        authorizations,
+        journals,
+        outgoing,
+        send_observations,
+    )
 
 
 def _read_authority(state_root: Path, path: Path) -> _Authority:
@@ -475,6 +554,53 @@ def _snapshot(authority: _Authority, *, lock_active: bool = False) -> RunSnapsho
         authority.stopped is not None,
         outcome,
         blocker,
+        owner,
+        cause,
+        action,
+    )
+
+
+def _outgoing_status(authority: _Authority, *, lock_active: bool = False) -> OutgoingStatus:
+    intent = None
+    for event in reversed(authority.payload["events"]):
+        if event["kind"] in {"handoff", "terminal"}:
+            intent = _restore(OutgoingIntent, event["intent"])
+            break
+    if intent is None:
+        return OutgoingStatus(
+            authority.run_spec.run_id,
+            authority.payload["sequence"],
+            None,
+            None,
+            None,
+            DecisionOutcome.EXTERNAL_OBSERVATION_UNKNOWN,
+            "runtime",
+            "no Store-owned outgoing intent exists",
+            "complete the exact authorized local result",
+        )
+    observation = authority.send_observations.get(intent.delivery_id)
+    state = TransportSendState.PREPARED if observation is None else observation.state
+    if lock_active:
+        outcome, owner = DecisionOutcome.AMBIGUOUS_NO_REPLAY, "owner"
+        cause = "an exact local authority mutation may be in flight"
+        action = "preserve exact writer evidence; do not send"
+    elif state is TransportSendState.PREPARED:
+        outcome, owner = DecisionOutcome.SAFE_CONTINUE, "runtime"
+        cause, action = "the exact outgoing intent is prepared", "send the exact bound intent once"
+    elif state is TransportSendState.SENT:
+        outcome, owner = DecisionOutcome.SAFE_IDEMPOTENT_REPLAY, "runtime"
+        cause, action = "the exact outgoing intent is recorded sent", "none"
+    else:
+        outcome, owner = DecisionOutcome.AMBIGUOUS_NO_REPLAY, "owner"
+        cause = "the exact outgoing send attempt is ambiguous"
+        action = "preserve exact transport evidence; do not resend automatically"
+    return OutgoingStatus(
+        authority.run_spec.run_id,
+        authority.payload["sequence"],
+        intent,
+        state,
+        observation,
+        outcome,
         owner,
         cause,
         action,
@@ -655,18 +781,89 @@ class AtomicRunStore:
                 return _restore(HandoffCommand, event["command"])
         raise _deny("current Stage has no exact incoming handoff")
 
+    def pending_outgoing(self) -> OutgoingIntent | None:
+        return _outgoing_status(self._read()).intent
+
+    def outgoing_status(self) -> OutgoingStatus:
+        return _outgoing_status(self._read())
+
+    def record_send_observation(self, fact: TransportSendObservation) -> RunDecision:
+        if not isinstance(fact, TransportSendObservation):
+            raise _deny("transport send observation type is invalid")
+
+        def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
+            if payload is None or authority is None:
+                raise _deny("RunStore is absent")
+            if authority.stopped is not None:
+                raise _deny("transport observation is illegal after local stop")
+            current = _outgoing_status(authority).intent
+            if (
+                current is None
+                or fact.delivery_id != current.delivery_id
+                or fact.run_spec_sha256 != current.run_spec_sha256
+                or fact.envelope_sha256 != current.envelope_sha256
+            ):
+                raise _deny("transport observation does not match the current outgoing intent")
+            previous = authority.send_observations.get(fact.delivery_id)
+            if previous == fact:
+                outcome = (
+                    DecisionOutcome.AMBIGUOUS_NO_REPLAY
+                    if fact.state is TransportSendState.AMBIGUOUS
+                    else DecisionOutcome.SAFE_IDEMPOTENT_REPLAY
+                )
+                return payload, (outcome, "exact transport observation is durable", "none")
+            if previous is None:
+                if fact.state is not TransportSendState.ATTEMPTING:
+                    raise _deny("transport result precedes its attempting observation")
+                result = (
+                    DecisionOutcome.SAFE_CONTINUE,
+                    "the exact send attempt is durable before external I/O",
+                    "call the exact Stage-blind sender once",
+                )
+            elif (
+                previous.state is not TransportSendState.ATTEMPTING
+                or previous.attempt_id != fact.attempt_id
+                or fact.state not in {TransportSendState.AMBIGUOUS, TransportSendState.SENT}
+            ):
+                raise _deny("transport observation conflicts or regresses")
+            elif fact.state is TransportSendState.SENT:
+                result = (
+                    DecisionOutcome.SAFE_CONTINUE,
+                    "the exact outgoing intent is recorded sent",
+                    "none",
+                )
+            else:
+                result = (
+                    DecisionOutcome.AMBIGUOUS_NO_REPLAY,
+                    "the exact outgoing send result is ambiguous",
+                    "preserve exact transport evidence; do not resend automatically",
+                )
+            payload["events"].append({"kind": "transport_send", "fact": _data(fact)})
+            return payload, result
+
+        authority, result = self._transaction(transform)
+        assert result is not None
+        owner = "owner" if result[0] is DecisionOutcome.AMBIGUOUS_NO_REPLAY else "runtime"
+        return RunDecision(result[0], owner, result[1], result[2], authority.payload["sequence"])
+
     def _record_effect(
         self,
         kind: str,
         command: HandoffCommand | TerminalCommand,
         effect: ValidationEffect,
+        intent: OutgoingIntent,
     ) -> RunDecision:
         def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
             if payload is None or authority is None:
                 raise _deny("RunStore is absent")
             if authority.stopped is not None:
                 raise _deny(f"{kind} is illegal after local stop")
-            encoded = {"kind": kind, "command": _data(command), "effect": _data(effect)}
+            encoded = {
+                "kind": kind,
+                "command": _data(command),
+                "effect": _data(effect),
+                "intent": _data(intent),
+            }
             for event in payload["events"]:
                 same = event["kind"] == kind and (
                     kind == "terminal" or event["command"]["delivery_id"] == command.delivery_id
@@ -703,11 +900,15 @@ class AtomicRunStore:
         assert result is not None
         return _decision(*result, authority.payload["sequence"])
 
-    def record_handoff(self, command: HandoffCommand, effect: ValidationEffect) -> RunDecision:
-        return self._record_effect("handoff", command, effect)
+    def record_handoff(
+        self, command: HandoffCommand, effect: ValidationEffect, intent: OutgoingIntent
+    ) -> RunDecision:
+        return self._record_effect("handoff", command, effect, intent)
 
-    def record_terminal(self, command: TerminalCommand, effect: ValidationEffect) -> RunDecision:
-        return self._record_effect("terminal", command, effect)
+    def record_terminal(
+        self, command: TerminalCommand, effect: ValidationEffect, intent: OutgoingIntent
+    ) -> RunDecision:
+        return self._record_effect("terminal", command, effect, intent)
 
     def record_stop(self, command: StopCommand) -> RunDecision:
         def transform(payload: _Payload, authority: _Authority | None) -> _TransformResult:
@@ -816,3 +1017,14 @@ class AtomicStatusReader:
             raise _deny("status run or state-root identity drift")
         _guard_path(self.state_root, self.lock_path)
         return _snapshot(authority, lock_active=self.lock_path.exists())
+
+    def outgoing(self, run_id: str) -> OutgoingStatus:
+        if _identifier("run_id", run_id) != self.run_id:
+            raise _deny("status run identity drift")
+        authority = _read_authority(self.state_root, self.path)
+        if authority.payload["run_id"] != self.run_id or authority.payload[
+            "state_root_sha256"
+        ] != _state_root_sha256(self.state_root):
+            raise _deny("status run or state-root identity drift")
+        _guard_path(self.state_root, self.lock_path)
+        return _outgoing_status(authority, lock_active=self.lock_path.exists())
