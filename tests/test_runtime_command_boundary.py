@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXECUTOR = ROOT / "scripts" / "awf_executor.py"
 ROLE_HANDLER = ROOT / "scripts" / "awf_role.py"
 ADAPTERS = ROOT / "scripts" / "agent_adapters"
+RUNTIME_WORKSPACE = ROOT / "src" / "agent_workflow" / "runtime" / "workspace.py"
 
 
 def production_python_files() -> list[Path]:
@@ -26,6 +27,28 @@ def test_only_unified_executor_imports_subprocess():
                     violations.append(path.relative_to(ROOT).as_posix())
 
     assert violations == []
+
+
+def test_installed_workspace_is_the_only_runtime_local_process_boundary():
+    violations = []
+    runtime_package = ROOT / "src" / "agent_workflow" / "runtime"
+    for path in sorted(runtime_package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports_subprocess = any(
+            (
+                isinstance(node, ast.Import)
+                and any(alias.name == "subprocess" for alias in node.names)
+            )
+            or (isinstance(node, ast.ImportFrom) and node.module == "subprocess")
+            for node in ast.walk(tree)
+        )
+        if imports_subprocess and path != RUNTIME_WORKSPACE:
+            violations.append(path.relative_to(ROOT).as_posix())
+
+    source = RUNTIME_WORKSPACE.read_text(encoding="utf-8")
+    assert violations == []
+    assert "shell=False" in source
+    assert "shell=True" not in source
 
 
 def test_production_code_never_uses_implicit_shell_execution():

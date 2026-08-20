@@ -82,7 +82,20 @@ from agent_workflow.runtime import (
     OPENCODE_FINDING_INSTRUCTIONS,
     InvocationSpec,
     RenderedInvocation,
+    WorkspaceError,
+    WorkspaceSpec,
+    assert_frozen_workspace as runtime_assert_frozen_workspace,
+    assert_workspace_state as runtime_assert_workspace_state,
+    bind_environment as bind_workspace_environment,
+    freeze_workspace as runtime_freeze_workspace,
+    import_workspace_delta,
+    prepare_workspace,
     render_provider_invocation,
+    restore_workspace_manifest,
+    serialize_workspace_delta,
+    workspace_control_sha256,
+    workspace_manifest,
+    workspace_manifest_sha256,
 )
 from agent_workflow.state_root import state_root_binding
 
@@ -1726,82 +1739,49 @@ def git_out(repo: str, *args: str) -> str:
     return proc.stdout.rstrip("\n\r")
 
 
-_MODEL_GIT_MANIFESTS: dict[str, dict[str, tuple[str, str]]] = {}
-
-
 def _model_git_manifest(
     workspace: str,
     *,
     include_semantic_index: bool = True,
 ) -> dict[str, tuple[str, str]]:
-    """Hash mutable Git control metadata without invoking model-controlled Git."""
-    git_dir = Path(workspace).resolve() / ".git"
-    if not git_dir.is_dir():
-        die("isolated model workspace Git directory is unavailable")
-    manifest: dict[str, tuple[str, str]] = {}
-    for path in sorted(git_dir.rglob("*")):
-        relative = path.relative_to(git_dir)
-        parts = relative.parts
-        if parts and parts[0] == "objects" and parts[:2] != ("objects", "info"):
-            continue
-        # The binary index contains platform-specific stat-cache data.  That
-        # cache can change after a read-only checkout/status operation without
-        # changing the staged tree, which made durable recovery reject an
-        # otherwise identical reviewer workspace on Windows.  Bind the
-        # semantic index state below instead of the volatile binary file.
-        if relative.as_posix() == "index":
-            continue
-        name = relative.as_posix()
-        if path.is_symlink():
-            manifest[name] = ("symlink", os.readlink(path))
-        elif path.is_file():
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            manifest[name] = ("file", digest)
-        elif path.is_dir():
-            manifest[name] = ("dir", "")
-        else:
-            manifest[name] = ("other", "")
-    if include_semantic_index:
-        staged = git_out(workspace, "ls-files", "--stage", "-z")
-        tree = git_out(workspace, "write-tree")
-        manifest["index-semantic"] = (
-            "git-index",
-            hashlib.sha256(staged.encode("utf-8") + b"\0" + tree.encode("ascii")).hexdigest(),
-        )
-    return manifest
+    """Compatibility view over the installed Runtime workspace manifest."""
+    if not include_semantic_index:
+        die("control-only model manifest is internal to the Runtime workspace boundary")
+    try:
+        return workspace_manifest(workspace, _runtime_workspace_environment())
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def freeze_model_git_metadata(workspace: str) -> None:
-    """Record the trusted pre-model Git control state in runner memory."""
-    resolved = str(Path(workspace).resolve())
-    _MODEL_GIT_MANIFESTS[resolved] = _model_git_manifest(resolved)
+    """Delegate the trusted pre-model Git-control freeze to the installed Runtime."""
+    try:
+        runtime_freeze_workspace(workspace, _runtime_workspace_environment())
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def assert_model_git_metadata(workspace: str) -> None:
-    """Reject any model mutation to Git config, refs, index, hooks, or info files."""
-    resolved = str(Path(workspace).resolve())
-    expected = _MODEL_GIT_MANIFESTS.get(resolved)
-    if expected is None:
-        die("model process changed isolated workspace Git control metadata")
-    expected_control = {key: value for key, value in expected.items() if key != "index-semantic"}
-    current_control = _model_git_manifest(resolved, include_semantic_index=False)
-    if current_control != expected_control or _model_git_manifest(resolved) != expected:
-        die("model process changed isolated workspace Git control metadata")
+    """Reject model Git-control drift through the installed Runtime boundary."""
+    try:
+        runtime_assert_frozen_workspace(workspace, _runtime_workspace_environment())
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def durable_model_manifest_sha256(workspace: str) -> str:
-    manifest = _model_git_manifest(str(Path(workspace).resolve()))
-    serializable = {key: list(value) for key, value in manifest.items()}
-    return canonical_payload_sha256(serializable)
+    try:
+        return workspace_manifest_sha256(workspace, _runtime_workspace_environment())
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def durable_model_control_sha256(workspace: str) -> str:
     """Bind Git control metadata that must survive a trusted HEAD/index transition."""
-    manifest = _model_git_manifest(str(Path(workspace).resolve()))
-    stable = {
-        key: list(value) for key, value in manifest.items() if key not in {"HEAD", "index-semantic"}
-    }
-    return canonical_payload_sha256(stable)
+    try:
+        return workspace_control_sha256(workspace, _runtime_workspace_environment())
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def _assert_durable_model_workspace_path(evidence: RunEvidence, workspace: str) -> Path:
@@ -1991,12 +1971,14 @@ def restore_durable_model_manifest(
     expected_sha256: str,
 ) -> str:
     resolved = _assert_durable_model_workspace_path(evidence, workspace)
-    manifest = _model_git_manifest(str(resolved))
-    serializable = {key: list(value) for key, value in manifest.items()}
-    if canonical_payload_sha256(serializable) != expected_sha256:
-        die("durable model workspace Git metadata does not match its checkpoint")
-    _MODEL_GIT_MANIFESTS[str(resolved)] = manifest
-    return str(resolved)
+    try:
+        return restore_workspace_manifest(
+            str(resolved),
+            expected_sha256,
+            _runtime_workspace_environment(),
+        )
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def _implement_lineage_checkpoint(
@@ -2166,6 +2148,14 @@ def postflight_git_env() -> dict[str, str]:
     return e
 
 
+def _runtime_workspace_environment() -> tuple[tuple[str, str], ...]:
+    """Bind the exact credential-free Git environment once per Runtime workspace call."""
+    try:
+        return bind_workspace_environment(postflight_git_env())
+    except WorkspaceError as exc:
+        die(str(exc))
+
+
 def postflight_git(workspace: str, *args: str, capture: bool = False) -> CompletedProcess:
     """Run trusted Git plumbing on a frozen model workspace without credentials."""
     return run_command(
@@ -2212,94 +2202,51 @@ def prepare_model_workspace(
     state_dir: Path | None = None,
     workspace_prefix: str = "model-workspace-",
 ) -> str:
-    """Create a fresh no-remote clone for one untrusted model invocation."""
-    parent = str(state_dir) if state_dir is not None else None
-    if state_dir is not None:
-        state_dir.mkdir(parents=True, exist_ok=True)
-    workspace = Path(tempfile.mkdtemp(prefix=workspace_prefix, dir=parent)).resolve()
-    clone = run_command(
-        ["git", "clone", "--no-hardlinks", "--no-checkout", source_repo, str(workspace)],
-        stdin=DEVNULL,
-        capture_output=True,
-        env=child_env(),
+    """Create a fresh no-remote clone through the installed Runtime boundary."""
+    parent = (
+        Path(state_dir).resolve()
+        if state_dir is not None
+        else Path(tempfile.gettempdir()).resolve()
     )
-    if clone.returncode != 0:
-        die("failed to create isolated model workspace")
-    if git(str(workspace), "remote", "remove", "origin") != 0:
-        die("failed to remove model workspace remote")
-    if git(str(workspace), "config", "core.logAllRefUpdates", "false") != 0:
-        die("failed to disable model workspace reflogs")
-    if git(str(workspace), "checkout", "--detach", expected_commit) != 0:
-        die("failed to checkout dispatched commit in model workspace")
-    git_dir = workspace / ".git"
-    logs = git_dir / "logs"
-    if logs.exists():
-        shutil.rmtree(logs)
-    fetch_head = git_dir / "FETCH_HEAD"
-    if fetch_head.exists():
-        fetch_head.unlink()
-    if logs.exists() or fetch_head.exists():
-        die("failed to remove model workspace source metadata")
-    head = git_out(str(workspace), "rev-parse", "--verify", "HEAD^{commit}")
-    if head != expected_commit:
-        die("model workspace does not match the dispatched commit")
-    if git_out(str(workspace), "remote"):
-        die("model workspace must not have a Git remote")
-    freeze_model_git_metadata(str(workspace))
-    return str(workspace)
+    try:
+        prepared = prepare_workspace(
+            WorkspaceSpec(
+                source_repo=str(Path(source_repo).resolve()),
+                expected_commit=expected_commit,
+                state_dir=str(parent),
+                workspace_prefix=workspace_prefix,
+                environment=_runtime_workspace_environment(),
+            )
+        )
+    except WorkspaceError as exc:
+        die(str(exc))
+    return prepared.path
 
 
 def assert_model_workspace_state(workspace: str, expected_commit: str) -> None:
-    """Reject model-created refs or remotes before importing any file delta."""
-    assert_model_git_metadata(workspace)
-    head = git_out(workspace, "rev-parse", "--verify", "HEAD^{commit}")
-    if head != expected_commit:
-        die("model process changed isolated workspace HEAD")
-    if git_out(workspace, "remote"):
-        die("model process added a Git remote to the isolated workspace")
+    """Reject workspace state drift through the installed Runtime boundary."""
+    try:
+        runtime_assert_workspace_state(
+            workspace,
+            expected_commit,
+            _runtime_workspace_environment(),
+        )
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def import_model_delta(workspace: str, trusted_repo: str) -> str:
-    """Apply the verified workspace tree delta to the trusted checkout."""
-    assert_model_git_metadata(workspace)
-    staged = postflight_git(workspace, "add", "-A")
-    if staged.returncode != 0:
-        die("failed to stage the isolated model delta")
-    model_tree_proc = postflight_git(workspace, "write-tree", capture=True)
-    base_tree_proc = postflight_git(workspace, "rev-parse", "HEAD^{tree}", capture=True)
-    if model_tree_proc.returncode != 0 or base_tree_proc.returncode != 0:
-        die("failed to resolve isolated model trees")
-    model_tree = model_tree_proc.stdout.decode("utf-8", errors="replace").strip()
-    base_tree = base_tree_proc.stdout.decode("utf-8", errors="replace").strip()
-    if not model_tree or model_tree == base_tree:
-        die("isolated model workspace has no importable changes")
-
-    diff = postflight_git(
-        workspace,
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--cached",
-        "--binary",
-        "--full-index",
-        "HEAD",
-        capture=True,
-    )
-    if diff.returncode != 0 or not diff.stdout:
-        die("failed to serialize the isolated model delta")
-    applied = run_command(
-        ["git", "-C", trusted_repo, "apply", "--index", "--binary", "-"],
-        input=diff.stdout,
-        stdout=DEVNULL,
-        stderr=DEVNULL,
-        env=child_env(),
-    )
-    if applied.returncode != 0:
-        die("failed to import the isolated model delta")
-    trusted_tree = git_out(trusted_repo, "write-tree")
-    if trusted_tree != model_tree:
-        die("imported trusted tree does not match the verified model tree")
-    return model_tree
+    """Apply one Runtime-verified exact delta to the trusted local checkout."""
+    environment = _runtime_workspace_environment()
+    try:
+        delta = serialize_workspace_delta(workspace, environment)
+        return import_workspace_delta(
+            delta,
+            str(Path(trusted_repo).resolve()),
+            environment,
+        )
+    except WorkspaceError as exc:
+        die(str(exc))
 
 
 def stage_model_artifact(workspace: str, relative_path: str, label: str) -> Path:
