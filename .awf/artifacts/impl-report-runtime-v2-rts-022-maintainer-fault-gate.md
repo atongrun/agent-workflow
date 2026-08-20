@@ -134,7 +134,12 @@ Per TaskCard Mac boundary, I did not run:
 - `pytest`
 - `ruff`
 
-Candidate/final-head CI and independent Gate Review remain required before any PASS result.
+Candidate ordinary CI `32324509595` and Binary Feasibility `32324509603` passed on exact head
+`194e6398d993735ba2927f8e8547dc9bc60643e6`. The same independent Gate Reviewer initially stopped
+on missing repository-visible pre-seed Review evidence, then verified the existing timestamped Codex
+rollout transcript and its extraction digest. That evidence proves exact TaskCard head `c3d373f` was
+independently reviewed PASS 47 seconds before seed `1731a4b`. The deterministic result is
+`RUST_MAINTAINER_GATE_PASS`; final closeout-head CI and exact-head evidence review remain.
 
 <!-- awf-implementation-report
 {
@@ -153,7 +158,9 @@ Candidate/final-head CI and independent Gate Review remain required before any P
     "Seeded five-target existing shared semantic suite failed exact S-AUTH-START-LAUNCH-NO-RESULT outcome drift",
     "Candidate source exactly matches the RTS-022A passed origin/main source",
     "Candidate local static scope and whitespace checks PASS",
-    "Candidate full GitHub CI and independent Gate Review pending"
+    "Candidate ordinary CI 32324509595 PASS",
+    "Candidate Binary Feasibility 32324509603 PASS",
+    "Independent Gate Review PASS after pre-seed transcript evidence verification"
   ],
   "source_revision": "3ba1db590587071cd69708c5806207311451468e"
 }
