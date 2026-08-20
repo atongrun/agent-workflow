@@ -347,7 +347,11 @@ fn canonical_json(value: &Json) -> String {
         Json::Number(number) => number.clone(),
         Json::String(text) => quote_json(text),
         Json::Array(values) => {
-            let body = values.iter().map(canonical_json).collect::<Vec<_>>().join(",");
+            let body = values
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",");
             format!("[{body}]")
         }
         Json::Object(values) => {
@@ -373,7 +377,11 @@ fn pretty_json_inner(value: &Json, depth: usize) -> String {
             let body = values
                 .iter()
                 .map(|(key, value)| {
-                    format!("{indent}{}: {}", quote_json(key), pretty_json_inner(value, depth + 1))
+                    format!(
+                        "{indent}{}: {}",
+                        quote_json(key),
+                        pretty_json_inner(value, depth + 1)
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join(",\n");
@@ -491,7 +499,9 @@ fn write_trusted_json_atomic(path: &Path, payload: &Json) -> Result<()> {
 
 fn read_envelope(path: &Path) -> Result<Json> {
     let value = read_trusted_json(path)?;
-    let object = value.as_object().ok_or_else(|| parse_error("envelope is not object"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| parse_error("envelope is not object"))?;
     let format = object.get("format").and_then(Json::as_str);
     let payload = object.get("payload").cloned();
     let stored = object.get("checksum").and_then(Json::as_str);
@@ -635,7 +645,10 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn configure_repo(repo: &Path) -> Result<()> {
-    git(repo, &["config", "user.email", "runtime-v2-rust@example.invalid"])?;
+    git(
+        repo,
+        &["config", "user.email", "runtime-v2-rust@example.invalid"],
+    )?;
     git(repo, &["config", "user.name", "Runtime V2 Rust Slice"])?;
     let remotes = git(repo, &["remote"])?;
     for remote in remotes.lines().filter(|line| !line.trim().is_empty()) {
@@ -659,7 +672,10 @@ fn compiled_spec(repo: &Path, run_id: &str) -> Result<Json> {
         ("run_id", Json::string(run_id)),
         ("source_head", Json::string(git_head(repo)?)),
         ("source_tree", Json::string(git_tree(repo)?)),
-        ("allowed_delta", Json::array(vec![Json::string(ALLOWED_DELTA)])),
+        (
+            "allowed_delta",
+            Json::array(vec![Json::string(ALLOWED_DELTA)]),
+        ),
         (
             "provider_command",
             Json::array(vec![Json::string(provider.display().to_string())]),
@@ -755,8 +771,7 @@ fn validate_run(run: &Json, spec: &Json) -> Result<()> {
         );
         let allowed = (pair.0 == IMPLEMENT_ID && pair.1 == "implement")
             || (pair.0 == REVIEW_ID && pair.1 == "review");
-        if !allowed || !seen.insert(pair)
-        {
+        if !allowed || !seen.insert(pair) {
             return Err(AwfError::new(
                 "DENY_BEFORE_PROVIDER",
                 "preserve files and diagnose exact run identity",
@@ -769,7 +784,10 @@ fn validate_run(run: &Json, spec: &Json) -> Result<()> {
 
 fn expected_journal_paths(run_dir: &Path, invocation_id: &str) -> Result<(PathBuf, PathBuf)> {
     match invocation_id {
-        IMPLEMENT_ID => Ok((workspace_path(run_dir, IMPLEMENT_ID), artifact_path(run_dir, "implementation"))),
+        IMPLEMENT_ID => Ok((
+            workspace_path(run_dir, IMPLEMENT_ID),
+            artifact_path(run_dir, "implementation"),
+        )),
         REVIEW_ID => Ok((trusted_repo_path(run_dir), artifact_path(run_dir, "review"))),
         _ => Err(AwfError::new(
             "DENY_BEFORE_PROVIDER",
@@ -802,7 +820,13 @@ fn prepared_journal(spec: &Json, run_dir: &Path, invocation_id: &str, role: &str
     ]))
 }
 
-fn validate_journal(journal: &Json, spec: &Json, run_dir: &Path, invocation_id: &str, role: &str) -> Result<()> {
+fn validate_journal(
+    journal: &Json,
+    spec: &Json,
+    run_dir: &Path,
+    invocation_id: &str,
+    role: &str,
+) -> Result<()> {
     let (workspace, artifact) = expected_journal_paths(run_dir, invocation_id)?;
     let expected = [
         ("invocation_id", invocation_id.to_string()),
@@ -845,7 +869,10 @@ fn validate_successful_journal_result(
     role: &str,
 ) -> Result<()> {
     validate_journal(journal, spec, run_dir, invocation_id, role)?;
-    if !matches!(get_string(journal, "state")?.as_str(), "result" | "validated") {
+    if !matches!(
+        get_string(journal, "state")?.as_str(),
+        "result" | "validated"
+    ) {
         return Err(AwfError::new(
             "DENY_BEFORE_PROVIDER",
             "preserve files and diagnose exact run identity",
@@ -1078,9 +1105,18 @@ fn invoke_provider(spec: &Json, run_dir: &Path, invocation_id: &str, mode: &str)
         journal,
         "result",
         Json::object(vec![
-            ("exit_code", Json::Number(output.status.code().unwrap_or(255).to_string())),
-            ("stdout_bytes", Json::Number(output.stdout.len().to_string())),
-            ("stderr_bytes", Json::Number(output.stderr.len().to_string())),
+            (
+                "exit_code",
+                Json::Number(output.status.code().unwrap_or(255).to_string()),
+            ),
+            (
+                "stdout_bytes",
+                Json::Number(output.stdout.len().to_string()),
+            ),
+            (
+                "stderr_bytes",
+                Json::Number(output.stderr.len().to_string()),
+            ),
         ]),
     );
     save_journal(run_dir, invocation_id, journal)?;
@@ -1124,13 +1160,19 @@ fn validate_counter(value: Json) -> Result<Json> {
         match item.as_str() {
             Some("implement") => implement_calls += 1,
             Some("review") => review_calls += 1,
-            _ => return Err(parse_error("provider counter contains an invalid call role")),
+            _ => {
+                return Err(parse_error(
+                    "provider counter contains an invalid call role",
+                ))
+            }
         }
     }
     if implement == implement_calls && review == review_calls {
         Ok(value)
     } else {
-        Err(parse_error("provider counter calls do not match role totals"))
+        Err(parse_error(
+            "provider counter calls do not match role totals",
+        ))
     }
 }
 
@@ -1226,7 +1268,14 @@ fn create_trusted_repo(run_dir: &Path) -> Result<(String, String)> {
         let source = workspace_path(run_dir, IMPLEMENT_ID).join(ALLOWED_DELTA);
         fs::copy(source, repo.join(ALLOWED_DELTA)).map_err(io_error)?;
         git(&repo, &["add", ALLOWED_DELTA])?;
-        git(&repo, &["commit", "-m", "Bind disposable Runtime v2 Rust slice effect"])?;
+        git(
+            &repo,
+            &[
+                "commit",
+                "-m",
+                "Bind disposable Runtime v2 Rust slice effect",
+            ],
+        )?;
     }
     configure_repo(&repo)?;
     Ok((git_head(&repo)?, git_tree(&repo)?))
@@ -1389,7 +1438,10 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
                     Json::object(vec![
                         ("from", Json::string("implement")),
                         ("to", Json::string("review")),
-                        ("trusted_commit", run.get("trusted_commit").cloned().unwrap_or(Json::Null)),
+                        (
+                            "trusted_commit",
+                            run.get("trusted_commit").cloned().unwrap_or(Json::Null),
+                        ),
                     ]),
                 );
                 run = set_field(run, "phase", Json::string("review_handoff_intent"));
@@ -1422,11 +1474,7 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
                     }
                     "result" | "validated" => {
                         validate_successful_journal_result(
-                            &journal,
-                            &spec,
-                            &run_dir,
-                            REVIEW_ID,
-                            "review",
+                            &journal, &spec, &run_dir, REVIEW_ID, "review",
                         )?;
                         validate_review_report(&artifact_path(&run_dir, "review"))?;
                     }
@@ -1443,13 +1491,7 @@ pub fn run_slice(state: &Path, repo: &Path, run_id: &str) -> Result<Status> {
             }
             "review_result" => {
                 let journal = read_journal(&run_dir, REVIEW_ID)?;
-                validate_successful_journal_result(
-                    &journal,
-                    &spec,
-                    &run_dir,
-                    REVIEW_ID,
-                    "review",
-                )?;
+                validate_successful_journal_result(&journal, &spec, &run_dir, REVIEW_ID, "review")?;
                 validate_review_report(&artifact_path(&run_dir, "review"))?;
                 revalidate_trusted_repo(&run, &run_dir)?;
                 let mut journal = journal;
@@ -1617,7 +1659,9 @@ fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status>
                     false,
                     trusted_repo,
                 )),
-                other => Err(parse_error(format!("invalid implement journal state {other}"))),
+                other => Err(parse_error(format!(
+                    "invalid implement journal state {other}"
+                ))),
             }
         }
         "implement_launch_intent" => Ok(status(
@@ -1728,11 +1772,7 @@ fn status_slice_inner(state: &Path, repo: &Path, run_id: &str) -> Result<Status>
                 )),
                 "result" | "validated" => Ok(status(
                     match validate_successful_journal_result(
-                        &journal,
-                        &spec,
-                        &run_dir,
-                        REVIEW_ID,
-                        "review",
+                        &journal, &spec, &run_dir, REVIEW_ID, "review",
                     ) {
                         Ok(()) => "SAFE_CONTINUE",
                         Err(err) => return Err(err),
@@ -1929,17 +1969,38 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
     let base = new_run(&spec)?;
     match inject {
         "auth_prepared_only" => {
-            save_journal(&run_dir, IMPLEMENT_ID, prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?)?;
-            save_run(&run_dir, set_field(base, "phase", Json::string("prepared_without_authorization")))?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?,
+            )?;
+            save_run(
+                &run_dir,
+                set_field(
+                    base,
+                    "phase",
+                    Json::string("prepared_without_authorization"),
+                ),
+            )?;
         }
         "auth_without_journal" => {
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_authorized")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_authorized")),
+            )?;
         }
         "auth_authorized_prepared" | "duplicate_pre_start" => {
-            save_journal(&run_dir, IMPLEMENT_ID, prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?)?;
+            save_journal(
+                &run_dir,
+                IMPLEMENT_ID,
+                prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?,
+            )?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_authorized")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_authorized")),
+            )?;
         }
         "auth_launch_no_result" => {
             let journal = journal_with_launch_intent(
@@ -1950,7 +2011,10 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             )?;
             save_journal(&run_dir, IMPLEMENT_ID, journal)?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_launch_intent")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_launch_intent")),
+            )?;
         }
         "start_result" => {
             let journal = journal_with_started(
@@ -1961,7 +2025,10 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             )?;
             save_journal(&run_dir, IMPLEMENT_ID, journal)?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_started")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_started")),
+            )?;
         }
         "artifact" => {
             let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
@@ -1971,10 +2038,18 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
                 successful_journal_from_prepared(&spec, &run_dir, journal, "normal")?,
             )?;
             write_counter(&counter_path(&run_dir), "implement")?;
-            fs::create_dir_all(artifact_path(&run_dir, "implementation").parent().unwrap()).map_err(io_error)?;
-            fs::write(artifact_path(&run_dir, "implementation"), "{\"artifact\":\"invalid\"}\n").map_err(io_error)?;
+            fs::create_dir_all(artifact_path(&run_dir, "implementation").parent().unwrap())
+                .map_err(io_error)?;
+            fs::write(
+                artifact_path(&run_dir, "implementation"),
+                "{\"artifact\":\"invalid\"}\n",
+            )
+            .map_err(io_error)?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_result")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_result")),
+            )?;
         }
         "result_validate" => {
             let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
@@ -1986,7 +2061,10 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
                 successful_journal_from_prepared(&spec, &run_dir, journal, "normal")?,
             )?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_result")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_result")),
+            )?;
         }
         "nonzero_result_with_valid_artifact" => {
             let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
@@ -1998,7 +2076,10 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
                 nonzero_journal_from_prepared(&spec, &run_dir, journal, "normal")?,
             )?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_result")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_result")),
+            )?;
         }
         "effect_intent" => {
             let journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
@@ -2013,7 +2094,10 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
             let run = set_field(run, "trusted_commit", Json::string(head));
             let run = set_field(run, "trusted_tree", Json::string(tree));
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_committed")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_committed")),
+            )?;
         }
         "duplicate_terminal" => {
             run_slice(state, repo, run_id)?;
@@ -2037,15 +2121,14 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             );
             save_journal(&run_dir, IMPLEMENT_ID, bad)?;
             let run = add_authorization(base, IMPLEMENT_ID, "implement");
-            save_run(&run_dir, set_field(run, "phase", Json::string("implement_authorized")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("implement_authorized")),
+            )?;
         }
         "git_drift" => {
             let implement_journal = prepared_journal(&spec, &run_dir, IMPLEMENT_ID, "implement")?;
-            save_journal(
-                &run_dir,
-                IMPLEMENT_ID,
-                implement_journal.clone(),
-            )?;
+            save_journal(&run_dir, IMPLEMENT_ID, implement_journal.clone())?;
             provider_main(&provider_args(&run_dir, "implement", "normal")?)?;
             save_journal(
                 &run_dir,
@@ -2054,11 +2137,7 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             )?;
             let (head, tree) = create_trusted_repo(&run_dir)?;
             let review_journal = prepared_journal(&spec, &run_dir, REVIEW_ID, "review")?;
-            save_journal(
-                &run_dir,
-                REVIEW_ID,
-                review_journal.clone(),
-            )?;
+            save_journal(&run_dir, REVIEW_ID, review_journal.clone())?;
             provider_main(&provider_args(&run_dir, "review", "normal")?)?;
             save_journal(
                 &run_dir,
@@ -2080,7 +2159,10 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
                     run.get("trusted_commit").cloned().unwrap_or(Json::Null),
                 )]),
             );
-            save_run(&run_dir, set_field(run, "phase", Json::string("review_result")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("review_result")),
+            )?;
             let trusted = trusted_repo_path(&run_dir);
             fs::write(trusted.join(ALLOWED_DELTA), "drift\n").map_err(io_error)?;
             git(&trusted, &["add", ALLOWED_DELTA])?;
@@ -2103,7 +2185,10 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
             );
             let run = set_field(run, "trusted_commit", Json::string(head));
             let run = set_field(run, "trusted_tree", Json::string(tree));
-            save_run(&run_dir, set_field(run, "phase", Json::string("review_authorized")))?;
+            save_run(
+                &run_dir,
+                set_field(run, "phase", Json::string("review_authorized")),
+            )?;
         }
         _ => return Err(parse_error(format!("unknown inject {inject}"))),
     }
@@ -2111,7 +2196,11 @@ pub fn inject_case(state: &Path, repo: &Path, run_id: &str, inject: &str) -> Res
 }
 
 fn provider_args(run_dir: &Path, role: &str, mode: &str) -> Result<Vec<String>> {
-    let invocation = if role == "implement" { IMPLEMENT_ID } else { REVIEW_ID };
+    let invocation = if role == "implement" {
+        IMPLEMENT_ID
+    } else {
+        REVIEW_ID
+    };
     let workspace = if role == "implement" {
         workspace_path(run_dir, IMPLEMENT_ID)
     } else {
@@ -2119,7 +2208,11 @@ fn provider_args(run_dir: &Path, role: &str, mode: &str) -> Result<Vec<String>> 
     };
     let artifact = artifact_path(
         run_dir,
-        if role == "implement" { "implementation" } else { "review" },
+        if role == "implement" {
+            "implementation"
+        } else {
+            "review"
+        },
     );
     Ok(vec![
         "provider".to_string(),
@@ -2231,7 +2324,9 @@ pub fn verify_fixture(
     }
     let fixture = read_trusted_json(fixture_path)?;
     let rows = fixture_rows(&fixture)?;
-    parse_json("{\"a\":1,\"a\":2}").err().ok_or_else(|| parse_error("duplicate JSON smoke did not fail"))?;
+    parse_json("{\"a\":1,\"a\":2}")
+        .err()
+        .ok_or_else(|| parse_error("duplicate JSON smoke did not fail"))?;
     let source_repo_arg = repo_arg.canonicalize().map_err(io_error)?;
     let source_revision = git_head(&source_repo_arg)?;
     let root = state_root.join(format!("rts022 verify {}", now_id()));
@@ -2279,7 +2374,10 @@ pub fn verify_fixture(
         };
         let bytes_after_status = tree_bytes(&run_dir(&case_state, &id));
         if status.outcome != expected {
-            return Err(parse_error(format!("{id} outcome drift: {}", status.outcome)));
+            return Err(parse_error(format!(
+                "{id} outcome drift: {}",
+                status.outcome
+            )));
         }
         if status.legal_next_action != expected_action {
             return Err(parse_error(format!(
@@ -2328,7 +2426,10 @@ pub fn verify_fixture(
                 "assertions_checked",
                 Json::array(assertions.into_iter().map(Json::string).collect()),
             ),
-            ("prohibited_checked", Json::array(prohibited.into_iter().map(Json::string).collect())),
+            (
+                "prohibited_checked",
+                Json::array(prohibited.into_iter().map(Json::string).collect()),
+            ),
             ("concrete_checks", checks),
         ]));
     }
@@ -2357,21 +2458,36 @@ pub fn verify_fixture(
             Json::string(completed_status.outcome.clone()),
         ),
         ("normal_run_completed", Json::Bool(normal.terminal)),
-        ("status_ok", Json::Bool(completed_status.outcome == "TERMINAL_IDEMPOTENT")),
+        (
+            "status_ok",
+            Json::Bool(completed_status.outcome == "TERMINAL_IDEMPOTENT"),
+        ),
         (
             "completed_replay_ok",
             Json::Bool(normal_counts_before == normal_counts_after),
         ),
         ("stop_ok", Json::Bool(stop_ok)),
-        ("active_writer_stop_denied", Json::Bool(active_writer_stop_denied)),
+        (
+            "active_writer_stop_denied",
+            Json::Bool(active_writer_stop_denied),
+        ),
         (
             "active_invocation_stop_denied",
             Json::Bool(active_invocation_stop_denied),
         ),
-        ("no_stale_lock_cleanup", Json::Bool(active_writer_stop_denied)),
+        (
+            "no_stale_lock_cleanup",
+            Json::Bool(active_writer_stop_denied),
+        ),
         ("status_git_readonly", Json::Bool(status_git_readonly)),
-        ("completed_replay_provider_counts_stable", Json::Bool(normal_counts_before == normal_counts_after)),
-        ("status_byte_readonly", Json::Bool(status_before == status_after)),
+        (
+            "completed_replay_provider_counts_stable",
+            Json::Bool(normal_counts_before == normal_counts_after),
+        ),
+        (
+            "status_byte_readonly",
+            Json::Bool(status_before == status_after),
+        ),
         ("provider_counts", normal_counts_after),
         (
             "runtime_child_executables",
@@ -2379,15 +2495,32 @@ pub fn verify_fixture(
         ),
         ("child_argv_no_shell", Json::Bool(child_argv_no_shell)),
         ("python_invoked", Json::Bool(python_invoked)),
-        ("git_prerequisite", Json::Bool(git(&source_repo_arg, &["--version"]).is_ok())),
-        ("executable_size_bytes", Json::Number(fs::metadata(&exe).map_err(io_error)?.len().to_string())),
+        (
+            "git_prerequisite",
+            Json::Bool(git(&source_repo_arg, &["--version"]).is_ok()),
+        ),
+        (
+            "executable_size_bytes",
+            Json::Number(fs::metadata(&exe).map_err(io_error)?.len().to_string()),
+        ),
         ("executable_sha256", Json::string(sha256_file(&exe)?)),
-        ("startup_samples_ms", Json::array(startup_samples.into_iter().map(|n| Json::Number(n.to_string())).collect())),
+        (
+            "startup_samples_ms",
+            Json::array(
+                startup_samples
+                    .into_iter()
+                    .map(|n| Json::Number(n.to_string()))
+                    .collect(),
+            ),
+        ),
         ("direct_dependency_count", Json::Number("0".to_string())),
         ("transitive_dependency_count", Json::Number("0".to_string())),
         ("direct_dependencies", Json::array(Vec::new())),
         ("dependencies_complete", Json::Bool(true)),
-        ("preliminary_result", Json::string("RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE")),
+        (
+            "preliminary_result",
+            Json::string("RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE"),
+        ),
     ]);
     Ok(evidence)
 }
@@ -2459,7 +2592,10 @@ fn active_writer_stop_gate(state: &Path, repo: &Path, run_id: &str) -> Result<bo
 fn status_git_readonly_gate(state: &Path, repo: &Path, run_id: &str) -> Result<bool> {
     let dir = run_dir(state, run_id);
     let trusted = trusted_repo_path(&dir);
-    git(&trusted, &["remote", "add", "dummy", "https://example.invalid/nope.git"])?;
+    git(
+        &trusted,
+        &["remote", "add", "dummy", "https://example.invalid/nope.git"],
+    )?;
     let config = trusted.join(".git").join("config");
     let before = fs::read(&config).map_err(io_error)?;
     let denied = status_slice(state, repo, run_id).is_err();
@@ -2495,9 +2631,7 @@ fn check_assertions(
             "no_terminal" => {
                 run.get("terminal").is_none() || run.get("terminal") == Some(&Json::Null)
             }
-            "terminal_completed" => {
-                run.get("terminal").and_then(Json::as_str) == Some("completed")
-            }
+            "terminal_completed" => run.get("terminal").and_then(Json::as_str) == Some("completed"),
             "no_trusted_repo" => !trusted.exists(),
             "trusted_repo_exists" => trusted.exists(),
             "trusted_commit_exists" => run.get("trusted_commit").and_then(Json::as_str).is_some(),
@@ -2510,7 +2644,11 @@ fn check_assertions(
                             .map(ToOwned::to_owned)
             }
             "trusted_remote_absent" => {
-                trusted.exists() && git(&trusted, &["remote"]).unwrap_or_default().trim().is_empty()
+                trusted.exists()
+                    && git(&trusted, &["remote"])
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
             }
             "trusted_commit_exact" => {
                 trusted.exists()
@@ -2521,10 +2659,18 @@ fn check_assertions(
                             .map(ToOwned::to_owned)
             }
             "auth_implement_once" => auth_count(&run, "implement") == 1,
-            "auth_full_once" => auth_count(&run, "implement") == 1 && auth_count(&run, "review") == 1,
+            "auth_full_once" => {
+                auth_count(&run, "implement") == 1 && auth_count(&run, "review") == 1
+            }
             "no_auth" => auth_count(&run, "implement") == 0 && auth_count(&run, "review") == 0,
-            "no_handoff" => run.get("handoff_intent").is_none() || run.get("handoff_intent") == Some(&Json::Null),
-            "handoff_exact" => run.get("handoff_intent").and_then(Json::as_object).is_some(),
+            "no_handoff" => {
+                run.get("handoff_intent").is_none()
+                    || run.get("handoff_intent") == Some(&Json::Null)
+            }
+            "handoff_exact" => run
+                .get("handoff_intent")
+                .and_then(Json::as_object)
+                .is_some(),
             "implement_journal_absent" => !journal_path(&dir, IMPLEMENT_ID).exists(),
             "journal_implement_prepared_only" => {
                 journal_state(&dir, IMPLEMENT_ID) == Some("prepared".to_string())
@@ -2557,7 +2703,9 @@ fn check_assertions(
             other => return Err(parse_error(format!("unmapped assertion {other}"))),
         };
         if !pass {
-            return Err(parse_error(format!("{run_id} assertion failed: {assertion}")));
+            return Err(parse_error(format!(
+                "{run_id} assertion failed: {assertion}"
+            )));
         }
         assertion_passes.insert(assertion.clone());
         checks.push(Json::object(vec![
@@ -2646,9 +2794,11 @@ fn prohibited_assertion_map(item: &str) -> Result<&'static [&'static str]> {
         "different trusted commit" => Ok(&["trusted_commit_exact"]),
         "remote Git write" => Ok(&["trusted_remote_absent"]),
         "new authorization identity" => Ok(&["auth_implement_once"]),
-        "automatic provider replay" => {
-            Ok(&["no_provider", "implement_count_stable_on_rerun", "duplicate_rerun_stable"])
-        }
+        "automatic provider replay" => Ok(&[
+            "no_provider",
+            "implement_count_stable_on_rerun",
+            "duplicate_rerun_stable",
+        ]),
         "handoff rewrite" => Ok(&["handoff_exact", "state_stable_on_status"]),
         other => Err(parse_error(format!("unmapped prohibited item {other}"))),
     }
@@ -2872,7 +3022,10 @@ pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> R
     for file in files {
         let evidence = read_trusted_json(&file)?;
         if get_string(&evidence, "format")? != "awf.runtime-v2-rust-evidence.v1" {
-            return Err(parse_error(format!("{} evidence format drift", file.display())));
+            return Err(parse_error(format!(
+                "{} evidence format drift",
+                file.display()
+            )));
         }
         let target = get_string(&evidence, "target")?;
         if !expected_targets.contains(&target.as_str()) {
@@ -2979,18 +3132,34 @@ pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> R
                     _ => None,
                 })
                 .ok_or_else(|| parse_error(format!("{target} row {id} terminal missing")))?;
-            if assertions.iter().any(|assertion| assertion == "terminal_completed") && !terminal {
-                return Err(parse_error(format!("{target} row {id} terminal fact missing")));
+            if assertions
+                .iter()
+                .any(|assertion| assertion == "terminal_completed")
+                && !terminal
+            {
+                return Err(parse_error(format!(
+                    "{target} row {id} terminal fact missing"
+                )));
             }
-            if assertions.iter().any(|assertion| assertion == "no_terminal") && terminal {
-                return Err(parse_error(format!("{target} row {id} terminal fact drift")));
+            if assertions
+                .iter()
+                .any(|assertion| assertion == "no_terminal")
+                && terminal
+            {
+                return Err(parse_error(format!(
+                    "{target} row {id} terminal fact drift"
+                )));
             }
             let phase = get_string(row, "phase")?;
             if get_string(row, "decision_owner")? != decision_owner(outcome, &phase) {
-                return Err(parse_error(format!("{target} row {id} decision owner drift")));
+                return Err(parse_error(format!(
+                    "{target} row {id} decision owner drift"
+                )));
             }
             if get_string(row, "decision_source")? != decision_source(outcome, &phase) {
-                return Err(parse_error(format!("{target} row {id} decision source drift")));
+                return Err(parse_error(format!(
+                    "{target} row {id} decision source drift"
+                )));
             }
             require_concrete_checks(row, assertions, prohibited, target, id)?;
         }
@@ -3075,7 +3244,9 @@ fn require_child_inventory(evidence: &Json, target: &str) -> Result<()> {
                 .ok_or_else(|| parse_error(format!("{target} child inventory item is not string")))
         })
         .collect::<Result<Vec<_>>>()?;
-    let has_git = children.iter().any(|child| child == "git" || child == "git.exe");
+    let has_git = children
+        .iter()
+        .any(|child| child == "git" || child == "git.exe");
     let has_self = children
         .iter()
         .any(|child| child == "runtime-v2-rust" || child == "runtime-v2-rust.exe");
@@ -3100,7 +3271,9 @@ fn require_invocation_ids(row: &Json, target: &str, id: &str) -> Result<()> {
             .as_str()
             .ok_or_else(|| parse_error(format!("{target} row {id} invocation id is not string")))?;
         if !matches!(item, IMPLEMENT_ID | REVIEW_ID) || !seen.insert(item.to_string()) {
-            return Err(parse_error(format!("{target} row {id} invocation id drift")));
+            return Err(parse_error(format!(
+                "{target} row {id} invocation id drift"
+            )));
         }
     }
     Ok(())
@@ -3126,9 +3299,9 @@ fn require_concrete_checks(
     let mut seen_prohibited = BTreeSet::new();
     for check in checks {
         require_bool(check, "pass", true)?;
-        let object = check
-            .as_object()
-            .ok_or_else(|| parse_error(format!("{target} row {id} concrete check is not object")))?;
+        let object = check.as_object().ok_or_else(|| {
+            parse_error(format!("{target} row {id} concrete check is not object"))
+        })?;
         let assertion = check.get("assertion").and_then(Json::as_str);
         let prohibited_item = check.get("prohibited").and_then(Json::as_str);
         match (assertion, prohibited_item) {
@@ -3152,19 +3325,18 @@ fn require_concrete_checks(
                     )));
                 }
                 let allowed = prohibited_assertion_map(item)?;
-                let proved_by = check
-                    .get("proved_by")
-                    .and_then(Json::as_array)
-                    .ok_or_else(|| {
-                        parse_error(format!("{target} row {id} prohibited proof set missing"))
-                    })?;
+                let proved_by =
+                    check
+                        .get("proved_by")
+                        .and_then(Json::as_array)
+                        .ok_or_else(|| {
+                            parse_error(format!("{target} row {id} prohibited proof set missing"))
+                        })?;
                 let proved_by = proved_by
                     .iter()
                     .map(|value| {
                         value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
-                            parse_error(format!(
-                                "{target} row {id} prohibited proof is not string"
-                            ))
+                            parse_error(format!("{target} row {id} prohibited proof is not string"))
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -3212,10 +3384,14 @@ fn require_row_provider_counts(
     for assertion in assertions {
         match assertion.as_str() {
             "no_provider" if implement != 0 || review != 0 => {
-                return Err(parse_error(format!("{target} row {id} provider count drift")));
+                return Err(parse_error(format!(
+                    "{target} row {id} provider count drift"
+                )));
             }
             "one_implement" if implement != 1 => {
-                return Err(parse_error(format!("{target} row {id} implement count drift")));
+                return Err(parse_error(format!(
+                    "{target} row {id} implement count drift"
+                )));
             }
             "one_review" if review != 1 => {
                 return Err(parse_error(format!("{target} row {id} review count drift")));
@@ -3267,8 +3443,14 @@ fn sha256(input: &[u8]) -> [u8; 32] {
         0xc67178f2,
     ];
     let mut h = [
-        0x6a09e667u32, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
-        0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667u32,
+        0xbb67ae85,
+        0x3c6ef372,
+        0xa54ff53a,
+        0x510e527f,
+        0x9b05688c,
+        0x1f83d9ab,
+        0x5be0cd19,
     ];
     let bit_len = (input.len() as u64) * 8;
     let mut data = input.to_vec();

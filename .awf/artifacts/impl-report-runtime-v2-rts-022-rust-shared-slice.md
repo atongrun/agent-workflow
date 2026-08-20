@@ -59,9 +59,9 @@ external local `git` executable.
 
 - Frozen Python denominator: 1,454 nonblank/noncomment lines; 1.5x threshold: 2,181.
 - Runner-only Python denominator: 1,380 nonblank/noncomment lines; 1.5x threshold: 2,070.
-- Rust production numerator under `experiments/runtime-v2-rust/src/`: 3,292 nonblank/noncomment
-  lines (`lib.rs` 3,286, `main.rs` 6).
-- Rust test code: 373 nonblank/noncomment lines.
+- Rust production numerator under `experiments/runtime-v2-rust/src/`: 3,474 nonblank/noncomment
+  lines (`lib.rs` 3,468, `main.rs` 6) after applying the exact CI-owned rustfmt output.
+- Rust test code: 378 nonblank/noncomment lines after rustfmt.
 - Direct production dependencies: 0.
 - Transitive dependencies: 0.
 
@@ -188,7 +188,7 @@ Focused independent TaskCard Gate re-review of exact candidate `9309bb6` returne
 remaining findings. The companion ReviewReport records that reviewed semantic candidate; CI and
 cross-platform execution remain pending and no Rust selection is inferred.
 
-Known CI risks before reviewer/CI:
+Known CI risks before machine validation:
 
 - Rust syntax, rustfmt, clippy, and cross-platform behavior are not locally compiled due to the Mac
   no-Rust boundary.
@@ -225,11 +225,11 @@ Known CI risks before reviewer/CI:
   ],
   "source_revision": "4177e71b76dcfd21c5ade00e4f9c4bdbead44127",
   "review_status": "PASS",
-  "preliminary_result": "PENDING_CI_AND_INDEPENDENT_REVIEW",
+  "preliminary_result": "PENDING_CI",
   "dependency_count": 0,
-  "rust_source_nonblank_noncomment_loc": 3292,
-  "rust_lib_nonblank_noncomment_loc": 3286,
-  "rust_test_nonblank_noncomment_loc": 373,
+  "rust_source_nonblank_noncomment_loc": 3474,
+  "rust_lib_nonblank_noncomment_loc": 3468,
+  "rust_test_nonblank_noncomment_loc": 378,
   "rust_source_exceeds_2181_threshold": true,
   "named_value_requiring_machine_evidence": "removes Python runtime prerequisite for this disposable shared slice",
   "local_rust_not_run_reason": "TaskCard forbids local Mac cargo/rustc/binary execution"

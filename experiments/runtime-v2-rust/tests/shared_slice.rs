@@ -66,7 +66,10 @@ fn shared_slice_fixture_and_normal_path_pass() {
         String::from_utf8_lossy(&output.stderr)
     );
     let evidence_text = fs::read_to_string(&evidence).expect("read evidence");
-    assert!(evidence_text.contains("\"case_count\": 14"), "{evidence_text}");
+    assert!(
+        evidence_text.contains("\"case_count\": 14"),
+        "{evidence_text}"
+    );
     assert!(
         evidence_text.contains("\"python_invoked\": false"),
         "evidence must prove no Python child: {evidence_text}"
@@ -360,7 +363,10 @@ fn static_writer_lock_and_status_readonly_boundaries_are_present() {
     );
     assert!(
         source.contains("fn validate_successful_journal_result")
-            && source.matches("validate_successful_journal_result(").count() >= 8,
+            && source
+                .matches("validate_successful_journal_result(")
+                .count()
+                >= 8,
         "successful-result journal joins must be enforced across run/status recovery"
     );
     let exact_start = source
@@ -376,8 +382,7 @@ fn static_writer_lock_and_status_readonly_boundaries_are_present() {
         "exact_journal_ids must validate on-disk filename identities, not embedded journal fields"
     );
     assert!(
-        source.contains("validate_run_id(run_id)?")
-            && source.contains("repo_arg.canonicalize()"),
+        source.contains("validate_run_id(run_id)?") && source.contains("repo_arg.canonicalize()"),
         "public run-id and --repo . cwd-drift gates must be static-visible"
     );
 }
