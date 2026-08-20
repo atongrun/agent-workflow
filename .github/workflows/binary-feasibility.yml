@@ -150,6 +150,22 @@ jobs:
         shell: bash
         run: cargo +1.85.1 fmt --manifest-path experiments/runtime-v2-rust/Cargo.toml -- --check
 
+      - name: Capture exact rustfmt repair after a formatting failure
+        if: failure() && matrix.target == 'linux-x86_64'
+        shell: bash
+        run: cargo +1.85.1 fmt --manifest-path experiments/runtime-v2-rust/Cargo.toml
+
+      - name: Upload exact rustfmt repair source
+        if: failure() && matrix.target == 'linux-x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: awf-rustfmt-repair-source
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            experiments/runtime-v2-rust/src/lib.rs
+            experiments/runtime-v2-rust/tests/shared_slice.rs
+
       - name: Run Rust clippy
         shell: bash
         run: >-
