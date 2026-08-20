@@ -2000,7 +2000,7 @@ def test_coder_runs_model_in_no_remote_workspace_then_trusted_runner_pushes(
     monkeypatch.delenv("AWF_NO_PUSH", raising=False)
     seen: dict[str, str] = {}
 
-    def fake_tool(model_repo, card_file, *_args):
+    def fake_tool(model_repo, card_file, *_args, **_kwargs):
         seen["repo"] = model_repo
         seen["card"] = card_file
         assert Path(model_repo).resolve() != executor.resolve()
@@ -2080,7 +2080,7 @@ def test_isolated_model_commit_fails_before_trusted_checkout_or_remote_changes(
     monkeypatch.setenv("AWF_REPO_DIR", str(executor))
     monkeypatch.setenv("AWF_SCRIPT_DIR", str(script_dir))
 
-    def fake_tool(model_repo, _card_file, *_args):
+    def fake_tool(model_repo, _card_file, *_args, **_kwargs):
         model_path = Path(model_repo)
         run("git", "config", "user.name", "Model", cwd=model_path)
         run("git", "config", "user.email", "model@example.invalid", cwd=model_path)
