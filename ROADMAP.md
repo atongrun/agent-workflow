@@ -45,18 +45,21 @@ reason, deterministic rework, human intervention, and TaskCard completion.
 - [x] Complete RTS-024 with the same-fixture comparison and owner decision: Python refactor,
   checksummed atomic-file RunStore/journal, logical single writer, narrow product boundary and later
   bounded native-launcher candidate; freeze the contract after Architecture and Adversarial PASS.
-- [ ] Complete RTS-030 as the first independently reversible Phase 3 Python Core interface/package
+- [x] Complete RTS-030 as the first independently reversible Phase 3 Python Core interface/package
   boundary without dual write, default change, representation deletion or launcher work.
+- [ ] Complete RTS-031 as a pure local checksummed atomic-file RunStore/per-invocation journal
+  implementation behind the selected ports, with no production handler migration or dual write.
 
-Current last passed TaskCard gate is RTS-024. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
+Current last passed TaskCard gate is RTS-030. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
 checksummed atomic-file RunStore/per-invocation journal, one logical writer and no physical
-Coordinator. Independent Architecture Review passed; Adversarial Review passed after one focused
-LOC evidence correction. The semantic contract and 39-case/11-outcome matrix are Frozen. Rust
-remains a comparison oracle, RTS-023 does not enter, SQLite is not selected, and launcher work is
-deferred until after the Phase 3 Python boundary. RTS-030 is next. No production default, migration,
-release, retained-event operation or destructive cleanup is authorized. See the
+Coordinator. The semantic contract and 39-case/11-outcome matrix are Frozen. RTS-030 added strict
+installed Python Core contracts and ports; its independent Gate Review passed after one canonical
+launch-identity repair. Rust remains a comparison oracle, RTS-023 does not enter, SQLite is not
+selected, and launcher work is deferred until after the full Phase 3 Python boundary. RTS-031 pure
+local Store/journal implementation is next. No production handler migration/dual write, default,
+migration, release, retained-event operation or destructive cleanup is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-024 closeout](docs/tasks/runtime-v2-rts-024-decision-implementation-report.md).
+[RTS-030 closeout](docs/tasks/runtime-v2-rts-030-python-core-boundary-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

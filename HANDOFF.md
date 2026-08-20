@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-024 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-030 is the last passed
 TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
 `Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -122,6 +122,21 @@ ADR-0006 is accepted and the semantic contract/fault matrix are Frozen without c
 39 cases or 11 outcomes. Phase 3 starts with separately frozen RTS-030. No production default,
 state migration, launcher acceptance, release, retained-event operation or destructive cleanup is
 authorized. See the [RTS-024 closeout](docs/tasks/runtime-v2-rts-024-decision-implementation-report.md).
+
+RTS-030 then returned `PASS` for the first reversible Phase 3 Python Core package/interface
+boundary. The installed `agent_workflow.runtime` package defines strict immutable RunSpec,
+InvocationSpec and canonical RenderedInvocation identities plus narrow logical RunStore,
+per-invocation journal, read-only status and pure renderer ports. It imports no packaged operations
+scripts and changes no production/default Runtime path. Candidate ordinary CI `32335336859` and
+Binary Feasibility `32335336776` passed. Independent Gate Review found one missing canonical launch
+identity; repair `c9e2c5f` bound executable/argv/cwd/environment and stdin digest/length, repair CI
+passed the affected tests and installed-wheel gates, and the same Reviewer focused re-review passed.
+
+The next safe action is a separately frozen RTS-031 TaskCard for a pure local checksummed atomic-
+file RunStore and per-invocation journal implementation behind those ports. It must not migrate or
+dual-write a production handler, read/delete legacy authority, invoke providers, touch Agent Bus or
+external truth, or change a default. See the
+[RTS-030 closeout](docs/tasks/runtime-v2-rts-030-python-core-boundary-implementation-report.md).
 
 ## Current Handoff State: 2026-08-17
 

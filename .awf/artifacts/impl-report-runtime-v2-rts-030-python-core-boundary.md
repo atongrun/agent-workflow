@@ -50,8 +50,9 @@ Candidate CI run `32335336859` passed full Linux/Windows tests, macOS runtime ch
 wheel checks on all three platforms after one L1 import-order repair. Binary Feasibility run
 `32335336776` also passed all jobs. The single independent Gate Reviewer then found one L3 launch-
 identity gap: `LaunchIntent` required a rendered-invocation digest without canonical bytes. Repair
-`c9e2c5f` added exact canonical hashing and focused field-drift tests. Focused/full repair CI and the
-same Reviewer's focused re-review remain pending.
+`c9e2c5f` added exact canonical hashing and focused field-drift tests. Repair CI `32336141952`
+passed Ruff, complete Linux tests/distribution validation, macOS runtime and all installed-wheel
+jobs before closeout. The same Reviewer's focused re-review returned `PASS` with no new L3 defect.
 
 ## Explicit non-claims
 
@@ -81,7 +82,7 @@ Runtime v2.
   "tests": [
     "Candidate ordinary CI 32335336859 PASS",
     "Candidate Binary Feasibility 32335336776 PASS",
-    "Independent Gate Review REQUEST_CHANGES; c9e2c5f launch-identity repair pending CI/re-review"
+    "Independent Gate Review PASS after c9e2c5f launch-identity repair and focused re-review"
   ],
   "source_revision": "c9e2c5f1731b8690318420df1b87c35602be5611"
 }
