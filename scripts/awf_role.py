@@ -1966,8 +1966,7 @@ def recover_postflight_manifest(
         report_sha = facts.get("review_report_sha256")
         report_files = sorted(Path(workspace).glob(".awf/artifacts/review-report-*.md"))
         matching_report = any(
-            isinstance(report_sha, str)
-            and artifact_sha256(path) == report_sha
+            isinstance(report_sha, str) and artifact_sha256(path) == report_sha
             for path in report_files
         )
         if (

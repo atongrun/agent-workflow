@@ -29,9 +29,7 @@ _DENY_PREFIXES = tuple(
     ".venv/ venv/ env/ __pycache__/ node_modules/ dist/ build/ coverage/ htmlcov/".split()
 )
 _DENY_EXACT = ("Thumbs.db", ".DS_Store", ".coverage", "coverage.xml")
-_DENY_SUFFIXES = tuple(
-    ".swp .swo .swn .bak .orig .pyc .pyo .log .pid .egg-info".split()
-)
+_DENY_SUFFIXES = tuple(".swp .swo .swn .bak .orig .pyc .pyo .log .pid .egg-info".split())
 _SECRET_DETECTORS = (
     ("private-key", re.compile(r"-----BEGIN\s+(?:\S+\s+)?PRIVATE\s+KEY-----")),
     ("credential-url", re.compile(r"https?://[^/:@\s]+:[^/@\s]+@")),
@@ -289,9 +287,7 @@ def resolve_repo_file(repo: Path, relative_path: str, label: str) -> Path:
     return resolved
 
 
-def resolve_review_report_path(
-    repo: Path, report_path: str, implementation_report: str
-) -> Path:
+def resolve_review_report_path(repo: Path, report_path: str, implementation_report: str) -> Path:
     if not report_path:
         raise ArtifactError("--review-report is required")
     resolved = resolve_repo_file(repo, report_path, "ReviewReport")
@@ -314,9 +310,7 @@ def artifact_fact(path: Path, relative_path: str | None = None) -> ArtifactFact:
     return ArtifactFact(bound_path, len(raw), hashlib.sha256(raw).hexdigest())
 
 
-def validate_implementation_report(
-    path: Path, relative_path: str | None = None
-) -> ArtifactFact:
+def validate_implementation_report(path: Path, relative_path: str | None = None) -> ArtifactFact:
     if not str(path):
         raise ArtifactError(
             "--report is required; ImplementationReport must exist before commit or review"
@@ -490,9 +484,7 @@ def _review_machine(markdown: str, *, embedded: bool) -> dict[str, object]:
     return data
 
 
-def parse_review_report(
-    path: Path, relative_path: str | None = None
-) -> ValidatedReviewArtifact:
+def parse_review_report(path: Path, relative_path: str | None = None) -> ValidatedReviewArtifact:
     source = Path(path)
     try:
         raw = source.read_bytes()
@@ -549,11 +541,7 @@ def path_is_denied(path: str) -> bool:
     components = path.split("/")
     if any(prefix.rstrip("/") in components for prefix in _DENY_PREFIXES):
         return True
-    return (
-        basename in _DENY_EXACT
-        or path.endswith(_DENY_SUFFIXES)
-        or ".egg-info/" in path
-    )
+    return basename in _DENY_EXACT or path.endswith(_DENY_SUFFIXES) or ".egg-info/" in path
 
 
 def validate_postflight_paths(

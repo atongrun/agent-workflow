@@ -41,9 +41,7 @@ def write_card(
         "verification_commands": commands or [["{python}", "-c", "raise SystemExit(0)"]],
     }
     path.write_text(
-        "# TaskCard\n\n<!-- awf-postflight\n"
-        + json.dumps(payload, indent=2)
-        + "\n-->\n",
+        "# TaskCard\n\n<!-- awf-postflight\n" + json.dumps(payload, indent=2) + "\n-->\n",
         encoding="utf-8",
     )
 

@@ -25,8 +25,8 @@ adoption, remote operation, recovery representation change, migration, default s
 
 ## Budget and validation
 
-- Installed Artifact module: 554 nonblank/noncomment lines (budget 560).
-- Focused Artifact tests: 221 nonblank/noncomment lines (budget 900).
+- Installed Artifact module: 542 nonblank/noncomment lines (budget 560).
+- Focused Artifact tests: 219 nonblank/noncomment lines (budget 900).
 - `scripts/awf_artifact_contract.py` and `scripts/awf_role.py` have a combined strongly negative
   production delta; moved policy bodies were deleted.
 - No dependency was added.
