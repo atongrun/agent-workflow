@@ -589,6 +589,22 @@ live cross-machine acceptance, migrate/change defaults, begin lifecycle/launcher
 delete compatibility. Fresh isolated Mac-to-Windows no-model acceptance remains the following
 Phase 4A gate after RTS-041 passes.
 
+RTS-041 result: **PASS**. The existing checksummed atomic authority now commits each accepted
+handoff/terminal effect with exact reconstructable result-envelope bytes. One Stage-blind injected
+dispatcher persists `attempting` before sender I/O and records only `sent` or `ambiguous`; exact
+in-flight or stopped state cannot authorize replay. The initial Gate Review found stale-prepared
+concurrency and stopped-status defects; repair `beec962` closed both, and focused re-review returned
+PASS with zero findings. Exact repaired-head ordinary CI `32376015654` and Binary Feasibility
+`32376016069` passed. Production authority, Agent Bus, retained events and defaults remain
+unchanged.
+
+The exact successor is a separately frozen **RTS-042 fresh isolated Mac-to-Windows no-model
+request/result acceptance** using the selected adapter boundary. It must use fresh isolated
+Bus/config/state/queue identities, a real child handler, external success-gated ACK evidence and
+scoped queues `0/0 -> 0/0`. It cannot invoke a model/business handler, touch production or retained
+deliveries, adopt/dual-write production authority, migrate/change defaults, begin lifecycle or
+launcher work, release or delete compatibility.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -853,11 +869,12 @@ Core contract/port boundary; RTS-031 through RTS-034 passed the disposable Store
 renderer, isolated workspace/trusted import and Artifact-validation seams without changing current
 authority. RTS-035 passed the complete disposable local application composition and closes Phase 3.
 RTS-040 passed the strict Stage-blind command/result envelope and no-I/O receive/preparation
-boundary. The next action is the separately frozen RTS-041 Store-owned outgoing-intent and bounded
-Agent Bus adapter boundary in disposable no-model state. No production/retained Bus operation,
-Store adoption or dual write, live cross-machine acceptance, default switch, production state
-migration, native-launcher acceptance, release, retained-event operation or destructive cleanup is
-authorized.
+boundary. RTS-041 passed the Store-owned exact outgoing-intent and bounded Stage-blind adapter
+boundary after its concurrency/stopped-state repair and focused independent re-review. The next
+action is the separately frozen RTS-042 fresh isolated Mac-to-Windows no-model request/result
+acceptance. No production/retained Bus operation, Store adoption or dual write, default switch,
+production state migration, native-launcher acceptance, release, retained-event operation or
+destructive cleanup is authorized.
 
 ## 12. Plan Completion Definition
 

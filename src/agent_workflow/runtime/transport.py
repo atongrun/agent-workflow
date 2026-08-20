@@ -14,7 +14,6 @@ from .ports import (
     TerminalCommand,
     WorkflowStage,
 )
-from .store import AtomicRunStore
 
 ENVELOPE_FORMAT = "awf.runtime-v2.command-result-envelope.v1"
 _MAX_ENVELOPE_BYTES = 256 * 1024
@@ -476,6 +475,8 @@ class LocalTransportBoundary:
             or envelope.payload_sha256.removeprefix("sha256:") != request.payload_sha256
         )
         if isinstance(envelope, ResultEnvelope):
+            from .store import AtomicRunStore
+
             mismatch = mismatch or (
                 expected_causation_delivery_id is None
                 or envelope.causation_delivery_id != expected_causation_delivery_id

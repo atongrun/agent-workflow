@@ -120,6 +120,9 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "PreparedWorkspace",
         "OPENCODE_FINDING_INSTRUCTIONS",
         "OpenCodeRenderer",
+        "OutgoingIntent",
+        "OutgoingIntentDispatcher",
+        "OutgoingStatus",
         "PI_FINDING_INSTRUCTIONS",
         "PiReviewerRenderer",
         "ProviderRenderer",
@@ -143,6 +146,10 @@ def test_runtime_package_exports_only_contracts_and_ports() -> None:
         "TerminalCommand",
         "TerminalOutcome",
         "TransportError",
+        "TransportSender",
+        "TransportSendObservation",
+        "TransportSendReceipt",
+        "TransportSendState",
         "ValidationEffect",
         "ValidatedReviewArtifact",
         "WorkspaceDelta",
@@ -190,9 +197,12 @@ def test_ports_expose_no_arbitrary_phase_or_repair_escape_hatch() -> None:
         "authorize",
         "journal",
         "pending_handoff",
+        "pending_outgoing",
         "record_handoff",
+        "record_send_observation",
         "record_stop",
         "record_terminal",
+        "outgoing_status",
     }
     assert public_protocol_methods(InvocationJournal) == {
         "record_launch_intent",
@@ -200,7 +210,7 @@ def test_ports_expose_no_arbitrary_phase_or_repair_escape_hatch() -> None:
         "record_result",
         "snapshot",
     }
-    assert public_protocol_methods(StatusReader) == {"snapshot"}
+    assert public_protocol_methods(StatusReader) == {"outgoing", "snapshot"}
     assert public_protocol_methods(ProviderRenderer) == {"render"}
     all_methods = set().union(
         public_protocol_methods(RunStore),
@@ -304,6 +314,7 @@ def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
         ProviderRenderer,
         runtime.ProviderLauncher,
         runtime.StartedProvider,
+        runtime.TransportSender,
     }
     concrete = {
         runtime.AtomicInvocationJournal,
@@ -315,6 +326,7 @@ def test_package_exports_only_explicit_runtime_values_ports_and_store() -> None:
         runtime.LocalRuntimeApplication,
         runtime.LocalTransportBoundary,
         runtime.OpenCodeRenderer,
+        runtime.OutgoingIntentDispatcher,
         runtime.PiReviewerRenderer,
         runtime.StoreError,
         runtime.SubprocessProviderLauncher,

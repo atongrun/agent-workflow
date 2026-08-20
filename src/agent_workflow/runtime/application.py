@@ -20,6 +20,7 @@ from .artifact import (
     validate_secret_observation,
 )
 from .contracts import InvocationSpec, RenderedInvocation, RunSpec, _canonical_bytes, _identifier
+from .outgoing import OutgoingIntent
 from .ports import (
     AuthorizationCommand,
     DecisionOutcome,
@@ -622,6 +623,7 @@ class LocalRuntimeApplication:
                 "reviewer",
             ),
             effect,
+            OutgoingIntent.from_envelope(outgoing),
         )
 
     def _finish_review(
@@ -689,6 +691,7 @@ class LocalRuntimeApplication:
                     "coder",
                 ),
                 effect,
+                OutgoingIntent.from_envelope(outgoing),
             )
             return
         terminal = TerminalOutcome.COMPLETED if verdict == "PASS" else TerminalOutcome.BLOCKED
@@ -716,6 +719,7 @@ class LocalRuntimeApplication:
                 effect_sha256,
             ),
             effect,
+            OutgoingIntent.from_envelope(outgoing),
         )
 
     @staticmethod

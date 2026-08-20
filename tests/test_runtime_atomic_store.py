@@ -19,9 +19,11 @@ from agent_workflow.runtime import (
     HandoffCommand,
     JournalAuthorization,
     LaunchIntent,
+    OutgoingIntent,
     ProcessObservation,
     ProviderResult,
     ProviderSelection,
+    ResultEnvelope,
     RunSpec,
     RunStore,
     StatusReader,
@@ -104,7 +106,7 @@ def authorize(
         stage=stage,
         role=role,
         attempt=attempt,
-        delivery_id=incoming.delivery_id if incoming else f"delivery-{label}",
+        delivery_id=incoming.delivery_id if incoming else "awfv2:" + digest(f"delivery-{label}"),
         payload_sha256=incoming.payload_sha256 if incoming else digest(f"payload-{label}"),
     )
     fact = JournalAuthorization(
@@ -143,6 +145,39 @@ def complete_provider(
     )
 
 
+def handoff_values(
+    spec: RunSpec,
+    source: AuthorizationCommand,
+    label: str,
+) -> tuple[HandoffCommand, OutgoingIntent]:
+    review_bound = source.stage in {WorkflowStage.IMPLEMENT, WorkflowStage.REWORK}
+    route = spec.review_route if review_bound else spec.rework_route
+    target_role = "reviewer" if review_bound else "coder"
+    envelope = ResultEnvelope.create(
+        run_id=spec.run_id,
+        task_id=spec.task_id,
+        run_spec_sha256=spec.sha256,
+        source_role="reviewer" if source.stage is WorkflowStage.REVIEW else "coder",
+        target_role=target_role,
+        route=route,
+        source_invocation_id=source.invocation_id,
+        source_authorization_sha256=source.authorization_sha256,
+        target_invocation_id=f"target-{label}",
+        causation_delivery_id=source.delivery_id,
+        payload={"label": label},
+    )
+    command = HandoffCommand(
+        run_spec_sha256=spec.sha256,
+        source_invocation_id=source.invocation_id,
+        source_authorization_sha256=source.authorization_sha256,
+        delivery_id=envelope.delivery_id,
+        payload_sha256=envelope.payload_sha256.removeprefix("sha256:"),
+        route=route,
+        target_role=target_role,
+    )
+    return command, OutgoingIntent.from_envelope(envelope)
+
+
 def handoff(
     store: AtomicRunStore,
     spec: RunSpec,
@@ -150,18 +185,39 @@ def handoff(
     effect: ValidationEffect,
     label: str,
 ) -> HandoffCommand:
-    review_bound = source.stage in {WorkflowStage.IMPLEMENT, WorkflowStage.REWORK}
-    command = HandoffCommand(
+    command, intent = handoff_values(spec, source, label)
+    assert store.record_handoff(command, effect, intent).outcome is DecisionOutcome.SAFE_CONTINUE
+    return command
+
+
+def terminal_values(
+    spec: RunSpec,
+    source: AuthorizationCommand,
+    outcome: TerminalOutcome = TerminalOutcome.COMPLETED,
+) -> tuple[TerminalCommand, OutgoingIntent]:
+    envelope = ResultEnvelope.create(
+        run_id=spec.run_id,
+        task_id=spec.task_id,
+        run_spec_sha256=spec.sha256,
+        source_role="reviewer",
+        target_role="architect",
+        route=f"result:{outcome.value}",
+        source_invocation_id=source.invocation_id,
+        source_authorization_sha256=source.authorization_sha256,
+        target_invocation_id="target-architect",
+        causation_delivery_id=source.delivery_id,
+        payload={"outcome": outcome.value},
+    )
+    command = TerminalCommand(
         run_spec_sha256=spec.sha256,
         source_invocation_id=source.invocation_id,
         source_authorization_sha256=source.authorization_sha256,
-        delivery_id=f"delivery-handoff-{label}",
-        payload_sha256=digest(f"handoff-payload-{label}"),
-        route=spec.review_route if review_bound else spec.rework_route,
-        target_role="reviewer" if review_bound else "coder",
+        delivery_id=envelope.delivery_id,
+        payload_sha256=envelope.payload_sha256.removeprefix("sha256:"),
+        outcome=outcome,
+        evidence_sha256=digest("terminal-evidence"),
     )
-    assert store.record_handoff(command, effect).outcome is DecisionOutcome.SAFE_CONTINUE
-    return command
+    return command, OutgoingIntent.from_envelope(envelope)
 
 
 def terminal(
@@ -171,16 +227,8 @@ def terminal(
     effect: ValidationEffect,
     outcome: TerminalOutcome = TerminalOutcome.COMPLETED,
 ) -> TerminalCommand:
-    command = TerminalCommand(
-        run_spec_sha256=spec.sha256,
-        source_invocation_id=source.invocation_id,
-        source_authorization_sha256=source.authorization_sha256,
-        delivery_id="delivery-terminal",
-        payload_sha256=digest("terminal-payload"),
-        outcome=outcome,
-        evidence_sha256=digest("terminal-evidence"),
-    )
-    assert store.record_terminal(command, effect).outcome is DecisionOutcome.SAFE_CONTINUE
+    command, intent = terminal_values(spec, source, outcome)
+    assert store.record_terminal(command, effect, intent).outcome is DecisionOutcome.SAFE_CONTINUE
     return command
 
 
@@ -256,7 +304,9 @@ def test_full_implement_review_rework_review_terminal_route(tmp_path: Path) -> N
     assert final.next_action == "status or exact stop only"
 
     before = store.path.read_bytes()
-    replay = store.record_terminal(command, review_two_effect)
+    intent = store.pending_outgoing()
+    assert intent is not None
+    replay = store.record_terminal(command, review_two_effect, intent)
     assert replay.outcome is DecisionOutcome.TERMINAL_IDEMPOTENT
     assert replay.sequence == final.sequence
     assert store.path.read_bytes() == before
@@ -331,7 +381,9 @@ def test_exact_journal_and_handoff_replays_are_stable(tmp_path: Path) -> None:
     assert store.path.read_bytes() == before
     outgoing = handoff(store, spec, command, effect, "stable")
     before = store.path.read_bytes()
-    resend = store.record_handoff(outgoing, effect)
+    intent = store.pending_outgoing()
+    assert intent is not None
+    resend = store.record_handoff(outgoing, effect, intent)
     assert resend.outcome is DecisionOutcome.SAFE_STABLE_RESEND
     assert store.path.read_bytes() == before
 
@@ -408,35 +460,20 @@ def test_stage_attempt_route_and_rework_budgets_fail_closed(tmp_path: Path) -> N
 
     implement, journal = authorize(store, spec, WorkflowStage.IMPLEMENT, "zero-rework", 1)
     effect = complete_provider(journal, implement, "zero-rework")
-    wrong = HandoffCommand(
-        spec.sha256,
-        implement.invocation_id,
-        implement.authorization_sha256,
-        "delivery-wrong-route",
-        digest("wrong-route-payload"),
-        spec.rework_route,
-        "coder",
-    )
+    valid, intent = handoff_values(spec, implement, "wrong-route")
+    wrong = dataclasses.replace(valid, route=spec.rework_route, target_role="coder")
     before = store.path.read_bytes()
     with pytest.raises(StoreError):
-        store.record_handoff(wrong, effect)
+        store.record_handoff(wrong, effect, intent)
     assert store.path.read_bytes() == before
 
     handoff(store, spec, implement, effect, "zero-review")
     review, review_journal = authorize(store, spec, WorkflowStage.REVIEW, "zero-review", 1)
     review_effect = complete_provider(review_journal, review, "zero-review")
-    request_rework = HandoffCommand(
-        spec.sha256,
-        review.invocation_id,
-        review.authorization_sha256,
-        "delivery-zero-rework-request",
-        digest("zero-rework-request"),
-        spec.rework_route,
-        "coder",
-    )
+    request_rework, rework_intent = handoff_values(spec, review, "zero-rework-request")
     before = store.path.read_bytes()
     with pytest.raises(StoreError, match="rework capacity"):
-        store.record_handoff(request_rework, review_effect)
+        store.record_handoff(request_rework, review_effect, rework_intent)
     assert store.path.read_bytes() == before
 
 
@@ -534,7 +571,7 @@ def test_duplicate_keys_new_schema_and_writer_drift_fail_closed(tmp_path: Path) 
 
     store.path.write_text(valid + "\n", encoding="utf-8")
     envelope = load_envelope(store)
-    envelope["payload"]["schema_version"] = 3
+    envelope["payload"]["schema_version"] = 4
     rechecksum(envelope)
     write_envelope(store, envelope)
     newer = store.path.read_bytes()
@@ -586,18 +623,10 @@ def test_unsupported_and_conflicting_terminal_preserve_exact_authority(tmp_path:
     handoff(store, spec, implement, implement_effect, "terminal-review")
     review, review_journal = authorize(store, spec, WorkflowStage.REVIEW, "terminal-review", 1)
     effect = complete_provider(review_journal, review, "terminal-review")
-    unsupported = TerminalCommand(
-        spec.sha256,
-        review.invocation_id,
-        review.authorization_sha256,
-        "delivery-terminal",
-        digest("unsupported-payload"),
-        TerminalOutcome.FAILED,
-        digest("unsupported-evidence"),
-    )
+    unsupported, unsupported_intent = terminal_values(spec, review, TerminalOutcome.FAILED)
     before = store.path.read_bytes()
     with pytest.raises(StoreError, match="has no owner"):
-        store.record_terminal(unsupported, effect)
+        store.record_terminal(unsupported, effect, unsupported_intent)
     assert store.path.read_bytes() == before
 
     accepted = terminal(store, spec, review, effect, TerminalOutcome.BLOCKED)
@@ -608,7 +637,9 @@ def test_unsupported_and_conflicting_terminal_preserve_exact_authority(tmp_path:
     assert store.path.read_bytes() == before
     conflicting = dataclasses.replace(accepted, outcome=TerminalOutcome.COMPLETED)
     with pytest.raises(StoreError) as caught:
-        store.record_terminal(conflicting, effect)
+        intent = store.pending_outgoing()
+        assert intent is not None
+        store.record_terminal(conflicting, effect, intent)
     assert caught.value.outcome is DecisionOutcome.TERMINAL_CONFLICT
 
 

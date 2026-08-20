@@ -53,6 +53,15 @@ from .contracts import (
     RenderedInvocation,
     RunSpec,
 )
+from .outgoing import (
+    OutgoingIntent,
+    OutgoingIntentDispatcher,
+    OutgoingStatus,
+    TransportSender,
+    TransportSendObservation,
+    TransportSendReceipt,
+    TransportSendState,
+)
 from .ports import (
     AuthorizationCommand,
     DecisionOutcome,
@@ -147,6 +156,9 @@ __all__ = [
     "PreparedWorkspace",
     "OPENCODE_FINDING_INSTRUCTIONS",
     "OpenCodeRenderer",
+    "OutgoingIntent",
+    "OutgoingIntentDispatcher",
+    "OutgoingStatus",
     "PI_FINDING_INSTRUCTIONS",
     "PiReviewerRenderer",
     "ProviderRenderer",
@@ -168,6 +180,10 @@ __all__ = [
     "TerminalCommand",
     "TerminalOutcome",
     "TransportError",
+    "TransportSender",
+    "TransportSendObservation",
+    "TransportSendReceipt",
+    "TransportSendState",
     "ValidationEffect",
     "WorkspaceDelta",
     "WorkspaceError",
