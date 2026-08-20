@@ -224,7 +224,7 @@ Known CI risks before machine validation:
     "Source gate scan PASS",
     "Whitespace diff check PASS"
   ],
-  "source_revision": "b6bd849c8012e716a27f673d0d300c8928aaeec0",
+  "source_revision": "46f906e558392982c5e1b8e086b8e28b4d864b23",
   "review_status": "PASS",
   "preliminary_result": "PENDING_CI",
   "dependency_count": 0,
