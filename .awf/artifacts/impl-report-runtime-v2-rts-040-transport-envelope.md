@@ -55,8 +55,10 @@ unchanged.
   external GitHub API `403 rate limit exceeded`; every other binary job passed, and the immediately
   preceding TaskCard baseline at `a1d5f45` passed the full Binary matrix.
 
-Exact-head full pytest/Ruff/installed-wheel/cross-platform and Binary Feasibility evidence is the
-next candidate gate; local macOS intentionally did not install or run pytest/Ruff.
+Exact-head ordinary CI `32368582902` passed Ruff, full Linux and Windows suites, macOS runtime,
+resource/workflow/distribution validation and all installed-wheel jobs. Exact-head Binary
+Feasibility `32368582891` passed every native/Rust comparison cell and aggregate. Local macOS
+intentionally did not install or run pytest/Ruff.
 
 ## Fault coverage
 

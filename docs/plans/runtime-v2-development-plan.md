@@ -572,6 +572,23 @@ events, claim external ACK from local state, dual-write or migrate authority, ch
 a physical Coordinator/scheduler, begin launcher work, release or delete compatibility. Fresh
 isolated cross-machine acceptance remains a later Phase 4A gate after the local envelope passes.
 
+RTS-040 result: **PASS**. The installed Runtime now owns one strict
+`awf.runtime-v2.command-result-envelope.v1` family and a no-I/O local receive/preparation boundary.
+Exact owner, route, invocation, authorization, payload and causation identity is validated before
+application/provider entry, and result preparation joins Store-owned outgoing facts without
+claiming send, handler success or ACK. Independent Gate Review returned PASS with zero findings at
+`8adacc9`; exact-head ordinary CI `32368582902` and Binary Feasibility `32368582891` passed. Agent
+Bus, production handlers/authority, retained deliveries and defaults remain unchanged.
+
+The exact successor is a separately frozen **RTS-041 Store-owned outgoing-intent and bounded Agent
+Bus adapter boundary**. It may atomically retain the exact canonical result-envelope bytes in the
+selected disposable Store and exercise one narrow injected adapter against only that intent, with
+explicit send observations and no ambiguous retry. It cannot adopt/dual-write production authority,
+change Agent Bus itself, operate production/retained events, infer handler success or ACK, perform
+live cross-machine acceptance, migrate/change defaults, begin lifecycle/launcher work, release or
+delete compatibility. Fresh isolated Mac-to-Windows no-model acceptance remains the following
+Phase 4A gate after RTS-041 passes.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -835,10 +852,12 @@ product boundary; the semantic contract is `Frozen`. RTS-030 passed the reversib
 Core contract/port boundary; RTS-031 through RTS-034 passed the disposable Store/journal, production
 renderer, isolated workspace/trusted import and Artifact-validation seams without changing current
 authority. RTS-035 passed the complete disposable local application composition and closes Phase 3.
-The next action is the separately frozen RTS-040 Phase 4A Stage-blind command/result envelope in
-disposable no-model state. No production/retained Bus operation, Store adoption or dual write,
-default switch, production state migration, native-launcher acceptance, release, retained-event
-operation or destructive cleanup is authorized.
+RTS-040 passed the strict Stage-blind command/result envelope and no-I/O receive/preparation
+boundary. The next action is the separately frozen RTS-041 Store-owned outgoing-intent and bounded
+Agent Bus adapter boundary in disposable no-model state. No production/retained Bus operation,
+Store adoption or dual write, live cross-machine acceptance, default switch, production state
+migration, native-launcher acceptance, release, retained-event operation or destructive cleanup is
+authorized.
 
 ## 12. Plan Completion Definition
 
