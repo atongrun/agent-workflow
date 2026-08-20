@@ -9,7 +9,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import tests.fixtures.runtime_v2_bus_acceptance as acceptance
 from agent_workflow.runtime import (
     AtomicRunStore,
     CommandEnvelope,
@@ -18,7 +17,7 @@ from agent_workflow.runtime import (
     ResultEnvelope,
     TransportSendState,
 )
-
+from tests.fixtures import runtime_v2_bus_acceptance as acceptance
 
 REPO = Path(__file__).resolve().parents[1]
 SCOPE = "rts042-focused-001"
