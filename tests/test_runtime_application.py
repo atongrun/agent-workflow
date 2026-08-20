@@ -5,7 +5,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -15,16 +15,21 @@ from agent_workflow.runtime import (
     ATTACH_INPUT,
     ApplicationError,
     AtomicRunStore,
+    CommandEnvelope,
     DecisionOutcome,
     LocalRuntimeApplication,
     LocalStageRequest,
+    LocalTransportBoundary,
     PostflightObservation,
     ProcessResult,
     ProviderSelection,
+    ResultEnvelope,
     RunSpec,
     StoreError,
     SubprocessProviderLauncher,
+    TerminalCommand,
     TerminalOutcome,
+    TransportError,
     WorkflowStage,
     bind_environment,
     normalize_rework_feedback,
@@ -124,6 +129,7 @@ class Fixture:
         verdict: str = "PASS",
         mode: str = "success",
         change_text: str | None = None,
+        outgoing_target: str | None = None,
     ) -> LocalStageRequest:
         input_data = {
             "invocation_id": f"invoke-{label}",
@@ -152,13 +158,30 @@ class Fixture:
             if stage is not WorkflowStage.IMPLEMENT
             else None
         )
+        if incoming is None:
+            command = CommandEnvelope.create(
+                run_id=self.spec.run_id,
+                task_id=self.spec.task_id,
+                run_spec_sha256=self.spec.sha256,
+                source_role="architect",
+                target_role="coder",
+                route=self.spec.implement_route,
+                source_invocation_id="owner-dispatch",
+                source_authorization_sha256=digest("owner-dispatch-authorization"),
+                target_invocation_id=f"invoke-{label}",
+                payload={"input_sha256": digest(input_text)},
+            )
         return LocalStageRequest(
             invocation_id=f"invoke-{label}",
             stage=stage,
             attempt=attempt,
-            delivery_id=incoming.delivery_id if incoming else f"delivery-{label}",
-            payload_sha256=incoming.payload_sha256 if incoming else digest(f"payload-{label}"),
-            outgoing_delivery_id=f"outgoing-{label}",
+            delivery_id=incoming.delivery_id if incoming else command.delivery_id,
+            payload_sha256=(
+                incoming.payload_sha256
+                if incoming
+                else command.payload_sha256.removeprefix("sha256:")
+            ),
+            outgoing_target_invocation_id=outgoing_target or f"invoke-next-{label}",
             provider_executable=str(Path(sys.executable).resolve()),
             provider_environment=self.env,
             input_text=input_text,
@@ -275,6 +298,91 @@ def authorize_without_launch(
     return request
 
 
+def transport_command(
+    fixture: Fixture,
+    request: LocalStageRequest,
+    payload: dict[str, object] | None = None,
+) -> tuple[CommandEnvelope, LocalStageRequest]:
+    envelope = CommandEnvelope.create(
+        run_id=fixture.spec.run_id,
+        task_id=fixture.spec.task_id,
+        run_spec_sha256=fixture.spec.sha256,
+        source_role="architect",
+        target_role="coder",
+        route=fixture.spec.implement_route,
+        source_invocation_id="owner-dispatch",
+        source_authorization_sha256=digest("owner-dispatch-authorization"),
+        target_invocation_id=request.invocation_id,
+        payload=payload or {"task_id": fixture.spec.task_id, "intent": "implement"},
+    )
+    return envelope, replace(
+        request,
+        delivery_id=envelope.delivery_id,
+        payload_sha256=envelope.payload_sha256.removeprefix("sha256:"),
+    )
+
+
+def pending_result(
+    fixture: Fixture,
+    boundary: LocalTransportBoundary,
+    request: LocalStageRequest,
+    causation_delivery_id: str,
+):
+    intent = AtomicRunStore(
+        fixture.state, fixture.spec.run_id, "writer-local-fixture"
+    ).pending_handoff()
+    assert intent is not None
+    effect = (
+        AtomicRunStore(fixture.state, fixture.spec.run_id, "writer-local-fixture")
+        .journal(intent.source_invocation_id)
+        .snapshot()
+        .validation_effect
+    )
+    assert effect is not None
+    if intent.target_role == "reviewer":
+        payload = {
+            "source_invocation_id": intent.source_invocation_id,
+            "effect_sha256": effect.effect_sha256,
+        }
+        source_role = "coder"
+    else:
+        payload = json.loads(
+            normalize_rework_feedback(
+                parse_review_report(
+                    fixture.repo / fixture.spec.review_report,
+                    fixture.spec.review_report,
+                ).review.as_payload()
+            )
+        )
+        source_role = "reviewer"
+    return boundary.prepare_result(
+        fixture.spec,
+        intent,
+        source_role=source_role,
+        target_role=intent.target_role,
+        route=intent.route,
+        target_invocation_id=request.invocation_id,
+        causation_delivery_id=causation_delivery_id,
+        payload=payload,
+    )
+
+
+def terminal_command(fixture: Fixture) -> TerminalCommand:
+    authority = json.loads(authority_path(fixture).read_text(encoding="utf-8"))["payload"]
+    raw = next(
+        event["command"] for event in reversed(authority["events"]) if event["kind"] == "terminal"
+    )
+    return TerminalCommand(
+        raw["run_spec_sha256"],
+        raw["source_invocation_id"],
+        raw["source_authorization_sha256"],
+        raw["delivery_id"],
+        raw["payload_sha256"],
+        TerminalOutcome(raw["outcome"]),
+        raw["evidence_sha256"],
+    )
+
+
 def test_installed_application_completes_pass_and_replay_is_byte_stable(
     local_runtime: Fixture,
 ) -> None:
@@ -337,6 +445,182 @@ def test_installed_application_records_blocked_terminal(local_runtime: Fixture) 
     assert final.terminal is TerminalOutcome.BLOCKED
 
 
+@pytest.mark.parametrize(
+    ("verdict", "terminal"),
+    [("PASS", TerminalOutcome.COMPLETED), ("BLOCKED", TerminalOutcome.BLOCKED)],
+)
+def test_transport_boundary_preserves_pass_and_blocked_result_sequences(
+    local_runtime: Fixture,
+    verdict: str,
+    terminal: TerminalOutcome,
+) -> None:
+    fixture = local_runtime
+    boundary = LocalTransportBoundary(fixture.app)
+    implement = fixture.request(
+        WorkflowStage.IMPLEMENT,
+        "implement",
+        1,
+        outgoing_target="invoke-review",
+    )
+    command, implement = transport_command(fixture, implement)
+    assert boundary.accept(fixture.spec, implement, command.encode()).stage is WorkflowStage.REVIEW
+
+    review = fixture.request(
+        WorkflowStage.REVIEW,
+        "review",
+        1,
+        verdict=verdict,
+        outgoing_target="invoke-architect-decision",
+    )
+    review_result = pending_result(fixture, boundary, review, command.delivery_id)
+    final = boundary.accept(
+        fixture.spec,
+        review,
+        review_result.encode(),
+        expected_causation_delivery_id=command.delivery_id,
+    )
+
+    assert final.terminal is terminal
+    terminal_intent = terminal_command(fixture)
+    terminal_result = boundary.prepare_result(
+        fixture.spec,
+        terminal_intent,
+        source_role="reviewer",
+        target_role="architect",
+        route=f"result:{terminal.value}",
+        target_invocation_id="invoke-architect-decision",
+        causation_delivery_id=review_result.delivery_id,
+        payload=parse_review_report(
+            fixture.repo / fixture.spec.review_report,
+            fixture.spec.review_report,
+        ).review.as_payload(),
+    )
+    assert terminal_result.delivery_id == terminal_intent.delivery_id
+    assert fixture.launcher.calls == ["invoke-implement", "invoke-review"]
+
+
+def test_transport_boundary_preserves_bounded_rework_and_second_review(
+    local_runtime: Fixture,
+) -> None:
+    fixture = local_runtime
+    boundary = LocalTransportBoundary(fixture.app)
+    implement = fixture.request(
+        WorkflowStage.IMPLEMENT,
+        "implement",
+        1,
+        outgoing_target="invoke-review-one",
+    )
+    initial, implement = transport_command(fixture, implement)
+    boundary.accept(fixture.spec, implement, initial.encode())
+
+    review_one = fixture.request(
+        WorkflowStage.REVIEW,
+        "review-one",
+        1,
+        verdict="REQUEST_CHANGES",
+        outgoing_target="invoke-rework",
+    )
+    review_input = pending_result(fixture, boundary, review_one, initial.delivery_id)
+    boundary.accept(
+        fixture.spec,
+        review_one,
+        review_input.encode(),
+        expected_causation_delivery_id=initial.delivery_id,
+    )
+
+    rework = fixture.request(
+        WorkflowStage.REWORK,
+        "rework",
+        1,
+        outgoing_target="invoke-review-two",
+    )
+    rework_input = pending_result(fixture, boundary, rework, review_input.delivery_id)
+    boundary.accept(
+        fixture.spec,
+        rework,
+        rework_input.encode(),
+        expected_causation_delivery_id=review_input.delivery_id,
+    )
+
+    review_two = fixture.request(
+        WorkflowStage.REVIEW,
+        "review-two",
+        2,
+        outgoing_target="invoke-architect-decision",
+    )
+    second_review_input = pending_result(
+        fixture,
+        boundary,
+        review_two,
+        rework_input.delivery_id,
+    )
+    final = boundary.accept(
+        fixture.spec,
+        review_two,
+        second_review_input.encode(),
+        expected_causation_delivery_id=rework_input.delivery_id,
+    )
+
+    assert final.terminal is TerminalOutcome.COMPLETED
+    assert fixture.launcher.calls == [
+        "invoke-implement",
+        "invoke-review-one",
+        "invoke-rework",
+        "invoke-review-two",
+    ]
+
+
+def test_valid_but_foreign_result_denies_before_application_or_store_mutation(
+    local_runtime: Fixture,
+) -> None:
+    fixture = local_runtime
+    boundary = LocalTransportBoundary(fixture.app)
+    implement = fixture.request(
+        WorkflowStage.IMPLEMENT,
+        "implement",
+        1,
+        outgoing_target="invoke-review",
+    )
+    command, implement = transport_command(fixture, implement)
+    boundary.accept(fixture.spec, implement, command.encode())
+    review = fixture.request(
+        WorkflowStage.REVIEW,
+        "review",
+        1,
+        outgoing_target="invoke-architect-decision",
+    )
+    exact = pending_result(fixture, boundary, review, command.delivery_id)
+    foreign = ResultEnvelope.create(
+        run_id=exact.run_id,
+        task_id=exact.task_id,
+        run_spec_sha256=exact.run_spec_sha256,
+        source_role=exact.source_role,
+        target_role=exact.target_role,
+        route=exact.route,
+        source_invocation_id=exact.source_invocation_id,
+        source_authorization_sha256=digest("foreign-authorization"),
+        target_invocation_id=exact.target_invocation_id,
+        causation_delivery_id=exact.causation_delivery_id,
+        payload=exact.payload,
+    )
+    foreign_request = replace(
+        review,
+        delivery_id=foreign.delivery_id,
+        payload_sha256=foreign.payload_sha256.removeprefix("sha256:"),
+    )
+    before = files(fixture.state)
+
+    with pytest.raises(TransportError):
+        boundary.accept(
+            fixture.spec,
+            foreign_request,
+            foreign.encode(),
+            expected_causation_delivery_id=command.delivery_id,
+        )
+    assert fixture.launcher.calls == ["invoke-implement"]
+    assert files(fixture.state) == before
+
+
 def test_provider_artifact_failure_is_durable_and_never_replays(local_runtime: Fixture) -> None:
     fixture = local_runtime
     request = fixture.request(
@@ -386,6 +670,31 @@ def test_launch_without_result_is_ambiguous_and_stop_cannot_guess(
     with pytest.raises(StoreError) as stop:
         app.stop(fixture.spec)
     assert stop.value.outcome is DecisionOutcome.AMBIGUOUS_NO_REPLAY
+    assert files(fixture.state) == before
+
+
+def test_exact_transport_redelivery_preserves_provider_ambiguity_without_replay(
+    local_runtime: Fixture,
+) -> None:
+    fixture = local_runtime
+    launcher = _CrashingLauncher()
+    app = LocalRuntimeApplication(fixture.state, "writer-local-fixture", launcher)
+    boundary = LocalTransportBoundary(app)
+    request = fixture.request(
+        WorkflowStage.IMPLEMENT,
+        "ambiguous",
+        1,
+        outgoing_target="invoke-review",
+    )
+    envelope, request = transport_command(fixture, request)
+
+    with pytest.raises(RuntimeError, match="observation boundary"):
+        boundary.accept(fixture.spec, request, envelope.encode())
+    before = files(fixture.state)
+    status = boundary.accept(fixture.spec, request, envelope.encode())
+
+    assert status.outcome is DecisionOutcome.AMBIGUOUS_NO_REPLAY
+    assert launcher.calls == 1
     assert files(fixture.state) == before
 
 

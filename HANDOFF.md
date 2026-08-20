@@ -181,6 +181,22 @@ Agent Bus send, handler success and ACK as external observations. It must not op
 retained events, dual-write/migrate authority, change defaults, begin native-launcher work, release
 or delete compatibility. Fresh isolated cross-machine acceptance remains a later Phase 4A gate.
 
+RTS-040 then returned `PASS` for that local transport-envelope boundary. One strict versioned
+command/result family now binds exact owner, route, invocation, authorization, payload and causation
+identity and rejects malformed or mismatched input before application/provider entry. Result
+preparation joins exact Store-owned outgoing facts without transport, send, handler-success or ACK
+authority. Independent Gate Review returned PASS with zero findings at `8adacc9`; exact-head
+ordinary CI `32368582902` and Binary Feasibility `32368582891` passed. See the
+[RTS-040 closeout](docs/tasks/runtime-v2-rts-040-transport-envelope-implementation-report.md).
+
+The next safe action is a separately frozen RTS-041 Store-owned outgoing-intent and bounded Agent
+Bus adapter boundary. It may atomically retain exact canonical result-envelope bytes in the selected
+disposable Store and exercise one narrow injected adapter with explicit send observations. It must
+not adopt or dual-write production authority, modify Agent Bus, operate production/retained events,
+retry ambiguous sends, infer handler success/ACK, perform live cross-machine acceptance, change
+defaults, migrate state, begin lifecycle/launcher work, release or delete compatibility. Fresh
+isolated Mac-to-Windows no-model acceptance remains the following Phase 4A gate.
+
 ## Current Handoff State: 2026-08-17
 
 The final fresh-machine no-model usability gate is green. The original benchmark's disposable

@@ -57,8 +57,10 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   postflight-decision seam, preserving sole current production authority and recovery.
 - [x] Complete RTS-035 as the disposable selected local `run/status/stop` application composition,
   with full PASS/rework/BLOCKED paths, all shared faults and no production/default adoption.
+- [x] Complete RTS-040 as the strict versioned Stage-blind command/result envelope and no-I/O local
+  receive/preparation boundary, with exact identity/causation and pre-provider denial.
 
-Current last passed TaskCard gate is RTS-035, and Phase 3 is complete. ADR-0006 selects
+Current last passed TaskCard gate is RTS-040, and Phase 3 is complete. ADR-0006 selects
 `PYTHON + NATIVE LAUNCHER` with a checksummed atomic-file RunStore/per-invocation journal, one
 logical writer and no physical Coordinator. The semantic contract and 39-case/11-outcome matrix
 are Frozen. RTS-030 added strict
@@ -67,13 +69,14 @@ journal; RTS-032 moved existing provider command rendering behind the installed 
 while leaving current state sole authority; RTS-033 moved exact isolated-workspace and trusted
 local import effects behind the same boundary; RTS-034 moved Artifact validation and exact raw facts
 without changing recovery or lineage authority; RTS-035 composes those seams through one disposable
-local application and exact Store writer. Rust remains a comparison oracle, RTS-023 does not enter,
-SQLite is not selected, and launcher work remains deferred. The next safe action is a separately
-frozen RTS-040 Phase 4A Stage-blind command/result envelope using disposable no-model state. No
-production/retained Bus operation, Store adoption, dual write, default, migration, release,
-retained-event operation or destructive cleanup is authorized. See the
-[development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-035 closeout](docs/tasks/runtime-v2-rts-035-local-application-implementation-report.md).
+local application and exact Store writer; RTS-040 adds the strict Stage-blind envelope and local
+receive/preparation boundary. Rust remains a comparison oracle, RTS-023 does not enter, SQLite is
+not selected, and launcher work remains deferred. The next safe action is a separately frozen
+RTS-041 Store-owned outgoing-intent and bounded Agent Bus adapter boundary using disposable no-model
+state. No production/retained Bus operation, production Store adoption or dual write, live
+cross-machine acceptance, default, migration, release, retained-event operation or destructive
+cleanup is authorized. See the [development plan](docs/plans/runtime-v2-development-plan.md) and
+[RTS-040 closeout](docs/tasks/runtime-v2-rts-040-transport-envelope-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

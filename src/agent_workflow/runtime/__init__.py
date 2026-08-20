@@ -92,6 +92,13 @@ from .store import (
     StoreError,
     WriterBusy,
 )
+from .transport import (
+    ENVELOPE_FORMAT,
+    CommandEnvelope,
+    LocalTransportBoundary,
+    ResultEnvelope,
+    TransportError,
+)
 from .workspace import (
     PreparedWorkspace,
     WorkspaceDelta,
@@ -113,6 +120,7 @@ from .workspace import (
 __all__ = [
     "INVOCATION_SPEC_FORMAT",
     "RUN_SPEC_FORMAT",
+    "ENVELOPE_FORMAT",
     "AUTHORITY_FORMAT",
     "ATTACH_INPUT",
     "ApplicationError",
@@ -123,6 +131,7 @@ __all__ = [
     "ContractError",
     "CODEX_FINDING_INSTRUCTIONS",
     "CodexReviewerRenderer",
+    "CommandEnvelope",
     "DecisionOutcome",
     "HandoffCommand",
     "InvocationJournal",
@@ -132,6 +141,7 @@ __all__ = [
     "LaunchIntent",
     "LocalRuntimeApplication",
     "LocalStageRequest",
+    "LocalTransportBoundary",
     "ProcessObservation",
     "ProcessResult",
     "PreparedWorkspace",
@@ -145,6 +155,7 @@ __all__ = [
     "ProviderSelection",
     "RenderedInputFile",
     "RenderedInvocation",
+    "ResultEnvelope",
     "RunDecision",
     "RunSnapshot",
     "RunSpec",
@@ -156,6 +167,7 @@ __all__ = [
     "StoreError",
     "TerminalCommand",
     "TerminalOutcome",
+    "TransportError",
     "ValidationEffect",
     "WorkspaceDelta",
     "WorkspaceError",
