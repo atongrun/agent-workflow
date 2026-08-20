@@ -489,6 +489,19 @@ launcher, touch Agent Bus transport or migrate production state.
 RTS-030 must be independently reversible and must name the exact first production integration seam
 for its successor rather than combining all Phase 3 behavior in one PR.
 
+RTS-030 result: **PASS**. The installed `agent_workflow.runtime` boundary defines strict immutable
+RunSpec/InvocationSpec/RenderedInvocation values and narrow logical RunStore, per-invocation journal,
+read-only status and pure renderer ports without changing the production/default Runtime. Candidate
+ordinary CI and the automatically triggered Binary Feasibility matrix passed. Independent Gate
+Review found one missing canonical rendered-invocation identity; repair `c9e2c5f` bound executable,
+argv, cwd, environment and stdin digest/length, and the same Reviewer focused re-review passed.
+
+The exact successor is a separately frozen **RTS-031** pure local checksummed atomic-file RunStore
+and per-invocation journal implementation. It may implement the selected ports and disposable fault
+fixtures only. It cannot migrate or dual-write a production handler, read/delete legacy authority,
+invoke providers, touch external truth, or change the default. Production integration remains a
+later seam after RTS-031 passes.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -748,9 +761,11 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 RTS-001, RTS-010, RTS-011, RTS-020, RTS-021, RTS-022A, RTS-022B and RTS-024 passed. ADR-0006 selects
 Python refactoring, checksummed atomic-file RunStore/journal, logical single writer and the narrow
-product boundary; the semantic contract is `Frozen`. The next action is the separately frozen
-RTS-030 Phase 3 TaskCard. No default switch, production state migration, native-launcher acceptance,
-release, retained-event operation or destructive cleanup is authorized.
+product boundary; the semantic contract is `Frozen`. RTS-030 passed the reversible installed Python
+Core contract/port boundary. The next action is the separately frozen RTS-031 pure local atomic-file
+RunStore/journal implementation TaskCard. No production handler migration or dual write, default
+switch, production state migration, native-launcher acceptance, release, retained-event operation or
+destructive cleanup is authorized.
 
 ## 12. Plan Completion Definition
 
