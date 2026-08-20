@@ -54,8 +54,6 @@ _RESULT_KEYS = _COMMON_KEYS | {"causation_delivery_id"}
 
 
 class TransportError(ContractError):
-    """Envelope input is invalid at the pre-provider transport boundary."""
-
     outcome = DecisionOutcome.DENY_BEFORE_PROVIDER
     owner = "sender"
     next_action = "correct the exact envelope identity and resend only those bytes"
@@ -90,10 +88,7 @@ def _json_shape(value: object, depth: int = 0) -> int:
             value.encode("utf-8")
         except UnicodeEncodeError as exc:
             raise TransportError("envelope JSON text is not valid UTF-8") from exc
-        if any(
-            (ord(char) < 0x20 and char not in "\t\n\r") or ord(char) == 0x7F
-            for char in value
-        ):
+        if any((ord(char) < 0x20 and char not in "\t\n\r") or ord(char) == 0x7F for char in value):
             raise TransportError("envelope JSON text contains a prohibited control character")
         return 1
     if isinstance(value, list):
@@ -441,8 +436,6 @@ class _LocalApplication(Protocol):
 
 
 class LocalTransportBoundary:
-    """Validate transport facts, then delegate once to the accepted local application."""
-
     def __init__(self, application: _LocalApplication) -> None:
         self.application = application
 
@@ -456,7 +449,10 @@ class LocalTransportBoundary:
     ) -> RunSnapshot:
         expected = {
             WorkflowStage.IMPLEMENT: (
-                CommandEnvelope, "architect", "coder", run_spec.implement_route
+                CommandEnvelope,
+                "architect",
+                "coder",
+                run_spec.implement_route,
             ),
             WorkflowStage.REVIEW: (ResultEnvelope, "coder", "reviewer", run_spec.review_route),
             WorkflowStage.REWORK: (ResultEnvelope, "reviewer", "coder", run_spec.rework_route),
@@ -487,14 +483,18 @@ class LocalTransportBoundary:
                 run_spec.run_id,
                 self.application.writer_id,
             ).pending_handoff()
-            mismatch = mismatch or incoming is None or (
-                incoming.delivery_id != envelope.delivery_id
-                or incoming.payload_sha256 != envelope.payload_sha256.removeprefix("sha256:")
-                or incoming.route != envelope.route
-                or incoming.target_role != envelope.target_role
-                or incoming.source_invocation_id != envelope.source_invocation_id
-                or incoming.source_authorization_sha256
-                != envelope.source_authorization_sha256
+            mismatch = (
+                mismatch
+                or incoming is None
+                or (
+                    incoming.delivery_id != envelope.delivery_id
+                    or incoming.payload_sha256 != envelope.payload_sha256.removeprefix("sha256:")
+                    or incoming.route != envelope.route
+                    or incoming.target_role != envelope.target_role
+                    or incoming.source_invocation_id != envelope.source_invocation_id
+                    or incoming.source_authorization_sha256
+                    != envelope.source_authorization_sha256
+                )
             )
         if mismatch:
             raise TransportError("envelope does not match the exact local application input")

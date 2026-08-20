@@ -315,9 +315,12 @@ def pending_result(
         fixture.state, fixture.spec.run_id, "writer-local-fixture"
     ).pending_handoff()
     assert intent is not None
-    effect = AtomicRunStore(
-        fixture.state, fixture.spec.run_id, "writer-local-fixture"
-    ).journal(intent.source_invocation_id).snapshot().validation_effect
+    effect = (
+        AtomicRunStore(fixture.state, fixture.spec.run_id, "writer-local-fixture")
+        .journal(intent.source_invocation_id)
+        .snapshot()
+        .validation_effect
+    )
     assert effect is not None
     if intent.target_role == "reviewer":
         payload = {
@@ -350,9 +353,7 @@ def pending_result(
 def terminal_command(fixture: Fixture) -> TerminalCommand:
     authority = json.loads(authority_path(fixture).read_text(encoding="utf-8"))["payload"]
     raw = next(
-        event["command"]
-        for event in reversed(authority["events"])
-        if event["kind"] == "terminal"
+        event["command"] for event in reversed(authority["events"]) if event["kind"] == "terminal"
     )
     return TerminalCommand(
         raw["run_spec_sha256"],
