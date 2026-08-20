@@ -16,10 +16,14 @@ INVOCATION_SPEC_FORMAT = "awf.runtime-v2.invocation-spec.v1"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
-_ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*")
+_ENV_NAME_RE = re.compile(r"[^=\x00-\x1f\x7f]+")
 _SENSITIVE_ENV_PARTS = ("TOKEN", "PASSWORD", "SECRET", "CREDENTIAL", "PRIVATE_KEY")
 _CODER_PROVIDERS = frozenset({"codex", "opencode"})
 _REVIEWER_PROVIDERS = frozenset({"codex", "opencode", "pi"})
+_MAX_PROVIDER_INPUT_BYTES = 256 * 1024
+_MAX_ENV_VALUE_CHARS = 32_767
+_MAX_ENVIRONMENT_ITEMS = 256
+_MAX_ENVIRONMENT_BYTES = 512 * 1024
 
 
 class ContractError(ValueError):
@@ -43,6 +47,31 @@ def _strict_text(name: str, value: object, *, maximum: int = 512) -> str:
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise ContractError(f"{name} contains a control character")
     return value
+
+
+def _multiline_text(name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ContractError(f"{name} must be nonblank UTF-8 text")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ContractError(f"{name} must be valid UTF-8 text") from exc
+    if len(encoded) > _MAX_PROVIDER_INPUT_BYTES:
+        raise ContractError(f"{name} exceeds the provider input bound")
+    if any(
+        (ord(char) < 0x20 and char not in "\t\n\r") or ord(char) == 0x7F for char in value
+    ):
+        raise ContractError(f"{name} contains a prohibited control character")
+    return value
+
+
+def _executable(value: object) -> str:
+    executable = _strict_text("executable", value, maximum=4096)
+    if os.path.isabs(executable):
+        _absolute_path("executable", executable)
+    elif any(char.isspace() for char in executable) or "/" in executable or "\\" in executable:
+        raise ContractError("a relative executable must be one structured token")
+    return executable
 
 
 def _sha256(name: str, value: object) -> str:
@@ -98,18 +127,44 @@ def _absolute_path(name: str, value: object) -> str:
     return text
 
 
+def _workspace_path(name: str, value: object, workspace: Path) -> str:
+    if isinstance(value, str) and Path(value).is_absolute():
+        text = _absolute_path(name, value)
+        candidate = Path(text)
+    else:
+        text = _repo_relative_path(name, value)
+        candidate = workspace.joinpath(*PurePosixPath(text).parts)
+    try:
+        candidate.resolve().relative_to(workspace.resolve())
+    except ValueError as exc:
+        raise ContractError(f"{name} must be inside workspace") from exc
+    return text
+
+
 def _environment(value: object) -> tuple[tuple[str, str], ...]:
     if not isinstance(value, Mapping):
         raise ContractError("environment must be an object")
+    if len(value) > _MAX_ENVIRONMENT_ITEMS:
+        raise ContractError("environment contains too many entries")
     pairs: list[tuple[str, str]] = []
+    total_bytes = 0
     for raw_name, raw_value in value.items():
         name = _strict_text("environment name", raw_name, maximum=128)
-        item = _strict_text(f"environment[{name}]", raw_value, maximum=4096)
+        if not isinstance(raw_value, str) or len(raw_value) > _MAX_ENV_VALUE_CHARS:
+            raise ContractError(f"environment[{name}] must be bounded text")
+        if "\0" in raw_value:
+            raise ContractError(f"environment[{name}] contains NUL")
         if _ENV_NAME_RE.fullmatch(name) is None:
             raise ContractError(f"environment name is invalid: {name}")
-        if any(part in name for part in _SENSITIVE_ENV_PARTS):
+        if any(part in name.upper() for part in _SENSITIVE_ENV_PARTS):
             raise ContractError(f"credential-bearing environment name is forbidden: {name}")
-        pairs.append((name, item))
+        try:
+            total_bytes += len(name.encode("utf-8")) + len(raw_value.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise ContractError(f"environment[{name}] must be valid UTF-8 text") from exc
+        if total_bytes > _MAX_ENVIRONMENT_BYTES:
+            raise ContractError("environment exceeds the canonical identity bound")
+        pairs.append((name, raw_value))
     return tuple(sorted(pairs))
 
 
@@ -304,8 +359,10 @@ class InvocationSpec:
     role: str
     provider: str
     model: str
+    executable: str
     workspace: str
     input_path: str
+    input_text: str
     report_path: str
     provider_args: tuple[str, ...] = ()
     environment: tuple[tuple[str, str], ...] = ()
@@ -321,8 +378,10 @@ class InvocationSpec:
             "role",
             "provider",
             "model",
+            "executable",
             "workspace",
             "input_path",
+            "input_text",
             "report_path",
             "provider_args",
             "environment",
@@ -341,21 +400,27 @@ class InvocationSpec:
         allowed = _CODER_PROVIDERS if self.role == "coder" else _REVIEWER_PROVIDERS
         if self.provider not in allowed:
             raise ContractError("provider is unsupported for role")
-        _strict_text("model", self.model, maximum=200)
+        if self.model:
+            _strict_text("model", self.model, maximum=200)
+        elif self.model != "":
+            raise ContractError("model must be text")
+        _executable(self.executable)
         workspace = Path(_absolute_path("workspace", self.workspace))
         input_path = Path(_absolute_path("input_path", self.input_path))
-        report_path = Path(_absolute_path("report_path", self.report_path))
-        for name, path in (("input_path", input_path), ("report_path", report_path)):
-            try:
-                path.relative_to(workspace)
-            except ValueError as exc:
-                raise ContractError(f"{name} must be inside workspace") from exc
+        try:
+            input_path.resolve().relative_to(workspace.resolve())
+        except ValueError as exc:
+            raise ContractError("input_path must be inside workspace") from exc
+        _workspace_path("report_path", self.report_path, workspace)
+        _multiline_text("input_text", self.input_text)
         if not isinstance(self.provider_args, tuple):
             raise ContractError("provider_args must be an immutable tuple")
         for index, item in enumerate(self.provider_args):
             argument = _strict_text(f"provider_args[{index}]", item, maximum=4096)
             normalized = argument.upper().replace("-", "_")
-            if any(part in normalized for part in _SENSITIVE_ENV_PARTS):
+            if argument.startswith("-") and any(
+                part in normalized for part in _SENSITIVE_ENV_PARTS
+            ):
                 raise ContractError("credential-bearing provider argument is forbidden")
         _environment_tuple(self.environment)
 
@@ -374,8 +439,10 @@ class InvocationSpec:
             role=mapping["role"],
             provider=mapping["provider"],
             model=mapping["model"],
+            executable=mapping["executable"],
             workspace=mapping["workspace"],
             input_path=mapping["input_path"],
+            input_text=mapping["input_text"],
             report_path=mapping["report_path"],
             provider_args=tuple(raw_args),
             environment=_environment(mapping["environment"]),
@@ -391,8 +458,10 @@ class InvocationSpec:
             "role": self.role,
             "provider": self.provider,
             "model": self.model,
+            "executable": self.executable,
             "workspace": self.workspace,
             "input_path": self.input_path,
+            "input_text": self.input_text,
             "report_path": self.report_path,
             "provider_args": list(self.provider_args),
             "environment": dict(self.environment),
@@ -408,27 +477,56 @@ class InvocationSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class RenderedInputFile:
+    path: str
+    content: bytes
+
+    def __post_init__(self) -> None:
+        _absolute_path("file input path", self.path)
+        if not isinstance(self.content, bytes) or len(self.content) > _MAX_PROVIDER_INPUT_BYTES:
+            raise ContractError("file input content must be bounded immutable bytes")
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "sha256": hashlib.sha256(self.content).hexdigest(),
+            "length": len(self.content),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedInvocation:
     executable: str
     argv: tuple[str, ...]
     cwd: str
     stdin: bytes | None = None
     environment: tuple[tuple[str, str], ...] = ()
+    file_inputs: tuple[RenderedInputFile, ...] = ()
 
     def __post_init__(self) -> None:
-        executable = _strict_text("executable", self.executable, maximum=4096)
-        if os.path.isabs(executable):
-            _absolute_path("executable", executable)
-        elif any(char.isspace() for char in executable) or "/" in executable or "\\" in executable:
-            raise ContractError("a relative executable must be one structured token")
+        _executable(self.executable)
         if not isinstance(self.argv, tuple):
             raise ContractError("argv must be an immutable tuple")
         for index, item in enumerate(self.argv):
-            _strict_text(f"argv[{index}]", item, maximum=4096)
+            _multiline_text(f"argv[{index}]", item)
         _absolute_path("cwd", self.cwd)
-        if self.stdin is not None and not isinstance(self.stdin, bytes):
-            raise ContractError("stdin must be immutable bytes or None")
+        if self.stdin is not None and (
+            not isinstance(self.stdin, bytes) or len(self.stdin) > _MAX_PROVIDER_INPUT_BYTES
+        ):
+            raise ContractError("stdin must be bounded immutable bytes or None")
         _environment_tuple(self.environment)
+        if not isinstance(self.file_inputs, tuple):
+            raise ContractError("file_inputs must be an immutable tuple")
+        if any(not isinstance(item, RenderedInputFile) for item in self.file_inputs):
+            raise ContractError("file_inputs must contain RenderedInputFile values")
+        if len({item.path for item in self.file_inputs}) != len(self.file_inputs):
+            raise ContractError("file input paths must be unique")
+        cwd = Path(self.cwd)
+        for item in self.file_inputs:
+            try:
+                Path(item.path).resolve().relative_to(cwd.resolve())
+            except ValueError as exc:
+                raise ContractError("file input paths must be inside cwd") from exc
 
     def to_mapping(self) -> dict[str, Any]:
         stdin_identity = None
@@ -443,6 +541,7 @@ class RenderedInvocation:
             "cwd": self.cwd,
             "stdin": stdin_identity,
             "environment": dict(self.environment),
+            "file_inputs": [item.to_mapping() for item in self.file_inputs],
         }
 
     @property

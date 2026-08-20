@@ -78,7 +78,10 @@ unbound argument/environment value after rendering.
 - Codex reviewer preserves exact current `exec -C`, read-only sandbox, output path, optional model,
   stdin and TaskCard/template input behavior.
 - Pi reviewer preserves exact current no-session/no-approve/no-extension/no-skill tool boundary,
-  optional model, `@context-file`, bounded stdout path and message behavior.
+  optional model, bounded stdout path, context bytes and message behavior. Its generated context
+  file is intentionally relocated from the event state directory to one exact ignored path inside
+  the isolated model workspace so the selected `InvocationSpec` containment invariant can bind it;
+  no other argv token or input byte may drift.
 
 Use one explicit closed provider/role dispatch. Do not add discovery, entry points, dynamic plugins,
 configuration registries, arbitrary providers or a generic provider framework.
@@ -105,6 +108,7 @@ configuration registries, arbitrary providers or a generic provider framework.
 - `src/agent_workflow/runtime/__init__.py`
 - `scripts/awf_role.py`
 - `tests/test_runtime_core_contracts.py`
+- `tests/test_runtime_core_boundary.py`
 - `tests/test_runtime_provider_renderers.py`
 - `tests/test_runtime_command_boundary.py`
 - `tests/test_awf_role.py`
@@ -146,8 +150,9 @@ Phase 3 gate/next-step sections of the Runtime v2 plan, HANDOFF and ROADMAP.
       existing identity/path/options without exposing Workflow Stage or mutation handles.
 - [ ] RenderedInvocation canonical identity covers executable, argv, cwd, environment, stdin and
       every declared file input by exact path/hash/length.
-- [ ] Installed OpenCode coder/reviewer, Codex reviewer and Pi reviewer renderers reproduce current
-      executable/argv/stdin/file-input behavior on the same fixtures.
+- [ ] Installed OpenCode coder/reviewer and Codex reviewer renderers reproduce current
+      executable/argv/stdin behavior on the same fixtures. Pi reproduces every existing token and
+      context byte with only the frozen state-directory-to-workspace context-path substitution.
 - [ ] Renderer output contains no shell string and renderer code performs no filesystem, process,
       Git, Bus, network, environment-discovery or Runtime-state effect.
 - [ ] Production role wrappers import only installed renderers, construct a fully bound spec after
@@ -174,7 +179,7 @@ Phase 3 gate/next-step sections of the Runtime v2 plan, HANDOFF and ROADMAP.
 - CI: focused Runtime contracts/renderers plus full role/recovery tests, Ruff, installed-wheel and
   ordinary cross-platform jobs.
 - Same-fixture parity compares exact current argv/stdin/context bytes before production import
-  removal.
+  removal; Pi parity permits only the explicit context-path substitution frozen above.
 - Fault fixtures drift executable, every argv token, cwd, environment, stdin and file input and
   prove canonical identity changes or fail-closed rejection.
 - Independent Review checks full binding, renderer purity, no old-adapter fallback, no-replay
@@ -197,6 +202,7 @@ Phase 3 gate/next-step sections of the Runtime v2 plan, HANDOFF and ROADMAP.
     "src/agent_workflow/runtime/__init__.py",
     "scripts/awf_role.py",
     "tests/test_runtime_core_contracts.py",
+    "tests/test_runtime_core_boundary.py",
     "tests/test_runtime_provider_renderers.py",
     "tests/test_runtime_command_boundary.py",
     "tests/test_awf_role.py",

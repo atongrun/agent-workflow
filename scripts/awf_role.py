@@ -39,17 +39,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from agent_adapters.codex import (
-    render_reviewer_invocation as render_codex_reviewer_invocation,
-)
-from agent_adapters.opencode import (
-    render_executor_argv as render_opencode_executor_argv,
-)
-from agent_adapters.opencode import (
-    render_reviewer_argv as render_opencode_reviewer_argv,
-)
-from agent_adapters.pi import (
-    render_reviewer_argv as render_pi_reviewer_argv,
+from agent_workflow.runtime import (
+    ATTACH_INPUT,
+    CODEX_FINDING_INSTRUCTIONS,
+    OPENCODE_FINDING_INSTRUCTIONS,
+    InvocationSpec,
+    RenderedInvocation,
+    render_provider_invocation,
 )
 from awf_artifact_contract import ArtifactContractError, validate_stage_artifact_contract
 from awf_control_plane import (
@@ -503,6 +499,41 @@ def _control_plane_enabled() -> bool:
 def workflow_run_id(a: argparse.Namespace) -> str:
     task_id = a.branch.rsplit("/", 1)[-1]
     return getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
+
+
+def provider_invocation_binding(
+    a: argparse.Namespace,
+    role: str,
+    input_context: dict[str, object],
+    gate: object | None,
+    *,
+    tool: str,
+    model: str,
+) -> tuple[str, str, str, str]:
+    """Project current authority into one opaque, non-authorizing renderer identity."""
+    run_id = workflow_run_id(a)
+    task_id = a.branch.rsplit("/", 1)[-1]
+    invocation_id = str(input_context["key"])
+    authorization_sha256 = canonical_payload_sha256(
+        {
+            "run_id": run_id,
+            "task_id": task_id,
+            "invocation_id": invocation_id,
+            "delivery_id": input_context["delivery_id"],
+            "payload_sha256": input_context["payload_sha256"],
+            "source_event_id": input_context["source_event_id"],
+            "event_type": getattr(a, "input_type", ""),
+            "role": role,
+            "tool": tool,
+            "model": model,
+            "source_commit": a.commit,
+            "gate_allowed": getattr(gate, "allowed", None),
+            "gate_reason": getattr(gate, "reason", ""),
+            "gate_run_id": getattr(gate, "run_id", ""),
+            "gate_sequence": int(getattr(gate, "sequence", 0)),
+        }
+    ).removeprefix("sha256:")
+    return invocation_id, run_id, task_id, authorization_sha256
 
 
 def pre_invocation_gate(
@@ -3578,6 +3609,99 @@ def read_text(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _provider_spec(
+    binding: tuple[str, str, str, str] | None,
+    *,
+    role: str,
+    provider: str,
+    model: str,
+    executable: str,
+    workspace: str,
+    input_path: str,
+    input_text: str,
+    report_path: str,
+    provider_args: tuple[str, ...] = (),
+) -> InvocationSpec:
+    root = Path(workspace).resolve()
+
+    def absolute(path: str) -> str:
+        candidate = Path(path)
+        return str((candidate if candidate.is_absolute() else root / candidate).resolve())
+
+    environment = tuple(sorted(model_env(str(root)).items()))
+    if binding is None:
+        direct_sha256 = canonical_payload_sha256(
+            {
+                "role": role,
+                "provider": provider,
+                "model": model,
+                "executable": executable,
+                "workspace": str(root),
+                "input_path": absolute(input_path),
+                "input_sha256": hashlib.sha256(input_text.encode("utf-8")).hexdigest(),
+                "report_path": report_path,
+                "report_target": absolute(report_path),
+                "provider_args": provider_args,
+                "environment": dict(environment),
+            }
+        ).removeprefix("sha256:")
+        binding = (f"direct-{direct_sha256}", "direct-provider", "direct", direct_sha256)
+    invocation_id, run_id, task_id, authorization_sha256 = binding
+    return InvocationSpec(
+        invocation_id=invocation_id,
+        run_id=run_id,
+        task_id=task_id,
+        authorization_sha256=authorization_sha256,
+        role=role,
+        provider=provider,
+        model=model,
+        executable=executable,
+        workspace=str(root),
+        input_path=absolute(input_path),
+        input_text=input_text,
+        report_path=report_path,
+        provider_args=provider_args,
+        environment=environment,
+    )
+
+
+def spawn_rendered(
+    rendered: RenderedInvocation,
+    *,
+    evidence: RunEvidence | None = None,
+    tracked_phase: str | None = None,
+    stdout_path: str | None = None,
+    stdout_max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES,
+) -> int:
+    if not rendered.environment:
+        die("provider environment is not bound")
+    try:
+        stdin = None if rendered.stdin is None else rendered.stdin.decode("utf-8")
+    except UnicodeDecodeError:
+        die("provider stdin is not UTF-8 text")
+    for item in rendered.file_inputs:
+        path = Path(item.path)
+        if path.exists() and (not path.is_file() or path.read_bytes() != item.content):
+            die("provider file input conflicts with its rendered identity")
+        try:
+            text = item.content.decode("utf-8")
+        except UnicodeDecodeError:
+            die("provider file input is not UTF-8 text")
+        atomic_write_text(path, text)
+        if path.read_bytes() != item.content:
+            die("provider file input changed before process start")
+    return spawn(
+        [rendered.executable, *rendered.argv],
+        cwd=rendered.cwd,
+        stdin=stdin,
+        env=dict(rendered.environment),
+        evidence=evidence,
+        tracked_phase=tracked_phase,
+        stdout_path=stdout_path,
+        stdout_max_bytes=stdout_max_bytes,
+    )
+
+
 def tool_opencode_exec(
     repo: str,
     card_file: str,
@@ -3586,29 +3710,37 @@ def tool_opencode_exec(
     implementation_report_path: str,
     review_feedback: str = "",
     evidence: RunEvidence | None = None,
+    binding: tuple[str, str, str, str] | None = None,
 ) -> int:
     """Run OpenCode as an executor: edit code in `repo` per the card + prompt."""
     binp = env("AWF_OPENCODE_BIN", "opencode")
     prompt = read_text(prompt_file)
     normalized_feedback = normalize_rework_feedback(review_feedback) if review_feedback else ""
-    invocation_argv = render_opencode_executor_argv(
-        binary=binp,
-        workspace=repo,
-        card_file=card_file,
-        model=model,
-        prompt=prompt,
-        implementation_report_path=implementation_report_path,
-        normalized_review_feedback=normalized_feedback,
+    instructions = prompt
+    instructions += (
+        f"\n\nWrite the complete ImplementationReport to exactly: {implementation_report_path}\n"
     )
-    if evidence is not None:
-        return spawn(
-            invocation_argv,
-            cwd=repo,
-            env=model_env(repo),
-            evidence=evidence,
-            tracked_phase="opencode",
-        )
-    return spawn(invocation_argv, cwd=repo, env=model_env(repo))
+    instructions += OPENCODE_FINDING_INSTRUCTIONS
+    if normalized_feedback:
+        instructions += "\n\n--- Structured reviewer feedback to correct ---\n\n"
+        instructions += normalized_feedback
+    spec = _provider_spec(
+        binding,
+        role="coder",
+        provider="opencode",
+        model=model,
+        executable=binp,
+        workspace=repo,
+        input_path=card_file,
+        input_text=instructions,
+        report_path=implementation_report_path,
+        provider_args=(ATTACH_INPUT,),
+    )
+    return spawn_rendered(
+        render_provider_invocation(spec),
+        evidence=evidence,
+        tracked_phase="opencode" if evidence is not None else None,
+    )
 
 
 def normalize_rework_feedback(raw: str) -> str:
@@ -3651,6 +3783,7 @@ def tool_codex_review(
     model: str,
     review_report_path: str,
     evidence: RunEvidence | None = None,
+    binding: tuple[str, str, str, str] | None = None,
 ) -> int:
     """Run Codex review and persist its final response at the exact report path."""
     binp = env("AWF_CODEX_BIN", "codex")
@@ -3658,21 +3791,35 @@ def tool_codex_review(
     template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
     review_report_template = read_text(str(template_path))
     card_text = read_text(card_file) if card_file and Path(card_file).is_file() else ""
-    invocation_argv, invocation_stdin = render_codex_reviewer_invocation(
-        binary=binp,
-        workspace=repo,
-        base=base,
-        model=model,
-        review_report_path=review_report_path,
-        prompt=prompt,
-        review_report_template=review_report_template,
-        card_text=card_text,
+    invocation_input = prompt
+    invocation_input += (
+        f"\n\nReview the committed branch diff against the base ref `{base}`. "
+        "Use Git read-only commands to inspect that exact comparison."
     )
-    return spawn(
-        invocation_argv,
-        cwd=repo,
-        stdin=invocation_stdin,
-        env=model_env(repo),
+    invocation_input += (
+        "\n\nYour final response is persisted verbatim as the ReviewReport. "
+        "Return the complete filled-in Markdown report itself; do not merely summarize "
+        "the verdict or say that you wrote a file."
+        f"\n\nReviewReport output path: {review_report_path}\n"
+        "\n--- Required ReviewReport template ---\n\n" + review_report_template
+    )
+    invocation_input += CODEX_FINDING_INSTRUCTIONS
+    if card_text:
+        invocation_input += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + card_text
+    input_path = card_file if card_file and Path(card_file).is_file() else review_report_path
+    spec = _provider_spec(
+        binding,
+        role="reviewer",
+        provider="codex",
+        model=model,
+        executable=binp,
+        workspace=repo,
+        input_path=input_path,
+        input_text=invocation_input,
+        report_path=review_report_path,
+    )
+    return spawn_rendered(
+        render_provider_invocation(spec),
         evidence=evidence,
         tracked_phase="codex" if evidence is not None else None,
     )
@@ -3686,27 +3833,31 @@ def tool_opencode_review(
     model: str,
     review_report_path: str,
     evidence: RunEvidence | None = None,
+    binding: tuple[str, str, str, str] | None = None,
 ) -> int:
     """Fallback reviewer using OpenCode (when Codex is unavailable)."""
     binp = env("AWF_OPENCODE_BIN", "opencode")
     attached_card = card_file if card_file and Path(card_file).is_file() else ""
-    invocation_argv = render_opencode_reviewer_argv(
-        binary=binp,
-        workspace=repo,
-        card_file=attached_card,
+    instructions = read_text(prompt_file)
+    instructions += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
+    instructions += OPENCODE_FINDING_INSTRUCTIONS
+    spec = _provider_spec(
+        binding,
+        role="reviewer",
+        provider="opencode",
         model=model,
-        prompt=read_text(prompt_file),
-        review_report_path=review_report_path,
+        executable=binp,
+        workspace=repo,
+        input_path=attached_card or review_report_path,
+        input_text=instructions,
+        report_path=review_report_path,
+        provider_args=(ATTACH_INPUT,) if attached_card else (),
     )
-    if evidence is not None:
-        return spawn(
-            invocation_argv,
-            cwd=repo,
-            env=model_env(repo),
-            evidence=evidence,
-            tracked_phase="opencode",
-        )
-    return spawn(invocation_argv, cwd=repo, env=model_env(repo))
+    return spawn_rendered(
+        render_provider_invocation(spec),
+        evidence=evidence,
+        tracked_phase="opencode" if evidence is not None else None,
+    )
 
 
 def tool_pi_review(
@@ -3717,6 +3868,7 @@ def tool_pi_review(
     model: str,
     review_report_path: str,
     evidence: RunEvidence | None = None,
+    binding: tuple[str, str, str, str] | None = None,
 ) -> int:
     """Run Pi as a read-only reviewer and persist stdout as the ReviewReport."""
     binp = env("AWF_PI_BIN", "pi")
@@ -3748,28 +3900,27 @@ def tool_pi_review(
         context += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + card_text
 
     def invoke(context_path: Path) -> int:
-        atomic_write_text(context_path, context)
-        invocation_argv = render_pi_reviewer_argv(
-            binary=binp,
-            base=base,
+        spec = _provider_spec(
+            binding,
+            role="reviewer",
+            provider="pi",
             model=model,
-            review_report_path=review_report_path,
-            context_file=str(context_path),
+            executable=binp,
+            workspace=repo,
+            input_path=str(context_path),
+            input_text=context,
+            report_path=review_report_path,
+            provider_args=(base,),
         )
-        return spawn(
-            invocation_argv,
-            cwd=repo,
-            env=model_env(repo),
+        return spawn_rendered(
+            render_provider_invocation(spec),
             evidence=evidence,
             tracked_phase="pi" if evidence is not None else None,
             stdout_path=review_report_path,
             stdout_max_bytes=MAX_COMBINED_REPORT_BYTES,
         )
 
-    if evidence is not None:
-        return invoke(evidence.run_dir / "pi-review-context.md")
-    with tempfile.TemporaryDirectory(prefix="awf-pi-review-") as context_dir:
-        return invoke(Path(context_dir) / "review-context.md")
+    return invoke(Path(repo) / ".awf" / "pi-review-context.md")
 
 
 # ---------------------------------------------------------------------------
@@ -4214,6 +4365,9 @@ def role_coder(a: argparse.Namespace) -> int:
             )
             fresh_contract_prevalidated = True
     gate = pre_invocation_gate(a, "coder", evidence)
+    renderer_binding = provider_invocation_binding(
+        a, "coder", input_context, gate, tool=tool, model=model
+    )
 
     try:
         if resume_outbox(a, "coder", repo, evidence, input_context):
@@ -4347,6 +4501,7 @@ def role_coder(a: argparse.Namespace) -> int:
                 a.report,
                 getattr(a, "review_feedback", ""),
                 evidence,
+                binding=renderer_binding,
             )
         else:
             die(f"coder: unsupported tool '{tool}'")
@@ -4699,6 +4854,9 @@ def role_reviewer(a: argparse.Namespace) -> int:
             record(evidence, "fork_pr_rejected", reason="invalid_or_untrusted_provenance")
             raise
     gate = pre_invocation_gate(a, "reviewer", evidence)
+    renderer_binding = provider_invocation_binding(
+        a, "reviewer", input_context, gate, tool=tool, model=model
+    )
 
     try:
         if resume_outbox(a, "reviewer", repo, evidence, input_context):
@@ -4822,7 +4980,15 @@ def role_reviewer(a: argparse.Namespace) -> int:
         log(f"reviewer: branch={a.branch} tool={tool or '<human>'} base={base}")
     reviewer_tools = {"codex", "opencode", "pi"}
     if tool == "codex" and checkpoint is None:
-        rc = tool_codex_review(repo, base_commit, prompt_file, card_file, model, a.review_report)
+        rc = tool_codex_review(
+            repo,
+            base_commit,
+            prompt_file,
+            card_file,
+            model,
+            a.review_report,
+            binding=renderer_binding,
+        )
     elif tool in reviewer_tools and recovery_phase == "model_not_started":
         model_state_dir = evidence.run_dir if evidence is not None else None
         model_repo = prepare_model_workspace(repo, a.commit, state_dir=model_state_dir)
@@ -4857,6 +5023,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
                 model,
                 str(model_review_report_path),
                 evidence,
+                binding=renderer_binding,
             )
         elif tool == "opencode":
             rc = tool_opencode_review(
@@ -4867,6 +5034,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
                 model,
                 str(model_review_report_path),
                 evidence,
+                binding=renderer_binding,
             )
         else:
             rc = tool_pi_review(
@@ -4877,6 +5045,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
                 model,
                 str(model_review_report_path),
                 evidence,
+                binding=renderer_binding,
             )
         if rc == 0:
             if checkpoint is not None and checkpoint_path is not None:
