@@ -112,10 +112,10 @@ from agent_workflow.runtime import (
     freeze_workspace as runtime_freeze_workspace,
 )
 from agent_workflow.runtime import (
-    normalize_rework_feedback as runtime_normalize_rework_feedback,
+    normalize_review_envelope as runtime_normalize_review_envelope,
 )
 from agent_workflow.runtime import (
-    normalize_review_envelope as runtime_normalize_review_envelope,
+    normalize_rework_feedback as runtime_normalize_rework_feedback,
 )
 from agent_workflow.runtime import (
     parse_postflight_contract as runtime_parse_postflight_contract,
