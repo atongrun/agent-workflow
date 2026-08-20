@@ -59,9 +59,9 @@ external local `git` executable.
 
 - Frozen Python denominator: 1,454 nonblank/noncomment lines; 1.5x threshold: 2,181.
 - Runner-only Python denominator: 1,380 nonblank/noncomment lines; 1.5x threshold: 2,070.
-- Rust production numerator under `experiments/runtime-v2-rust/src/`: 3,217 nonblank/noncomment
-  lines (`lib.rs` 3,211, `main.rs` 6).
-- Rust test code: 316 nonblank/noncomment lines.
+- Rust production numerator under `experiments/runtime-v2-rust/src/`: 3,292 nonblank/noncomment
+  lines (`lib.rs` 3,286, `main.rs` 6).
+- Rust test code: 373 nonblank/noncomment lines.
 - Direct production dependencies: 0.
 - Transitive dependencies: 0.
 
@@ -180,6 +180,9 @@ Independent review of exact head `5ea5ea0` returned `REQUEST_CHANGES`. This repa
 - row evidence for task/run/invocation identities, provider counts, terminal fact, and
   decision owner/source;
 - public run/status/stop/inject run-id namespace fail-closed validation.
+- exact aggregate binding for fixture injection boundary, recomputed decision owner/source, and
+  one-to-one assertion/prohibited proof objects with allowed `proved_by` sets;
+- negative aggregate tests for mutated injection, decision-source, and concrete assertion evidence.
 
 The companion ReviewReport remains intentionally `BLOCKED` with `PENDING_INDEPENDENT_REVIEW`.
 
@@ -218,13 +221,13 @@ Known CI risks before reviewer/CI:
     "Source gate scan PASS",
     "Whitespace diff check PASS"
   ],
-  "source_revision": "b2d815871379097ec54c7bf0de77c1f1fe3d4252",
+  "source_revision": "WORKING_TREE_AFTER_ad263ab_PENDING_COMMIT",
   "review_status": "PENDING_INDEPENDENT_REVIEW",
   "preliminary_result": "PENDING_CI_AND_INDEPENDENT_REVIEW",
   "dependency_count": 0,
-  "rust_source_nonblank_noncomment_loc": 3217,
-  "rust_lib_nonblank_noncomment_loc": 3211,
-  "rust_test_nonblank_noncomment_loc": 316,
+  "rust_source_nonblank_noncomment_loc": 3292,
+  "rust_lib_nonblank_noncomment_loc": 3286,
+  "rust_test_nonblank_noncomment_loc": 373,
   "rust_source_exceeds_2181_threshold": true,
   "named_value_requiring_machine_evidence": "removes Python runtime prerequisite for this disposable shared slice",
   "local_rust_not_run_reason": "TaskCard forbids local Mac cargo/rustc/binary execution"

@@ -14,6 +14,11 @@ successful-result journal joins, prohibited assertion mapping, exact stop gates,
 row evidence identity facts, run-id namespace validation, and Rust aggregate hardening. It remains
 pending re-review.
 
+Independent re-review of exact candidate `ad263ab` returned one HIGH `REQUEST_CHANGES`: the Rust
+aggregate did not bind the exact fixture injection, decision source, and assertion/prohibited proof
+objects. The current focused repair adds those exact bindings and targeted negative evidence
+mutations. It remains `BLOCKED` until the same TaskCard Gate Reviewer re-reviews the repair.
+
 Required reviewer checks:
 
 - frozen write-scope compliance: only the 10 TaskCard model-writable paths changed;
@@ -44,7 +49,7 @@ Required reviewer checks:
   "verdict": "BLOCKED",
   "reason": "PENDING_INDEPENDENT_REVIEW",
   "task_id": "runtime-v2-rts-022-rust-shared-slice",
-  "last_reviewed_head": "5ea5ea0",
+  "last_reviewed_head": "ad263ab0807903ec85f5822f762077254863af72",
   "last_review_verdict": "REQUEST_CHANGES",
   "reviewer_required": true,
   "self_pass_claim": false

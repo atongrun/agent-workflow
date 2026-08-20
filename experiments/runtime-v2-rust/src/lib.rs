@@ -2315,6 +2315,7 @@ pub fn verify_fixture(
             ),
             ("provider_counts", status.provider_counts.clone()),
             ("terminal", Json::Bool(status.terminal)),
+            ("phase", Json::string(status.phase.clone())),
             (
                 "decision_owner",
                 Json::string(decision_owner(&expected, &status.phase)),
@@ -2950,7 +2951,7 @@ pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> R
             return Err(parse_error(format!("{target} case row count drift")));
         }
         let mut seen_rows = BTreeSet::new();
-        for (id, _inject, outcome, action, assertions, prohibited) in &expected_rows {
+        for (id, inject, outcome, action, assertions, prohibited) in &expected_rows {
             let row = rows
                 .iter()
                 .find(|row| row.get("case_id").and_then(Json::as_str) == Some(id.as_str()))
@@ -2960,6 +2961,7 @@ pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> R
             }
             if get_string(row, "outcome")? != outcome.as_str()
                 || get_string(row, "legal_next_action")? != action.as_str()
+                || get_string(row, "inject")? != inject.as_str()
             {
                 return Err(parse_error(format!("{target} row {id} semantic drift")));
             }
@@ -2983,31 +2985,14 @@ pub fn aggregate_evidence(input: &Path, fixture_path: &Path, output: &Path) -> R
             if assertions.iter().any(|assertion| assertion == "no_terminal") && terminal {
                 return Err(parse_error(format!("{target} row {id} terminal fact drift")));
             }
-            let owner = get_string(row, "decision_owner")?;
-            let owner_ok = match outcome.as_str() {
-                "OWNER_DECISION_REQUIRED" | "AMBIGUOUS_NO_REPLAY" => owner == "owner",
-                "HANDLER_FAILURE_NO_ACK" => owner == "handler",
-                "TERMINAL_IDEMPOTENT" => owner == "runtime",
-                "SAFE_CONTINUE" => owner == "runtime" || owner == "runtime-provider-gate",
-                _ => false,
-            };
-            if !owner_ok {
+            let phase = get_string(row, "phase")?;
+            if get_string(row, "decision_owner")? != decision_owner(outcome, &phase) {
                 return Err(parse_error(format!("{target} row {id} decision owner drift")));
             }
-            let source = get_string(row, "decision_source")?;
-            if source.is_empty() || source.contains('/') || source.contains('\\') {
+            if get_string(row, "decision_source")? != decision_source(outcome, &phase) {
                 return Err(parse_error(format!("{target} row {id} decision source drift")));
             }
-            let concrete = row
-                .get("concrete_checks")
-                .and_then(Json::as_array)
-                .ok_or_else(|| parse_error(format!("{target} row {id} missing concrete checks")))?;
-            if concrete.len() != assertions.len() + prohibited.len() {
-                return Err(parse_error(format!("{target} row {id} concrete check count drift")));
-            }
-            for check in concrete {
-                require_bool(check, "pass", true)?;
-            }
+            require_concrete_checks(row, assertions, prohibited, target, id)?;
         }
     }
     for target in expected_targets.iter() {
@@ -3117,6 +3102,97 @@ fn require_invocation_ids(row: &Json, target: &str, id: &str) -> Result<()> {
         if !matches!(item, IMPLEMENT_ID | REVIEW_ID) || !seen.insert(item.to_string()) {
             return Err(parse_error(format!("{target} row {id} invocation id drift")));
         }
+    }
+    Ok(())
+}
+
+fn require_concrete_checks(
+    row: &Json,
+    assertions: &[String],
+    prohibited: &[String],
+    target: &str,
+    id: &str,
+) -> Result<()> {
+    let checks = row
+        .get("concrete_checks")
+        .and_then(Json::as_array)
+        .ok_or_else(|| parse_error(format!("{target} row {id} missing concrete checks")))?;
+    if checks.len() != assertions.len() + prohibited.len() {
+        return Err(parse_error(format!(
+            "{target} row {id} concrete check count drift"
+        )));
+    }
+    let mut seen_assertions = BTreeSet::new();
+    let mut seen_prohibited = BTreeSet::new();
+    for check in checks {
+        require_bool(check, "pass", true)?;
+        let object = check
+            .as_object()
+            .ok_or_else(|| parse_error(format!("{target} row {id} concrete check is not object")))?;
+        let assertion = check.get("assertion").and_then(Json::as_str);
+        let prohibited_item = check.get("prohibited").and_then(Json::as_str);
+        match (assertion, prohibited_item) {
+            (Some(assertion), None) => {
+                if object.len() != 2
+                    || !assertions.iter().any(|expected| expected == assertion)
+                    || !seen_assertions.insert(assertion.to_string())
+                {
+                    return Err(parse_error(format!(
+                        "{target} row {id} assertion proof drift"
+                    )));
+                }
+            }
+            (None, Some(item)) => {
+                if object.len() != 3
+                    || !prohibited.iter().any(|expected| expected == item)
+                    || !seen_prohibited.insert(item.to_string())
+                {
+                    return Err(parse_error(format!(
+                        "{target} row {id} prohibited proof drift"
+                    )));
+                }
+                let allowed = prohibited_assertion_map(item)?;
+                let proved_by = check
+                    .get("proved_by")
+                    .and_then(Json::as_array)
+                    .ok_or_else(|| {
+                        parse_error(format!("{target} row {id} prohibited proof set missing"))
+                    })?;
+                let proved_by = proved_by
+                    .iter()
+                    .map(|value| {
+                        value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                            parse_error(format!(
+                                "{target} row {id} prohibited proof is not string"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let allowed = allowed
+                    .iter()
+                    .map(|value| value.to_string())
+                    .collect::<Vec<_>>();
+                if proved_by != allowed
+                    || !proved_by
+                        .iter()
+                        .any(|proof| assertions.iter().any(|assertion| assertion == proof))
+                {
+                    return Err(parse_error(format!(
+                        "{target} row {id} prohibited proof binding drift"
+                    )));
+                }
+            }
+            _ => {
+                return Err(parse_error(format!(
+                    "{target} row {id} concrete proof kind drift"
+                )))
+            }
+        }
+    }
+    if seen_assertions.len() != assertions.len() || seen_prohibited.len() != prohibited.len() {
+        return Err(parse_error(format!(
+            "{target} row {id} concrete proof coverage drift"
+        )));
     }
     Ok(())
 }

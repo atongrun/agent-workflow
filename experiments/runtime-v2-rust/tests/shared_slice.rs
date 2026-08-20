@@ -129,6 +129,63 @@ fn shared_slice_fixture_and_normal_path_pass() {
         summary.contains("RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE"),
         "aggregate summary must report eligibility gate: {summary}"
     );
+    for (name, from, to) in [
+        (
+            "inject",
+            "\"inject\": \"auth_prepared_only\"",
+            "\"inject\": \"auth_prepared_only_drift\"",
+        ),
+        (
+            "decision-source",
+            "\"decision_source\": \"prepared_without_authorization:runtime-gate\"",
+            "\"decision_source\": \"drift:runtime-gate\"",
+        ),
+        (
+            "concrete-check",
+            "\"assertion\": \"no_provider\"",
+            "\"assertion\": \"no_provider_drift\"",
+        ),
+    ] {
+        let mutated = evidence_text.replacen(from, to, 1);
+        assert_ne!(mutated, evidence_text, "mutation source missing for {name}");
+        let mutated_input = state.join(format!("aggregate-mutated-{name}"));
+        fs::create_dir_all(&mutated_input).expect("create mutated aggregate input");
+        for target in [
+            "linux-x86_64",
+            "linux-arm64",
+            "windows-x86_64",
+            "macos-x86_64",
+            "macos-arm64",
+        ] {
+            let target_text = mutated
+                .replace(
+                    &format!("\"target\": \"{}\"", actual_target()),
+                    &format!("\"target\": \"{target}\""),
+                )
+                .replace(
+                    &format!("\"actual_target\": \"{}\"", actual_target()),
+                    &format!("\"actual_target\": \"{target}\""),
+                );
+            fs::write(mutated_input.join(format!("{target}.json")), target_text)
+                .expect("write mutated aggregate evidence");
+        }
+        let rejected = Command::new(exe)
+            .arg("aggregate")
+            .arg("--input")
+            .arg(&mutated_input)
+            .arg("--fixture")
+            .arg(repo.join("tests/fixtures/runtime_v2_shared_slice_cases.json"))
+            .arg("--output")
+            .arg(state.join(format!("summary-mutated-{name}.json")))
+            .output()
+            .expect("run mutated Rust aggregate verifier");
+        assert!(
+            !rejected.status.success(),
+            "aggregate must reject {name} drift\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&rejected.stdout),
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+    }
 }
 
 #[test]
