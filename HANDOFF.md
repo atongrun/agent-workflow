@@ -197,6 +197,22 @@ retry ambiguous sends, infer handler success/ACK, perform live cross-machine acc
 defaults, migrate state, begin lifecycle/launcher work, release or delete compatibility. Fresh
 isolated Mac-to-Windows no-model acceptance remains the following Phase 4A gate.
 
+RTS-041 then returned `PASS` for that local outgoing-intent adapter boundary. Each accepted
+handoff/terminal effect now commits exact reconstructable result-envelope bytes in the same atomic
+authority. One Stage-blind injected dispatcher persists `attempting` before I/O and records only
+`sent` or `ambiguous`; duplicate in-flight and stopped state cannot authorize replay. Initial Gate
+Review findings on stale-prepared concurrency and stopped status were repaired at `beec962`, and
+focused re-review returned PASS with zero findings. Exact repaired-head ordinary CI `32376015654`
+and Binary Feasibility `32376016069` passed. See the
+[RTS-041 closeout](docs/tasks/runtime-v2-rts-041-outgoing-intent-adapter-implementation-report.md).
+
+The next safe action is a separately frozen RTS-042 fresh isolated Mac-to-Windows no-model
+request/result acceptance using the selected adapter boundary. It must use fresh isolated
+Bus/config/state/queue identities, run a real child handler, prove external success-gated ACK and
+scoped queues `0/0 -> 0/0`, and preserve exact identity. It must not invoke a model/business
+handler, touch production or retained events, adopt/dual-write production authority, change
+defaults, migrate state, begin lifecycle/launcher work, release or delete compatibility.
+
 ## Current Handoff State: 2026-08-17
 
 The final fresh-machine no-model usability gate is green. The original benchmark's disposable

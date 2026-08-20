@@ -33,10 +33,10 @@ No local fact means downstream acceptance, handler success, ACK or exactly-once 
 
 ## Files and budgets
 
-- `src/agent_workflow/runtime/outgoing.py`: 222 nonblank/noncomment lines (budget: 300).
-- Store/ports/transport/application refinements remain below the 300 net-line combined budget.
-- `tests/test_runtime_outgoing_adapter.py` plus focused refinements remain below the 900-line test
-  budget.
+- `src/agent_workflow/runtime/outgoing.py`: 219 nonblank/noncomment lines (budget: 300).
+- Store/ports/transport/application refinements: 219 net nonblank/noncomment lines (budget: 300).
+- `tests/test_runtime_outgoing_adapter.py` plus focused refinements: 388 net
+  nonblank/noncomment lines (budget: 900).
 - Store schema advances from 2 to 3 fail-closed for fresh disposable Runtime v2 state; this card
   provides no migration/fallback and reads no old or production state.
 - No dependency, persistent file family, adapter registry or background component was added.
@@ -51,11 +51,11 @@ No local fact means downstream acceptance, handler success, ACK or exactly-once 
 - Scope audit contains only frozen RTS-041 paths and no tracked generated/build/mass-formatting or
   unrelated repository changes.
 
-Exact candidate `dde018a` ordinary CI `32373020432` passed Ruff, the full Linux suite (855 tests),
-the Windows recovery/configuration suite, macOS runtime, resource/workflow/distribution validation
-and all installed-wheel jobs. Exact candidate Binary Readiness `32373020410` passed every native,
-retained Rust-comparison and aggregate job. Local macOS intentionally did not install or run
-pytest/Ruff.
+Exact repaired candidate `beec962af638d583b68bb1ef463df42c89e5f5b3` ordinary CI
+`32376015654` passed Ruff, the full Linux suite, the Windows recovery/configuration suite, macOS
+runtime, resource/workflow/distribution validation and all installed-wheel jobs. Exact candidate
+Binary Readiness `32376016069` passed every native, retained Rust-comparison and aggregate job.
+Local macOS intentionally did not install or run pytest/Ruff.
 
 ## Fault coverage
 
@@ -64,6 +64,8 @@ pytest/Ruff.
 - sender true, false, unknown, invalid receipt and exception;
 - crash-visible attempting with no automatic re-entry;
 - exact sent and ambiguous replay with zero additional sender calls;
+- concurrent stale-`prepared` dispatchers with exactly one sender call;
+- stopped-plus-`prepared` projection with owner-only next action and zero sender calls;
 - conflicting attempt identity, illegal result-before-attempt and state regression;
 - corrupt stored intent with a recomputed authority checksum;
 - byte-stable read-only outgoing status and prohibited second representation;
@@ -76,3 +78,13 @@ success/ACK, inspect queues or prove cross-machine behavior. After exact-head CI
 Gate Review PASS, the sole next Phase 4A gate is a fresh isolated Mac-to-Windows no-model
 request/result acceptance using the selected adapter boundary. That later gate must use fresh
 identities and isolated queues/config/state, and must not touch production or retained deliveries.
+
+## Independent review
+
+The first Gate Review at `a0abb83` returned `REQUEST_CHANGES` for two L3 defects: a stale
+concurrent `prepared` snapshot could enter the sender twice, and stopped-plus-`prepared` status
+advertised an illegal send action. Repair `beec962` makes the dispatcher honor the Store's
+authoritative attempt decision before I/O, projects in-flight ambiguity conservatively, and gives
+stopped state precedence. Deterministic interleaving and stopped-state fixtures prove exactly one
+sender call and zero sender calls respectively. Focused re-review of the repaired exact candidate
+returned `PASS` with zero remaining findings.
