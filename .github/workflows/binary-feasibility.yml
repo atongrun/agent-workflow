@@ -117,9 +117,80 @@ jobs:
           if-no-files-found: error
           path: ${{ env.AWF_EVIDENCE_ROOT }}/*.json
 
+  rust-shared-slice:
+    name: rust-shared-${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+          - runner: windows-2025
+            target: windows-x86_64
+          - runner: macos-15-intel
+            target: macos-x86_64
+          - runner: macos-14
+            target: macos-arm64
+    env:
+      AWF_RUST_EVIDENCE_ROOT: rust-shared-evidence
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.85.1 --profile minimal
+
+      - name: Build the disposable Rust shared slice
+        shell: bash
+        run: cargo build --manifest-path experiments/runtime-v2-rust/Cargo.toml --release --locked
+
+      - name: Run the complete Rust shared semantic suite
+        shell: bash
+        run: cargo test --manifest-path experiments/runtime-v2-rust/Cargo.toml --locked
+
+      - name: Exercise unrelated-cwd run status replay stop evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${AWF_RUST_EVIDENCE_ROOT}"
+          exe="experiments/runtime-v2-rust/target/release/runtime-v2-rust"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            exe="${exe}.exe"
+          fi
+          "${exe}" verify \
+            --fixture tests/fixtures/runtime_v2_shared_slice_cases.json \
+            --state "${RUNNER_TEMP}/rust shared state" \
+            --repo . \
+            --target "${{ matrix.target }}" \
+            --evidence "${AWF_RUST_EVIDENCE_ROOT}/rust-shared-${{ matrix.target }}.json"
+
+      - name: Upload Rust shared executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: awf-rust-shared-executable-${{ matrix.target }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            experiments/runtime-v2-rust/target/release/runtime-v2-rust
+            experiments/runtime-v2-rust/target/release/runtime-v2-rust.exe
+
+      - name: Upload Rust shared evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: awf-rust-shared-evidence-${{ matrix.target }}
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ env.AWF_RUST_EVIDENCE_ROOT }}/*.json
+
   aggregate:
     name: aggregate-go-no-go-input
-    needs: native-candidates
+    needs:
+      - native-candidates
+      - rust-shared-slice
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -144,3 +215,54 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           path: ${{ runner.temp }}/awf-binary-summary.json
+
+      - name: Download Rust shared evidence only
+        uses: actions/download-artifact@v4
+        with:
+          pattern: awf-rust-shared-evidence-*
+          path: ${{ runner.temp }}/awf-rust-shared-evidence
+          merge-multiple: true
+
+      - name: Require complete Rust shared evidence matrix
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = process.env.RUNNER_TEMP + '/awf-rust-shared-evidence';
+          const expected = new Set([
+            'linux-x86_64',
+            'linux-arm64',
+            'windows-x86_64',
+            'macos-x86_64',
+            'macos-arm64',
+          ]);
+          const seen = new Set();
+          const files = fs.readdirSync(path).filter((name) => name.endsWith('.json'));
+          for (const file of files) {
+            const raw = fs.readFileSync(`${path}/${file}`, 'utf8');
+            const evidence = JSON.parse(raw);
+            const target = evidence.target;
+            if (!expected.has(target)) throw new Error(`unexpected target ${target}`);
+            if (seen.has(target)) throw new Error(`duplicate target ${target}`);
+            seen.add(target);
+            if (evidence.format !== 'awf.runtime-v2-rust-evidence.v1') throw new Error(`${target} format drift`);
+            if (evidence.actual_target !== target) throw new Error(`${target} target drift`);
+            if (evidence.case_count !== 14) throw new Error(`${target} case count drift`);
+            if (!Array.isArray(evidence.case_rows) || evidence.case_rows.length !== 14) {
+              throw new Error(`${target} case row drift`);
+            }
+            if (!Array.isArray(evidence.startup_samples_ms) || evidence.startup_samples_ms.length !== 5) {
+              throw new Error(`${target} startup sample drift`);
+            }
+            if (evidence.python_invoked !== false) throw new Error(`${target} invoked Python`);
+            if (evidence.child_argv_no_shell !== true) throw new Error(`${target} shell boundary drift`);
+            if (evidence.direct_dependency_count !== 0 || evidence.transitive_dependency_count !== 0) {
+              throw new Error(`${target} dependency drift`);
+            }
+            if (typeof evidence.executable_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(evidence.executable_sha256)) {
+              throw new Error(`${target} executable sha drift`);
+            }
+          }
+          for (const target of expected) {
+            if (!seen.has(target)) throw new Error(`missing target ${target}`);
+          }
+          NODE
