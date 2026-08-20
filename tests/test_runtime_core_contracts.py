@@ -203,6 +203,22 @@ def test_rendered_invocation_is_structured_and_immutable(tmp_path: Path) -> None
     )
 
     assert rendered.argv[0] == "run"
+    assert rendered == dataclasses.replace(rendered)
+    assert rendered.canonical_bytes == dataclasses.replace(rendered).canonical_bytes
+    assert rendered.sha256 == dataclasses.replace(rendered).sha256
+    assert len(rendered.sha256) == 64
+    for changed in (
+        dataclasses.replace(rendered, executable="codex"),
+        dataclasses.replace(rendered, argv=("run", "--quiet")),
+        dataclasses.replace(rendered, cwd=str(tmp_path / "other")),
+        dataclasses.replace(rendered, stdin=b"different input"),
+        dataclasses.replace(rendered, environment=(("LANG", "en_US.UTF-8"),)),
+    ):
+        assert changed.sha256 != rendered.sha256
+    assert rendered.to_mapping()["stdin"] == {
+        "sha256": "901e6053aa8c678a9ea555c0225237affac98329538280b6917544b9f61b07c6",
+        "length": 13,
+    }
     with pytest.raises(dataclasses.FrozenInstanceError):
         rendered.cwd = "/changed"  # type: ignore[misc]
     with pytest.raises(ContractError, match="structured token"):
@@ -262,6 +278,12 @@ def test_transition_commands_are_frozen_and_exactly_bound() -> None:
 
 
 def test_journal_facts_are_separate_frozen_and_exactly_bound() -> None:
+    rendered = RenderedInvocation(
+        executable="opencode",
+        argv=("run",),
+        cwd=str(Path.cwd()),
+        stdin=b"bounded input",
+    )
     authorization = JournalAuthorization(
         run_spec_sha256=SHA_A,
         invocation_id="invoke-example-coder",
@@ -270,7 +292,7 @@ def test_journal_facts_are_separate_frozen_and_exactly_bound() -> None:
     )
     launch = LaunchIntent(
         authorization_sha256=SHA_B,
-        rendered_invocation_sha256=SHA_C,
+        rendered_invocation_sha256=rendered.sha256,
     )
     process = ProcessObservation(
         authorization_sha256=SHA_B,
@@ -299,7 +321,7 @@ def test_journal_facts_are_separate_frozen_and_exactly_bound() -> None:
         validation_effect_sha256=effect.effect_sha256,
     )
 
-    assert launch.rendered_invocation_sha256 == SHA_C
+    assert launch.rendered_invocation_sha256 == rendered.sha256
     assert process.process_identity_sha256 == result.process_identity_sha256
     assert snapshot.validation_effect_sha256 == effect.effect_sha256
     with pytest.raises(dataclasses.FrozenInstanceError):

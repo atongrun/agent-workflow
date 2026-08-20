@@ -429,3 +429,26 @@ class RenderedInvocation:
         if self.stdin is not None and not isinstance(self.stdin, bytes):
             raise ContractError("stdin must be immutable bytes or None")
         _environment_tuple(self.environment)
+
+    def to_mapping(self) -> dict[str, Any]:
+        stdin_identity = None
+        if self.stdin is not None:
+            stdin_identity = {
+                "sha256": hashlib.sha256(self.stdin).hexdigest(),
+                "length": len(self.stdin),
+            }
+        return {
+            "executable": self.executable,
+            "argv": list(self.argv),
+            "cwd": self.cwd,
+            "stdin": stdin_identity,
+            "environment": dict(self.environment),
+        }
+
+    @property
+    def canonical_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_mapping())
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.canonical_bytes).hexdigest()
