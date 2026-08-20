@@ -53,20 +53,23 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   current production authority/recovery and passing independent Review plus exact-head CI.
 - [x] Complete RTS-033 as the event-contained no-remote workspace, compatible Git-control identity
   and exact trusted local import seam, preserving sole current production authority.
+- [x] Complete RTS-034 as the installed TaskCard/report identity, strict report/raw-Artifact and
+  postflight-decision seam, preserving sole current production authority and recovery.
 
-Current last passed TaskCard gate is RTS-033. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
+Current last passed TaskCard gate is RTS-034. ADR-0006 selects `PYTHON + NATIVE LAUNCHER` with a
 checksummed atomic-file RunStore/per-invocation journal, one logical writer and no physical
 Coordinator. The semantic contract and 39-case/11-outcome matrix are Frozen. RTS-030 added strict
 installed Python Core contracts and ports. RTS-031 added the selected disposable local Store and
 journal; RTS-032 moved existing provider command rendering behind the installed Runtime boundary
 while leaving current state sole authority; RTS-033 moved exact isolated-workspace and trusted
-local import effects behind the same boundary without changing recovery or lineage authority. Rust
-remains a comparison oracle, RTS-023 does not enter, SQLite is not selected, and launcher work is
-deferred until after the full Phase 3 Python boundary. The next safe action is a separately frozen
-RTS-034 Artifact validation seam. No Store adoption, dual write, default, migration, release,
-retained-event operation or destructive cleanup is authorized. See the
+local import effects behind the same boundary; RTS-034 moved Artifact validation and exact raw facts
+without changing recovery or lineage authority. Rust remains a comparison oracle, RTS-023 does not
+enter, SQLite is not selected, and launcher work is deferred until after the full Phase 3 Python
+boundary. The next safe action is a separately frozen RTS-035 selected local Workflow application
+composition boundary using newly created disposable state. No Store adoption, dual write, default,
+migration, release, retained-event operation or destructive cleanup is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-033 closeout](docs/tasks/runtime-v2-rts-033-workspace-import-implementation-report.md).
+[RTS-034 closeout](docs/tasks/runtime-v2-rts-034-artifact-validation-implementation-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

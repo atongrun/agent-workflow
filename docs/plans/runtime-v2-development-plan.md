@@ -542,6 +542,21 @@ accepted/rejected outcomes and ordering before trusted import. It cannot adopt/d
 RTS-031 Store, change Artifact policy or rework lineage, operate remote Git/GitHub or Bus, migrate
 state, change defaults or add a generic validation/plugin framework.
 
+RTS-034 result: **PASS**. The installed Runtime now owns TaskCard/report identity, strict
+ImplementationReport/ReviewReport policy, exact raw Artifact facts and postflight decisions while
+the operations scripts retain only trusted observations, execution and compatibility mapping.
+Independent Gate Review returned PASS with zero findings at `f10ab60`. Exact-head ordinary CI
+`32355614215` and Binary Feasibility `32355614216` passed after one external GitHub API 403
+single-job rerun. Current production authority/recovery remains sole; no Store adoption, dual
+write, migration or default changed.
+
+The exact successor is a separately frozen **RTS-035 selected local Workflow application
+composition boundary**. It may compose the accepted RunSpec, atomic Store/journal, renderer,
+workspace and Artifact APIs in newly created disposable state to prove the complete local
+transition path, `run/status/stop`, mutation-free status and exact stop. It cannot read/dual-write
+legacy authority, become the default, operate transport/remote/lifecycle truth, migrate state or
+delete compatibility.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -802,11 +817,12 @@ rewrite, SQLite store, or physical single Coordinator.**
 RTS-001, RTS-010, RTS-011, RTS-020, RTS-021, RTS-022A, RTS-022B and RTS-024 passed. ADR-0006 selects
 Python refactoring, checksummed atomic-file RunStore/journal, logical single writer and the narrow
 product boundary; the semantic contract is `Frozen`. RTS-030 passed the reversible installed Python
-Core contract/port boundary and RTS-031 passed the disposable local atomic Store/journal boundary.
-The next action is the separately frozen RTS-032 production provider-renderer seam while current
-state remains sole authority. No Store adoption or dual write, default switch, production state
-migration, native-launcher acceptance, release, retained-event operation or destructive cleanup is
-authorized.
+Core contract/port boundary; RTS-031 through RTS-034 passed the disposable Store/journal, production
+renderer, isolated workspace/trusted import and Artifact-validation seams without changing current
+authority. The next action is the separately frozen RTS-035 selected local Workflow application
+composition boundary in newly created disposable state. No Store adoption or dual write, default
+switch, production state migration, native-launcher acceptance, release, retained-event operation
+or destructive cleanup is authorized.
 
 ## 12. Plan Completion Definition
 
