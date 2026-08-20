@@ -1,8 +1,8 @@
 # ADR-0006: Runtime v2 Product Boundary and Implementation Choice
 
-**Status:** Proposed — owner accepted; pending independent reviews  
-**Date:** 2026-08-20  
-**Decision gate:** RTS-024  
+**Status:** Proposed — owner accepted; pending independent reviews
+**Date:** 2026-08-20
+**Decision gate:** RTS-024
 **TaskCard:**
 [`runtime-v2-rts-024-decision`](../tasks/runtime-v2-rts-024-decision.md)
 
