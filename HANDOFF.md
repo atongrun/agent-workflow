@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-020 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-021 is the last passed
 TaskCard gate: the language-neutral
 semantic contract is `Candidate`, its machine-readable fault matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -84,10 +84,19 @@ run `32308287696`. The first exact-head Review found one corrupt authorized-jour
 `457a336` fixed both implement and review authorization states without provider start or state repair.
 See the [RTS-020 closeout](docs/tasks/runtime-v2-rts-020-python-shared-slice-implementation-report.md).
 
-RTS-021 is the next eligible gate: compare SQLite and the smallest credible atomic-file/journal
-design behind the same removable slice API. RTS-020 is comparative evidence, not a choice of
-Python, store, physical Coordinator or product boundary. Do not inspect or operate retained events.
-No production migration, default, release or destructive decision has been made.
+RTS-021 then passed the same removable slice for checksummed atomic-file and stdlib SQLite Stores.
+Both retained all 14 shared rows and removed the same four local ordering windows; SQLite passed
+contention/restart/corruption/restore/migration/read-only-status/exact-stop gates but bought no
+unique Workflow ownership reduction. PR #103 pre-closeout head `00baa356` passed ordinary CI run
+`32314492329` and Binary Feasibility run `32314492349`; final closeout-head CI/Review remains.
+See the [RTS-021 closeout](docs/tasks/runtime-v2-rts-021-storage-comparison-implementation-report.md).
+
+RTS-022 is the next entry-satisfied conditional gate because Python ownership is credible but
+relocatable distribution remains unresolved. This permits one bounded Rust shared slice under the
+existing stop budgets; it does not choose Rust, SQLite, a physical Coordinator or product boundary.
+RTS-023 remains conditional on a Rust-specific stop with native value still present. Do not inspect
+or operate retained events. No production migration, default, release or destructive decision has
+been made.
 
 ## Current Handoff State: 2026-08-17
 

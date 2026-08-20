@@ -1,9 +1,10 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-020 / Python shared disposable slice (`PASS`, 2026-08-20)**. The semantic contract remains
-`Candidate`; RTS-021 is the next eligible removable comparison gate. This plan is not an ADR and
-authorizes no production migration, default switch or release action by itself.
+**RTS-021 / storage comparison (`PASS`, 2026-08-20)**. The semantic contract remains `Candidate`;
+RTS-022 is the next entry-satisfied conditional comparison gate because native distribution value
+remains an evidence-backed open hypothesis. This plan is not an ADR and authorizes no production
+migration, default switch or release action by itself.
 
 RTS-020 passed one-command implement/review/terminal execution and all eight shared fault families
 across 14 machine rows with one RunStore writer and one InvocationJournal API. Pre-final-review head
@@ -11,6 +12,11 @@ across 14 machine rows with one RunStore writer and one InvocationJournal API. P
 after a two-line import-block repair. Repair head `457a336` then closed the final Review finding for
 corrupt authorized journals. The result keeps a smaller Python ownership model credible but does
 not select Python, atomic files, SQLite, a physical Coordinator or migration.
+
+RTS-021 passed the same shared slice for checksummed atomic-file and stdlib SQLite Stores. Both
+removed the same four named local ordering windows; SQLite met its evidence minimum but bought no
+unique Workflow ownership reduction and added migration, locking, backup and platform cost. Exact
+Store choice remains deferred to RTS-024.
 
 RTS-011's narrow Python prerequisite is now regression-locked: each authorized rework unlocks one
 additional review-stage slot while every distinct review delivery remains at input `attempt=1`.
@@ -358,6 +364,13 @@ Exit criteria:
 
 Compare the smallest credible atomic-file/journal design and SQLite behind the same slice API.
 
+Execution result: **PASS**. Both candidates preserved the shared 14-row Candidate semantics and
+passed contention, restart, corruption, current/stale/foreign restore, derived-state, SQLite
+migration, read-only status and exact-stop gates. SQLite reports `SQLITE_MEETS_MINIMUM_GATE`, but
+atomic removes the same four local windows; this is ADR eligibility evidence, not Store selection.
+See the
+[`RTS-021 closeout`](../tasks/runtime-v2-rts-021-storage-comparison-implementation-report.md).
+
 SQLite is selected only if:
 
 - it removes at least two named current local file-order recovery windows;
@@ -689,10 +702,12 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Next decision point
 
-RTS-001, RTS-010, RTS-011 and RTS-020 passed, so the contract remains Candidate and Phase 2 may
-continue. The first entry-satisfied card is RTS-021: compare SQLite and the smallest credible
-atomic-file/journal design behind the same disposable shared-slice boundary. This does not choose a
-store, language, physical Coordinator, product boundary or production migration.
+RTS-001, RTS-010, RTS-011, RTS-020 and RTS-021 passed, so the contract remains Candidate and Phase 2
+may continue. RTS-022 is now entry-satisfied because RTS-020 kept a smaller Python ownership model
+credible while leaving relocatable distribution unresolved; a native slice may therefore still
+materially improve distribution. This does not choose Rust, a Store, physical Coordinator, product
+boundary or production migration. RTS-023 remains conditional on a Rust-specific stop with native
+value still present.
 
 ## 12. Plan Completion Definition
 

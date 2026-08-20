@@ -1,0 +1,171 @@
+{
+  "format": "awf.runtime-v2-storage-cases.v1",
+  "maturity": "Candidate",
+  "task_id": "runtime-v2-rts-021-storage-comparison",
+  "shared_fixture": "tests/fixtures/runtime_v2_shared_slice_cases.json",
+  "backends": ["atomic", "sqlite"],
+  "named_windows": [
+    {
+      "id": "W-AUTH",
+      "rts020_boundary": "prepared InvocationJournal write before RunStore authorization write",
+      "candidates": {
+        "atomic": {
+          "result": "eliminated",
+          "transaction_boundary": "one locked authority envelope replacement",
+          "joined_records": ["runspec", "run.authorization", "journal.prepared"],
+          "recovery_action": "invoke once only after exact authorization and journal revalidation"
+        },
+        "sqlite": {
+          "result": "eliminated",
+          "transaction_boundary": "one BEGIN IMMEDIATE transaction",
+          "joined_records": ["runspec", "run.authorization", "journal.prepared"],
+          "recovery_action": "invoke once only after exact authorization and journal revalidation"
+        }
+      }
+    },
+    {
+      "id": "W-RESULT",
+      "rts020_boundary": "durable invocation result write before Workflow phase advancement",
+      "candidates": {
+        "atomic": {
+          "result": "eliminated",
+          "transaction_boundary": "one locked authority envelope replacement after child exit",
+          "joined_records": ["journal.result", "run.phase"],
+          "recovery_action": "skip provider and validate exact durable workspace"
+        },
+        "sqlite": {
+          "result": "eliminated",
+          "transaction_boundary": "one BEGIN IMMEDIATE transaction after child exit",
+          "joined_records": ["journal.result", "run.phase"],
+          "recovery_action": "skip provider and validate exact durable workspace"
+        }
+      }
+    },
+    {
+      "id": "W-HANDOFF",
+      "rts020_boundary": "Workflow handoff intent before prepared review journal/authorization",
+      "candidates": {
+        "atomic": {
+          "result": "eliminated",
+          "transaction_boundary": "one locked authority envelope replacement",
+          "joined_records": ["run.handoff_intent", "review.journal.prepared", "review.authorization"],
+          "recovery_action": "invoke reviewer once after exact trusted Git identity revalidation"
+        },
+        "sqlite": {
+          "result": "eliminated",
+          "transaction_boundary": "one BEGIN IMMEDIATE transaction",
+          "joined_records": ["run.handoff_intent", "review.journal.prepared", "review.authorization"],
+          "recovery_action": "invoke reviewer once after exact trusted Git identity revalidation"
+        }
+      }
+    },
+    {
+      "id": "W-TERMINAL",
+      "rts020_boundary": "validated review journal before terminal Workflow write",
+      "candidates": {
+        "atomic": {
+          "result": "eliminated",
+          "transaction_boundary": "one locked authority envelope replacement after Git revalidation",
+          "joined_records": ["review.journal.validated", "run.terminal"],
+          "recovery_action": "return terminal idempotently"
+        },
+        "sqlite": {
+          "result": "eliminated",
+          "transaction_boundary": "one BEGIN IMMEDIATE transaction after Git revalidation",
+          "joined_records": ["review.journal.validated", "run.terminal"],
+          "recovery_action": "return terminal idempotently"
+        }
+      }
+    }
+  ],
+  "storage_cases": [
+    {
+      "id": "ST-LOCK-CONTENTION",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "hold_writer",
+      "expected_outcome": "AMBIGUOUS_NO_REPLAY",
+      "legal_next_action": "preserve exact writer/process evidence for owner decision",
+      "prohibited": ["provider start", "mutation", "guessed repair"]
+    },
+    {
+      "id": "ST-RESTART-WINDOWS",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "restart_after_each_named_boundary",
+      "expected_outcome": "TERMINAL_IDEMPOTENT",
+      "legal_next_action": "status or exact stop only",
+      "prohibited": ["provider replay", "new authorization identity", "terminal rewrite"]
+    },
+    {
+      "id": "ST-CORRUPT-AUTHORITY",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "corrupt_authority",
+      "expected_outcome": "DENY_BEFORE_PROVIDER",
+      "legal_next_action": "preserve files and diagnose exact run identity",
+      "prohibited": ["provider start", "repair during status", "terminal promotion"]
+    },
+    {
+      "id": "ST-BACKUP-RESTORE-CURRENT",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "backup_restore_current",
+      "expected_outcome": "TERMINAL_IDEMPOTENT",
+      "legal_next_action": "status or exact stop only",
+      "prohibited": ["provider replay", "new Git commit", "terminal rewrite"]
+    },
+    {
+      "id": "ST-BACKUP-STALE-DENY",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "backup_restore_stale",
+      "expected_outcome": "TERMINAL_CONFLICT",
+      "legal_next_action": "preserve newer authority; deny stale offline restore",
+      "prohibited": ["stale authorization", "stale terminal", "provider start"]
+    },
+    {
+      "id": "ST-BACKUP-FOREIGN-DENY",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "backup_restore_foreign",
+      "expected_outcome": "TERMINAL_CONFLICT",
+      "legal_next_action": "preserve newer authority; deny stale offline restore",
+      "prohibited": ["foreign authorization", "foreign terminal", "provider start"]
+    },
+    {
+      "id": "ST-RESTORE-ACTIVE-WRITER",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "restore_with_active_writer",
+      "expected_outcome": "AMBIGUOUS_NO_REPLAY",
+      "legal_next_action": "preserve exact writer/process evidence for owner decision",
+      "prohibited": ["offline restore while writer active", "current authority rewrite", "provider start"]
+    },
+    {
+      "id": "ST-SQLITE-MIGRATION",
+      "applies_to": ["sqlite"],
+      "inject": "sqlite_v1_to_v2_repeated_and_newer",
+      "expected_outcome": "SAFE_CONTINUE",
+      "legal_next_action": "run offline sqlite migration; deny unsupported newer schema",
+      "prohibited": ["status migration", "provider start", "schema downgrade"]
+    },
+    {
+      "id": "ST-DERIVED-DELETION",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "delete_derived",
+      "expected_outcome": "TERMINAL_IDEMPOTENT",
+      "legal_next_action": "status or exact stop only",
+      "prohibited": ["lost authority", "provider replay", "guessed repair"]
+    },
+    {
+      "id": "ST-DERIVED-FORGERY",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "forge_derived",
+      "expected_outcome": "TERMINAL_IDEMPOTENT",
+      "legal_next_action": "status or exact stop only",
+      "prohibited": ["derived authorization", "derived terminal", "provider start"]
+    },
+    {
+      "id": "ST-EXACT-STOP",
+      "applies_to": ["atomic", "sqlite"],
+      "inject": "exact_stop_idle_and_active_deny",
+      "expected_outcome": "TERMINAL_IDEMPOTENT",
+      "legal_next_action": "none",
+      "prohibited": ["stop active invocation", "stop active writer", "native lifecycle claim"]
+    }
+  ]
+}
