@@ -192,20 +192,15 @@ class OutgoingIntentDispatcher:
         intent = status.intent
         if intent is None or status.state is None:
             raise ContractError("no exact Store-owned outgoing intent is available")
-        if status.state is TransportSendState.SENT:
+        if (
+            status.state is not TransportSendState.PREPARED
+            or status.outcome is not DecisionOutcome.SAFE_CONTINUE
+        ):
             return RunDecision(
-                DecisionOutcome.SAFE_IDEMPOTENT_REPLAY,
-                "runtime",
-                "the exact outgoing intent is already recorded sent",
-                "none",
-                status.sequence,
-            )
-        if status.state in {TransportSendState.ATTEMPTING, TransportSendState.AMBIGUOUS}:
-            return RunDecision(
-                DecisionOutcome.AMBIGUOUS_NO_REPLAY,
-                "owner",
-                "the exact outgoing send attempt is ambiguous",
-                "preserve exact transport evidence; do not resend automatically",
+                status.outcome,
+                status.owner,
+                status.cause,
+                status.next_action,
                 status.sequence,
             )
         attempt_id = "send-" + _digest(intent.delivery_id + "\0" + intent.envelope_sha256)
@@ -217,7 +212,9 @@ class OutgoingIntentDispatcher:
             TransportSendState.ATTEMPTING,
             _digest("attempting\0" + attempt_id),
         )
-        self.store.record_send_observation(attempting)
+        attempt = self.store.record_send_observation(attempting)
+        if attempt.outcome is not DecisionOutcome.SAFE_CONTINUE:
+            return attempt
         try:
             receipt = self.sender.send(
                 delivery_id=intent.delivery_id,

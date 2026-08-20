@@ -17,11 +17,14 @@ from agent_workflow.runtime import (
     LaunchIntent,
     OutgoingIntent,
     OutgoingIntentDispatcher,
+    OutgoingStatus,
     ProcessObservation,
     ProviderResult,
     ProviderSelection,
     ResultEnvelope,
+    RunDecision,
     RunSpec,
+    StopCommand,
     StoreError,
     TransportSendObservation,
     TransportSendReceipt,
@@ -165,6 +168,48 @@ class FakeSender:
         return self.result
 
 
+class CountingSender:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str, bytes]] = []
+
+    def send(
+        self,
+        *,
+        delivery_id: str,
+        target_role: str,
+        route: str,
+        envelope: bytes,
+    ) -> TransportSendReceipt:
+        self.calls.append((delivery_id, target_role, route, envelope))
+        return TransportSendReceipt(True, digest("counting-sender-success"))
+
+
+class StalePreparedStore:
+    """Expose two prepared reads while preserving one underlying atomic writer."""
+
+    def __init__(self, store: AtomicRunStore) -> None:
+        self.store = store
+        self.prepared = store.outgoing_status()
+        self.prepared_reads = 2
+        self.nested: OutgoingIntentDispatcher | None = None
+        self.nested_decision: RunDecision | None = None
+        self.intercept = True
+
+    def outgoing_status(self) -> OutgoingStatus:
+        if self.prepared_reads:
+            self.prepared_reads -= 1
+            return self.prepared
+        return self.store.outgoing_status()
+
+    def record_send_observation(self, fact: TransportSendObservation) -> RunDecision:
+        decision = self.store.record_send_observation(fact)
+        if self.intercept and fact.state is TransportSendState.ATTEMPTING:
+            self.intercept = False
+            assert self.nested is not None
+            self.nested_decision = self.nested.dispatch()
+        return decision
+
+
 def test_outgoing_intent_is_exact_canonical_result_envelope() -> None:
     envelope = ResultEnvelope.create(
         run_id="task-runtime-v2-rts-041",
@@ -224,6 +269,43 @@ def test_success_records_attempt_before_send_and_exact_replay_sends_zero(tmp_pat
     replay = dispatcher.dispatch()
     assert replay.outcome is DecisionOutcome.SAFE_IDEMPOTENT_REPLAY
     assert len(sender.calls) == 1
+    assert authority_files(tmp_path) == before
+
+
+def test_two_prepared_dispatchers_allow_only_the_attempt_owner_to_send(tmp_path: Path) -> None:
+    store, _spec, intent = prepared_store(tmp_path)
+    sender = CountingSender()
+    stale = StalePreparedStore(store)
+    stale.nested = OutgoingIntentDispatcher(stale, sender)
+
+    decision = OutgoingIntentDispatcher(stale, sender).dispatch()
+
+    assert stale.nested_decision is not None
+    assert stale.nested_decision.outcome is DecisionOutcome.AMBIGUOUS_NO_REPLAY
+    assert decision.outcome is DecisionOutcome.SAFE_CONTINUE
+    assert sender.calls == [
+        (intent.delivery_id, intent.target_role, intent.route, intent.envelope_bytes)
+    ]
+    assert store.outgoing_status().state is TransportSendState.SENT
+
+
+def test_stopped_prepared_intent_never_advertises_or_performs_send(tmp_path: Path) -> None:
+    store, spec, _intent = prepared_store(tmp_path)
+    reader = AtomicStatusReader(tmp_path, spec.run_id)
+    snapshot = reader.snapshot(spec.run_id)
+    store.record_stop(StopCommand(spec.sha256, spec.run_id, snapshot.sequence))
+    before = authority_files(tmp_path)
+
+    status = reader.outgoing(spec.run_id)
+    sender = CountingSender()
+    decision = OutgoingIntentDispatcher(store, sender).dispatch()
+
+    assert status.state is TransportSendState.PREPARED
+    assert status.outcome is DecisionOutcome.OWNER_DECISION_REQUIRED
+    assert status.owner == "owner"
+    assert status.next_action == "inspect the exact stopped run; do not send"
+    assert decision.outcome is DecisionOutcome.OWNER_DECISION_REQUIRED
+    assert sender.calls == []
     assert authority_files(tmp_path) == before
 
 

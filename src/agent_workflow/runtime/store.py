@@ -567,23 +567,23 @@ def _outgoing_status(authority: _Authority, *, lock_active: bool = False) -> Out
             intent = _restore(OutgoingIntent, event["intent"])
             break
     if intent is None:
-        return OutgoingStatus(
-            authority.run_spec.run_id,
-            authority.payload["sequence"],
-            None,
-            None,
-            None,
-            DecisionOutcome.EXTERNAL_OBSERVATION_UNKNOWN,
-            "runtime",
-            "no Store-owned outgoing intent exists",
-            "complete the exact authorized local result",
-        )
-    observation = authority.send_observations.get(intent.delivery_id)
-    state = TransportSendState.PREPARED if observation is None else observation.state
+        observation = None
+        state = None
+    else:
+        observation = authority.send_observations.get(intent.delivery_id)
+        state = TransportSendState.PREPARED if observation is None else observation.state
     if lock_active:
         outcome, owner = DecisionOutcome.AMBIGUOUS_NO_REPLAY, "owner"
         cause = "an exact local authority mutation may be in flight"
         action = "preserve exact writer evidence; do not send"
+    elif authority.stopped is not None:
+        outcome, owner = DecisionOutcome.OWNER_DECISION_REQUIRED, "owner"
+        cause = "the exact local application is stopped"
+        action = "inspect the exact stopped run; do not send"
+    elif intent is None:
+        outcome, owner = DecisionOutcome.EXTERNAL_OBSERVATION_UNKNOWN, "runtime"
+        cause = "no Store-owned outgoing intent exists"
+        action = "complete the exact authorized local result"
     elif state is TransportSendState.PREPARED:
         outcome, owner = DecisionOutcome.SAFE_CONTINUE, "runtime"
         cause, action = "the exact outgoing intent is prepared", "send the exact bound intent once"
@@ -808,10 +808,15 @@ class AtomicRunStore:
             if previous == fact:
                 outcome = (
                     DecisionOutcome.AMBIGUOUS_NO_REPLAY
-                    if fact.state is TransportSendState.AMBIGUOUS
+                    if fact.state in {TransportSendState.ATTEMPTING, TransportSendState.AMBIGUOUS}
                     else DecisionOutcome.SAFE_IDEMPOTENT_REPLAY
                 )
-                return payload, (outcome, "exact transport observation is durable", "none")
+                next_action = (
+                    "preserve exact transport evidence; do not resend automatically"
+                    if outcome is DecisionOutcome.AMBIGUOUS_NO_REPLAY
+                    else "none"
+                )
+                return payload, (outcome, "exact transport observation is durable", next_action)
             if previous is None:
                 if fact.state is not TransportSendState.ATTEMPTING:
                     raise _deny("transport result precedes its attempting observation")
