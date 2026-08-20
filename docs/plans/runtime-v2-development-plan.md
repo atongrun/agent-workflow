@@ -1,10 +1,10 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
 Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-021 / storage comparison (`PASS`, 2026-08-20)**. The semantic contract remains `Candidate`;
-RTS-022 is the next entry-satisfied conditional comparison gate because native distribution value
-remains an evidence-backed open hypothesis. This plan is not an ADR and authorizes no production
-migration, default switch or release action by itself.
+**RTS-022A / Rust shared slice (`RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE`, 2026-08-20)**.
+The semantic contract remains `Candidate`; the separately frozen RTS-022B independent-maintainer
+fault gate is next. This plan is not an ADR and authorizes no production migration, default switch
+or release action by itself.
 
 RTS-020 passed one-command implement/review/terminal execution and all eight shared fault families
 across 14 machine rows with one RunStore writer and one InvocationJournal API. Pre-final-review head
@@ -17,6 +17,12 @@ RTS-021 passed the same shared slice for checksummed atomic-file and stdlib SQLi
 removed the same four named local ordering windows; SQLite met its evidence minimum but bought no
 unique Workflow ownership reduction and added migration, locking, backup and platform cost. Exact
 Store choice remains deferred to RTS-024.
+
+RTS-022A passed the same 14-row semantics on five native Rust targets with zero Cargo dependencies,
+no Python process and exact run/status/replay/stop evidence. Its 3,471-line production numerator
+exceeds the frozen 2,181 threshold, but machine evidence proves the named Python-runtime
+prerequisite is absent for this removable slice. This authorizes only RTS-022B; it does not select
+Rust or change the production Python Runtime.
 
 RTS-011's narrow Python prerequisite is now regression-locked: each authorized rework unlocks one
 additional review-stage slot while every distinct review delivery remains at input `attempt=1`.
@@ -402,6 +408,11 @@ Budget and stop conditions:
 The numeric thresholds are explicit planning risk budgets, not claims that Rust should naturally meet
 them.
 
+RTS-022A returned `RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE`: five native targets passed the
+shared suite and exact lifecycle, direct/transitive dependency counts were zero, and every target
+recorded `python_invoked=false`. Because the Rust numerator is 3,471 lines, the separate RTS-022B
+maintainer-fault gate remains mandatory before RTS-024.
+
 #### RTS-023 — Go slice, conditional fallback
 
 Run the same shared slice once if Rust stops for Rust-specific build, dependency, ownership, or team
@@ -702,12 +713,11 @@ rewrite, SQLite store, or physical single Coordinator.**
 
 ### Next decision point
 
-RTS-001, RTS-010, RTS-011, RTS-020 and RTS-021 passed, so the contract remains Candidate and Phase 2
-may continue. RTS-022 is now entry-satisfied because RTS-020 kept a smaller Python ownership model
-credible while leaving relocatable distribution unresolved; a native slice may therefore still
-materially improve distribution. This does not choose Rust, a Store, physical Coordinator, product
-boundary or production migration. RTS-023 remains conditional on a Rust-specific stop with native
-value still present.
+RTS-001, RTS-010, RTS-011, RTS-020, RTS-021 and RTS-022A passed, so the contract remains Candidate
+and Phase 2 may continue. RTS-022B is the next gate: one separately frozen independent-maintainer
+fault diagnosis/repair card. A PASS proceeds to RTS-024; a Rust-specific stop may make RTS-023
+entry-eligible only if native value remains. This does not choose Rust, a Store, physical
+Coordinator, product boundary or production migration.
 
 ## 12. Plan Completion Definition
 

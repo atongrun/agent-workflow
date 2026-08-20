@@ -91,12 +91,16 @@ unique Workflow ownership reduction. PR #103 pre-closeout head `00baa356` passed
 `32314492329` and Binary Feasibility run `32314492349`; final closeout-head CI/Review remains.
 See the [RTS-021 closeout](docs/tasks/runtime-v2-rts-021-storage-comparison-implementation-report.md).
 
-RTS-022 is the next entry-satisfied conditional gate because Python ownership is credible but
-relocatable distribution remains unresolved. This permits one bounded Rust shared slice under the
-existing stop budgets; it does not choose Rust, SQLite, a physical Coordinator or product boundary.
-RTS-023 remains conditional on a Rust-specific stop with native value still present. Do not inspect
-or operate retained events. No production migration, default, release or destructive decision has
-been made.
+RTS-022A then returned `RUST_SHARED_SLICE_ELIGIBLE_FOR_MAINTAINER_GATE`. The removable
+zero-dependency Rust executable preserved all 14 Candidate rows on five native targets; every cell
+recorded `python_invoked=false`, exact run/status/replay/stop facts, and implement=1/review=1.
+Pre-closeout head `3be3263` passed ordinary CI run `32322178827` and Binary Feasibility run
+`32322178851`. Its 3,471-line numerator exceeds the frozen threshold, so RTS-022B is mandatory: one
+separately frozen independent-maintainer injected-fault diagnosis/repair card. This does not choose
+Rust, SQLite, a physical Coordinator or product boundary. RTS-023 remains conditional on a
+Rust-specific stop with native value still present. Do not inspect or operate retained events. No
+production migration, default, release or destructive decision has been made. See the
+[RTS-022A closeout](docs/tasks/runtime-v2-rts-022-rust-shared-slice-implementation-report.md).
 
 ## Current Handoff State: 2026-08-17
 
