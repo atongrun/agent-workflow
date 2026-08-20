@@ -135,9 +135,13 @@ class OutgoingStatus:
             raise ContractError("prepared outgoing status cannot have a send observation")
         if self.state not in {None, TransportSendState.PREPARED} and self.observation is None:
             raise ContractError("observed outgoing status requires an exact observation")
-        if self.intent is not None and self.observation is not None and (
-            self.observation.delivery_id != self.intent.delivery_id
-            or self.observation.envelope_sha256 != self.intent.envelope_sha256
+        if (
+            self.intent is not None
+            and self.observation is not None
+            and (
+                self.observation.delivery_id != self.intent.delivery_id
+                or self.observation.envelope_sha256 != self.intent.envelope_sha256
+            )
         ):
             raise ContractError("outgoing status observation identity drift")
         if not isinstance(self.outcome, DecisionOutcome):
@@ -235,11 +239,7 @@ class OutgoingIntentDispatcher:
             )
         if not isinstance(receipt, TransportSendReceipt):
             receipt = TransportSendReceipt(None, _digest("invalid-transport-receipt"))
-        state = (
-            TransportSendState.SENT
-            if receipt.success is True
-            else TransportSendState.AMBIGUOUS
-        )
+        state = TransportSendState.SENT if receipt.success is True else TransportSendState.AMBIGUOUS
         return self.store.record_send_observation(
             TransportSendObservation(
                 intent.run_spec_sha256,
