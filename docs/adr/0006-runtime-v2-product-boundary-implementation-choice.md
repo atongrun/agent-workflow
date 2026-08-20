@@ -1,10 +1,15 @@
 # ADR-0006: Runtime v2 Product Boundary and Implementation Choice
 
-**Status:** Proposed — owner accepted; pending independent reviews
+**Status:** Accepted
 **Date:** 2026-08-20
 **Decision gate:** RTS-024
 **TaskCard:**
 [`runtime-v2-rts-024-decision`](../tasks/runtime-v2-rts-024-decision.md)
+
+Independent review evidence:
+
+- [Architecture Review — PASS](../reviews/2026-08-20-runtime-v2-rts-024-architecture-review.md)
+- [Adversarial Review — PASS after one focused evidence repair](../reviews/2026-08-20-runtime-v2-rts-024-adversarial-review.md)
 
 ## Context
 
@@ -37,8 +42,9 @@ distribution-relevant prerequisite reduction; it does not provide equivalent pro
 evidence. This asymmetry is evidence, not a claim that Rust is infeasible.
 
 The owner accepted the following decision on 2026-08-20. Independent architecture and adversarial
-reviews still gate the semantic-contract `Frozen` promotion. Until both pass, this ADR is proposed
-and authorizes no production implementation, default switch, migration, release or launcher claim.
+reviews passed, including focused re-review of one LOC evidence correction, so this ADR is accepted
+and the semantic contract may be promoted to `Frozen`. This acceptance authorizes no default switch,
+migration, release or launcher claim.
 
 ## Decision
 
@@ -268,12 +274,12 @@ the product boundary before the selected local vertical slice is accepted.
 
 ## Review and freeze gate
 
-This ADR becomes `Accepted`, and `awf.semantic-contract.v1` plus the normative fault matrix become
-`Frozen`, only after:
+This ADR is `Accepted`, and `awf.semantic-contract.v1` plus the normative fault matrix are `Frozen`,
+because:
 
-1. an independent architecture Reviewer returns `PASS` on ownership, interfaces, external truth,
+1. an independent architecture Reviewer returned `PASS` on ownership, interfaces, external truth,
    evidence, rollback and plan consistency;
-2. a different independent adversarial Reviewer returns `PASS` after challenging evidence
+2. a different independent adversarial Reviewer returned `PASS` after challenging evidence
    asymmetry, hidden dual-write/migration/default claims, invariant preservation and scope drift;
 3. any repair is focused-revalidated and re-reviewed by the affected Reviewer;
 4. the 39-case/11-outcome matrix remains internally consistent and no normalized outcome or

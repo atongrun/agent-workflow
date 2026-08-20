@@ -1,10 +1,10 @@
 # Runtime v2 Fault Matrix
 
-Status: **Candidate**
+Status: **Frozen**
 
 The normative machine-readable table is
 [`runtime-v2-fault-matrix.json`](runtime-v2-fault-matrix.json). It is bound to
-the Candidate evidence head `2868486263aaf35814719fb9ab085a5787359408` and uses evidence/outcome
+the RTS-024 reviewed decision head `5da55fda62119eec01844e5d6c52f91d5dd187ba` and uses evidence/outcome
 IDs from [`awf.semantic-contract.v1`](../runtime-v2-semantic-contract.md).
 
 This is a current-reference fault map, not a replacement design. A safe current denial may expose
@@ -16,7 +16,7 @@ later slice may reduce a fault window only by preserving or strengthening the no
 The JSON top level contains exactly:
 
 - `format = awf.runtime-v2-fault-matrix.v1`;
-- `maturity = Candidate`;
+- `maturity = Frozen`;
 - the exact Git `basis`;
 - the semantic-contract path;
 - the declared normalized `outcomes`;
@@ -24,7 +24,8 @@ The JSON top level contains exactly:
   one legal next action, prohibited actions, and one or more semantic-contract evidence IDs.
 
 Optional `reference_gap` and `open_question` fields never weaken the expected current outcome. They
-identify evidence needed before maturity promotion.
+identify implementation/reconciliation evidence still required by later gates; they do not weaken
+the Frozen denial or authorize guessed recovery.
 
 ## Coverage index
 
@@ -89,7 +90,7 @@ These are mapped known boundaries, not reasons to redefine PASS or weaken Candid
 
 ## Static validation
 
-Candidate validation must prove:
+Frozen validation must prove:
 
 1. the JSON parses with duplicate-key rejection;
 2. `format`, `maturity`, `basis`, and `contract` are exact;

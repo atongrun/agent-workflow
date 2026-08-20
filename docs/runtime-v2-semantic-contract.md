@@ -1,6 +1,6 @@
 # `awf.semantic-contract.v1` — Runtime v2 Core Semantics
 
-Status: **Candidate — RTS-024 decision review candidate**
+Status: **Frozen**
 
 Extraction basis: `main@0ed7812a8dd9cc26d7e1ecb310ed1add95627bf2`
 
@@ -18,12 +18,14 @@ operate Agent Bus state, change a service, or mutate a remote repository. RTS-01
 now supplied the two Phase 1 reference acceptances required for `Candidate`, and RTS-020 through
 RTS-022B supplied the Phase 2 comparison evidence. The owner selected Python refactoring, a
 checksummed atomic-file RunStore/per-invocation journal, one logical writer without a physical
-Coordinator, and a later bounded native-launcher candidate. This document remains `Candidate` until
-the independent architecture and adversarial review gates pass.
+Coordinator, and a later bounded native-launcher candidate. The independent
+[Architecture Review](reviews/2026-08-20-runtime-v2-rts-024-architecture-review.md) and separate
+[Adversarial Review](reviews/2026-08-20-runtime-v2-rts-024-adversarial-review.md) passed, including
+focused re-review of one evidence correction, so the contract is `Frozen`.
 
 ## 1. Vocabulary and evidence convention
 
-`MUST`, `MUST NOT`, `MAY`, and `OWNER_ONLY` are normative within this decision candidate.
+`MUST`, `MUST NOT`, `MAY`, and `OWNER_ONLY` are normative within this Frozen contract.
 “Observed” means the current implementation and cited evidence agree. “Selected” means accepted by
 the owner for the later implementation boundary but not yet implemented by this document.
 “Hypothesis” is not a current requirement and cannot authorize implementation.
@@ -436,17 +438,16 @@ Open questions carried to later phases:
 | E-RTS021 | `docs/tasks/runtime-v2-rts-021-storage-comparison-implementation-report.md`; atomic/SQLite same-fixture comparison proving the same four local ordering-window reductions and unequal operational ownership |
 | E-RTS022A | `docs/tasks/runtime-v2-rts-022-rust-shared-slice-implementation-report.md`; zero-dependency Rust same-fixture slice on five native targets with explicitly bounded/synthetic external evidence |
 | E-RTS022B | `docs/tasks/runtime-v2-rts-022-maintainer-fault-gate-implementation-report.md`; one blinded launch-intent ambiguity fault independently diagnosed and repaired in one bounded attempt |
-| E-RTS024 | `docs/adr/0006-runtime-v2-product-boundary-implementation-choice.md`; owner-accepted Python/atomic/logical-writer/product-boundary decision, pending independent review until Frozen promotion |
+| E-RTS024 | `docs/adr/0006-runtime-v2-product-boundary-implementation-choice.md`; accepted Python/atomic/logical-writer/product-boundary decision; independent architecture and adversarial reviews passed before Frozen promotion |
 
 ## 13. Decision review and change control
 
-Before Frozen promotion, an independent architecture review and a separate independent adversarial
-review MUST both return `PASS` on this exact decision candidate and ADR-0006. A repair must preserve
-failed evidence, name the affected claim and receive focused re-review from the affected Reviewer.
+The independent architecture review and separate independent adversarial review both returned
+`PASS`; the adversarial review's one evidence repair preserved the decision and passed focused
+re-review. The mechanical promotion changed no normalized outcome, prohibited effect or external
+owner.
 
-After both reviews pass, the document status and normative fault-matrix maturity may become
-`Frozen`; no normalized outcome, prohibited effect or external owner changes during that mechanical
-promotion. Frozen authorizes only separately approved Phase 3 Python TaskCards. It is not a
+Frozen authorizes only separately approved Phase 3 Python TaskCards. It is not a
 production ABI, state migration, default switch, launcher acceptance, release action, retained-event
 operation or destructive cleanup authority. Any later semantic change requires a new owner-approved
 ADR/TaskCard with explicit compatibility and evidence consequences.
