@@ -11,9 +11,9 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-021 is the last passed
-TaskCard gate: the language-neutral
-semantic contract is `Candidate`, its machine-readable fault matrix contains 39 unique cases and
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-024 is the last passed
+TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
+`Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
 record families without hiding external Agent Bus/Git/GitHub/OS/provider truth. Independent Review
 2 returned `PASS` with zero findings. See the
@@ -108,9 +108,20 @@ tests and exact seeded CI logs, and restored it in one semantic repair. Seeded B
 `32324044913` compiled all five Rust targets then failed the same existing row; candidate ordinary
 CI `32324509595`, Binary Feasibility `32324509603` and independent Gate Review passed. Final Rust
 source matches the RTS-022A main source exactly. RTS-023 does not enter. RTS-024 is now
-`OWNER_DECISION_REQUIRED`; do not infer a language, Store, Coordinator, product boundary, semantic
-freeze, production default, migration or release choice. See the
+the owner decision gate; its result is recorded below. See the
 [RTS-022B closeout](docs/tasks/runtime-v2-rts-022-maintainer-fault-gate-implementation-report.md).
+
+RTS-024 then returned `PASS — PYTHON + NATIVE LAUNCHER`. The owner selected Python refactoring,
+checksummed atomic-file RunStore plus a per-invocation journal API, and one logical Workflow writer
+without a physical always-on Coordinator. Rust remains a comparison oracle, RTS-023 does not enter,
+SQLite is not selected, and the native launcher is a separate bounded distribution candidate only
+after Phase 3 stabilizes the Python package/application boundary. Independent Architecture Review
+passed. A separate Adversarial Review found one Python LOC-head ambiguity; repair `5da55fd` recorded
+1,380 runner lines at `77c7023` and 1,396 at repair head `457a336`, then focused re-review passed.
+ADR-0006 is accepted and the semantic contract/fault matrix are Frozen without changing any of the
+39 cases or 11 outcomes. Phase 3 starts with separately frozen RTS-030. No production default,
+state migration, launcher acceptance, release, retained-event operation or destructive cleanup is
+authorized. See the [RTS-024 closeout](docs/tasks/runtime-v2-rts-024-decision-implementation-report.md).
 
 ## Current Handoff State: 2026-08-17
 
