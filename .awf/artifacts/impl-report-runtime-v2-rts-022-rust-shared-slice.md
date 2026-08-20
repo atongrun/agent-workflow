@@ -121,7 +121,7 @@ Known CI risks before reviewer/CI:
     "Line-length scan PASS",
     "Whitespace diff check PASS"
   ],
-  "source_revision": "WORKING_TREE_PENDING_COMMIT",
+  "source_revision": "c5ec162653189eb07e80ea7636ae62ec37066937",
   "review_status": "PENDING_INDEPENDENT_REVIEW",
   "preliminary_result": "PENDING_CI_AND_INDEPENDENT_REVIEW",
   "dependency_count": 0,
