@@ -46,7 +46,7 @@ Workflow/Agent Bus/ACK ordering.
 ## Scope and budgets
 
 - Renderer module: 119/320 nonblank/noncomment lines.
-- Focused renderer tests: 270/750 nonblank/noncomment lines.
+- Focused renderer tests: 268/750 nonblank/noncomment lines.
 - Production `scripts/awf_role.py`: net +161/180 nonblank/noncomment lines against `origin/main`.
 - Dependencies: no addition; installed Runtime remains standard-library only.
 - Dispatch: one explicit provider/role branch, no discovery, registry, plugin or provider framework.
@@ -65,9 +65,13 @@ Repository-policy-safe local validation passed:
 - exact writable-path, dependency and LOC audits;
 - `git diff --check`.
 
-Per repository policy, local pytest, Ruff and Rust were not run on this Mac. Exact-head ordinary CI,
-installed-wheel/cross-platform jobs and the independent TaskCard Gate Review are pending at this
-pre-candidate report revision.
+Per repository policy, local pytest, Ruff and Rust were not run on this Mac. Independent TaskCard
+Gate Review returned `PASS` with zero findings on semantic candidate `9d2cb47`. Exact-head ordinary
+CI `32345260471` and Binary Feasibility `32345260487` then passed at `1028eae`, including full Linux
+and Windows suites, Ruff, macOS runtime, installed-wheel jobs, all five native cells and both
+aggregates. The only post-review repair was the L1 test-stub compatibility commit `1028eae`, which
+accepted the already-reviewed `binding=` keyword in two monkeypatched fakes; it changed no Runtime
+behavior or semantic evidence.
 
 ## Explicit non-claims
 
@@ -100,9 +104,10 @@ state, release or authorize destructive cleanup.
   ],
   "tests": [
     "Local policy-safe static and direct smoke validation PASS",
-    "Exact-head ordinary CI pending",
-    "Independent TaskCard Gate Review pending"
+    "Independent TaskCard Gate Review PASS with zero findings at semantic candidate 9d2cb47",
+    "Exact-head ordinary CI 32345260471 PASS at 1028eae",
+    "Exact-head Binary Feasibility 32345260487 PASS at 1028eae"
   ],
-  "source_revision": "4fc459f9f03ef299bcc50bcc56b2116d2009cda6"
+  "source_revision": "1028eae5eecde2b5427ab15e58e32d834201ba39"
 }
 -->
