@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-033 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-034 is the last passed
 TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
 `Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -157,11 +157,19 @@ passed at `75a4630`, including Windows staged-tree provenance. Current
 RunLedger/checkpoint/outbox/inbox/RunEvidence state remains sole production authority. See the
 [RTS-033 closeout](docs/tasks/runtime-v2-rts-033-workspace-import-implementation-report.md).
 
-The next safe action is a separately frozen RTS-034 Artifact validation boundary. It may move only
-the current TaskCard-bound Artifact path/report/size/hash, allowed-path, secret and postflight-result
-validation behind the installed Runtime boundary while preserving outcomes and ordering before
-trusted import. It must not adopt/dual-write the RTS-031 Store, change Artifact policy or rework
-lineage, operate remote Git/GitHub or Bus, migrate production state or change defaults.
+RTS-034 then returned `PASS` for the Artifact validation seam. The installed Runtime owns
+TaskCard/report identity, strict report policy, exact raw Artifact facts and postflight decisions;
+the operations scripts retain trusted observations/execution and compatibility mapping only.
+Independent Gate Review returned PASS at `f10ab60`; ordinary CI `32355614215` and Binary
+Feasibility `32355614216` passed after one external GitHub API 403 single-job rerun. Current
+RunLedger/checkpoint/outbox/inbox/RunEvidence remains sole production authority. See the
+[RTS-034 closeout](docs/tasks/runtime-v2-rts-034-artifact-validation-implementation-report.md).
+
+The next safe action is a separately frozen RTS-035 selected local Workflow application composition
+boundary. It may compose the accepted Runtime APIs only in newly created disposable state to prove
+the complete local transition path, `run/status/stop`, mutation-free status and exact stop. It must
+not read or dual-write legacy authority, become the default, operate transport/remote/lifecycle
+truth, migrate state or delete compatibility.
 
 ## Current Handoff State: 2026-08-17
 
