@@ -132,11 +132,20 @@ Binary Feasibility `32335336776` passed. Independent Gate Review found one missi
 identity; repair `c9e2c5f` bound executable/argv/cwd/environment and stdin digest/length, repair CI
 passed the affected tests and installed-wheel gates, and the same Reviewer focused re-review passed.
 
-The next safe action is a separately frozen RTS-031 TaskCard for a pure local checksummed atomic-
-file RunStore and per-invocation journal implementation behind those ports. It must not migrate or
-dual-write a production handler, read/delete legacy authority, invoke providers, touch Agent Bus or
-external truth, or change a default. See the
-[RTS-030 closeout](docs/tasks/runtime-v2-rts-030-python-core-boundary-implementation-report.md).
+RTS-031 then returned `PASS` for the disposable local atomic Store/journal implementation. One
+checksummed authority envelope owns immutable RunSpec, Workflow transitions, embedded invocation
+facts, outgoing intent and terminal behind one exact writer lock. Candidate ordinary CI
+`32341036671`, Binary Feasibility `32341036800` and independent Review passed after repair `2d4576b`
+closed parent-path symlink/reparse traversal. No production handler, legacy representation,
+external truth, dependency, default or migration boundary changed.
+
+The next safe action is a separately frozen RTS-032 TaskCard for the production provider-renderer
+seam: place existing Codex/OpenCode/Pi command construction behind narrow installed Runtime v2
+renderers receiving a fully bound InvocationSpec immediately before the existing spawn boundary.
+Current production state remains sole authority; RTS-032 must not read/write the new Store,
+dual-write, interpret Workflow Stage in a renderer, add a generic provider framework or change
+fallback/default behavior. See the
+[RTS-031 closeout](docs/tasks/runtime-v2-rts-031-atomic-store-journal-implementation-report.md).
 
 ## Current Handoff State: 2026-08-17
 

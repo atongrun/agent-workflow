@@ -137,6 +137,7 @@ class RunSnapshot:
     sequence: int
     stage: WorkflowStage | None
     terminal: TerminalOutcome | None
+    outcome: DecisionOutcome
     first_blocker: str | None
     owner: str
     cause: str
@@ -150,6 +151,8 @@ class RunSnapshot:
             raise ContractError("stage must be a WorkflowStage or None")
         if self.terminal is not None and not isinstance(self.terminal, TerminalOutcome):
             raise ContractError("terminal must be a TerminalOutcome or None")
+        if not isinstance(self.outcome, DecisionOutcome):
+            raise ContractError("outcome must be a DecisionOutcome")
         if self.first_blocker is not None:
             _strict_text("first_blocker", self.first_blocker, maximum=500)
         _strict_text("owner", self.owner, maximum=100)
@@ -226,46 +229,50 @@ class JournalSnapshot:
     invocation_id: str
     authorization_sha256: str
     invocation_spec_sha256: str
-    launch_intent: bool
-    process_observed: bool
-    result_sha256: str | None
-    validation_effect_sha256: str | None
+    launch_intent: LaunchIntent | None
+    process_observation: ProcessObservation | None
+    result: ProviderResult | None
+    validation_effect: ValidationEffect | None
 
     def __post_init__(self) -> None:
         _sha256("run_spec_sha256", self.run_spec_sha256)
         _identifier("invocation_id", self.invocation_id)
         _sha256("authorization_sha256", self.authorization_sha256)
         _sha256("invocation_spec_sha256", self.invocation_spec_sha256)
-        if not isinstance(self.launch_intent, bool) or not isinstance(self.process_observed, bool):
-            raise ContractError("journal observation flags must be booleans")
-        if self.result_sha256 is not None:
-            _sha256("result_sha256", self.result_sha256)
-        if self.validation_effect_sha256 is not None:
-            _sha256("validation_effect_sha256", self.validation_effect_sha256)
+        for name, value, expected in (
+            ("launch_intent", self.launch_intent, LaunchIntent),
+            ("process_observation", self.process_observation, ProcessObservation),
+            ("result", self.result, ProviderResult),
+            ("validation_effect", self.validation_effect, ValidationEffect),
+        ):
+            if value is not None and not isinstance(value, expected):
+                raise ContractError(f"{name} has an invalid fact type")
 
 
 @runtime_checkable
 class RunStore(Protocol):
     def initialize(self, run_spec: RunSpec) -> RunSnapshot: ...
 
-    def authorize(self, command: AuthorizationCommand) -> RunDecision: ...
+    def authorize(
+        self, command: AuthorizationCommand, fact: JournalAuthorization
+    ) -> RunDecision: ...
 
-    def record_handoff(self, command: HandoffCommand) -> RunDecision: ...
+    def record_handoff(self, command: HandoffCommand, effect: ValidationEffect) -> RunDecision: ...
 
-    def record_terminal(self, command: TerminalCommand) -> RunDecision: ...
+    def record_terminal(
+        self, command: TerminalCommand, effect: ValidationEffect
+    ) -> RunDecision: ...
+
+    def journal(self, invocation_id: str) -> InvocationJournal: ...
 
 
 @runtime_checkable
 class InvocationJournal(Protocol):
-    def record_authorization(self, fact: JournalAuthorization) -> JournalSnapshot: ...
-
     def record_launch_intent(self, fact: LaunchIntent) -> JournalSnapshot: ...
 
     def record_process_observation(self, fact: ProcessObservation) -> JournalSnapshot: ...
 
     def record_result(self, fact: ProviderResult) -> JournalSnapshot: ...
-
-    def record_validation_effect(self, fact: ValidationEffect) -> JournalSnapshot: ...
 
     def snapshot(self) -> JournalSnapshot: ...
 
