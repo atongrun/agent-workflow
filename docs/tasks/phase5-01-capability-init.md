@@ -67,14 +67,27 @@ existing deterministic terminal consumer but is not advertised as an agent-tool 
   create-only durable write.
 - Do not give the Pi process Git credentials, authenticated remotes, shell interpretation, or direct
   TaskCard write authority.
+- This is a preparatory, trusted planning-output boundary only. It must not call or extend
+  `LocalRuntimeApplication`, `RunSpec`, `RunStore`, invocation journals, transport envelopes, ACK
+  handling, listener lifecycle, or Workflow transitions. The helper accepts caller-supplied trusted
+  context, repository root, and one exact destination; validates all untrusted stdout before any
+  write; uses create-only durable persistence; and returns a non-authorizing Artifact fact. The
+  resulting TaskCard becomes executable only after the existing owner commit/TaskCard gate and the
+  separately scoped Phase 5-02 `awf run <TaskCard>` path.
 
 ### Finding
 
-- Add one explicit boolean profile/config opt-in; absence means off.
+- Add `finding_enabled: boolean` to the node-profile schema; omission is `false`.
 - When off, provider prompts contain no Dogfood Finding instructions, capture is not attempted, and
   normal status omits Feedback.
 - Existing `awf feedback ...` and reporter functionality remain callable for explicit maintainer
   profiles. No Phase B behavior is added.
+- Phase 5-01 must not add Finding state to `RunSpec`, `InvocationSpec`,
+  `LocalRuntimeApplication`, RunStore, journals, transport, or Workflow authority. Normal Runtime v2
+  renderers default to no Finding instructions. The explicit profile boolean applies only to the
+  existing profile-driven Phase A listener/adapter prompt capture and normal status; `awf feedback`
+  remains independently callable. Binding Finding into a future fresh-run Runtime invocation is
+  deferred to a separately scoped Phase 5-02 decision.
 
 ### Agent Bus
 
@@ -115,6 +128,10 @@ existing deterministic terminal consumer but is not advertised as an agent-tool 
 - [ ] Existing live listener path-conflict rejection is unchanged.
 - [ ] Pi Architect is accepted by `InvocationSpec`, rendered through the closed provider dispatch
       with read-only tools, and its stdout can be validated/persisted only by the trusted helper.
+- [ ] The Pi Architect helper denies a missing/nonexistent destination parent, symlink/escape
+      destination, existing destination, invalid UTF-8, invalid TaskCard/postflight/report-path
+      binding, or secret-shaped output before creating any file, and returns only a non-authorizing
+      Artifact fact.
 - [ ] Coder Codex, Coder Pi, Architect OpenCode/Codex and other unsupported combinations remain
       unadvertised and fail before mutation/provider start.
 - [ ] Finding is off by default across profile generation, prompts/capture and normal status;
