@@ -95,6 +95,7 @@ or recovery/resume mechanism is authorized.
 - `tests/test_cli.py`
 - `tests/test_plan_loop.py`
 - `tests/test_runtime_provider_renderers.py`
+- `tests/verify_installed_wheel.py`
 - `tests/test_awf_plan.py`
 - `.awf/artifacts/impl-report-phase5-03-architect-led-plan-loop.md`
 - `.awf/artifacts/review-report-phase5-03-architect-led-plan-loop.md`
@@ -112,6 +113,7 @@ Closeout may also update `README.md`, `HANDOFF.md`, `ROADMAP.md`, `CHANGELOG.md`
     "tests/test_cli.py",
     "tests/test_plan_loop.py",
     "tests/test_runtime_provider_renderers.py",
+    "tests/verify_installed_wheel.py",
     "tests/test_awf_plan.py",
     ".awf/artifacts/impl-report-phase5-03-architect-led-plan-loop.md",
     ".awf/artifacts/review-report-phase5-03-architect-led-plan-loop.md"
