@@ -182,6 +182,8 @@ class LocalReadiness:
     config: dict[str, str]
     repo: Path
     bus_executable: str
+    bus_capabilities: tuple[str, ...]
+    bus_provenance_sha256: str
     tool_executable: str
     tool_version_sha256: str
 
@@ -413,9 +415,9 @@ def _validate_profile_semantics(profile: NodeProfile) -> None:
         if path == profile.repo or path.is_relative_to(profile.repo):
             raise NodeError(f"profile {field} must be outside the role repository")
     if profile.role == "coder" and profile.values["tool"] == "pi":
-        raise NodeError("Pi is reviewer-only and cannot be selected for coder")
-    if profile.role == "architect" and profile.values["tool"] != "none":
-        raise NodeError("architect terminal handling is no-model; tool must be none")
+        raise NodeError("Pi is not a supported coder tool")
+    if profile.role == "architect" and profile.values["tool"] not in {"none", "pi"}:
+        raise NodeError("architect tool must be Pi or the internal no-model terminal consumer")
     if profile.role != "architect" and profile.values["tool"] == "none":
         raise NodeError("coder and reviewer profiles require a model tool")
     if bool(profile.values.get("upstream_repo")) != bool(profile.values.get("head_repo")):
@@ -652,6 +654,54 @@ def _resolved_executable(value: str) -> str:
     return str(Path(resolved).resolve()) if resolved else str(Path(value).resolve())
 
 
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    try:
+        with Path(path).open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise NodeError("Agent Bus executable provenance is unreadable") from exc
+    return "sha256:" + digest.hexdigest()
+
+
+def probe_agent_bus_client(executable: str) -> dict[str, object]:
+    """Prove the required structured-listener capability without connecting to a server."""
+    _awf_config, awf_listen = _operations_modules()
+    resolved = _resolved_executable(executable)
+    if not Path(resolved).is_file():
+        raise NodeError("Agent Bus executable is unavailable")
+    try:
+        probe = awf_listen.run_command(
+            [resolved, "listen", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            allow_shell_wrapper=True,
+        )
+    except awf_listen.ExecutionFailure as exc:
+        raise NodeError("Agent Bus structured argv capability probe failed") from exc
+    output = (probe.stdout or "") + "\n" + (probe.stderr or "")
+    if probe.returncode != 0 or "--on-argv" not in output:
+        raise NodeError(
+            "Agent Bus client lacks agent-bus.listen.on-argv.v1; install a compatible client"
+        )
+    provenance = {
+        "executable_sha256": _file_sha256(resolved),
+        "listen_help_sha256": _version_sha256(probe.stdout or "", probe.stderr or ""),
+    }
+    return {
+        "executable": resolved,
+        "capabilities": ("agent-bus.listen.on-argv.v1",),
+        "provenance": provenance,
+        "provenance_sha256": "sha256:"
+        + hashlib.sha256(
+            json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        "version": "unreported; capability-probed",
+    }
+
+
 def _local_readiness(profile: NodeProfile) -> LocalReadiness:
     inherited_root = os.environ.get("AWF_STATE_ROOT")
     if inherited_root and resolve_state_root(inherited_root) != profile.state_root:
@@ -664,7 +714,11 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
     awf_config, awf_listen = _operations_modules()
     try:
         config = awf_config.load_config(profile.config_path)
-        repo = awf_listen.check_workspace_readiness(profile.repo, profile.role)
+        repo = awf_listen.check_workspace_readiness(
+            profile.repo,
+            profile.role,
+            require_clean=profile.role in {"coder", "reviewer"} or profile.values["tool"] != "none",
+        )
     except (awf_config.ConfigError, SystemExit) as exc:
         raise NodeError("local readiness failed; profile, config, or workspace is invalid") from exc
     required = {"AGENT_BUS_URL", ROLE_TOKEN[profile.role]}
@@ -674,6 +728,7 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
     bus = awf_config.native_executable(config.get("AWF_BUS_BIN", "agent-bus"))
     if not (shutil.which(bus) or Path(bus).is_file()):
         raise NodeError("local readiness failed; Agent Bus executable is unavailable")
+    bus_facts = probe_agent_bus_client(bus)
     environment = dict(os.environ)
     token = config[ROLE_TOKEN[profile.role]]
     environment.update(
@@ -704,7 +759,7 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
         raise TransientBusReadinessError("local readiness failed; Agent Bus health probe failed")
     tool = ""
     tool_version_sha256 = ""
-    if profile.role != "architect":
+    if profile.values["tool"] != "none":
         key, default = TOOL_CONFIG[str(profile.values["tool"])]
         tool = awf_config.native_executable(config.get(key, default))
         if not (shutil.which(tool) or Path(tool).is_file()):
@@ -725,7 +780,9 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
     return LocalReadiness(
         config=config,
         repo=repo,
-        bus_executable=_resolved_executable(bus),
+        bus_executable=str(bus_facts["executable"]),
+        bus_capabilities=tuple(bus_facts["capabilities"]),
+        bus_provenance_sha256=str(bus_facts["provenance_sha256"]),
         tool_executable=_resolved_executable(tool) if tool else "",
         tool_version_sha256=tool_version_sha256,
     )
@@ -782,6 +839,8 @@ def _readiness_fingerprint(
         "config_sha256": config_sha256,
         "repo": str(readiness.repo),
         "bus_executable": readiness.bus_executable,
+        "bus_capabilities": readiness.bus_capabilities,
+        "bus_provenance_sha256": readiness.bus_provenance_sha256,
         "tool_executable": readiness.tool_executable,
         "tool_version_sha256": readiness.tool_version_sha256,
         "listener": listener,
@@ -930,7 +989,7 @@ def doctor_report(
         valid_until=valid_until,
         listener=listener,
     )
-    tool_status = "not_applicable" if profile.role == "architect" else "pass"
+    tool_status = "not_applicable" if profile.values["tool"] == "none" else "pass"
     return {
         "format": READINESS_FORMAT,
         "observed_at": observed_at.isoformat(),
@@ -971,9 +1030,18 @@ def doctor_report(
             {
                 "id": "workspace",
                 "status": "pass",
-                "scope": "source" if profile.role == "architect" else "dedicated_role",
+                "scope": (
+                    "source"
+                    if profile.role == "architect" and profile.values["tool"] == "none"
+                    else "dedicated_role"
+                ),
             },
-            {"id": "agent_bus", "status": "pass"},
+            {
+                "id": "agent_bus",
+                "status": "pass",
+                "capabilities": list(readiness.bus_capabilities),
+                "provenance_sha256": readiness.bus_provenance_sha256,
+            },
             {
                 "id": "model_tool",
                 "status": tool_status,
@@ -1071,6 +1139,8 @@ def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
             argv.extend([flag, str(values[key])])
     if values.get("enable_preflight"):
         argv.append("--enable-preflight")
+    if values.get("finding_enabled"):
+        argv.append("--enable-finding")
     if values.get("no_push"):
         argv.append("--no-push")
     if launch_id:

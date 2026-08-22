@@ -17,7 +17,6 @@ import pytest
 from agent_workflow.runtime import RenderedInputFile, RenderedInvocation
 from agent_workflow.state_root import state_root_binding
 from scripts import awf_executor
-from scripts.agent_adapters.opencode import _FINDING_INSTRUCTIONS as OPENCODE_FINDING_INSTRUCTIONS
 
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
@@ -2162,7 +2161,7 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
         "provider/model",
         "--",
         "instructions\n\nWrite the complete ImplementationReport to exactly: "
-        ".awf/artifacts/impl-report-task.md\n" + OPENCODE_FINDING_INSTRUCTIONS,
+        ".awf/artifacts/impl-report-task.md\n",
     ]
 
 
@@ -2292,8 +2291,7 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
         "-m",
         "provider/model",
         "--",
-        "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n"
-        + OPENCODE_FINDING_INSTRUCTIONS,
+        "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n",
     ]
 
 
@@ -2550,10 +2548,9 @@ def test_tool_opencode_card_prompt_boundary_without_model(monkeypatch, tmp_path,
 
     expected_instructions = (
         "instructions\n\nWrite the complete ImplementationReport to exactly: "
-        ".awf/artifacts/impl-report-task.md\n" + OPENCODE_FINDING_INSTRUCTIONS
+        ".awf/artifacts/impl-report-task.md\n"
         if adapter == "executor"
         else "instructions\n\nWrite the complete ReviewReport to exactly: .awf/review.md\n"
-        + OPENCODE_FINDING_INSTRUCTIONS
     )
     assert captured["argv"] == [
         "opencode-test",
@@ -2602,7 +2599,7 @@ def test_spawn_stdin_when_provided(monkeypatch):
     assert captured.get("stdin") is not subprocess.DEVNULL
 
 
-def test_capture_dogfood_finding_uses_run_state_and_strips_before_business(tmp_path):
+def test_capture_dogfood_finding_uses_run_state_and_strips_before_business(monkeypatch, tmp_path):
     report = tmp_path / "model" / "review.md"
     report.parent.mkdir()
     finding = {
@@ -2618,6 +2615,7 @@ def test_capture_dogfood_finding_uses_run_state_and_strips_before_business(tmp_p
         encoding="utf-8",
     )
     evidence = awf_role.RunEvidence(70, "reviewer", state_root=tmp_path / "state")
+    monkeypatch.setenv("AWF_FINDING_ENABLED", "1")
 
     awf_role.capture_dogfood_finding(
         report,
@@ -2633,7 +2631,7 @@ def test_capture_dogfood_finding_uses_run_state_and_strips_before_business(tmp_p
     assert result["finding_status"] == "queued"
 
 
-def test_finding_evidence_failure_does_not_change_business_result(tmp_path, capsys):
+def test_finding_evidence_failure_does_not_change_business_result(monkeypatch, tmp_path, capsys):
     report = tmp_path / "review.md"
     finding = {
         "kind": "reliability",
@@ -2653,6 +2651,8 @@ def test_finding_evidence_failure_does_not_change_business_result(tmp_path, caps
 
         def record(self, _phase, **_fields):
             raise OSError("evidence disk unavailable")
+
+    monkeypatch.setenv("AWF_FINDING_ENABLED", "1")
 
     awf_role.capture_dogfood_finding(
         report,
@@ -2689,6 +2689,7 @@ def test_missing_feedback_state_strips_finding_without_business_failure(
             sys.modules["awf_feedback"].FeedbackStateError("unavailable")
         ),
     )
+    monkeypatch.setenv("AWF_FINDING_ENABLED", "1")
 
     awf_role.capture_dogfood_finding(
         report,
@@ -2702,6 +2703,23 @@ def test_missing_feedback_state_strips_finding_without_business_failure(
     output = capsys.readouterr().out
     assert "Finding state is unavailable" in output
     assert "Finding was stripped but not queued" in output
+
+
+def test_finding_default_off_does_not_inspect_or_modify_provider_report(tmp_path):
+    report = tmp_path / "review.md"
+    raw = "# ReviewReport\n\nVerdict: PASS\n\n<!-- awf-dogfood-finding-v1\n{}\n-->\n"
+    report.write_text(raw, encoding="utf-8")
+
+    awf_role.capture_dogfood_finding(
+        report,
+        input_context={"delivery_id": "delivery-off"},
+        source_role="reviewer",
+        source_tool="pi",
+        evidence=None,
+    )
+
+    assert report.read_text(encoding="utf-8") == raw
+    assert not (tmp_path / "feedback").exists()
 
 
 @pytest.mark.parametrize(("returncode", "should_write"), [(0, True), (3, False)])

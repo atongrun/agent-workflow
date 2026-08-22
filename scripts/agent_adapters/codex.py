@@ -26,6 +26,7 @@ def render_reviewer_invocation(
     prompt: str,
     review_report_template: str,
     card_text: str = "",
+    finding_enabled: bool = False,
 ) -> tuple[list[str], str]:
     """Render Codex reviewer argv and stdin without reading files or starting a process."""
     argv = [
@@ -54,7 +55,8 @@ def render_reviewer_invocation(
         f"\n\nReviewReport output path: {review_report_path}\n"
         "\n--- Required ReviewReport template ---\n\n" + review_report_template
     )
-    stdin += _FINDING_INSTRUCTIONS
+    if finding_enabled:
+        stdin += _FINDING_INSTRUCTIONS
     if card_text:
         stdin += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + card_text
     return argv, stdin

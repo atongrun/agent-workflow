@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from agent_workflow import node
 from agent_workflow import status as factual_status
@@ -24,6 +27,16 @@ from agent_workflow.state_root import resolve_state_root
 
 class FacadeError(RuntimeError):
     """A credential-safe failure at the thin usability boundary."""
+
+
+MACHINE_CONFIG_FORMAT = "awf.machine-config.v1"
+MACHINE_CONFIG_NAME = ".awf/machine.json"
+ROLE_ORDER = ("architect", "coder", "reviewer")
+ROLE_PROVIDER_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "architect": ("pi",),
+    "coder": ("opencode",),
+    "reviewer": ("opencode", "pi", "codex"),
+}
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,151 @@ class ProjectContract:
     @property
     def card(self) -> Path:
         return resolve_manifest_card(self.manifest, self.repo)
+
+
+@dataclass(frozen=True)
+class MachineContract:
+    repo: Path
+    config_path: Path
+    machine: str
+    project: str
+    finding_enabled: bool
+    profiles: tuple[node.NodeProfile, ...]
+
+    @property
+    def run_id(self) -> str:
+        return ""
+
+
+def default_machine_config_path(repo: Path) -> Path:
+    return Path(repo).resolve() / MACHINE_CONFIG_NAME
+
+
+def _run_checked(argv: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise FacadeError(f"dependency command failed: {argv[0]}") from exc
+    if result.returncode:
+        raise FacadeError(f"dependency command returned non-zero: {argv[0]}")
+    return result
+
+
+def _resolved_tool(config: Mapping[str, str], tool: str) -> str:
+    key, fallback = node.TOOL_CONFIG[tool]
+    configured = str(config.get(key, fallback))
+    resolved = shutil.which(configured)
+    if resolved:
+        return str(Path(resolved).resolve())
+    candidate = Path(configured).expanduser()
+    return str(candidate.resolve()) if candidate.is_file() else ""
+
+
+def discover_machine_capabilities(
+    repo: Path,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, object]:
+    """Read local dependency facts without creating profiles, workspaces, or runs."""
+    repo = Path(repo).resolve()
+    git = shutil.which("git")
+    gh = shutil.which("gh")
+    if not git:
+        raise FacadeError("Git is unavailable; install Git before awf init")
+    if not gh:
+        raise FacadeError("GitHub CLI is unavailable; install and authenticate gh before awf init")
+    top = _run_checked([git, "-C", str(repo), "rev-parse", "--show-toplevel"])
+    if Path(top.stdout.strip()).resolve() != repo:
+        raise FacadeError("awf init --repo must name the Git worktree root")
+    _run_checked([git, "--version"])
+    _run_checked([gh, "--version"])
+    _run_checked([gh, "auth", "status"])
+
+    awf_config, _awf_listen = node._operations_modules()
+    selected_config = (config_path or node.default_config_path()).expanduser().resolve()
+    try:
+        config = awf_config.load_config(selected_config)
+    except awf_config.ConfigError as exc:
+        raise FacadeError(
+            "Agent Bus/provider configuration is unavailable; configure dispatch.env before init"
+        ) from exc
+    if not config.get("AGENT_BUS_URL"):
+        raise FacadeError("Agent Bus server URL is missing from the existing credential source")
+    configured_bus = awf_config.native_executable(config.get("AWF_BUS_BIN", "agent-bus"))
+    bus = shutil.which(configured_bus) or (
+        str(Path(configured_bus).expanduser().resolve())
+        if Path(configured_bus).expanduser().is_file()
+        else ""
+    )
+    if not bus:
+        raise FacadeError("Agent Bus client is unavailable; install a compatible client")
+    bus_facts = node.probe_agent_bus_client(str(bus))
+
+    tools: dict[str, dict[str, object]] = {}
+    for tool in node.TOOL_CONFIG:
+        executable = _resolved_tool(config, tool)
+        version_sha256 = ""
+        available = bool(executable)
+        if executable:
+            try:
+                result = _run_checked([executable, "--version"])
+            except FacadeError:
+                available = False
+            else:
+                version_sha256 = node._version_sha256(result.stdout or "", result.stderr or "")
+        tools[tool] = {
+            "available": available,
+            "executable": executable,
+            "version_sha256": version_sha256,
+        }
+    return {
+        "repo": str(repo),
+        "git": str(Path(git).resolve()),
+        "github": str(Path(gh).resolve()),
+        "config_path": str(selected_config),
+        "configured_keys": frozenset(key for key, value in config.items() if value),
+        "agent_bus": bus_facts,
+        "tools": tools,
+    }
+
+
+def recommended_bindings(capabilities: Mapping[str, object]) -> dict[str, tuple[str, str]]:
+    tools = capabilities.get("tools")
+    if not isinstance(tools, Mapping):
+        raise FacadeError("detected agent-tool facts are unavailable")
+
+    def available(tool: str) -> bool:
+        facts = tools.get(tool)
+        return isinstance(facts, Mapping) and facts.get("available") is True
+
+    result: dict[str, tuple[str, str]] = {}
+    if available("pi"):
+        result["architect"] = ("pi", "")
+    if available("opencode"):
+        result["coder"] = ("opencode", "")
+        result["reviewer"] = ("opencode", "")
+    elif available("pi"):
+        result["reviewer"] = ("pi", "")
+    elif available("codex"):
+        result["reviewer"] = ("codex", "")
+    return result
+
+
+def _model_selection(value: str) -> tuple[str, dict[str, str]]:
+    if value in {"", "tool-default"}:
+        return "", {"mode": "tool-default", "ref": ""}
+    if value != value.strip() or len(value) > 200 or re.search(r"[\s\x00-\x1f\x7f]", value):
+        raise FacadeError("model reference must be one bounded tool-native token")
+    return value, {"mode": "explicit", "ref": value}
 
 
 def _safe_name(value: str) -> str:
@@ -73,7 +231,7 @@ def _profile_values(
     head_remote: str,
     base_ref: str,
 ) -> dict[str, object]:
-    route = "task:awf-review-v3" if role == "reviewer" else "task:awf-impl-v3"
+    route = _role_route(role)
     values: dict[str, object] = {
         "format": node.PROFILE_FORMAT,
         "name": name,
@@ -114,6 +272,379 @@ def _write_profile(path: Path, values: dict[str, object], *, replace: bool) -> n
         raise FacadeError(f"could not generate profile {path}: {exc}") from exc
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _git_output(repo: Path, *args: str) -> str:
+    return _run_checked(["git", "-C", str(repo), *args]).stdout.strip()
+
+
+def _github_repo_slug(url: str) -> str:
+    value = url.strip().removesuffix(".git")
+    match = re.search(r"(?:github\.com[/:])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$", value)
+    if match is None:
+        raise FacadeError("trusted remotes must be GitHub repositories or be named explicitly")
+    return match.group(1)
+
+
+def _role_route(role: str) -> str:
+    return {
+        "architect": "decision:awf-ready-v3",
+        "coder": "task:awf-impl-v3",
+        "reviewer": "task:awf-review-v3",
+    }[role]
+
+
+def _role_workspace(*, project: str, machine: str, role: str) -> Path:
+    name = profile_name(project=project, machine=machine, role=role)
+    return node.default_config_home() / "workspaces" / name
+
+
+def _workspace_matches(
+    workspace: Path,
+    *,
+    expected_head: str,
+    upstream_remote: str,
+    upstream_url: str,
+    head_remote: str,
+    head_url: str,
+) -> bool:
+    try:
+        return (
+            Path(_git_output(workspace, "rev-parse", "--show-toplevel")).resolve()
+            == workspace.resolve()
+            and _git_output(workspace, "rev-parse", "HEAD") == expected_head
+            and not _git_output(workspace, "status", "--porcelain")
+            and _git_output(workspace, "remote", "get-url", upstream_remote) == upstream_url
+            and _git_output(workspace, "remote", "get-url", head_remote) == head_url
+        )
+    except FacadeError:
+        return False
+
+
+def _stage_role_workspace(
+    source: Path,
+    destination: Path,
+    *,
+    expected_head: str,
+    upstream_remote: str,
+    upstream_url: str,
+    head_remote: str,
+    head_url: str,
+) -> Path | None:
+    if destination.exists():
+        if _workspace_matches(
+            destination,
+            expected_head=expected_head,
+            upstream_remote=upstream_remote,
+            upstream_url=upstream_url,
+            head_remote=head_remote,
+            head_url=head_url,
+        ):
+            return None
+        raise FacadeError(
+            f"role workspace is not the exact clean initialized checkout: {destination}; "
+            "move or remove it explicitly before retrying"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staged = destination.with_name(f".{destination.name}.init-{uuid.uuid4().hex}")
+    try:
+        _run_checked(["git", "clone", "--no-hardlinks", "--quiet", str(source), str(staged)])
+        _run_checked(["git", "-C", str(staged), "checkout", "--quiet", "--detach", expected_head])
+        remotes = _git_output(staged, "remote").splitlines()
+        for remote in remotes:
+            _run_checked(["git", "-C", str(staged), "remote", "remove", remote])
+        _run_checked(["git", "-C", str(staged), "remote", "add", upstream_remote, upstream_url])
+        _run_checked(["git", "-C", str(staged), "remote", "add", head_remote, head_url])
+        if not _workspace_matches(
+            staged,
+            expected_head=expected_head,
+            upstream_remote=upstream_remote,
+            upstream_url=upstream_url,
+            head_remote=head_remote,
+            head_url=head_url,
+        ):
+            raise FacadeError("staged role workspace did not preserve exact Git identity")
+        return staged
+    except Exception:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+
+
+def _write_machine_config(path: Path, value: dict[str, object], *, replace: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and not replace:
+        raise FacadeError(f"machine config already exists: {path}; pass --replace")
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(name)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        raise FacadeError("machine config could not be persisted") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def initialize_machine(
+    *,
+    repo: Path,
+    machine: str,
+    project: str,
+    bindings: Mapping[str, tuple[str, str]],
+    capabilities: Mapping[str, object],
+    lifecycle: str,
+    upstream_repo: str,
+    head_repo: str,
+    upstream_remote: str,
+    head_remote: str,
+    base_ref: str,
+    finding_enabled: bool,
+    replace: bool,
+) -> tuple[MachineContract, tuple[str, ...]]:
+    """Validate the full machine plan before creating exact profiles and role checkouts."""
+    source = Path(repo).resolve()
+    machine = _safe_name(machine)
+    project = _safe_name(project)
+    if upstream_remote == head_remote:
+        raise FacadeError("upstream and contribution-fork remote names must be distinct")
+    if set(bindings) - set(ROLE_ORDER):
+        raise FacadeError("machine role selection contains an unsupported role")
+    tools = capabilities.get("tools")
+    configured_keys = capabilities.get("configured_keys")
+    if not isinstance(tools, Mapping) or not isinstance(configured_keys, frozenset):
+        raise FacadeError("dependency discovery facts are incomplete")
+    selected_config = Path(str(capabilities["config_path"])).resolve()
+    normalized_bindings: dict[str, tuple[str, str]] = {}
+    model_selections: dict[str, dict[str, str]] = {}
+    for role, selection in bindings.items():
+        if (
+            not isinstance(selection, tuple)
+            or len(selection) != 2
+            or selection[0] not in ROLE_PROVIDER_CAPABILITIES[role]
+        ):
+            raise FacadeError(f"{role} does not support the selected agent tool")
+        facts = tools.get(selection[0])
+        if not isinstance(facts, Mapping) or facts.get("available") is not True:
+            raise FacadeError(f"{role} agent tool is not installed: {selection[0]}")
+        token_name = node.ROLE_TOKEN[role]
+        if token_name not in configured_keys:
+            raise FacadeError(f"{role} requires {token_name} in the existing credential source")
+        if not isinstance(selection[1], str):
+            raise FacadeError(f"{role} model selection must be text")
+        model, model_selection = _model_selection(selection[1])
+        normalized_bindings[role] = (selection[0], model)
+        model_selections[role] = model_selection
+    bindings = normalized_bindings
+
+    upstream_url = _git_output(source, "remote", "get-url", upstream_remote)
+    head_url = _git_output(source, "remote", "get-url", head_remote)
+    if re.search(r"https?://[^/@:]+:[^/@]+@", upstream_url + "\n" + head_url):
+        raise FacadeError("trusted remote URLs must not contain embedded credentials")
+    inferred_upstream = _github_repo_slug(upstream_url)
+    inferred_head = _github_repo_slug(head_url)
+    if upstream_repo and upstream_repo != inferred_upstream:
+        raise FacadeError("configured upstream repository does not match its Git remote")
+    if head_repo and head_repo != inferred_head:
+        raise FacadeError("configured contribution fork does not match its Git remote")
+    upstream_repo = upstream_repo or inferred_upstream
+    head_repo = head_repo or inferred_head
+    expected_head = _git_output(source, "rev-parse", "HEAD")
+    state_root = node.default_state_root().resolve()
+    profile_root = node.default_config_home() / "profiles"
+    machine_path = default_machine_config_path(source)
+    destinations = {
+        role: profile_root / f"{profile_name(project=project, machine=machine, role=role)}.json"
+        for role in bindings
+    }
+    if not replace:
+        existing = [path for path in (machine_path, *destinations.values()) if path.exists()]
+        if existing:
+            raise FacadeError(
+                f"machine configuration already exists: {existing[0]}; pass --replace"
+            )
+
+    values_by_role: dict[str, dict[str, object]] = {}
+    workspaces: dict[str, Path] = {}
+    for role in ROLE_ORDER:
+        if role not in bindings:
+            continue
+        tool, model = bindings[role]
+        workspace = _role_workspace(project=project, machine=machine, role=role).resolve()
+        workspaces[role] = workspace
+        values = _profile_values(
+            name=destinations[role].stem,
+            role=role,
+            repo=workspace,
+            state_root=state_root,
+            tool=tool,
+            model=model,
+            lifecycle=lifecycle,
+            upstream_repo=upstream_repo,
+            head_repo=head_repo,
+            upstream_remote=upstream_remote,
+            head_remote=head_remote,
+            base_ref=base_ref,
+        )
+        values["config"] = str(selected_config)
+        values["finding_enabled"] = finding_enabled
+        values_by_role[role] = values
+
+    profile_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="awf-init-profiles-", dir=profile_root) as directory:
+        for role, values in values_by_role.items():
+            _write_profile(Path(directory) / f"{role}.json", values, replace=True)
+
+    staged: dict[str, Path] = {}
+    created: list[Path] = []
+    try:
+        for role, destination in workspaces.items():
+            temporary = _stage_role_workspace(
+                source,
+                destination,
+                expected_head=expected_head,
+                upstream_remote=upstream_remote,
+                upstream_url=upstream_url,
+                head_remote=head_remote,
+                head_url=head_url,
+            )
+            if temporary is not None:
+                staged[role] = temporary
+        for role, temporary in staged.items():
+            destination = workspaces[role]
+            os.replace(temporary, destination)
+            created.append(destination)
+        profiles = tuple(
+            _write_profile(destinations[role], values_by_role[role], replace=replace)
+            for role in ROLE_ORDER
+            if role in values_by_role
+        )
+        config = {
+            "format": MACHINE_CONFIG_FORMAT,
+            "machine": machine,
+            "project": project,
+            "repo": str(source),
+            "state_root": str(state_root),
+            "finding_enabled": finding_enabled,
+            "roles": {
+                profile.role: {
+                    "profile": str(profile.path.resolve()),
+                    "profile_sha256": profile.digest,
+                    "workspace": str(profile.repo),
+                    "tool": str(profile.values["tool"]),
+                    "model_selection": model_selections[profile.role],
+                }
+                for profile in profiles
+            },
+        }
+        _write_machine_config(machine_path, config, replace=replace)
+    except Exception:
+        for temporary in staged.values():
+            shutil.rmtree(temporary, ignore_errors=True)
+        for destination in created:
+            shutil.rmtree(destination, ignore_errors=True)
+        raise
+
+    warnings: list[str] = []
+    if "coder" in bindings and "reviewer" in bindings:
+        if bindings["coder"] == bindings["reviewer"] and bindings["coder"][1]:
+            warnings.append(
+                "Coder and Reviewer use the same agent tool and model; "
+                "review independence may be weaker."
+            )
+        elif bindings["coder"] == bindings["reviewer"]:
+            warnings.append(
+                "Coder and Reviewer use the same agent tool with tool-default; "
+                "the resolved models are tool-owned."
+            )
+        elif bindings["coder"][0] == bindings["reviewer"][0]:
+            warnings.append("Coder and Reviewer use the same agent tool installation.")
+    return load_machine(source), tuple(warnings)
+
+
+def load_machine(repo: Path) -> MachineContract:
+    repo = Path(repo).resolve()
+    path = default_machine_config_path(repo)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise FacadeError("machine configuration is unavailable or invalid") from exc
+    expected = {
+        "format",
+        "machine",
+        "project",
+        "repo",
+        "state_root",
+        "finding_enabled",
+        "roles",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise FacadeError("machine configuration has missing or unknown fields")
+    if value["format"] != MACHINE_CONFIG_FORMAT or Path(str(value["repo"])).resolve() != repo:
+        raise FacadeError("machine configuration identity does not match this repository")
+    if not isinstance(value["finding_enabled"], bool) or not isinstance(value["roles"], dict):
+        raise FacadeError("machine configuration role or Finding state is invalid")
+    if set(value["roles"]) - set(ROLE_ORDER):
+        raise FacadeError("machine configuration contains an unsupported role")
+    profiles: list[node.NodeProfile] = []
+    workspaces: set[Path] = set()
+    for role in ROLE_ORDER:
+        if role not in value["roles"]:
+            continue
+        binding = value["roles"][role]
+        if not isinstance(binding, dict) or set(binding) != {
+            "profile",
+            "profile_sha256",
+            "workspace",
+            "tool",
+            "model_selection",
+        }:
+            raise FacadeError(f"machine {role} binding is invalid")
+        reference = str(binding["profile"])
+        profile = node.load_installed_profile(reference) or node.load_profile(reference)
+        if profile.role != role:
+            raise FacadeError(f"machine {role} profile identity drifted")
+        model_selection = binding["model_selection"]
+        if (
+            not isinstance(model_selection, dict)
+            or set(model_selection) != {"mode", "ref"}
+            or model_selection.get("mode") not in {"tool-default", "explicit"}
+            or not isinstance(model_selection.get("ref"), str)
+            or (model_selection["mode"] == "tool-default" and model_selection["ref"])
+            or (model_selection["mode"] == "explicit" and not model_selection["ref"])
+        ):
+            raise FacadeError(f"machine {role} model selection is invalid")
+        expected_model, normalized_selection = _model_selection(model_selection["ref"])
+        if normalized_selection != model_selection:
+            raise FacadeError(f"machine {role} model selection drifted")
+        if (
+            profile.digest != binding["profile_sha256"]
+            or profile.repo != Path(str(binding["workspace"])).resolve()
+            or profile.values["tool"] != binding["tool"]
+            or profile.values.get("model", "") != expected_model
+        ):
+            raise FacadeError(f"machine {role} profile binding drifted")
+        if bool(profile.values.get("finding_enabled", False)) != value["finding_enabled"]:
+            raise FacadeError(f"machine {role} Finding binding drifted")
+        if profile.state_root != Path(str(value["state_root"])).resolve():
+            raise FacadeError(f"machine {role} state-root binding drifted")
+        if profile.repo in workspaces:
+            raise FacadeError("machine roles cannot share one active workspace")
+        workspaces.add(profile.repo)
+        profiles.append(profile)
+    return MachineContract(
+        repo=repo,
+        config_path=path,
+        machine=str(value["machine"]),
+        project=str(value["project"]),
+        finding_enabled=value["finding_enabled"],
+        profiles=tuple(profiles),
+    )
 
 
 def enroll_profiles(
@@ -214,7 +745,16 @@ def load_project(repo: Path) -> ProjectContract:
     )
 
 
-def _selected(contract: ProjectContract, role: str = "") -> tuple[node.NodeProfile, ...]:
+def _load_profile_contract(repo: Path) -> MachineContract | ProjectContract:
+    resolved = Path(repo).resolve()
+    if default_machine_config_path(resolved).is_file():
+        return load_machine(resolved)
+    return load_project(resolved)
+
+
+def _selected(
+    contract: MachineContract | ProjectContract, role: str = ""
+) -> tuple[node.NodeProfile, ...]:
     if not role:
         return contract.profiles
     profiles = tuple(profile for profile in contract.profiles if profile.role == role)
@@ -240,9 +780,14 @@ def doctor(
     ttl_seconds: int = 3600,
     explain: bool = False,
 ) -> int:
-    contract = load_project(repo)
+    contract = _load_profile_contract(repo)
     if explain:
-        print(f"project={contract.repo} run={contract.run_id} source={contract.manifest_path}")
+        if isinstance(contract, MachineContract):
+            print(
+                f"project={contract.repo} machine={contract.machine} source={contract.config_path}"
+            )
+        else:
+            print(f"project={contract.repo} run={contract.run_id} source={contract.manifest_path}")
     results = [
         node.doctor(profile, ttl_seconds=ttl_seconds) for profile in _selected(contract, role)
     ]
@@ -255,7 +800,7 @@ def start(
     role: str = "",
     allow_session_bound: bool = False,
 ) -> int:
-    contract = load_project(repo)
+    contract = _load_profile_contract(repo)
     plans: list[tuple[str, node.NodeProfile]] = []
     for profile in _selected(contract, role):
         facts = node.lifecycle_facts(profile)
@@ -296,7 +841,7 @@ def start(
 
 
 def status(repo: Path, *, role: str = "", explain: bool = False) -> int:
-    contract = load_project(repo)
+    contract = _load_profile_contract(repo)
     results = [
         node.status(profile, contract.run_id, explain=explain)
         for profile in _selected(contract, role)
@@ -305,7 +850,7 @@ def status(repo: Path, *, role: str = "", explain: bool = False) -> int:
 
 
 def stop(repo: Path, *, role: str = "") -> int:
-    contract = load_project(repo)
+    contract = _load_profile_contract(repo)
     for profile in _selected(contract, role):
         result = node.stop(profile)
         if result:
@@ -314,7 +859,7 @@ def stop(repo: Path, *, role: str = "") -> int:
 
 
 def drain(repo: Path, *, role: str = "") -> int:
-    contract = load_project(repo)
+    contract = _load_profile_contract(repo)
     profiles = _selected(contract, role)
     observations: list[tuple[node.NodeProfile, dict[str, object]]] = [
         (profile, factual_status._queue(profile)) for profile in profiles
@@ -329,6 +874,15 @@ def drain(repo: Path, *, role: str = "") -> int:
             )
     for profile, _queue in observations:
         result = node.stop(profile)
+        if result:
+            return result
+    return 0
+
+
+def logs(repo: Path, *, role: str = "", lines: int = 100) -> int:
+    contract = _load_profile_contract(repo)
+    for profile in _selected(contract, role):
+        result = node.logs(profile, lines)
         if result:
             return result
     return 0

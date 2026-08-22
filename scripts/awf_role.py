@@ -1356,6 +1356,7 @@ def _append_process_git_config(environment: dict[str, str], key: str, value: str
 
 
 _MODEL_ENV_ALLOWLIST = {
+    "AWF_FINDING_ENABLED",
     "ALL_PROXY",
     "APPDATA",
     "COLORTERM",
@@ -1739,6 +1740,8 @@ def capture_dogfood_finding(
     Reserved-envelope contract errors and strip failures remain artifact
     failures because continuing would contaminate the formal report.
     """
+    if os.environ.get("AWF_FINDING_ENABLED") != "1":
+        return
     state_root = evidence.state_dir if evidence is not None else feedback_state_root
     delivery_identity = str(input_context.get("delivery_id") or input_context["key"])
 
@@ -3298,7 +3301,8 @@ def tool_opencode_exec(
     instructions += (
         f"\n\nWrite the complete ImplementationReport to exactly: {implementation_report_path}\n"
     )
-    instructions += OPENCODE_FINDING_INSTRUCTIONS
+    if os.environ.get("AWF_FINDING_ENABLED") == "1":
+        instructions += OPENCODE_FINDING_INSTRUCTIONS
     if normalized_feedback:
         instructions += "\n\n--- Structured reviewer feedback to correct ---\n\n"
         instructions += normalized_feedback
@@ -3371,7 +3375,8 @@ def tool_codex_review(
         f"\n\nReviewReport output path: {review_report_path}\n"
         "\n--- Required ReviewReport template ---\n\n" + review_report_template
     )
-    invocation_input += CODEX_FINDING_INSTRUCTIONS
+    if os.environ.get("AWF_FINDING_ENABLED") == "1":
+        invocation_input += CODEX_FINDING_INSTRUCTIONS
     if card_text:
         invocation_input += "\n\n--- TaskCard (acceptance criteria to verify) ---\n\n" + card_text
     input_path = card_file if card_file and Path(card_file).is_file() else review_report_path
@@ -3408,7 +3413,8 @@ def tool_opencode_review(
     attached_card = card_file if card_file and Path(card_file).is_file() else ""
     instructions = read_text(prompt_file)
     instructions += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
-    instructions += OPENCODE_FINDING_INSTRUCTIONS
+    if os.environ.get("AWF_FINDING_ENABLED") == "1":
+        instructions += OPENCODE_FINDING_INSTRUCTIONS
     spec = _provider_spec(
         binding,
         role="reviewer",

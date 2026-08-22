@@ -11,7 +11,9 @@ from types import SimpleNamespace
 from agent_workflow import node, status
 
 
-def make_profile(tmp_path: Path, *, role: str = "reviewer") -> node.NodeProfile:
+def make_profile(
+    tmp_path: Path, *, role: str = "reviewer", finding_enabled: bool = False
+) -> node.NodeProfile:
     values: dict[str, object] = {
         "format": "awf.node-profile.v1",
         "name": f"{role}-node",
@@ -22,6 +24,7 @@ def make_profile(tmp_path: Path, *, role: str = "reviewer") -> node.NodeProfile:
         "head_repo": "contributor/project",
         "config": str((tmp_path / "dispatch.env").resolve()),
         "state_root": str((tmp_path / "state").resolve()),
+        "finding_enabled": finding_enabled,
     }
     return node.NodeProfile(tmp_path / "profile.json", values)
 
@@ -63,6 +66,20 @@ def test_architect_workspace_can_report_ready_when_source_is_dirty(monkeypatch, 
 
     assert facts["scope"] == "source"
     assert facts["status"] == "ready"
+    assert facts["dirty"] is True
+
+
+def test_pi_architect_workspace_is_dedicated_and_requires_cleanliness(monkeypatch, tmp_path: Path):
+    profile = make_profile(tmp_path, role="architect")
+    profile.values["tool"] = "pi"
+    profile.repo.mkdir()
+    outputs = iter([(0, str(profile.repo)), (0, "b" * 40), (0, "main"), (0, " M README.md")])
+    monkeypatch.setattr(status, "_command", lambda argv: next(outputs))
+
+    facts = status._workspace(profile)
+
+    assert facts["scope"] == "dedicated_role"
+    assert facts["status"] == "not_ready"
     assert facts["dirty"] is True
 
 
@@ -179,7 +196,13 @@ def test_snapshot_labels_unavailable_queue_without_failing(monkeypatch, tmp_path
         lambda value: {"source": "agent_bus_pending_read_only", "status": "unknown"},
     )
     monkeypatch.setattr(status, "_artifacts", lambda *args: {"status": "not_recorded"})
-    monkeypatch.setattr(status, "_feedback", lambda value: {"status": "not_recorded"})
+    monkeypatch.setattr(
+        status,
+        "_feedback",
+        lambda value: (_ for _ in ()).throw(
+            AssertionError("Finding-off status must not inspect Feedback")
+        ),
+    )
     monkeypatch.setattr(status, "_model_invocation", lambda *args: None)
     monkeypatch.setattr(
         node,
@@ -200,6 +223,7 @@ def test_snapshot_labels_unavailable_queue_without_failing(monkeypatch, tmp_path
     assert value["format"] == "awf.node-status.v1"
     assert value["queue"]["status"] == "unknown"
     assert value["checkpoint"]["ledger"]["status"] == "not_requested"
+    assert "feedback" not in value
 
 
 def test_causal_status_identifies_lifecycle_boundary_before_model():

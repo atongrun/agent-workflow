@@ -10,10 +10,56 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent_workflow import __version__, cli
+from agent_workflow import __version__, cli, facade
 from agent_workflow.manifest import derive_manifest, write_manifest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_init_interactively_customizes_current_machine_roles(monkeypatch, tmp_path, capsys):
+    capabilities = {
+        "agent_bus": {
+            "capabilities": ("agent-bus.listen.on-argv.v1",),
+            "provenance_sha256": "sha256:" + "1" * 64,
+        },
+        "tools": {
+            "opencode": {"available": True},
+            "pi": {"available": True},
+            "codex": {"available": False},
+        },
+    }
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(cli.facade, "discover_machine_capabilities", lambda *a, **k: capabilities)
+
+    def initialize(**kwargs):
+        observed.update(kwargs)
+        return (
+            facade.MachineContract(
+                repo=tmp_path,
+                config_path=tmp_path / ".awf/machine.json",
+                machine="mac",
+                project="project",
+                finding_enabled=False,
+                profiles=(),
+            ),
+            (),
+        )
+
+    monkeypatch.setattr(cli.facade, "initialize_machine", initialize)
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    replies = iter(["c", "", "", "architect-model", "n", "", "", "review-model"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(replies))
+
+    result = cli.main(["init", "--repo", str(tmp_path), "--machine", "mac"])
+
+    assert result == 0
+    assert observed["bindings"] == {
+        "architect": ("pi", "architect-model"),
+        "reviewer": ("opencode", "review-model"),
+    }
+    output = capsys.readouterr().out
+    assert "agent-bus.listen.on-argv.v1" in output
+    assert "Finding: off" in output
 
 
 def run_awf(*args: str, cwd: Path = PROJECT_ROOT) -> subprocess.CompletedProcess:

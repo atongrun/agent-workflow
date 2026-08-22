@@ -79,11 +79,12 @@ def _listener(profile: NodeProfile) -> dict[str, object]:
 
 
 def _workspace(profile: NodeProfile) -> dict[str, object]:
+    dedicated = profile.role != "architect" or profile.values.get("tool") != "none"
     facts: dict[str, object] = {
         "source": "git_read_only",
         "status": "unknown",
         "repo": str(profile.repo),
-        "scope": "source" if profile.role == "architect" else "dedicated_role",
+        "scope": "dedicated_role" if dedicated else "source",
     }
     commands = {
         "top": [
@@ -128,7 +129,7 @@ def _workspace(profile: NodeProfile) -> dict[str, object]:
         observed[key] = output
     root_matches = Path(observed["top"]).resolve() == profile.repo
     dirty = bool(observed["porcelain"])
-    ready = root_matches and (profile.role == "architect" or not dirty)
+    ready = root_matches and (not dedicated or not dirty)
     facts.update(
         {
             "status": "ready" if ready else "not_ready",
@@ -609,7 +610,7 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
     pull_request, ci = _pr_and_ci(profile, ledger)
     lifecycle = node.lifecycle_facts(profile, listener=listener)
     model_invoked = _model_invocation(profile, ledger)
-    return {
+    value = {
         "format": STATUS_FORMAT,
         "observed_at": _now(),
         "profile": {"name": profile.name, "role": profile.role, "path": str(profile.path)},
@@ -625,7 +626,6 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
         "artifacts": _artifacts(profile, ledger, review_file_sha),
         "pull_request": pull_request,
         "ci": ci,
-        "feedback": _feedback(profile),
         "causal": _causal_status(
             run_id,
             lifecycle,
@@ -634,6 +634,9 @@ def snapshot(profile: NodeProfile, run_id: str = "") -> dict[str, object]:
             model_invoked,
         ),
     }
+    if profile.values.get("finding_enabled") is True:
+        value["feedback"] = _feedback(profile)
+    return value
 
 
 def print_human(value: dict[str, object], *, explain: bool = False) -> None:
