@@ -19,7 +19,14 @@ from .artifact import (
     validate_postflight_paths,
     validate_secret_observation,
 )
-from .contracts import InvocationSpec, RenderedInvocation, RunSpec, _canonical_bytes, _identifier
+from .contracts import (
+    FreshRunSpec,
+    InvocationSpec,
+    RenderedInvocation,
+    RunSpec,
+    _canonical_bytes,
+    _identifier,
+)
 from .outgoing import OutgoingIntent
 from .ports import (
     AuthorizationCommand,
@@ -199,9 +206,10 @@ class LocalStageRequest:
         _identifier("outgoing_target_invocation_id", self.outgoing_target_invocation_id)
         if not isinstance(self.stage, WorkflowStage):
             raise TypeError("stage must be a WorkflowStage")
-        if self.stage is WorkflowStage.REVIEW and self.postflight is not None:
-            raise ValueError("review does not accept coder postflight observations")
-        if self.stage is not WorkflowStage.REVIEW and self.postflight is None:
+        no_postflight = {WorkflowStage.REVIEW, WorkflowStage.ARCHITECT}
+        if self.stage in no_postflight and self.postflight is not None:
+            raise ValueError("review and architect do not accept coder postflight observations")
+        if self.stage not in no_postflight and self.postflight is None:
             raise ValueError("coder and rework require postflight observations")
         if not Path(self.provider_executable).is_absolute():
             raise ValueError("provider executable must be absolute")
@@ -263,7 +271,7 @@ class LocalRuntimeApplication:
     def status(self, run_id: str) -> RunSnapshot:
         return AtomicStatusReader(self.state_root, run_id).snapshot(run_id)
 
-    def stop(self, run_spec: RunSpec) -> RunSnapshot:
+    def stop(self, run_spec: RunSpec | FreshRunSpec) -> RunSnapshot:
         snapshot = self.status(run_spec.run_id)
         if snapshot.stopped:
             return snapshot
@@ -271,7 +279,7 @@ class LocalRuntimeApplication:
         store.record_stop(StopCommand(run_spec.sha256, run_spec.run_id, snapshot.sequence))
         return self.status(run_spec.run_id)
 
-    def run(self, run_spec: RunSpec, request: LocalStageRequest) -> RunSnapshot:
+    def run(self, run_spec: RunSpec | FreshRunSpec, request: LocalStageRequest) -> RunSnapshot:
         store = AtomicRunStore(self.state_root, run_spec.run_id, self.writer_id)
         snapshot = store.initialize(run_spec)
         if snapshot.terminal is not None or snapshot.stopped:
@@ -377,9 +385,7 @@ class LocalRuntimeApplication:
                 request,
                 workspace,
                 process_result.return_code,
-                run_spec.review_report
-                if request.stage is WorkflowStage.REVIEW
-                else run_spec.implementation_report,
+                self._report_for_stage(run_spec, request.stage),
             )
             journal.record_result(
                 ProviderResult(
@@ -406,9 +412,7 @@ class LocalRuntimeApplication:
                 request,
                 workspace,
                 current.result.return_code,
-                run_spec.review_report
-                if request.stage is WorkflowStage.REVIEW
-                else run_spec.implementation_report,
+                self._report_for_stage(run_spec, request.stage),
             )
         except WorkspaceError as exc:
             raise _deny_mutation("durable workspace failed exact result revalidation") from exc
@@ -479,11 +483,19 @@ class LocalRuntimeApplication:
         return str(path), expected_manifest
 
     def _invocation(
-        self, run_spec: RunSpec, request: LocalStageRequest, workspace: str
+        self, run_spec: RunSpec | FreshRunSpec, request: LocalStageRequest, workspace: str
     ) -> InvocationSpec:
-        review = request.stage is WorkflowStage.REVIEW
-        selection = run_spec.reviewer if review else run_spec.coder
-        report = run_spec.review_report if review else run_spec.implementation_report
+        role = {
+            WorkflowStage.REVIEW: "reviewer",
+            WorkflowStage.ARCHITECT: "architect",
+        }.get(request.stage, "coder")
+        if role == "architect":
+            if not isinstance(run_spec, FreshRunSpec):
+                raise _deny_provider("architect Stage requires a fresh RunSpec v2")
+            selection = run_spec.architect
+        else:
+            selection = run_spec.reviewer if role == "reviewer" else run_spec.coder
+        report = self._report_for_stage(run_spec, request.stage)
         input_path = Path(workspace) / ".awf" / f"runtime-input-{request.invocation_id}.md"
         return InvocationSpec(
             invocation_id=request.invocation_id,
@@ -497,7 +509,7 @@ class LocalRuntimeApplication:
                     "payload_sha256": request.payload_sha256,
                 }
             ),
-            role="reviewer" if review else "coder",
+            role=role,
             provider=selection.provider,
             model=selection.model,
             executable=request.provider_executable,
@@ -511,11 +523,27 @@ class LocalRuntimeApplication:
 
     @staticmethod
     def _persist_review_stdout(invocation: InvocationSpec, result: ProcessResult) -> None:
-        if invocation.role != "reviewer" or invocation.provider != "pi" or not result.stdout:
+        if invocation.role not in {"reviewer", "architect"} or not result.stdout:
+            return
+        if invocation.provider != "pi":
             return
         path = Path(invocation.report_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(result.stdout)
+
+    @staticmethod
+    def _report_for_stage(
+        run_spec: RunSpec | FreshRunSpec, stage: WorkflowStage
+    ) -> str:
+        if stage is WorkflowStage.ARCHITECT:
+            if not isinstance(run_spec, FreshRunSpec):
+                raise _deny_provider("architect Stage requires FreshRunSpec")
+            return run_spec.decision_report
+        return (
+            run_spec.review_report
+            if stage is WorkflowStage.REVIEW
+            else run_spec.implementation_report
+        )
 
     def _result_fact(
         self,
@@ -531,7 +559,7 @@ class LocalRuntimeApplication:
             "artifact_sha256": hashlib.sha256(raw).hexdigest(),
             "artifact_size": len(raw),
         }
-        if request.stage is not WorkflowStage.REVIEW and return_code == 0:
+        if request.stage in {WorkflowStage.IMPLEMENT, WorkflowStage.REWORK} and return_code == 0:
             assert_workspace_state(workspace, request.expected_commit, request.provider_environment)
             delta = serialize_workspace_delta(workspace, request.provider_environment)
             value["workspace_delta_sha256"] = delta.identity_sha256
@@ -550,7 +578,7 @@ class LocalRuntimeApplication:
     def _finish_coder(
         self,
         store: AtomicRunStore,
-        run_spec: RunSpec,
+        run_spec: RunSpec | FreshRunSpec,
         request: LocalStageRequest,
         command: AuthorizationCommand,
         workspace: str,
@@ -629,7 +657,7 @@ class LocalRuntimeApplication:
     def _finish_review(
         self,
         store: AtomicRunStore,
-        run_spec: RunSpec,
+        run_spec: RunSpec | FreshRunSpec,
         request: LocalStageRequest,
         command: AuthorizationCommand,
         workspace: str,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ from agent_workflow.runtime import (
     HandoffCommand,
     JournalAuthorization,
     LaunchIntent,
+    LocalRuntimeApplication,
+    LocalStageRequest,
     ModelSelection,
     OutgoingIntent,
     ProcessObservation,
@@ -25,6 +28,7 @@ from agent_workflow.runtime import (
     ValidationEffect,
     WorkflowStage,
 )
+from agent_workflow.runtime.renderers import ARCHITECT_TERMINAL
 
 
 def digest(value: str) -> str:
@@ -237,3 +241,36 @@ def test_fresh_store_routes_reviewer_pass_to_one_architect_terminal(tmp_path: Pa
 
     assert outcome.outcome is DecisionOutcome.SAFE_CONTINUE
     assert store.initialize(spec).terminal is TerminalOutcome.COMPLETED
+
+
+def test_local_application_compiles_exact_fresh_architect_invocation(tmp_path: Path) -> None:
+    spec = fresh_spec(tmp_path)
+    workspace = tmp_path / "architect-event"
+    workspace.mkdir()
+    request = LocalStageRequest(
+        invocation_id="invoke-architect",
+        stage=WorkflowStage.ARCHITECT,
+        attempt=1,
+        delivery_id="awfv2:" + digest("architect-delivery"),
+        payload_sha256=digest("architect-payload"),
+        outgoing_target_invocation_id="terminal-architect",
+        provider_executable=str(Path(sys.executable).resolve()),
+        provider_environment=(("LANG", "C.UTF-8"),),
+        input_text='{"review_verdict":"PASS"}',
+        provider_args=(ARCHITECT_TERMINAL,),
+        source_repo=str(tmp_path.resolve()),
+        trusted_repo=str(tmp_path.resolve()),
+        expected_commit="a" * 40,
+        workspace_state_dir=str((tmp_path / "workspaces").resolve()),
+        python_executable=str(Path(sys.executable).resolve()),
+    )
+
+    invocation = LocalRuntimeApplication(tmp_path / "state", "writer")._invocation(
+        spec, request, str(workspace.resolve())
+    )
+
+    assert invocation.role == "architect"
+    assert invocation.provider == "pi"
+    assert invocation.model == ""
+    assert invocation.provider_args == (ARCHITECT_TERMINAL,)
+    assert invocation.report_path == str(workspace / spec.decision_report)
