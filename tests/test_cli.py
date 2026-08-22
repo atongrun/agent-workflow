@@ -90,6 +90,32 @@ def test_plan_start_is_narrow_one_card_capability(monkeypatch, tmp_path, capsys)
     assert "initiating Agent may exit" in capsys.readouterr().out
 
 
+def test_plan_start_accepts_closed_milestone_mode(monkeypatch, tmp_path):
+    observed: dict[str, object] = {}
+
+    def start_plan(**kwargs):
+        observed.update(kwargs)
+        return {"run_id": "plan-456", "status": "start_sent"}
+
+    monkeypatch.setitem(sys.modules, "awf_plan", SimpleNamespace(start_plan=start_plan))
+
+    assert (
+        cli.main(
+            [
+                "plan",
+                "start",
+                "--repo",
+                str(tmp_path),
+                "--plan",
+                "docs/plan.md",
+                "--milestone",
+            ]
+        )
+        == 0
+    )
+    assert observed["mode"] == "milestone"
+
+
 def test_init_withholds_ready_when_listener_activation_fails(monkeypatch, tmp_path, capsys):
     capabilities = {
         "agent_bus": {

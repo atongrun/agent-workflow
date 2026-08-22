@@ -381,6 +381,7 @@ class PlanRunStore:
         self.run_id = run_id
         self.directory = self.state_root / "plan-runs" / run_id
         self.path = self.directory / "run.json"
+        self.completed_directory = self.directory / "completed-cards"
 
     def _envelope(self, body: Mapping[str, object]) -> dict[str, object]:
         return {"body": dict(body), "sha256": _digest(body)}
@@ -467,6 +468,69 @@ class PlanRunStore:
         updated = {**body, **changes, "updated_at": _utc_now()}
         return self._write(updated)
 
+    def persist_completion(self, fact: Mapping[str, object]) -> Path:
+        """Create one immutable CompletedCardFact; this is not an execution journal."""
+        value = dict(fact)
+        card = value.get("card")
+        task_id = card.get("task_id") if isinstance(card, Mapping) else None
+        digest = value.get("sha256")
+        unsigned = {key: item for key, item in value.items() if key != "sha256"}
+        if (
+            value.get("format") != COMPLETED_CARD_FORMAT
+            or value.get("plan_run_id") != self.run_id
+            or not isinstance(task_id, str)
+            or _SAFE_ID.fullmatch(task_id) is None
+            or digest != _digest(unsigned)
+        ):
+            raise PlanLoopError("CompletedCardFact is malformed")
+        self.completed_directory.mkdir(parents=True, exist_ok=True)
+        destination = self.completed_directory / f"{task_id}.json"
+        encoded = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        if destination.exists():
+            try:
+                existing = destination.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise PlanLoopError("CompletedCardFact is unreadable") from exc
+            if existing != encoded:
+                raise PlanLoopError(
+                    "CompletedCardFact identity already exists with different facts"
+                )
+            return destination
+        try:
+            with destination.open("x", encoding="utf-8", newline="\n") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError:
+            return self.persist_completion(value)
+        except OSError as exc:
+            raise PlanLoopError("CompletedCardFact could not be persisted") from exc
+        return destination
+
+    def completions(self) -> tuple[dict[str, object], ...]:
+        values: list[dict[str, object]] = []
+        for path in self.completed_directory.glob("*.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise PlanLoopError("CompletedCardFact is unreadable") from exc
+            if not isinstance(value, dict):
+                raise PlanLoopError("CompletedCardFact is malformed")
+            card = value.get("card")
+            task_id = card.get("task_id") if isinstance(card, Mapping) else None
+            digest = value.get("sha256")
+            unsigned = {key: item for key, item in value.items() if key != "sha256"}
+            if (
+                value.get("format") != COMPLETED_CARD_FORMAT
+                or value.get("plan_run_id") != self.run_id
+                or not isinstance(task_id, str)
+                or path.name != f"{task_id}.json"
+                or digest != _digest(unsigned)
+            ):
+                raise PlanLoopError("CompletedCardFact is malformed")
+            values.append(value)
+        return tuple(sorted(values, key=lambda value: str(value.get("completed_at", ""))))
+
 
 def find_plan_run(
     state_root: Path, *, branch: str = "", repo: Path | None = None
@@ -538,15 +602,19 @@ def architect_context(
     coder: Mapping[str, object],
     reviewer: Mapping[str, object],
     last_completion: Mapping[str, object] | None = None,
+    fresh_main: str | None = None,
 ) -> str:
     try:
         plan_text = plan_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise PlanLoopError("committed Plan is not UTF-8") from exc
+    observed_main = fresh_main or plan.main_sha
+    if _GIT_OID.fullmatch(observed_main) is None:
+        raise PlanLoopError("fresh upstream main is invalid")
     facts: dict[str, object] = {
         "plan": plan.to_mapping(),
         "architect": architect.to_mapping(),
-        "fresh_main": plan.main_sha,
+        "fresh_main": observed_main,
         "coder": dict(coder),
         "reviewer": dict(reviewer),
     }
@@ -570,9 +638,71 @@ def architect_context(
         "allowed_paths must contain exactly one `.awf/artifacts/impl-report-<TASK_ID>.md` and one "
         "`.awf/artifacts/review-report-<TASK_ID>.md`; the TaskCard path itself must not be "
         "allowed.\n"
-        f"The TaskCard must contain `- **Frozen base**: `{plan.main_sha}`` and exactly this "
+        f"The TaskCard must contain `- **Frozen base**: `{observed_main}`` and exactly this "
         "awf-reviewer-selection JSON object: "
         f"`{selection_json}`.\n\n"
+        "## Durable facts\n\n```json\n"
+        + json.dumps(facts, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n```\n\n## Exact committed Plan\n\n"
+        + plan_text
+    )
+
+
+def next_architect_context(
+    *,
+    plan: PlanFact,
+    plan_bytes: bytes,
+    fresh_main: str,
+    last_completion: Mapping[str, object],
+    coder: Mapping[str, object],
+    reviewer: Mapping[str, object],
+    completed_task_ids: tuple[str, ...],
+) -> str:
+    """Compose the closed Phase 5-03 decision context from durable facts only."""
+    try:
+        plan_text = plan_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PlanLoopError("committed Plan is not UTF-8") from exc
+    if _GIT_OID.fullmatch(fresh_main) is None:
+        raise PlanLoopError("fresh upstream main is invalid")
+    if last_completion.get("format") != COMPLETED_CARD_FORMAT:
+        raise PlanLoopError("last CompletedCardFact is invalid")
+    if any(_SAFE_ID.fullmatch(value) is None for value in completed_task_ids):
+        raise PlanLoopError("completed TaskCard identity is invalid")
+    selection_json = json.dumps(
+        {"coder": dict(coder), "reviewer": dict(reviewer)},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    facts = {
+        "plan": plan.to_mapping(),
+        "fresh_main": fresh_main,
+        "last_completed_card": dict(last_completion),
+        "milestone": {
+            "completed_count": len(completed_task_ids),
+            "completed_task_ids": list(completed_task_ids),
+            "coder": dict(coder),
+            "reviewer": dict(reviewer),
+        },
+    }
+    return (
+        "# Trusted next ArchitectContext\n\n"
+        "Use only the durable facts, exact committed Plan and read-only repository at fresh_main. "
+        "Return exactly one closed outcome. If Plan work remains, return one complete next "
+        "TaskCard as raw Markdown with no wrapper or outcome label. If the Plan milestone is "
+        "fully complete, "
+        "return exactly `MILESTONE_COMPLETE`. If facts prevent a safe next decision, return "
+        "`BLOCKED` on the first line and a non-empty reason on following lines. Do not "
+        "pre-generate later cards.\n\n"
+        "For a TaskCard, write `## Task ID`, a blank line, then the bare Task ID without "
+        "backticks. Write the Task branch using this literal shape: "
+        "- **Task branch**: `agent/<TASK_ID>`. The final branch component must exactly equal "
+        "Task ID character-for-character. Write Frozen base as an exact standalone line with no "
+        f"suffix: - **Frozen base**: `{fresh_main}`. Include exactly this "
+        f"awf-reviewer-selection JSON object: `{selection_json}`. The awf-postflight allowed_paths "
+        "must contain exactly one `.awf/artifacts/impl-report-<TASK_ID>.md` and one "
+        "`.awf/artifacts/review-report-<TASK_ID>.md`; the TaskCard path itself must not be "
+        "allowed.\n\n"
         "## Durable facts\n\n```json\n"
         + json.dumps(facts, ensure_ascii=False, indent=2, sort_keys=True)
         + "\n```\n\n## Exact committed Plan\n\n"
@@ -599,6 +729,8 @@ def parse_decision(raw: bytes) -> dict[str, object]:
 
 def parse_next_output(raw: bytes) -> tuple[str, str]:
     """Return the Phase 5-03 closed outcome without scheduling anything."""
+    if not raw or len(raw) > 64 * 1024:
+        raise PlanLoopError("Architect next output is missing or oversized")
     try:
         text = raw.decode("utf-8").strip()
     except UnicodeDecodeError as exc:
@@ -607,6 +739,8 @@ def parse_next_output(raw: bytes) -> tuple[str, str]:
     if first in _CLOSED_NEXT:
         if first == "MILESTONE_COMPLETE" and rest.strip():
             raise PlanLoopError("MILESTONE_COMPLETE must be the complete Architect output")
+        if first == "BLOCKED" and not rest.strip():
+            raise PlanLoopError("BLOCKED requires a non-empty reason")
         return first, rest.strip()
     return "NEXT_TASK_CARD", text
 

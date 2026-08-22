@@ -14,6 +14,7 @@ from agent_workflow.plan_loop import (
     compile_plan_fact,
     completed_card_fact,
     find_plan_run,
+    next_architect_context,
     parse_decision,
     parse_next_output,
     plan_start_payload,
@@ -203,7 +204,7 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
         "plan": fact.to_mapping(),
         "architect": selected.to_mapping(),
     }
-    card = {"branch": "codex/CARD-001", "head_sha": "b" * 40}
+    card = {"task_id": "CARD-001", "branch": "codex/CARD-001", "head_sha": "b" * 40}
     completed = completed_card_fact(
         run=run,
         card=card,
@@ -221,6 +222,10 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
         "missing evidence",
     )
     assert parse_next_output(taskcard(fact.main_sha))[0] == "NEXT_TASK_CARD"
+    with pytest.raises(PlanLoopError, match="non-empty reason"):
+        parse_next_output(b"BLOCKED\n")
+    with pytest.raises(PlanLoopError, match="complete Architect output"):
+        parse_next_output(b"MILESTONE_COMPLETE\nextra")
     with pytest.raises(PlanLoopError, match="approve and green CI"):
         completed_card_fact(
             run=run,
@@ -229,6 +234,51 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
             ci={"conclusion": "SUCCESS"},
             merge={"state": "MERGED", "commit": "c" * 40},
         )
+
+
+def test_completed_card_facts_are_immutable_and_feed_minimal_next_context(tmp_path: Path) -> None:
+    repo, _ = repository(tmp_path)
+    selected = binding(repo, tmp_path)
+    plan, plan_bytes = compile_plan_fact(repo, Path("docs/plan.md"), selected)
+    payload = plan_start_payload(
+        plan,
+        selected,
+        mode="milestone",
+        coder_tool="opencode",
+        coder_model="coder/model",
+        reviewer_tool="pi",
+        reviewer_model="review/model",
+    )
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    run = store.create(payload, repo=repo)
+    completion = completed_card_fact(
+        run=run,
+        card={"task_id": "CARD-001", "branch": "agent/CARD-001", "head_sha": "b" * 40},
+        decision={"verdict": "approve"},
+        ci={"conclusion": "SUCCESS"},
+        merge={"state": "MERGED", "commit": "c" * 40},
+    )
+
+    first_path = store.persist_completion(completion)
+    assert store.persist_completion(completion) == first_path
+    assert store.completions() == (completion,)
+    context = next_architect_context(
+        plan=plan,
+        plan_bytes=plan_bytes,
+        fresh_main="d" * 40,
+        last_completion=completion,
+        coder=run["coder"],
+        reviewer=run["reviewer"],
+        completed_task_ids=("CARD-001",),
+    )
+
+    assert '"fresh_main": "' + "d" * 40 + '"' in context
+    assert '"completed_task_ids": [' in context
+    assert "MILESTONE_COMPLETE" in context
+    assert "Do not pre-generate later cards" in context
+    changed = {**completion, "completed_at": "changed"}
+    with pytest.raises(PlanLoopError, match="malformed"):
+        store.persist_completion(changed)
 
 
 def test_plan_status_is_a_read_only_projection(tmp_path: Path) -> None:

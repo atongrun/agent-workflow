@@ -40,7 +40,9 @@ from agent_workflow.plan_loop import (
     compile_plan_fact,
     completed_card_fact,
     find_plan_run,
+    next_architect_context,
     parse_decision,
+    parse_next_output,
     plan_start_payload,
     validate_plan_start_payload,
     validate_taskcard_binding,
@@ -197,7 +199,12 @@ def _validate_local_architect(args: argparse.Namespace, binding: ArchitectBindin
         raise PlanOperationError("Plan start Architect RoleBinding drifted before Pi invocation")
 
 
-def _checkout_plan_main(repo: Path, plan: PlanFact) -> bytes:
+def _checkout_fresh_main(
+    repo: Path,
+    plan: PlanFact,
+    *,
+    expected_main: str | None = None,
+) -> tuple[bytes, str]:
     if str(_git(repo, "status", "--porcelain")):
         raise PlanOperationError("Architect workspace is dirty before Plan handling")
     tracking = f"refs/remotes/{plan.upstream_remote}/{plan.base_ref}"
@@ -209,7 +216,7 @@ def _checkout_plan_main(repo: Path, plan: PlanFact) -> bytes:
         f"+refs/heads/{plan.base_ref}:{tracking}",
     )
     live = str(_git(repo, "rev-parse", f"{tracking}^{{commit}}"))
-    if live != plan.main_sha:
+    if expected_main is not None and live != expected_main:
         raise PlanOperationError("upstream main advanced after Plan start; start a fresh PlanRun")
     controller_branch = f"awf-plan/{hashlib.sha256(plan.identity.encode()).hexdigest()[:16]}"
     _git(repo, "checkout", "-q", "-B", controller_branch, live)
@@ -219,6 +226,11 @@ def _checkout_plan_main(repo: Path, plan: PlanFact) -> bytes:
     raw = _git(repo, "cat-file", "blob", plan.blob_oid, binary=True)
     if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != plan.blob_sha256:
         raise PlanOperationError("committed Plan blob bytes drifted")
+    return raw, live
+
+
+def _checkout_plan_main(repo: Path, plan: PlanFact) -> bytes:
+    raw, _live = _checkout_fresh_main(repo, plan, expected_main=plan.main_sha)
     return raw
 
 
@@ -424,6 +436,97 @@ def _invoke_taskcard_architect(
     return raw, task_id, branch
 
 
+def _persist_and_dispatch_taskcard(
+    args: argparse.Namespace,
+    *,
+    store: PlanRunStore,
+    plan: PlanFact,
+    repo: Path,
+    coder: dict[str, object],
+    reviewer: dict[str, object],
+    raw: bytes,
+    task_id: str,
+    branch: str,
+    frozen_base: str,
+) -> dict[str, object]:
+    destination = repo / "docs" / "tasks" / f"{task_id}.md"
+    if raw:
+        try:
+            persist_architect_taskcard(repo=str(repo), destination=str(destination), stdout=raw)
+        except ArtifactError as exc:
+            store.update(
+                status="architect_output_invalid_no_replay",
+                stop_reason=f"trusted TaskCard persistence rejected output: {exc}",
+            )
+            raise PlanOperationError("trusted TaskCard persistence rejected Pi output") from exc
+    elif not destination.is_file():
+        raise PlanOperationError("persisted Architect TaskCard is unavailable")
+    selections = reviewer_selection_contract(
+        destination.read_text(encoding="utf-8"),
+        fallback_tool=str(coder["tool"]),
+        fallback_model=str(coder["model"]),
+    )
+    if (selections.coder.tool, selections.coder.model) != (coder["tool"], coder["model"]):
+        raise PlanOperationError("persisted Coder selection drifted")
+    if (selections.reviewer.tool, selections.reviewer.model) != (
+        reviewer["tool"],
+        reviewer["model"],
+    ):
+        raise PlanOperationError("persisted Reviewer selection drifted")
+    card = {
+        "task_id": task_id,
+        "path": destination.relative_to(repo).as_posix(),
+        "branch": branch,
+        "frozen_base": frozen_base,
+        "status": "dispatching",
+    }
+    store.update(status="card_dispatching", current_card=card)
+
+    import awf_dispatch
+
+    dispatch_args = argparse.Namespace(
+        repo=repo,
+        card=card["path"],
+        branch=branch,
+        manifest=None,
+        to="coder",
+        tool=str(coder["tool"]),
+        model=str(coder["model"]),
+        reviewer_tool=str(reviewer["tool"]),
+        reviewer_model=str(reviewer["model"]),
+        report=compile_implementation_report_path(task_id),
+        review_report=compile_review_report_path(task_id),
+        upstream_repo=plan.repository,
+        upstream_remote=plan.upstream_remote,
+        head_repo=args.head_repo,
+        head_remote=args.head_remote,
+        base_ref=plan.base_ref,
+        event_type="task:awf-impl-v3",
+        no_push=False,
+        dry_run=False,
+    )
+    try:
+        awf_dispatch.dispatch(
+            dispatch_args,
+            before_send=lambda current_repo, _payload: _run_dispatch_preflight(
+                args,
+                store=store,
+                repo=current_repo,
+            ),
+        )
+    except PlanOperationError as exc:
+        store.update(status="dispatch_blocked", stop_reason=str(exc))
+        raise
+    except DispatchError:
+        store.update(
+            status="dispatch_ambiguous",
+            stop_reason="business dispatch failed or became ambiguous; no automatic retry",
+        )
+        raise
+    card = {**card, "status": "active", "taskcard_commit": str(_git(repo, "rev-parse", "HEAD"))}
+    return store.update(status="card_active", current_card=card)
+
+
 def handle_start(args: argparse.Namespace) -> dict[str, object]:
     value = {
         "run_id": args.run_id,
@@ -466,85 +569,263 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
         coder=coder,
         reviewer=reviewer,
     )
-    destination = repo / "docs" / "tasks" / f"{task_id}.md"
-    if raw:
-        try:
-            persist_architect_taskcard(repo=str(repo), destination=str(destination), stdout=raw)
-        except ArtifactError as exc:
-            store.update(
-                status="architect_output_invalid_no_replay",
-                stop_reason=f"trusted TaskCard persistence rejected output: {exc}",
-            )
-            raise PlanOperationError("trusted TaskCard persistence rejected Pi output") from exc
-    elif not destination.is_file():
-        raise PlanOperationError("persisted Architect TaskCard is unavailable")
-    selections = reviewer_selection_contract(
-        destination.read_text(encoding="utf-8"),
-        fallback_tool=str(coder["tool"]),
-        fallback_model=str(coder["model"]),
-    )
-    if (selections.coder.tool, selections.coder.model) != (coder["tool"], coder["model"]):
-        raise PlanOperationError("persisted Coder selection drifted")
-    if (selections.reviewer.tool, selections.reviewer.model) != (
-        reviewer["tool"],
-        reviewer["model"],
-    ):
-        raise PlanOperationError("persisted Reviewer selection drifted")
-    card = {
-        "task_id": task_id,
-        "path": destination.relative_to(repo).as_posix(),
-        "branch": branch,
-        "frozen_base": plan.main_sha,
-        "status": "dispatching",
-    }
-    store.update(status="card_dispatching", current_card=card)
-
-    import awf_dispatch
-
-    dispatch_args = argparse.Namespace(
+    return _persist_and_dispatch_taskcard(
+        args,
+        store=store,
+        plan=plan,
         repo=repo,
-        card=card["path"],
+        coder=coder,
+        reviewer=reviewer,
+        raw=raw,
+        task_id=task_id,
         branch=branch,
-        manifest=None,
-        to="coder",
-        tool=str(coder["tool"]),
-        model=str(coder["model"]),
-        reviewer_tool=str(reviewer["tool"]),
-        reviewer_model=str(reviewer["model"]),
-        report=compile_implementation_report_path(task_id),
-        review_report=compile_review_report_path(task_id),
-        upstream_repo=plan.repository,
-        upstream_remote=plan.upstream_remote,
-        head_repo=args.head_repo,
-        head_remote=args.head_remote,
-        base_ref=plan.base_ref,
-        event_type="task:awf-impl-v3",
-        no_push=False,
-        dry_run=False,
+        frozen_base=plan.main_sha,
     )
-    try:
-        awf_dispatch.dispatch(
-            dispatch_args,
-            before_send=lambda current_repo, _payload: _run_dispatch_preflight(
-                args,
-                store=store,
-                repo=current_repo,
+
+
+def _listener_plan_args(*, state_root: Path, plan: PlanFact) -> argparse.Namespace:
+    values = {
+        "config": os.environ.get("AWF_DISPATCH_ENV", ""),
+        "authority_manifest": os.environ.get("AWF_AUTHORITY_MANIFEST", ""),
+        "head_repo": os.environ.get("AWF_HEAD_REPO", ""),
+    }
+    if not all(values.values()):
+        raise PlanOperationError("managed Architect listener is missing Plan operation bindings")
+    return argparse.Namespace(
+        config=values["config"],
+        state_root=str(state_root.resolve()),
+        authority_manifest=values["authority_manifest"],
+        upstream_remote=plan.upstream_remote,
+        head_remote=os.environ.get("AWF_HEAD_REMOTE", "fork"),
+        head_repo=values["head_repo"],
+        gh_bin=os.environ.get("AWF_GH_BIN", "gh"),
+        model_tool=os.environ.get("AWF_PI_BIN", "pi"),
+    )
+
+
+def _validate_listener_architect(binding: ArchitectBinding, workspace: Path) -> None:
+    observed = argparse.Namespace(
+        profile=os.environ.get("AWF_PROFILE_PATH", ""),
+        profile_sha256=os.environ.get("AWF_PROFILE_SHA256", ""),
+        repo=str(workspace.resolve()),
+        tool=os.environ.get("AWF_TOOL", ""),
+        model=os.environ.get("AWF_MODEL", ""),
+    )
+    _validate_local_architect(observed, binding)
+
+
+def _invoke_next_architect(
+    *,
+    store: PlanRunStore,
+    run: dict[str, object],
+    binding: ArchitectBinding,
+    workspace: Path,
+    context: str,
+    last_completion: dict[str, object],
+    fresh_main: str,
+    coder: dict[str, object],
+    reviewer: dict[str, object],
+) -> tuple[str, bytes, str, str]:
+    if run.get("current_card") is not None:
+        raise PlanOperationError("next Architect invocation requires no active card")
+    completed_card = last_completion.get("card")
+    last_task_id = completed_card.get("task_id") if isinstance(completed_card, dict) else ""
+    if not isinstance(last_task_id, str) or not last_task_id:
+        raise PlanOperationError("last CompletedCardFact has no TaskCard identity")
+    authorization = hashlib.sha256(
+        (
+            str(run["start_payload_sha256"])
+            + "\0milestone-next\0"
+            + str(last_completion.get("sha256", ""))
+            + "\0"
+            + fresh_main
+        ).encode("utf-8")
+    ).hexdigest()
+    output = store.directory / f"architect-next-{last_task_id}.stdout"
+    invocation = run.get("architect_invocation")
+    if isinstance(invocation, dict) and invocation.get("kind") == "milestone-next":
+        if (
+            invocation.get("authorization_sha256") != authorization
+            or invocation.get("status") != "result_persisted"
+            or not output.is_file()
+        ):
+            raise PlanOperationError("next Architect invocation is ambiguous; Pi will not replay")
+        raw = output.read_bytes()
+    else:
+        context_path = workspace / ".awf" / f"architect-next-context-{last_task_id}.md"
+        context_path.parent.mkdir(parents=True, exist_ok=True)
+        store.update(
+            status="architect_next_running",
+            architect_invocation={
+                "kind": "milestone-next",
+                "status": "launch_intent",
+                "authorization_sha256": authorization,
+                "fresh_main": fresh_main,
+                "last_completion_sha256": last_completion.get("sha256", ""),
+            },
+        )
+        spec = _provider_spec(
+            (
+                f"{run['run_id']}-next-{last_task_id}",
+                str(run["run_id"]),
+                last_task_id,
+                authorization,
             ),
+            role="architect",
+            provider="pi",
+            model=binding.model,
+            executable=os.environ.get("AWF_PI_BIN", "pi"),
+            workspace=str(workspace),
+            input_path=str(context_path),
+            input_text=context,
+            report_path=f".awf/architect-next/{last_task_id}.md",
+            provider_args=("milestone-next",),
         )
-    except PlanOperationError as exc:
+        try:
+            rc = spawn_rendered(
+                render_provider_invocation(spec),
+                stdout_path=str(output),
+                stdout_max_bytes=64 * 1024,
+            )
+        except BaseException:
+            store.update(
+                status="architect_ambiguous",
+                stop_reason="Pi next decision outcome is ambiguous; provider replay is forbidden",
+            )
+            raise
+        finally:
+            context_path.unlink(missing_ok=True)
+        if rc != 0:
+            store.update(
+                status="architect_failed_no_replay",
+                architect_invocation={
+                    "kind": "milestone-next",
+                    "status": "failed_no_replay",
+                    "authorization_sha256": authorization,
+                    "fresh_main": fresh_main,
+                    "last_completion_sha256": last_completion.get("sha256", ""),
+                },
+                stop_reason="Pi next decision exited non-zero; provider replay is forbidden",
+            )
+            raise PlanOperationError("Pi Architect next decision invocation failed")
+        raw = output.read_bytes()
+    try:
+        outcome, body = parse_next_output(raw)
+        task_id = ""
+        branch = ""
+        if outcome == "NEXT_TASK_CARD":
+            normalized = body.encode("utf-8")
+            task_id, branch = validate_taskcard_binding(
+                normalized,
+                frozen_base=fresh_main,
+                coder=coder,
+                reviewer=reviewer,
+            )
+            raw = normalized
+    except PlanLoopError:
         store.update(
-            status="dispatch_blocked",
-            stop_reason=str(exc),
+            status="architect_output_invalid_no_replay",
+            architect_invocation={
+                "kind": "milestone-next",
+                "status": "result_invalid",
+                "authorization_sha256": authorization,
+                "result_sha256": hashlib.sha256(raw).hexdigest(),
+                "fresh_main": fresh_main,
+                "last_completion_sha256": last_completion.get("sha256", ""),
+            },
+            stop_reason="Pi Architect next output is invalid; provider replay is forbidden",
         )
         raise
-    except DispatchError:
+    store.update(
+        architect_invocation={
+            "kind": "milestone-next",
+            "status": "result_persisted",
+            "authorization_sha256": authorization,
+            "result_sha256": hashlib.sha256(raw).hexdigest(),
+            "fresh_main": fresh_main,
+            "last_completion_sha256": last_completion.get("sha256", ""),
+            "outcome": outcome,
+        }
+    )
+    return outcome, raw, task_id, branch
+
+
+def _continue_milestone(
+    *,
+    store: PlanRunStore,
+    source_repo: Path,
+    state_root: Path,
+) -> dict[str, object]:
+    run = store.load()
+    if run.get("mode") != "milestone":
+        return run
+    if run.get("current_card") is not None:
+        raise PlanOperationError("milestone continuation requires no active card")
+    if run.get("stop_requested") is True:
+        return store.update(status="stopped", stop_reason="PlanRun stop was requested")
+    plan = PlanFact.from_mapping(run["plan"])
+    binding = ArchitectBinding.from_mapping(run["architect"])
+    _validate_listener_architect(binding, source_repo)
+    plan_bytes, fresh_main = _checkout_fresh_main(source_repo, plan)
+    operation_args = _listener_plan_args(state_root=state_root, plan=plan)
+    _run_authoring_fast(operation_args, store=store, repo=source_repo)
+    completions = store.completions()
+    last_completion = run.get("last_completion")
+    if not completions or not isinstance(last_completion, dict):
+        raise PlanOperationError("milestone continuation requires a CompletedCardFact")
+    if not any(
+        completion.get("sha256") == last_completion.get("sha256")
+        for completion in completions
+    ):
+        raise PlanOperationError("PlanRun last completion does not match immutable facts")
+    for completion in completions:
+        if completion.get("plan") != run["plan"] or completion.get("architect") != run["architect"]:
+            raise PlanOperationError("CompletedCardFact Plan/Architect binding drifted")
+    completed_ids = tuple(str(completion["card"]["task_id"]) for completion in completions)
+    coder = dict(run["coder"])
+    reviewer = dict(run["reviewer"])
+    outcome, raw, task_id, branch = _invoke_next_architect(
+        store=store,
+        run=store.load(),
+        binding=binding,
+        workspace=source_repo,
+        context=next_architect_context(
+            plan=plan,
+            plan_bytes=plan_bytes,
+            fresh_main=fresh_main,
+            last_completion=last_completion,
+            coder=coder,
+            reviewer=reviewer,
+            completed_task_ids=completed_ids,
+        ),
+        last_completion=last_completion,
+        fresh_main=fresh_main,
+        coder=coder,
+        reviewer=reviewer,
+    )
+    if outcome == "MILESTONE_COMPLETE":
+        return store.update(status="milestone_completed", current_card=None, stop_reason="")
+    if outcome == "BLOCKED":
+        _closed, reason = parse_next_output(raw)
+        return store.update(status="blocked", current_card=None, stop_reason=reason)
+    if task_id in completed_ids:
         store.update(
-            status="dispatch_ambiguous",
-            stop_reason="business dispatch failed or became ambiguous; no automatic retry",
+            status="architect_output_invalid_no_replay",
+            stop_reason="Pi Architect repeated a completed TaskCard identity",
         )
-        raise
-    card = {**card, "status": "active", "taskcard_commit": str(_git(repo, "rev-parse", "HEAD"))}
-    return store.update(status="card_active", current_card=card)
+        raise PlanOperationError("Architect repeated a completed TaskCard")
+    return _persist_and_dispatch_taskcard(
+        operation_args,
+        store=store,
+        plan=plan,
+        repo=source_repo,
+        coder=coder,
+        reviewer=reviewer,
+        raw=raw,
+        task_id=task_id,
+        branch=branch,
+        frozen_base=fresh_main,
+    )
 
 
 def _terminal_context(
@@ -820,7 +1101,12 @@ def handle_card_terminal(
     if run.get("status") in {"merge_intent", "merge_ambiguous"}:
         raise PlanOperationError("merge mutation is ambiguous; no automatic terminal replay")
     card_value = run.get("current_card")
-    if card_value is None and run.get("status") == "completed":
+    if card_value is None and run.get("status") in {
+        "completed",
+        "milestone_completed",
+        "blocked",
+        "stopped",
+    }:
         completed = run.get("last_completion")
         completed_card = completed.get("card") if isinstance(completed, dict) else None
         if isinstance(completed_card, dict) and completed_card.get("branch") == args.branch:
@@ -976,12 +1262,26 @@ def handle_card_terminal(
         ci=ci,
         merge=merge,
     )
-    store.update(
-        status="completed",
-        current_card=None,
-        last_completion=completed,
-        stop_reason="",
-    )
+    store.persist_completion(completed)
+    if run.get("mode") == "one-card":
+        store.update(
+            status="completed",
+            current_card=None,
+            last_completion=completed,
+            stop_reason="",
+        )
+    else:
+        store.update(
+            status="card_completed",
+            current_card=None,
+            last_completion=completed,
+            stop_reason="",
+        )
+        _continue_milestone(
+            store=store,
+            source_repo=source_repo,
+            state_root=state_root,
+        )
     return {
         "terminal_state": "completed",
         "terminal": {

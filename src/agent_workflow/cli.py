@@ -420,7 +420,7 @@ def cmd_plan_start(args: argparse.Namespace) -> int:
         result = awf_plan.start_plan(
             repo=Path(args.repo),
             plan=Path(args.plan),
-            mode="one-card",
+            mode="milestone" if args.milestone else "one-card",
             coder_tool=args.coder_tool,
             coder_model=args.coder_model,
             reviewer_tool=args.reviewer_tool,
@@ -1247,7 +1247,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     plan_start_parser.add_argument("--repo", default=".")
     plan_start_parser.add_argument("--plan", required=True)
-    plan_start_parser.add_argument("--one-card", action="store_true", required=True)
+    plan_mode = plan_start_parser.add_mutually_exclusive_group(required=True)
+    plan_mode.add_argument("--one-card", action="store_true")
+    plan_mode.add_argument("--milestone", action="store_true")
     plan_start_parser.add_argument("--coder-tool", choices=("opencode",), default="opencode")
     plan_start_parser.add_argument("--coder-model", default="")
     plan_start_parser.add_argument(

@@ -153,6 +153,14 @@ class PiArchitectRenderer:
                 "approve, request_changes, reject, or escalate. Do not edit files, merge, or "
                 "invent rework."
             )
+        elif spec.provider_args == ("milestone-next",):
+            message = (
+                "Decide the next step for this exact Plan milestone from the attached durable "
+                "facts and freshly observed repository main. Use only read-only repository "
+                "inspection tools. Return exactly one closed outcome: one complete next TaskCard "
+                "as raw Markdown, exact MILESTONE_COMPLETE, or BLOCKED followed by a non-empty "
+                "reason. Do not edit files, pre-generate later cards, dispatch, or merge."
+            )
         else:
             raise ContractError("Pi architect mode is unsupported")
         argv = [

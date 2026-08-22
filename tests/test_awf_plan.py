@@ -25,7 +25,7 @@ from agent_workflow.plan_loop import (  # noqa: E402
 )
 
 
-def facts(tmp_path: Path):
+def facts(tmp_path: Path, *, mode: str = "one-card"):
     profile = tmp_path / "architect.json"
     profile.write_text("{}", encoding="utf-8")
     binding = ArchitectBinding(
@@ -49,7 +49,7 @@ def facts(tmp_path: Path):
     payload = plan_start_payload(
         plan,
         binding,
-        mode="one-card",
+        mode=mode,
         coder_tool="opencode",
         coder_model="",
         reviewer_tool="opencode",
@@ -248,8 +248,8 @@ CARD-001
     assert result["current_card"]["branch"] == "codex/CARD-001"
 
 
-def terminal_fixture(tmp_path: Path):
-    _binding, _plan, payload = facts(tmp_path)
+def terminal_fixture(tmp_path: Path, *, mode: str = "one-card"):
+    _binding, _plan, payload = facts(tmp_path, mode=mode)
     store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
     store.create(payload, repo=tmp_path / "source")
     store.update(
@@ -396,6 +396,200 @@ def test_plan_terminal_approve_creates_completed_card_fact(monkeypatch, tmp_path
     assert run["status"] == "completed"
     assert run["current_card"] is None
     assert run["last_completion"]["merge"]["commit"] == "7" * 40
+    assert store.completions() == (run["last_completion"],)
+
+
+def _completed_milestone_store(tmp_path: Path):
+    binding, plan, payload = facts(tmp_path, mode="milestone")
+    source = tmp_path / "repo"
+    source.mkdir()
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    run = store.create(payload, repo=source)
+    completion = awf_plan.completed_card_fact(
+        run=run,
+        card={
+            "task_id": "CARD-001",
+            "path": "docs/tasks/CARD-001.md",
+            "branch": "agent/CARD-001",
+            "frozen_base": "4" * 40,
+            "head_sha": "6" * 40,
+        },
+        decision={"verdict": "approve"},
+        ci={"conclusion": "SUCCESS"},
+        merge={"state": "MERGED", "commit": "7" * 40},
+    )
+    store.persist_completion(completion)
+    store.update(status="card_completed", current_card=None, last_completion=completion)
+    return binding, plan, store, source, completion
+
+
+def _bind_listener_environment(monkeypatch, binding: ArchitectBinding, tmp_path: Path) -> None:
+    monkeypatch.setenv("AWF_PROFILE_PATH", binding.profile)
+    monkeypatch.setenv("AWF_PROFILE_SHA256", binding.profile_sha256)
+    monkeypatch.setenv("AWF_TOOL", "pi")
+    monkeypatch.setenv("AWF_MODEL", "")
+    monkeypatch.setenv("AWF_DISPATCH_ENV", str(tmp_path / "dispatch.env"))
+    monkeypatch.setenv("AWF_AUTHORITY_MANIFEST", str(tmp_path / "authority.json"))
+    monkeypatch.setenv("AWF_HEAD_REPO", "contributor/project")
+    monkeypatch.setenv("AWF_HEAD_REMOTE", "fork")
+
+
+@pytest.mark.parametrize(
+    ("outcome", "raw", "expected_status", "expected_reason"),
+    [
+        ("MILESTONE_COMPLETE", b"MILESTONE_COMPLETE\n", "milestone_completed", ""),
+        ("BLOCKED", b"BLOCKED\nmissing owner fact\n", "blocked", "missing owner fact"),
+    ],
+)
+def test_milestone_continuation_is_closed_and_reruns_authoring_fast(
+    monkeypatch,
+    tmp_path: Path,
+    outcome: str,
+    raw: bytes,
+    expected_status: str,
+    expected_reason: str,
+) -> None:
+    binding, _plan, store, source, _completion = _completed_milestone_store(tmp_path)
+    _bind_listener_environment(monkeypatch, binding, tmp_path)
+    calls: list[object] = []
+    monkeypatch.setattr(
+        awf_plan,
+        "_checkout_fresh_main",
+        lambda *_a, **_k: (b"# Exact Plan\n", "9" * 40),
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_run_authoring_fast",
+        lambda *_a, **_k: calls.append("authoring-fast") or {"status": "PASS"},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_invoke_next_architect",
+        lambda **kwargs: calls.append(kwargs["context"]) or (outcome, raw, "", ""),
+    )
+
+    result = awf_plan._continue_milestone(
+        store=store,
+        source_repo=source,
+        state_root=tmp_path / "state",
+    )
+
+    assert result["status"] == expected_status
+    assert result["stop_reason"] == expected_reason
+    assert calls[0] == "authoring-fast"
+    assert '"fresh_main": "' + "9" * 40 + '"' in str(calls[1])
+
+
+def test_milestone_next_card_reuses_single_card_dispatch_with_fresh_base(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    binding, plan, store, source, _completion = _completed_milestone_store(tmp_path)
+    _bind_listener_environment(monkeypatch, binding, tmp_path)
+    next_raw = b"next TaskCard"
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        awf_plan,
+        "_checkout_fresh_main",
+        lambda *_a, **_k: (b"# Exact Plan\n", "9" * 40),
+    )
+    monkeypatch.setattr(awf_plan, "_run_authoring_fast", lambda *_a, **_k: {"status": "PASS"})
+    monkeypatch.setattr(
+        awf_plan,
+        "_invoke_next_architect",
+        lambda **_kwargs: ("NEXT_TASK_CARD", next_raw, "CARD-002", "agent/CARD-002"),
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_persist_and_dispatch_taskcard",
+        lambda _args, **kwargs: observed.update(kwargs) or {"status": "card_active"},
+    )
+
+    result = awf_plan._continue_milestone(
+        store=store,
+        source_repo=source,
+        state_root=tmp_path / "state",
+    )
+
+    assert result["status"] == "card_active"
+    assert observed["plan"] == plan
+    assert observed["raw"] == next_raw
+    assert observed["task_id"] == "CARD-002"
+    assert observed["frozen_base"] == "9" * 40
+
+
+def test_next_architect_ambiguous_invocation_is_never_replayed(monkeypatch, tmp_path: Path) -> None:
+    binding, _plan, store, source, completion = _completed_milestone_store(tmp_path)
+    monkeypatch.setattr(
+        awf_plan,
+        "spawn_rendered",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("provider lost")),
+    )
+    kwargs = {
+        "store": store,
+        "binding": binding,
+        "workspace": source,
+        "context": "context",
+        "last_completion": completion,
+        "fresh_main": "9" * 40,
+        "coder": {"tool": "opencode", "model": ""},
+        "reviewer": {"tool": "opencode", "model": ""},
+    }
+
+    with pytest.raises(RuntimeError, match="provider lost"):
+        awf_plan._invoke_next_architect(run=store.load(), **kwargs)
+    with pytest.raises(awf_plan.PlanOperationError, match="will not replay"):
+        awf_plan._invoke_next_architect(run=store.load(), **kwargs)
+
+
+def test_terminal_completion_enters_milestone_only_after_fact_is_persisted(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    store, args, provenance, evidence, input_context = terminal_fixture(
+        tmp_path,
+        mode="milestone",
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setenv("AWF_REPO_DIR", str(source))
+    monkeypatch.setattr(
+        awf_plan,
+        "_invoke_terminal_decision",
+        lambda **_kwargs: {"verdict": "approve", "sha256": "8" * 64, "bytes": 10},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_wait_exact_ci",
+        lambda *_a, **_k: {"conclusion": "SUCCESS", "head_sha": "6" * 40, "checks": 1},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_merge_and_observe",
+        lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "merge"},
+    )
+    observed: list[str] = []
+
+    def continue_after_fact(**_kwargs):
+        observed.append(str(store.completions()[0]["sha256"]))
+        return store.load()
+
+    monkeypatch.setattr(awf_plan, "_continue_milestone", continue_after_fact)
+
+    result = awf_plan.handle_card_terminal(
+        args=args,
+        evidence=evidence,
+        input_context=input_context,
+        review_report={"verdict": "PASS"},
+        provenance=provenance,
+        terminal_repo=tmp_path / "terminal",
+        implementation_sha256="sha256:" + "1" * 64,
+        review_sha256="sha256:" + "2" * 64,
+    )
+
+    assert result["terminal_state"] == "completed"
+    assert observed == [store.load()["last_completion"]["sha256"]]
+    assert store.load()["status"] == "card_completed"
 
 
 def test_plan_terminal_nonapprove_stops_without_ci_or_merge(monkeypatch, tmp_path: Path) -> None:
