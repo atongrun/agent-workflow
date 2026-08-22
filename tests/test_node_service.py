@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -719,6 +720,44 @@ def test_mac_and_systemd_definitions_target_reconcile_not_foreground(
     assert expected_profile in rendered
     assert "AGENT_BUS_TOKEN" not in rendered
     assert "password" not in rendered.lower()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX venvs use interpreter symlinks")
+def test_native_definitions_preserve_the_invoked_venv_python_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path, manager="launchd")
+    shim = tmp_path / "venv" / "bin" / "python"
+    shim.parent.mkdir(parents=True)
+    shim.symlink_to(Path(node_service.sys.executable).resolve())
+    monkeypatch.setattr(node_service.sys, "executable", str(shim))
+
+    systemd = node_service._render_systemd(profile, "awf-test.service")
+    launchd = node_service._render_launchd(profile, "com.agentworkflow.test").decode()
+    task = node_service._render_task_scheduler(profile, "DOMAIN\\user").decode()
+    for definition_text in (systemd, launchd, task):
+        assert str(shim) in definition_text
+        assert str(shim.resolve()) not in definition_text
+
+    definition = tmp_path / "launch-agent.plist"
+    definition.write_text(launchd, encoding="utf-8")
+    monkeypatch.setattr(
+        node_service.LaunchdAdapter,
+        "definition",
+        property(lambda self: definition),
+    )
+    manager = node_service.LaunchdAdapter(profile)
+    node_service._write_install_record(
+        profile,
+        "launchd",
+        definition,
+        {"manager_id": manager.label},
+    )
+    record = node_service._require_installed(profile, "launchd")
+    assert record["python"] == str(shim)
+    assert record["python_sha256"] == node_service._sha256(shim)
+    assert record["action_argv"][0] == str(shim)
 
 
 def test_native_manager_and_gbk_log_boundaries_are_utf8_safe(

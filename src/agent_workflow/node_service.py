@@ -83,13 +83,17 @@ def _reconcile_arguments(profile) -> list[str]:
     ]
 
 
+def _python_executable() -> Path:
+    return Path(os.path.abspath(sys.executable))
+
+
 def _reconcile_argv(profile) -> list[str]:
-    return [str(Path(sys.executable).resolve()), *_reconcile_arguments(profile)]
+    return [str(_python_executable()), *_reconcile_arguments(profile)]
 
 
 def _task_reconcile_argv(profile) -> list[str]:
     return [
-        str(Path(sys.executable).resolve()),
+        str(_python_executable()),
         "-m",
         "agent_workflow.node_service",
         "task-reconcile",
@@ -277,6 +281,7 @@ def _write_install_record(
     from agent_workflow import __version__
 
     body = definition.read_bytes()
+    python = _python_executable()
     record = {
         "format": "awf.node-managed-install.v1",
         "manager": manager,
@@ -285,8 +290,8 @@ def _write_install_record(
         "profile_sha256": profile.digest,
         "definition": str(definition),
         "definition_sha256": "sha256:" + hashlib.sha256(body).hexdigest(),
-        "python": str(Path(sys.executable).resolve()),
-        "python_sha256": _sha256(Path(sys.executable).resolve()),
+        "python": str(python),
+        "python_sha256": _sha256(python),
         "awf_version": __version__,
         "action_argv": _manager_action_argv(profile, manager),
         **extra,
@@ -330,6 +335,7 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
 
     record = _install_record(profile)
     manager_id, definition = _manager_target(profile, manager)
+    python = _python_executable()
     expected = {
         "manager": manager,
         "manager_id": manager_id,
@@ -337,7 +343,7 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
         "profile_source": str(Path(profile.authoring_path).resolve()),
         "profile_sha256": profile.digest,
         "definition": str(definition),
-        "python": str(Path(sys.executable).resolve()),
+        "python": str(python),
         "awf_version": __version__,
         "action_argv": _manager_action_argv(profile, manager),
     }
@@ -345,7 +351,7 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
         raise NodeServiceError("managed lifecycle installation drifted; run upgrade")
     if not definition.is_file() or _sha256(definition) != record.get("definition_sha256"):
         raise NodeServiceError("managed lifecycle definition digest does not match its record")
-    if _sha256(Path(sys.executable).resolve()) != record.get("python_sha256"):
+    if _sha256(python) != record.get("python_sha256"):
         raise NodeServiceError("installed Python digest does not match its record; run upgrade")
     return record
 
