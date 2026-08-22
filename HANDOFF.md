@@ -264,6 +264,34 @@ production change. Phase 4B itself remains open. The next safe milestone is sepa
 exists but may not install it or operate business events. Windows logout/login or reboot remains a
 disruptive external action requiring an explicitly scheduled owner window.
 
+RTS-046 remains **EXTERNAL_BLOCKED** on Linux qualification; Windows logout/login is separately
+`BLOCKED_BY_OWNER_AUTHORIZATION`. Fresh macOS identity `-01` exposed native definition re-entry
+resolving the venv shim to a base Python without Agent Workflow. RTS-047 preserved the invoked
+absolute venv path across all manager argv/install/checksum facts and passed independent L3 Review,
+877 local tests, ordinary CI `32547035193` and Binary Feasibility `32547035173`. Fresh macOS `-02`
+then entered installed AWF and stopped at the next independent boundary: current macOS and Windows
+Agent Bus clients lack required structured `--on-argv`. Falling back to legacy `--on` is forbidden.
+
+Owner-authorized provenance checks confirmed installation skew rather than a missing Bus feature:
+Agent Bus PR #27 is merged at exact master `6ca8f281...`, while formal v0.3.0 lacks `--on-argv` and
+master still reports 0.3.0. Fresh isolated macOS/Windows clients from the exact master commit proved
+the capability without changing old clients, server/deployment/database, endpoint/token values,
+events, queues or ACK state. Fresh RTS-046 `-03` then completed the full launchd sequence and the
+non-disruptive Task Scheduler sequence. Windows survived SSH session A into session B, restarted to
+a new exact incarnation with creation identity, and exact stop/uninstall removed all manager state.
+
+Linux entry audits found no suitable existing user with both linger enabled and AWF/Bus configuration;
+RTS-046 did not enable or deploy either. All three macOS scopes were normally uninstalled;
+Windows `-03` was exactly stopped/uninstalled. Definitions/install/process/lease manager state is
+absent and credential-safe logs are retained. No model, business event, ACK/retry/requeue or
+production state changed.
+
+Phase 4B remains open and Phase 5 did not start. The only legal continuation is an
+already-lingering/configured Linux user and an owner-scheduled Windows logout/login window, followed
+by another fresh RTS-046 identity. Before Phase 5, separately consider a formal Agent Bus client
+release (likely v0.3.1) so the structured contract is versioned rather than commit-probed; no release
+is authorized here.
+
 ## Current Handoff State: 2026-08-17
 
 The final fresh-machine no-model usability gate is green. The original benchmark's disposable

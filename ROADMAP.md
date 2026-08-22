@@ -69,11 +69,20 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   `AgentInstallation` abstraction; preserve its initial exact-identity findings.
 - [x] Complete RTS-045 bounded exact-lifecycle repair for process-root and installed manager-target
   identity, with focused/full tests, independent L3 Review and exact-head cross-platform CI.
+- [x] Complete RTS-047 bounded native venv re-entry repair after the first real LaunchAgent scope,
+  with independent L3 Review and exact-head CI.
+- [ ] RTS-046 passes real macOS launchd and non-disruptive Windows Task Scheduler under fresh `-03`,
+  but remains `EXTERNAL_BLOCKED` on Linux and `BLOCKED_BY_OWNER_AUTHORIZATION` on Windows login.
+  Do not count failed macOS `-01` or `-02` as PASS.
+- [ ] Before Phase 5, separately consider a formal Agent Bus client release (likely v0.3.1) carrying
+  `agent-bus.listen.on-argv.v1`; do not publish or redesign Agent Bus through RTS-046.
 
-Current last passed TaskCard gate is RTS-045; Phase 3 and Phase 4A are complete, and the local
+Current last passed TaskCard gate is RTS-047; Phase 3 and Phase 4A are complete, and the local
 Phase 4B lifecycle conformance gate is closed. Phase 4B remains open for real native-manager and
 Windows login-lifecycle acceptance. Independent review rejected a new lifecycle abstraction and
-closed two exact-identity defects through the bounded RTS-045 repair. ADR-0006 selects
+closed exact-identity defects through RTS-045 and the real venv re-entry defect through RTS-047.
+RTS-046 now proves macOS and non-disruptive Windows real-manager evidence but remains blocked before
+Linux and Windows login completion. ADR-0006 selects
 `PYTHON + NATIVE LAUNCHER` with a checksummed atomic-file RunStore/per-invocation journal, one
 logical writer and no physical Coordinator. The semantic contract and 39-case/11-outcome matrix
 are Frozen. RTS-030 added strict
@@ -87,13 +96,15 @@ receive/preparation boundary; RTS-041 adds the exact Store-owned outgoing intent
 attempt-before-I/O adapter. RTS-042-01 remains failed and permanently excluded from PASS;
 RTS-042-02 alone proves the fresh isolated Mac-to-Windows request/result, two real children, two
 ACKed events and `0/0 -> 0/0`. Rust remains a comparison oracle, RTS-023 does not enter, SQLite is
-not selected, and launcher work remains deferred. The next safe action is separately frozen RTS-046
-fresh isolated three-OS native-manager acceptance. Agent Bus may be assumed available but is not
-installed or absorbed; Windows logout/login or reboot requires an explicit owner window. No
+not selected, and launcher work remains deferred. The next safe action is another fresh RTS-046
+identity after an already-lingering/configured Linux user and an explicit Windows logout/login
+window exist. Agent Bus is not installed or absorbed by AWF. Before Phase 5, consider a small formal
+client release (likely v0.3.1) for the already-implemented structured argv contract; publishing is
+not authorized. Phase 5 is not eligible. No
 production/retained Bus operation, production Store adoption or dual write, default, migration,
 release, retained-event operation or destructive cleanup is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-045 closeout](docs/tasks/runtime-v2-rts-045-exact-lifecycle-identity-repair-report.md).
+[RTS-046 blocked report](docs/tasks/runtime-v2-rts-046-native-manager-acceptance-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

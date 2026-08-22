@@ -65,19 +65,19 @@ After independent Review and CI PASS, closeout may additionally update:
 
 ## Acceptance criteria
 
-- [ ] Task ID equals branch leaf and every changed path is within frozen scope.
-- [ ] Native action argv and install record preserve an absolute venv shim path byte-for-byte and do
+- [x] Task ID equals branch leaf and every changed path is within frozen scope.
+- [x] Native action argv and install record preserve an absolute venv shim path byte-for-byte and do
       not replace it with the resolved base interpreter path.
-- [ ] Executable SHA-256 validation still reads the invoked path and rejects byte drift/missing files.
-- [ ] launchd, systemd and Task Scheduler render the same preserved interpreter identity.
-- [ ] Existing current install, upgrade, exact-stop and Windows identity tests remain green.
-- [ ] One focused symlink regression protects argv, definition and install-record/current validation;
+- [x] Executable SHA-256 validation still reads the invoked path and rejects byte drift/missing files.
+- [x] launchd, systemd and Task Scheduler render the same preserved interpreter identity.
+- [x] Existing current install, upgrade, exact-stop and Windows identity tests remain green.
+- [x] One focused symlink regression protects argv, definition and install-record/current validation;
       no broad matrix or duplicated lifecycle fixture is added.
-- [ ] Production net growth is at most 25 nonblank/noncomment lines; focused test growth at most 100;
+- [x] Production net growth is at most 25 nonblank/noncomment lines; focused test growth at most 100;
       no dependency or representation is added.
-- [ ] Focused/full tests, Ruff/format and exact-head cross-platform CI pass.
-- [ ] Independent L3 Gate Review returns `PASS`; semantic findings receive focused re-review.
-- [ ] RTS-046 resumes only with a fresh acceptance identity; failed scope `-01` remains failure
+- [x] Focused/full tests, Ruff/format and exact-head cross-platform CI pass.
+- [x] Independent L3 Gate Review returns `PASS`; semantic findings receive focused re-review.
+- [x] RTS-046 resumes only with a fresh acceptance identity; failed scope `-01` remains failure
       evidence and never contributes to PASS.
 
 ## Verification

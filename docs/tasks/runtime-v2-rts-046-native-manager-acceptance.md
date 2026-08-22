@@ -116,20 +116,20 @@ After all required evidence and independent Review, closeout may additionally up
 
 - [ ] Task ID equals branch leaf; repository changes remain documentation/evidence only and in scope.
 - [ ] Every host proves exact candidate/application/profile/manager-definition identity before start.
-- [ ] macOS launchd completes the full real action sequence with correct running/restart/stop facts.
+- [x] macOS launchd completes the full real action sequence with correct running/restart/stop facts.
 - [ ] Linux systemd-user completes the full sequence, including a new exact restart incarnation.
-- [ ] Windows Task Scheduler completes install/start/status/logs/restart/status/exact-stop/uninstall,
+- [x] Windows Task Scheduler completes install/start/status/logs/restart/status/exact-stop/uninstall,
       and session-B evidence proves the session-A listener survived SSH exit.
-- [ ] Windows logout/login evidence is either real and owner-authorized or explicitly remains
+- [x] Windows logout/login evidence is either real and owner-authorized or explicitly remains
       `BLOCKED_BY_OWNER_AUTHORIZATION`; it is never simulated or inferred.
-- [ ] All stops are exact-bound; PID/name/liveness/desired state alone never authorizes signaling.
-- [ ] No Agent Bus business event, payload, ACK/retry/requeue or model invocation occurs.
-- [ ] Normal `run/status/stop` boundaries and optional Finding separation remain unchanged.
-- [ ] Credential/private-path-safe evidence records environments, commands, observations, limits and
+- [x] All stops are exact-bound; PID/name/liveness/desired state alone never authorizes signaling.
+- [x] No Agent Bus business event, payload, ACK/retry/requeue or model invocation occurs.
+- [x] Normal `run/status/stop` boundaries and optional Finding separation remain unchanged.
+- [x] Credential/private-path-safe evidence records environments, commands, observations, limits and
       exact cleanup state without publishing secrets or private endpoints.
-- [ ] Independent Gate Review returns `PASS` only if every Phase 4B criterion is proved; otherwise it
+- [x] Independent Gate Review returns `PASS` only if every Phase 4B criterion is proved; otherwise it
       returns the exact blocked status without weakening the contract.
-- [ ] Phase 5 is not started under any outcome.
+- [x] Phase 5 is not started under any outcome.
 
 ## Failure handling
 
@@ -148,3 +148,52 @@ After all required evidence and independent Review, closeout may additionally up
 - one independent Gate ReviewReport;
 - aligned HANDOFF, ROADMAP and plan status;
 - Phase 4B `PASS` only with genuine Windows login evidence, otherwise preserved owner block.
+
+## Owner-authorized client-skew continuation
+
+After scopes `-01` and `-02` were preserved as failures, the owner independently verified and
+authorized a client-only compatibility continuation:
+
+- **Fresh acceptance scope**: `rts046-live-20260822-03`
+- **Agent Bus repository**: `atongrun/agent-bus`, default branch `master`
+- **Exact compatible source**: `6ca8f2812be0286607bbbe3f14cc51783637b0b5`
+- **Producer contract**: `awf.handler-argv.v1`
+- **Consumer contract**: `agent-bus.listen.on-argv.v1`
+
+The compatible client must be installed into new isolated macOS and Windows environments. Existing
+client installations, server code/deployment/database, endpoint/token values, retained events,
+queues and ACK state are read-only. The disposable acceptance profiles must bind the exact isolated
+client executable and prove `--on-argv` before manager start. No legacy `--on` fallback exists.
+
+Agent Bus master still declares project version 0.3.0 while the formal v0.3.0 tag lacks this
+contract, so capability plus exact source/module provenance is required. A small formal client
+release is a later productization item; RTS-046 does not publish one.
+
+Linux and Windows logout/login boundaries are unchanged. Scope `-03` may proceed through compatible
+client setup and non-disruptive manager actions, but may not enable Linux linger or trigger Windows
+logout/login without their existing prerequisites/owner window.
+
+## Owner-authorized final acceptance window
+
+The owner subsequently authorized one bounded continuation:
+
+- **Fresh scope**: `rts046-live-20260822-04`
+- **Linux host/user**: SSH alias `la-codex-node`, exact principal `root` (`uid=0`)
+- **Original Linux linger**: `no`; restore to `no` after acceptance
+- **Existing enabled user-unit count**: 8; no existing unit may be changed
+- **Disposable Linux root**: `$HOME/.local/share/awf-rts046-linux-r4-20260822`
+- **Disposable systemd unit**: `awf-node-rts046-linux-systemd-20260822-04.service`
+- **Disposable profile name**: `rts046-linux-systemd-20260822-04`
+- **Windows profile/task**: `rts046-win-task-20260822-04`
+
+Pre-mutation audit proved the Linux root, unit and installed-profile name registry absent. For this
+scope only, linger may be enabled for the selected Linux principal, temporary exact-master Agent Bus
+client/config and Workflow resources may be created, and the full lifecycle sequence may run. After
+exact stop/uninstall, remove only this root/unit/registry and restore linger to `no`; verify the
+enabled-unit count remains 8.
+
+The owner also authorized one Windows logout/login sequence for the `-04` Task Scheduler identity.
+Before logout, capture exact definition/install/process/lease/launch/creation identity. Logout may
+terminate SSH and is not itself failure. After the owner logs back in, resume the same `-04` identity,
+verify continuity/recovery, then exact stop/uninstall and absence. Reboot and security/login-policy
+changes remain prohibited.
