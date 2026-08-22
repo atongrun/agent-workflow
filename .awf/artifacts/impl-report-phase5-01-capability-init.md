@@ -106,14 +106,14 @@ tool. Unsupported selections fail before profile/workspace/machine-config mutati
 - TaskCard boundary Review: initial `REQUEST_CHANGES` on two ambiguity findings; repaired TaskCard
   `8ba54c1`; focused re-review `PASS`. Owner model-selection clarification `7a0abb2` then received a
   second focused boundary `PASS` without widening the milestone.
-- Focused Phase 5-01 suite: `466 passed, 2 skipped`.
+- Focused Phase 5-01 suite: `470 passed, 2 skipped`.
 - Full repository suite after the Runtime export repair and model-binding clarification:
-  `909 passed, 5 skipped`.
+  `913 passed, 5 skipped`.
 - Ruff check and format check: PASS across the repository.
 - Compileall and `git diff --check`: PASS.
 - Resource validation: roles `6/6`, workflows `4/4`, examples `3/3` PASS.
 - Fresh wheel from unrelated cwd: PASS for exact wheel SHA-256
-  `113357039961e5ef78665458cc2fa30e73182090fbd8ef8982013d8ed1e0519c`.
+  `a9d44e394df6bc68a1f306b56d949a64213e89b289ca21f318499609f8f2d9b5`.
 - No provider/model invocation, Agent Bus event, ACK/retry/requeue, remote service, lifecycle
   manager or retained state operation was used for acceptance.
 
@@ -124,6 +124,14 @@ were initially added to `agent_workflow.runtime.__all__`. The repair removed bot
 kept the existing public package boundary unchanged: provider use remains through the existing
 `render_provider_invocation`, and trusted TaskCard persistence is an explicit submodule function.
 Focused boundary tests and the full suite then passed.
+
+The first independent L2 candidate Review returned `REQUEST_CHANGES` for one partial-init boundary:
+profile files were replaced one-by-one before machine config, so a later write failure could split
+old/new bindings. The bounded repair stages and validates all profile/config files, uses exact
+same-filesystem backups during one recoverable batch, validates the final machine binding before
+discarding backups, and restores byte-identical predecessors on any failure. A four-row table-driven
+fault test covers fresh/replace state crossed with mid-profile/machine-config failure. No Workflow,
+Runtime authority or lifecycle semantics changed.
 
 ## Limitations and next boundary
 

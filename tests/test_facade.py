@@ -638,3 +638,78 @@ def test_machine_config_rejects_profile_binding_drift(monkeypatch, tmp_path: Pat
 
     with pytest.raises(facade.FacadeError, match="profile binding drifted"):
         facade.load_machine(repo)
+
+
+@pytest.mark.parametrize("replace_existing", [False, True])
+@pytest.mark.parametrize("failure_target", ["reviewer-profile", "machine-config"])
+def test_machine_init_file_batch_rolls_back_fresh_and_replace_failures(
+    monkeypatch,
+    tmp_path: Path,
+    replace_existing: bool,
+    failure_target: str,
+) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+    capabilities = _capabilities(tmp_path, "opencode")
+    common = {
+        "repo": repo,
+        "machine": "lab",
+        "project": "sample",
+        "capabilities": capabilities,
+        "lifecycle": "managed",
+        "upstream_repo": "",
+        "head_repo": "",
+        "upstream_remote": "upstream",
+        "head_remote": "fork",
+        "base_ref": "main",
+        "finding_enabled": False,
+    }
+    if replace_existing:
+        facade.initialize_machine(
+            **common,
+            bindings={
+                "coder": ("opencode", "old-model"),
+                "reviewer": ("opencode", "old-model"),
+            },
+            replace=False,
+        )
+
+    profile_paths = {
+        role: config_home / "profiles" / f"sample-lab-{role}.json" for role in ("coder", "reviewer")
+    }
+    machine_path = facade.default_machine_config_path(repo)
+    watched = (*profile_paths.values(), machine_path)
+    before = {path: path.read_bytes() for path in watched if path.exists()}
+    target = profile_paths["reviewer"] if failure_target == "reviewer-profile" else machine_path
+    real_replace = facade._replace_file
+
+    def fail_selected_stage(source: Path, destination: Path) -> None:
+        if Path(destination) == target and "backup-" not in Path(source).name:
+            raise OSError("injected batch commit failure")
+        real_replace(Path(source), Path(destination))
+
+    monkeypatch.setattr(facade, "_replace_file", fail_selected_stage)
+
+    with pytest.raises(facade.FacadeError, match="rolled back"):
+        facade.initialize_machine(
+            **common,
+            bindings={
+                "coder": ("opencode", "new-model"),
+                "reviewer": ("opencode", "new-model"),
+            },
+            replace=replace_existing,
+        )
+
+    if replace_existing:
+        assert {path: path.read_bytes() for path in watched} == before
+        restored = facade.load_machine(repo)
+        assert {profile.values["model"] for profile in restored.profiles} == {"old-model"}
+    else:
+        assert all(not path.exists() for path in watched)
+        assert not (config_home / "workspaces" / "sample-lab-coder").exists()
+        assert not (config_home / "workspaces" / "sample-lab-reviewer").exists()
+    assert not list((config_home / "profiles").glob("awf-init-profiles-*"))
+    assert not list(machine_path.parent.glob(".machine.json.stage-*"))
+    assert not list(machine_path.parent.glob(".machine.json.backup-*"))

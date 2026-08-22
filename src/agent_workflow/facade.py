@@ -391,6 +391,48 @@ def _write_machine_config(path: Path, value: dict[str, object], *, replace: bool
         temporary.unlink(missing_ok=True)
 
 
+def _replace_file(source: Path, destination: Path) -> None:
+    os.replace(source, destination)
+
+
+def _commit_machine_files(
+    files: tuple[tuple[Path, Path], ...],
+    validate: Callable[[], MachineContract],
+) -> MachineContract:
+    """Commit staged config files as one recoverable batch or restore their exact predecessors."""
+    transaction = uuid.uuid4().hex
+    backups: list[tuple[Path, Path]] = []
+    committed: list[Path] = []
+    try:
+        for staged, destination in files:
+            if destination.exists() or destination.is_symlink():
+                backup = destination.with_name(f".{destination.name}.backup-{transaction}")
+                _replace_file(destination, backup)
+                backups.append((destination, backup))
+            _replace_file(staged, destination)
+            committed.append(destination)
+        contract = validate()
+    except Exception as exc:
+        for destination in reversed(committed):
+            destination.unlink(missing_ok=True)
+        restore_error: OSError | None = None
+        for destination, backup in reversed(backups):
+            try:
+                _replace_file(backup, destination)
+            except OSError as restore_exc:
+                restore_error = restore_exc
+        if restore_error is not None:
+            raise FacadeError(
+                "machine config rollback is incomplete; preserve backup files and inspect"
+            ) from restore_error
+        if isinstance(exc, FacadeError):
+            raise
+        raise FacadeError("machine config batch commit failed and was rolled back") from exc
+    for _destination, backup in backups:
+        backup.unlink(missing_ok=True)
+    return contract
+
+
 def initialize_machine(
     *,
     repo: Path,
@@ -468,6 +510,10 @@ def initialize_machine(
             raise FacadeError(
                 f"machine configuration already exists: {existing[0]}; pass --replace"
             )
+    elif machine_path.exists():
+        load_machine(source)
+    elif any(path.exists() for path in destinations.values()):
+        raise FacadeError("--replace requires an existing exact machine config for these profiles")
 
     values_by_role: dict[str, dict[str, object]] = {}
     workspaces: dict[str, Path] = {}
@@ -496,31 +542,18 @@ def initialize_machine(
         values_by_role[role] = values
 
     profile_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="awf-init-profiles-", dir=profile_root) as directory:
-        for role, values in values_by_role.items():
-            _write_profile(Path(directory) / f"{role}.json", values, replace=True)
-
-    staged: dict[str, Path] = {}
-    created: list[Path] = []
+    staged_profile_root = Path(
+        tempfile.mkdtemp(prefix="awf-init-profiles-", dir=profile_root)
+    ).resolve()
+    machine_path.parent.mkdir(parents=True, exist_ok=True)
+    staged_machine_path = machine_path.with_name(f".{machine_path.name}.stage-{uuid.uuid4().hex}")
     try:
-        for role, destination in workspaces.items():
-            temporary = _stage_role_workspace(
-                source,
-                destination,
-                expected_head=expected_head,
-                upstream_remote=upstream_remote,
-                upstream_url=upstream_url,
-                head_remote=head_remote,
-                head_url=head_url,
+        staged_profiles = tuple(
+            _write_profile(
+                staged_profile_root / f"{role}.json",
+                values_by_role[role],
+                replace=True,
             )
-            if temporary is not None:
-                staged[role] = temporary
-        for role, temporary in staged.items():
-            destination = workspaces[role]
-            os.replace(temporary, destination)
-            created.append(destination)
-        profiles = tuple(
-            _write_profile(destinations[role], values_by_role[role], replace=replace)
             for role in ROLE_ORDER
             if role in values_by_role
         )
@@ -533,22 +566,58 @@ def initialize_machine(
             "finding_enabled": finding_enabled,
             "roles": {
                 profile.role: {
-                    "profile": str(profile.path.resolve()),
+                    "profile": str(destinations[profile.role].resolve()),
                     "profile_sha256": profile.digest,
                     "workspace": str(profile.repo),
                     "tool": str(profile.values["tool"]),
                     "model_selection": model_selections[profile.role],
                 }
-                for profile in profiles
+                for profile in staged_profiles
             },
         }
-        _write_machine_config(machine_path, config, replace=replace)
+        _write_machine_config(staged_machine_path, config, replace=True)
     except Exception:
-        for temporary in staged.values():
+        shutil.rmtree(staged_profile_root, ignore_errors=True)
+        staged_machine_path.unlink(missing_ok=True)
+        raise
+
+    staged_workspaces: dict[str, Path] = {}
+    created_workspaces: list[Path] = []
+    try:
+        for role, destination in workspaces.items():
+            temporary = _stage_role_workspace(
+                source,
+                destination,
+                expected_head=expected_head,
+                upstream_remote=upstream_remote,
+                upstream_url=upstream_url,
+                head_remote=head_remote,
+                head_url=head_url,
+            )
+            if temporary is not None:
+                staged_workspaces[role] = temporary
+        for role, temporary in staged_workspaces.items():
+            destination = workspaces[role]
+            os.replace(temporary, destination)
+            created_workspaces.append(destination)
+        files = tuple(
+            (staged_profile_root / f"{role}.json", destinations[role])
+            for role in ROLE_ORDER
+            if role in values_by_role
+        ) + ((staged_machine_path, machine_path),)
+        contract = _commit_machine_files(
+            files,
+            lambda: load_machine(source),
+        )
+    except Exception:
+        for temporary in staged_workspaces.values():
             shutil.rmtree(temporary, ignore_errors=True)
-        for destination in created:
+        for destination in created_workspaces:
             shutil.rmtree(destination, ignore_errors=True)
         raise
+    finally:
+        shutil.rmtree(staged_profile_root, ignore_errors=True)
+        staged_machine_path.unlink(missing_ok=True)
 
     warnings: list[str] = []
     if "coder" in bindings and "reviewer" in bindings:
@@ -564,7 +633,7 @@ def initialize_machine(
             )
         elif bindings["coder"][0] == bindings["reviewer"][0]:
             warnings.append("Coder and Reviewer use the same agent tool installation.")
-    return load_machine(source), tuple(warnings)
+    return contract, tuple(warnings)
 
 
 def load_machine(repo: Path) -> MachineContract:
