@@ -277,3 +277,42 @@ RustDesk was disconnected, and execution stopped as `WAITING_FOR_OWNER_PHYSICAL_
 `-05` was not created, no logout occurred, and the post-unlock Clash/Agent Bus network check was not
 started. No RustDesk, Windows security, firewall, lifecycle, Agent Bus or Runtime configuration was
 changed.
+
+## Scope `rts046-live-20260822-05`
+
+### Windows pre-logout checkpoint
+
+The owner accepted the preserved RustDesk recovery evidence and authorized exactly one fresh
+logout/login sequence without another lock/reconnect preflight. A new disposable root, source,
+venv, credential copy, profile, state, log and Task Scheduler identity were created; no `-04`
+resource was reused or rewritten. The installed Runtime source was exact clean reviewed commit
+`59123f262ce4a2e2ef719af1efdc5fd5342f9fb3`. The isolated Agent Bus source remained exact
+`6ca8f2812be0286607bbbe3f14cc51783637b0b5`, and its bound executable proved `--on-argv` before
+install/start.
+
+The first doctor denied the newly copied credential file because it inherited an ACL. Only that new
+disposable file was changed to the required explicit current-user ACL; the next strict doctor passed
+with `configured=true`, `connected=true`, Agent Bus layer `pass`, model layer `not_applicable` and
+`model_invoked=false`. No manager or lifecycle state existed before that repair.
+
+Immediately before the authorized logout, exact evidence recorded:
+
+- profile `rts046-win-task-20260822-05`, profile SHA-256
+  `3ea4f0740128fc5a6558a7707108bd311193467b9d72ae06930e9416e6960908`;
+- state-root SHA-256 `99e48a6304698bebc8de27975fd45527510712a8e04e3f77eafb586158a0bd25`;
+- install manager `task-scheduler`, exact manager ID, current definition digest
+  `846294511ddc07cb3ee4bbca84f72f7a3042e1ce498f4abe485bc7e120453d4c` and matching bytes;
+- exact venv Python digest present, action argv bound to that Python, the immutable installed profile
+  snapshot, task reconcile and the `-05` log;
+- process PID `11028` and lease PID `11028`, identical launch ID
+  `55bf5a080cb742568f340746f49cd4aa` and matching profile/repo/state-root identity;
+- recorded/live Windows creation FILETIME `134318495073804833` exact;
+- desired `running`, generation 2; factual installation `current`, running observation `running`;
+- exactly one `-05` Scheduled Task at root path, `Interactive` logon type, two triggers and running
+  state;
+- credential-safe listener log with 13 lines, seven listen/connect markers and zero `ERROR`; and
+- current console user matched the installer principal in active console session 2.
+
+No model, provider, business event, ACK/retry/requeue/recovery or Phase 5 action occurred. This
+checkpoint is `READY_FOR_AUTHORIZED_LOGOUT`; only native `WTSLogoffSession` for the revalidated
+active console session may advance it.

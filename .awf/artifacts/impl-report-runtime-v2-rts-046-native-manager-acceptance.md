@@ -270,3 +270,26 @@ existing session and verify recovered normal desktop control. This mandatory pre
 stopped as `WAITING_FOR_OWNER_PHYSICAL_ACCESS`. RustDesk was disconnected; fresh `-05` was not
 created, no logout occurred, and no Clash/Agent Bus post-unlock network check or lifecycle mutation
 started. No RustDesk, security, firewall, Agent Bus or Runtime configuration changed.
+
+## Fresh Windows `-05` pre-logout evidence
+
+The owner accepted the existing RustDesk recovery evidence and authorized one fresh logout/login
+without another preflight. Scope `rts046-live-20260822-05` created only a new `%TEMP%` root, exact
+clean reviewed Workflow source `59123f2`, fresh venv/config/profile/state/log and Task Scheduler
+identity. It reused only the already-proved isolated compatible Agent Bus client at exact source
+`6ca8f281...`; `--on-argv` passed before install/start. `-04` remained untouched.
+
+The fresh config copy initially failed strict doctor because its ACL was inherited. Only the new
+copy was hardened to an explicit current-user ACL; doctor then passed configured/connected and
+model-not-applicable with no model invocation. Install/start produced one exact running identity:
+
+- profile digest `3ea4f074...`, state-root digest `99e48a63...`, definition digest `84629451...`;
+- process/lease PID `11028`, launch ID `55bf5a080cb742568f340746f49cd4aa` and matching root/profile/repo;
+- recorded/live creation FILETIME `134318495073804833` exact;
+- desired running generation 2, current installation and running observation;
+- one Interactive root Scheduled Task with two triggers; and
+- 13 credential-safe log lines, seven listen/connect markers and zero errors.
+
+Installer and active console user matched in session 2. No event, provider, model, ACK/retry/requeue
+or Phase 5 action occurred. The scope is `READY_FOR_AUTHORIZED_LOGOUT` and may advance only through
+the one authorized native session-2 logout.

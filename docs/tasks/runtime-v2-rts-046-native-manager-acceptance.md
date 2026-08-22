@@ -197,3 +197,20 @@ Before logout, capture exact definition/install/process/lease/launch/creation id
 terminate SSH and is not itself failure. After the owner logs back in, resume the same `-04` identity,
 verify continuity/recovery, then exact stop/uninstall and absence. Reboot and security/login-policy
 changes remain prohibited.
+
+## Owner-authorized fresh RTS-048 validation
+
+The owner accepted the preserved RustDesk Session 0 and locked-screen reconnect evidence and
+authorized exactly one new Windows logout/login sequence without another preflight:
+
+- **Fresh scope**: `rts046-live-20260822-05`
+- **Windows profile**: `rts046-win-task-20260822-05`
+- **Windows route**: `control:rts046-win-lifecycle-20260822-05`
+- **Disposable root**: `%TEMP%\awf-rts046-win-r5-20260822`
+- **Reviewed Runtime code**: `59123f262ce4a2e2ef719af1efdc5fd5342f9fb3`
+- **Compatible Agent Bus source**: `6ca8f2812be0286607bbbe3f14cc51783637b0b5`
+
+This scope alone may perform one exact Task Scheduler install/start, native logout, RustDesk login,
+post-login verification, exact stop and uninstall. It must preserve `-04` as failed evidence, must
+not attempt a second logout, and must stop on any unavailable/ambiguous login credential or identity.
+Linux remains `EXTERNAL_BLOCKED` and is not part of this continuation.
