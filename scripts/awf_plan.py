@@ -44,6 +44,7 @@ from agent_workflow.plan_loop import (
     validate_plan_start_payload,
     validate_taskcard_binding,
 )
+from agent_workflow.resources import authority_manifest_path
 from agent_workflow.runtime.architect import persist_architect_taskcard
 from agent_workflow.runtime.artifact import ArtifactError
 from agent_workflow.runtime.renderers import render_provider_invocation
@@ -154,6 +155,19 @@ def start_plan(
     )
     store = PlanRunStore(profile.state_root, str(payload["run_id"]))
     store.create(payload, repo=root)
+    preflight_args = argparse.Namespace(
+        config=str(profile.config_path),
+        state_root=str(profile.state_root),
+        authority_manifest=str(authority_manifest_path()),
+        upstream_remote=str(profile.values.get("upstream_remote", "upstream")),
+        head_remote=str(profile.values.get("head_remote", "fork")),
+        head_repo=str(profile.values.get("head_repo", "")),
+        gh_bin=str(profile.values.get("gh_bin", "gh")),
+        model_tool=str(profile.values.get("tool_executable", "")),
+    )
+    _checkout_plan_main(profile.repo, fact)
+    _run_authoring_fast(preflight_args, store=store, repo=profile.repo)
+    _run_dispatch_preflight(preflight_args, store=store, repo=profile.repo)
     store.update(status="start_sending")
     try:
         _send_plan_start(profile, payload)
@@ -223,7 +237,7 @@ def _preflight_args(
         upstream_remote=args.upstream_remote,
         head_remote=args.head_remote,
         gh_bin=args.gh_bin,
-        model_tool=os.environ.get("AWF_PI_BIN", "pi"),
+        model_tool=getattr(args, "model_tool", "") or os.environ.get("AWF_PI_BIN", "pi"),
         model_tool_policy="required",
         run_id="",
         profile="loop",
@@ -494,7 +508,13 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
                 repo=current_repo,
             ),
         )
-    except (DispatchError, PlanOperationError):
+    except PlanOperationError as exc:
+        store.update(
+            status="dispatch_blocked",
+            stop_reason=str(exc),
+        )
+        raise
+    except DispatchError:
         store.update(
             status="dispatch_ambiguous",
             stop_reason="business dispatch failed or became ambiguous; no automatic retry",
