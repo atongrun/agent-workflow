@@ -237,3 +237,21 @@ The system had no `logoff.exe`, so the first exact-session command failed before
 same-shell identity check passed, and native `WTSLogoffSession` returned success for console session
 1. This proves logout dispatch, not recovery. The acceptance is now `WAITING_FOR_OWNER_LOGIN` and
 must resume the unchanged `-04` profile/task/state after the owner logs in interactively.
+
+### Windows post-login failure
+
+After real login, the same task/profile/definition/desired identity remained. Console session 2 was
+the legitimate successor to session 1. The old process and lease records still matched each other,
+but the original process was dead; status reported `stale`.
+
+The logon trigger attempted reconcile while Agent Bus health was transiently unavailable and exited
+1. A subsequent doctor passed, but scheduled periodic triggers did not form a new incarnation in two
+bounded waits. The old PID was later reused: live creation FILETIME differed from the recorded
+FILETIME, and exact identity correctly refused it.
+
+Normal stop wrote desired `stopped`, generation 3, then failed closed before any signal because the
+listener was not an exact live incarnation. The Scheduled Task, install record, stale process/lease
+and logs remain preserved; no restart, manual record cleanup or uninstall was attempted.
+
+`-04` therefore fails the logout/login acceptance. A narrow L3 repair is required before a fresh
+identity may continue.

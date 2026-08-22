@@ -230,3 +230,26 @@ The system did not provide `logoff.exe`; the first command therefore failed befo
 After revalidating the same profile/launch/lease/state-root/creation/session identity, the native
 `WTSLogoffSession(sessionId=1)` API returned success. This records logout dispatch only, not login
 continuity. Current status is `WAITING_FOR_OWNER_LOGIN`; do not create or replace the `-04` identity.
+
+### Windows post-login failure
+
+After the owner completed normal interactive login, the same `-04` identity remained installed with
+desired `running`, generation 2 and the exact definition/profile/state binding. Console session
+changed legitimately from 1 to 2. The old process/lease record remained internally consistent but
+its process was dead; status correctly reported `stale` and did not authorize it as running.
+
+The logon-trigger reconcile ran before networking was ready and exited 1 with only
+`Agent Bus health probe failed`. A later doctor from SSH passed, proving the readiness failure was
+transient. The existing periodic Task Scheduler triggers nevertheless did not create a new
+incarnation during two bounded observation windows; LastRun remained the logon attempt, result 1 and
+missed-run count increased.
+
+The old recorded PID was then reused by an unrelated process. Live creation FILETIME
+`134318441283700333` did not match recorded `134318435738857477`; exact status remained stale. A
+normal `awf node stop` wrote desired `stopped`, generation 3, then failed closed before signal with
+`managed stop refused an unbound live listener`. No PID/task signal, record edit, restart or uninstall
+occurred. Task/record/lease/log/install evidence remains preserved.
+
+This is a new L3 lifecycle defect: post-login transient readiness plus PID reuse leaves no safe
+automatic reconcile or exact-stop cleanup convergence. Freeze a bounded repair before any new
+acceptance identity.
