@@ -1,9 +1,9 @@
 # RTS-046 Native-Manager Acceptance ImplementationReport
 
-## Current status
+## Final status
 
-`REQUEST_CHANGES` after the first real macOS start; acceptance evidence preserved. Phase 4B is not
-complete.
+`EXTERNAL_BLOCKED / evidence preserved`, with Windows login evidence additionally
+`BLOCKED_BY_OWNER_AUTHORIZATION`. Phase 4B is not complete.
 
 No model, business event, provider, Runtime Core, Agent Bus mutation, Finding workflow, remote
 manager or Windows session operation occurred.
@@ -63,12 +63,54 @@ only the unique LaunchAgent definition, install record and registries. Post-unin
 
 No stronger kill, PID scan, manual record edit or shared configuration deletion occurred.
 
-## Required repair gate
+## Bounded repair and fresh continuation
 
-Freeze a bounded RTS-047 repair that preserves the absolute venv interpreter path without resolving
-its symlink for native re-entry, while still hashing the executable bytes and binding exact action
-argv. It must cover launchd/systemd/Task Scheduler rendering and current install validation, add one
-focused venv-symlink regression, and change no record format or external boundary.
+RTS-047 preserved the absolute venv interpreter path without resolving its symlink, retained
+executable hashing/exact action argv, covered all three renderer formats, passed independent L3
+Review, full local tests and exact-head cross-platform CI.
 
-After RTS-047 independent Review/CI PASS, RTS-046 must restart with fresh acceptance identities.
 Historical failed macOS scope remains failure evidence and cannot contribute to PASS.
+
+## Fresh scope `rts046-live-20260822-02`
+
+A new venv, profile, route, state/log roots, installed snapshot and LaunchAgent identity were created
+after RTS-047 PASS. Doctor again proved configured/connected with no model and no installed/running
+state. Install and start reached the installed AWF listener, confirming native venv re-entry.
+
+The listener then exited before creating durable process/lease acceptance because the independently
+installed Agent Bus CLI rejected structured `--on-argv` as unsupported and offered only legacy
+`--on`. Fallback was forbidden: legacy shell handler syntax would weaken the accepted structured argv
+boundary. Factual status showed installed current, running false, no run/checkpoint/model/terminal
+facts, clean exact candidate and a payload-blind pending count of zero. No explicit queue/history or
+payload command was run.
+
+Normal exact uninstall removed only the unique `-02` definition, install record and registries.
+Definition/install/process/lease absence passed; the credential-safe listener log remains retained.
+
+## Windows pre-mutation result
+
+Read-only entry checks proved Python 3.12, Git, AWF config, Agent Bus, running Task Scheduler and an
+SSH identity equal to the active interactive-console user. A direct capability check then proved the
+installed Agent Bus supports `--ack-on-receive` but not `--on-argv`. No Task Scheduler definition,
+profile, state, process, lease or event was created. Windows post-SSH/restart/stop therefore did not
+begin, and logout/login remains `BLOCKED_BY_OWNER_AUTHORIZATION`.
+
+## Linux pre-mutation result
+
+Multiple reachable existing Linux user hosts were audited without modification. Suitable Python
+hosts had systemd-user running, but none had existing linger enabled and none had an existing AWF
+configuration/Agent Bus client binding. One configured host was unavailable. The frozen TaskCard
+forbids enabling linger or deploying/configuring Agent Bus, so no checkout, profile, service,
+process, lease or event was created.
+
+## Failure classification and next action
+
+- macOS/Windows: external Agent Bus version/capability mismatch at the structured listener boundary;
+- Linux: external prerequisite absent (existing linger and AWF/Bus configuration);
+- Windows login: explicit owner-authorization window absent.
+
+Agent Workflow does not replace or auto-deploy Agent Bus. The legal next action is external/operator
+prerequisite alignment: provide an independently versioned Agent Bus client supporting `--on-argv`
+on macOS/Windows, an already-lingering/configured Linux user host, and a scheduled Windows
+logout/login window. Only then may RTS-046 continue under another fresh identity. No Phase 5 work is
+authorized.

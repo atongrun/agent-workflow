@@ -632,6 +632,19 @@ cell and aggregate. Local lifecycle conformance is closed without a new record, 
 external operation. Phase 4B remains open for separately frozen RTS-046 fresh real three-OS
 native-manager and current Windows login-lifecycle acceptance.
 
+RTS-046 result: **EXTERNAL_BLOCKED / evidence preserved**; Windows login is additionally
+`BLOCKED_BY_OWNER_AUTHORIZATION`. The first fresh macOS scope exposed native venv re-entry resolving
+to a base interpreter. Bounded RTS-047 preserved the invoked venv path, passed independent L3
+Review, 877 local tests, ordinary CI `32547035193` and Binary Feasibility `32547035173`. A second
+fresh macOS scope then entered installed AWF and stopped at an independent Agent Bus capability
+boundary: existing macOS and Windows clients do not support required structured `--on-argv`.
+Audited Linux users lacked already-enabled linger plus existing AWF/Bus configuration; none was
+modified. Both macOS scopes were normally uninstalled with failure logs retained; Linux/Windows
+created no manager state and no model/business event occurred. Phase 4B remains open. Continuation
+requires external Agent Bus version alignment, an already-lingering/configured Linux user host, an
+owner-scheduled Windows logout/login window and another fresh RTS-046 identity. Phase 5 must not
+start.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -904,9 +917,12 @@ convergence evidence. RTS-043's independent adjudication found the combined Phas
 semantically complete; final focused re-review passed after documentation-only closeout findings
 were repaired. Phase 4A is closed. RTS-044/045 then closed local Phase 4B lifecycle conformance after
 repairing strict process-root and manager-target identity joins; no new lifecycle abstraction or
-state representation was added. Phase 4B remains open. The next action is separately frozen RTS-046
-fresh isolated three-OS native-manager acceptance, subject to an explicit owner window before any
-Windows logout/login or reboot. No production/retained Bus operation, Store adoption or dual write,
+state representation was added. RTS-047 then closed the venv native re-entry defect exposed by the
+first real LaunchAgent scope. RTS-046 remains `EXTERNAL_BLOCKED`: the existing macOS/Windows Agent
+Bus clients lack `--on-argv`, no audited Linux user already has both linger and AWF/Bus configuration,
+and Windows logout/login lacks an owner window. Phase 4B remains open and Phase 5 is not eligible.
+The next action is external prerequisite alignment followed by a fresh RTS-046 identity, not an AWF
+Bus installer or boundary fallback. No production/retained Bus operation, Store adoption or dual write,
 default switch, production state migration, native-launcher acceptance, release, retained-event
 operation or destructive cleanup is authorized.
 

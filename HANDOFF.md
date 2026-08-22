@@ -264,6 +264,24 @@ production change. Phase 4B itself remains open. The next safe milestone is sepa
 exists but may not install it or operate business events. Windows logout/login or reboot remains a
 disruptive external action requiring an explicitly scheduled owner window.
 
+RTS-046 is now **EXTERNAL_BLOCKED / evidence preserved**; Windows logout/login is separately
+`BLOCKED_BY_OWNER_AUTHORIZATION`. Fresh macOS identity `-01` exposed native definition re-entry
+resolving the venv shim to a base Python without Agent Workflow. RTS-047 preserved the invoked
+absolute venv path across all manager argv/install/checksum facts and passed independent L3 Review,
+877 local tests, ordinary CI `32547035193` and Binary Feasibility `32547035173`. Fresh macOS `-02`
+then entered installed AWF and stopped at the next independent boundary: current macOS and Windows
+Agent Bus clients lack required structured `--on-argv`. Falling back to legacy `--on` is forbidden.
+
+Linux entry audits found no suitable existing user with both linger enabled and AWF/Bus configuration;
+RTS-046 did not enable or deploy either. Windows identity/console/Task Scheduler checks passed, but no
+manager mutation occurred after the capability block. Both macOS scopes were normally uninstalled;
+definitions/install/process/lease state is absent and credential-safe failure logs are retained. No
+model, business event, ACK/retry/requeue or production state changed.
+
+Phase 4B remains open and Phase 5 did not start. The only legal continuation is external prerequisite
+alignment—compatible independently versioned Bus clients, an already-lingering/configured Linux user,
+and an owner-scheduled Windows logout/login window—followed by another fresh RTS-046 identity.
+
 ## Current Handoff State: 2026-08-17
 
 The final fresh-machine no-model usability gate is green. The original benchmark's disposable

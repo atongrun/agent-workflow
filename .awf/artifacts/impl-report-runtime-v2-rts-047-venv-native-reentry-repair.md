@@ -35,6 +35,9 @@ Task Scheduler and exact-stop regressions remain in the focused suite.
 - Compileall: PASS.
 - Focused lifecycle suite: **76 passed, 1 skipped**.
 - Full repository suite: **877 passed, 5 skipped**.
+- Exact-head ordinary CI `32547035193`: PASS across Linux, Windows recovery/configuration, macOS
+  runtime and all installed-wheel jobs.
+- Exact-head Binary Feasibility `32547035173`: PASS across all native/Rust cells and aggregates.
 - Ruff: PASS.
 - Ruff format check: PASS.
 - `git diff --check`: PASS.
@@ -47,4 +50,5 @@ Task Scheduler and exact-stop regressions remain in the focused suite.
 Only `node_service.py`, `test_node_service.py` and frozen TaskCard/evidence files changed. RTS-047
 does not itself operate a native manager or claim acceptance. Independent L3 Review returned `PASS`
 at `e35dca5`; exact-head CI remains before RTS-046 may resume with a fresh scope. The failed macOS
-`-01` scope remains failure evidence forever.
+`-01` scope remains failure evidence forever. RTS-046 fresh `-02` proved the repaired interpreter
+entered AWF before stopping at an independent Agent Bus capability mismatch.

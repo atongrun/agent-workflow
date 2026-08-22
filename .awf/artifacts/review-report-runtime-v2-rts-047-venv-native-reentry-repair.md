@@ -25,7 +25,8 @@ Reviewed exact candidate `e35dca50dfd758991e9ab01bbf36a5ef07baa6fe` against froz
 - Focused lifecycle suite: **76 passed, 1 skipped**.
 - Full repository suite: **877 passed, 5 skipped**.
 - Compileall, Ruff, Ruff format and `git diff --check`: PASS.
-- Exact-head ordinary cross-platform CI remains the publication gate.
+- Exact-head ordinary CI `32547035193`: PASS.
+- Exact-head Binary Feasibility `32547035173`: PASS.
 
 The independent reviewer could not execute pytest in its own interpreter because pytest was absent;
 the review therefore treated local test counts as author evidence and requires CI before acceptance
@@ -46,6 +47,8 @@ RTS-046 may resume only after exact-head CI PASS and only with a fresh acceptanc
   "medium": 0,
   "low": 0,
   "focused_tests": "76 passed, 1 skipped",
-  "full_tests": "877 passed, 5 skipped"
+  "full_tests": "877 passed, 5 skipped",
+  "ci_run": "32547035193",
+  "binary_run": "32547035173"
 }
 -->

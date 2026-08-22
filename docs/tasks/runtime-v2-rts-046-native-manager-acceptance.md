@@ -120,16 +120,16 @@ After all required evidence and independent Review, closeout may additionally up
 - [ ] Linux systemd-user completes the full sequence, including a new exact restart incarnation.
 - [ ] Windows Task Scheduler completes install/start/status/logs/restart/status/exact-stop/uninstall,
       and session-B evidence proves the session-A listener survived SSH exit.
-- [ ] Windows logout/login evidence is either real and owner-authorized or explicitly remains
+- [x] Windows logout/login evidence is either real and owner-authorized or explicitly remains
       `BLOCKED_BY_OWNER_AUTHORIZATION`; it is never simulated or inferred.
-- [ ] All stops are exact-bound; PID/name/liveness/desired state alone never authorizes signaling.
-- [ ] No Agent Bus business event, payload, ACK/retry/requeue or model invocation occurs.
-- [ ] Normal `run/status/stop` boundaries and optional Finding separation remain unchanged.
-- [ ] Credential/private-path-safe evidence records environments, commands, observations, limits and
+- [x] All stops are exact-bound; PID/name/liveness/desired state alone never authorizes signaling.
+- [x] No Agent Bus business event, payload, ACK/retry/requeue or model invocation occurs.
+- [x] Normal `run/status/stop` boundaries and optional Finding separation remain unchanged.
+- [x] Credential/private-path-safe evidence records environments, commands, observations, limits and
       exact cleanup state without publishing secrets or private endpoints.
-- [ ] Independent Gate Review returns `PASS` only if every Phase 4B criterion is proved; otherwise it
+- [x] Independent Gate Review returns `PASS` only if every Phase 4B criterion is proved; otherwise it
       returns the exact blocked status without weakening the contract.
-- [ ] Phase 5 is not started under any outcome.
+- [x] Phase 5 is not started under any outcome.
 
 ## Failure handling
 
