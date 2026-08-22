@@ -172,3 +172,28 @@ release is a later productization item; RTS-046 does not publish one.
 Linux and Windows logout/login boundaries are unchanged. Scope `-03` may proceed through compatible
 client setup and non-disruptive manager actions, but may not enable Linux linger or trigger Windows
 logout/login without their existing prerequisites/owner window.
+
+## Owner-authorized final acceptance window
+
+The owner subsequently authorized one bounded continuation:
+
+- **Fresh scope**: `rts046-live-20260822-04`
+- **Linux host/user**: SSH alias `la-codex-node`, exact principal `root` (`uid=0`)
+- **Original Linux linger**: `no`; restore to `no` after acceptance
+- **Existing enabled user-unit count**: 8; no existing unit may be changed
+- **Disposable Linux root**: `$HOME/.local/share/awf-rts046-linux-r4-20260822`
+- **Disposable systemd unit**: `awf-node-rts046-linux-systemd-20260822-04.service`
+- **Disposable profile name**: `rts046-linux-systemd-20260822-04`
+- **Windows profile/task**: `rts046-win-task-20260822-04`
+
+Pre-mutation audit proved the Linux root, unit and installed-profile name registry absent. For this
+scope only, linger may be enabled for the selected Linux principal, temporary exact-master Agent Bus
+client/config and Workflow resources may be created, and the full lifecycle sequence may run. After
+exact stop/uninstall, remove only this root/unit/registry and restore linger to `no`; verify the
+enabled-unit count remains 8.
+
+The owner also authorized one Windows logout/login sequence for the `-04` Task Scheduler identity.
+Before logout, capture exact definition/install/process/lease/launch/creation identity. Logout may
+terminate SSH and is not itself failure. After the owner logs back in, resume the same `-04` identity,
+verify continuity/recovery, then exact stop/uninstall and absence. Reboot and security/login-policy
+changes remain prohibited.
