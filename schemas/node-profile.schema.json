@@ -11,6 +11,7 @@
     "role": {"enum": ["architect", "coder", "reviewer"]},
     "repo": {"type": "string", "minLength": 1},
     "tool": {"enum": ["none", "codex", "opencode", "pi"]},
+    "tool_executable": {"type": "string", "minLength": 1},
     "model": {"type": "string"},
     "on_type": {"type": "string", "minLength": 1},
     "base": {"type": "string", "minLength": 1},

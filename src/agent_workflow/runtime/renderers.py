@@ -136,15 +136,35 @@ class PiArchitectRenderer:
 
     def render(self, spec: InvocationSpec) -> RenderedInvocation:
         _require(spec, "pi", {"architect"})
-        if spec.provider_args:
-            raise ContractError("Pi architect does not accept provider options")
-        message = (
-            "Reason from the attached trusted project context as the Agent Workflow Architect. "
-            "Use only read-only repository inspection tools. Return one complete self-contained "
-            "TaskCard Markdown document as stdout. The trusted runner validates and persists the "
-            "output; do not claim you wrote or authorized a TaskCard. "
-            f"Proposed TaskCard output path: {spec.report_path}"
-        )
+        if spec.provider_args == ():
+            message = (
+                "Reason from the attached trusted project context as the Agent Workflow Architect. "
+                "Use only read-only repository inspection tools. Return one complete "
+                "self-contained TaskCard Markdown document as stdout. The trusted runner "
+                "validates and persists the output; do not claim you wrote or authorized a "
+                "TaskCard. "
+                f"Proposed TaskCard output path: {spec.report_path}"
+            )
+        elif spec.provider_args == ("terminal-decision",):
+            message = (
+                "Make the final decision for this one exact reviewed TaskCard from the attached "
+                "trusted facts. Use only read-only repository inspection tools. Return the "
+                "complete Decision Markdown as stdout using exactly one closed verdict: "
+                "approve, request_changes, reject, or escalate. Do not edit files, merge, or "
+                "invent rework."
+            )
+        elif spec.provider_args == ("milestone-next",):
+            message = (
+                "Decide the next step for this exact Plan milestone from the attached durable "
+                "facts and freshly observed repository main. Use only read-only repository "
+                "inspection tools and reason silently. Return exactly one closed outcome: one "
+                "complete next TaskCard as raw Markdown, exact MILESTONE_COMPLETE, or BLOCKED "
+                "followed by a non-empty reason. For completion, stdout must be only the single "
+                "line MILESTONE_COMPLETE with no analysis, summary, or verification before or "
+                "after it. Do not edit files, pre-generate later cards, dispatch, or merge."
+            )
+        else:
+            raise ContractError("Pi architect mode is unsupported")
         argv = [
             "--print",
             "--mode",

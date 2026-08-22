@@ -766,9 +766,34 @@ Result: **PASS candidate** at `d9f470c`; Draft PR #121 integration remains owner
   finding is repaired. See
   [`phase5-01-capability-init-report.md`](../tasks/phase5-01-capability-init-report.md).
 
-STOP: Phase 5-02 has not started. It requires a separately frozen owner-approved TaskCard and may
-cover only the fresh `awf run <TaskCard>` production vertical path. No TaskCard execution, Runtime
-default, migration, release or compatibility deletion follows from Phase 5-01.
+#### Phase 5-02 — Architect-produced one-card closure
+
+Result: **PASS** on the accepted downstream PlanRun `plan-6d33b101abdaa25380ba529f`.
+
+- Exact committed Plan plus configured Pi Architect enters one durable Agent-facing start.
+- Existing Fast/Deep gates run internally before TaskCard authoring and remote business dispatch.
+- Fresh Pi authors one TaskCard; existing Windows OpenCode, trusted PR, exact-head Reviewer,
+  terminal Pi approve, green CI and trusted merge produce one CompletedCardFact.
+- Accepted downstream PR #57 merged as `41239ebd...`; all role queues returned to zero without
+  manual low-level operations. See the
+  [`Phase 5-02 closeout`](../tasks/phase5-02-architect-one-card-closure-report.md).
+
+#### Phase 5-03 — Architect-led Plan loop
+
+Result: **PASS** on the accepted downstream PlanRun `plan-5c3c56d8fcf45dadfc8f7c37`.
+
+- After each CompletedCardFact, AWF freshly observes exact upstream main and invokes Pi with exact
+  PlanFact, last completion and minimal milestone facts.
+- Pi returns one next TaskCard, exact MILESTONE_COMPLETE or BLOCKED. The same Phase 5-02 primitive
+  executes each card; no new worker, journal, Git pipeline, scheduler or TaskCard queue exists.
+- Accepted downstream PRs #66/#67 merged as `41d4ce4f...` and `310a2af4...`; Card 2 frozen base
+  exactly equals the Card 1 merge. Two immutable CompletedCardFacts and exact single-line
+  MILESTONE_COMPLETE form one durable join; all role queues returned to zero. See the
+  [`Phase 5-03 closeout`](../tasks/phase5-03-architect-led-plan-loop-report.md).
+
+STOP: Phase 5 feature work is closed. Runtime v2 Store migration/default cutover, recovery/resume,
+concurrent milestones and compatibility deletion remain deferred. `0.4.0rc1` release preparation
+stops at owner Release review.
 
 #### Later Phase 5 gates
 

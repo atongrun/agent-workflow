@@ -46,6 +46,17 @@ def test_trusted_architect_boundary_validates_then_creates_exact_taskcard(tmp_pa
         persist_architect_taskcard(repo=str(repo), destination=str(destination), stdout=raw)
 
 
+def test_trusted_architect_boundary_accepts_markdown_code_span_task_id(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    destination = repo / "docs/tasks/P5-TEST-001.md"
+    destination.parent.mkdir(parents=True)
+    raw = taskcard().replace(b"\nP5-TEST-001\n", b"\n`P5-TEST-001`\n", 1)
+
+    fact = persist_architect_taskcard(repo=str(repo), destination=str(destination), stdout=raw)
+
+    assert fact.path == "docs/tasks/P5-TEST-001.md"
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

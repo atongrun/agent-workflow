@@ -49,12 +49,18 @@ from agent_workflow.state_root import state_root_binding
 
 PREFLIGHT_REQUEST_TYPE = "control:awf-preflight-v1"
 PREFLIGHT_RESULT_TYPE = "control:awf-preflight-result-v1"
+PLAN_START_TYPE = "task:awf-plan-start-v1"
 
 DEFAULT_ON_TYPE = {
     "architect": "decision:awf-ready-v3",
     "coder": "task:awf-impl-v3",
     "reviewer": "task:awf-review-v3",
 }
+
+
+def configure_network_bypass(environment: dict[str, str], bus_url: str) -> None:
+    """Keep only the private Bus off host proxy routes."""
+    add_url_host_to_no_proxy(environment, bus_url)
 
 
 def _pid_alive(pid: object) -> bool:
@@ -436,6 +442,71 @@ def build_preflight_handler_argv(
     ]
 
 
+def build_plan_start_handler_argv(
+    python_exe: str,
+    plan_script: str,
+    *,
+    repo: Path,
+    profile_path: str,
+    profile_sha256: str,
+    tool: str,
+    model: str,
+    config_path: Path,
+    authority_manifest: Path,
+    state_root: Path,
+    upstream_remote: str,
+    head_remote: str,
+    head_repo: str,
+    gh_bin: str,
+) -> list[str]:
+    """Build the one structured Plan start handler without a new protocol."""
+    return [
+        python_exe,
+        plan_script,
+        "handle-start",
+        "--run-id",
+        "{payload.run_id}",
+        "--mode",
+        "{payload.mode}",
+        "--plan-json",
+        "{payload.plan}",
+        "--architect-json",
+        "{payload.architect}",
+        "--coder-json",
+        "{payload.coder}",
+        "--reviewer-json",
+        "{payload.reviewer}",
+        "--payload-sha256",
+        "{payload.awf_payload_sha256}",
+        "--delivery-id",
+        "{payload.awf_delivery_id}",
+        "--repo",
+        str(repo),
+        "--state-root",
+        str(state_root),
+        "--profile",
+        profile_path,
+        "--profile-sha256",
+        profile_sha256,
+        "--tool",
+        tool,
+        "--model",
+        model,
+        "--config",
+        str(config_path),
+        "--authority-manifest",
+        str(authority_manifest),
+        "--upstream-remote",
+        upstream_remote,
+        "--head-remote",
+        head_remote,
+        "--head-repo",
+        head_repo,
+        "--gh-bin",
+        gh_bin,
+    ]
+
+
 def handler_argv_json(argv: list[str]) -> str:
     """Serialize handler argv for agent-bus.listen.on-argv.v1."""
     return json.dumps([str(value) for value in argv], ensure_ascii=False, separators=(",", ":"))
@@ -445,7 +516,10 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="awf_listen")
     p.add_argument("--role", required=True)
     p.add_argument("--repo", required=True)
+    p.add_argument("--profile-path", default="", help=argparse.SUPPRESS)
+    p.add_argument("--profile-sha256", default="", help=argparse.SUPPRESS)
     p.add_argument("--tool", default="opencode")
+    p.add_argument("--tool-executable", default="", help=argparse.SUPPRESS)
     p.add_argument("--model", default="")
     p.add_argument("--on-type", dest="on_type", default="")
     p.add_argument("--base", default="master")
@@ -513,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     script_dir = Path(__file__).resolve().parent
     role_script = str(script_dir / "awf_role.py")
     preflight_script = str(script_dir / "awf_preflight.py")
+    plan_script = str(script_dir / "awf_plan.py")
     if a.role not in DEFAULT_ON_TYPE and not a.on_type:
         die(f"role '{a.role}' has no default --on-type; pass --on-type")
     on_type = a.on_type or DEFAULT_ON_TYPE[a.role]
@@ -541,13 +616,28 @@ def main(argv: list[str] | None = None) -> int:
     # from defaulting to the gbk locale codec and crashing on non-ASCII output.
     os.environ["PYTHONUTF8"] = "1"
     os.environ["PYTHONIOENCODING"] = "utf-8"
-    add_url_host_to_no_proxy(os.environ, url)
+    configure_network_bypass(os.environ, url)
 
     # Config the handler needs is passed via the ENVIRONMENT (inherited by the
     # agent-bus listener and thus by each handler process it spawns).
     os.environ["AWF_SCRIPT_DIR"] = str(script_dir)
     os.environ["AWF_REPO_DIR"] = str(repo)
+    os.environ["AWF_PROFILE_PATH"] = a.profile_path
+    os.environ["AWF_PROFILE_SHA256"] = a.profile_sha256
     os.environ["AWF_TOOL"] = a.tool
+    if a.tool_executable:
+        tool_key = {
+            "codex": "AWF_CODEX_BIN",
+            "opencode": "AWF_OPENCODE_BIN",
+            "pi": "AWF_PI_BIN",
+        }.get(a.tool)
+        if tool_key is None:
+            die("selected tool has no executable binding")
+        os.environ[tool_key] = a.tool_executable
+        tool_parent = str(Path(a.tool_executable).expanduser().absolute().parent)
+        os.environ["PATH"] = os.pathsep.join(
+            item for item in (tool_parent, os.environ.get("PATH", "")) if item
+        )
     os.environ["AWF_MODEL"] = a.model
     os.environ["AWF_BASE"] = a.base
     os.environ["AWF_UPSTREAM_REPO"] = a.upstream_repo
@@ -562,12 +652,12 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AWF_AUTHORITY_MANIFEST"] = str(a.authority_manifest.resolve())
     if a.enable_preflight and config_path is not None:
         os.environ["AWF_DISPATCH_ENV"] = str(config_path.resolve())
-    active_types = [on_type]
+    role_types = [on_type]
     if a.role == "coder" and on_type == DEFAULT_ON_TYPE["coder"]:
-        active_types.append("task:awf-rework-v3")
+        role_types.append("task:awf-rework-v3")
     elif a.role == "architect" and on_type == DEFAULT_ON_TYPE["architect"]:
-        active_types.append("decision:awf-blocked-v3")
-    os.environ["AWF_ACTIVE_ROUTE_TYPES"] = ",".join(active_types)
+        role_types.append("decision:awf-blocked-v3")
+    os.environ["AWF_ACTIVE_ROUTE_TYPES"] = ",".join(role_types)
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
 
@@ -600,17 +690,17 @@ def main(argv: list[str] | None = None) -> int:
         state_root=listener_root,
     )
     listen_argv += ["--on-argv", on_type, handler_argv_json(handler_argv)]
-    if len(active_types) > 1:
-        rework_handler_argv = build_handler_argv(
+    for secondary_type in role_types[1:]:
+        secondary_handler_argv = build_handler_argv(
             sys.executable,
             role_script,
             a.role,
-            on_type=active_types[1],
+            on_type=secondary_type,
             upstream_remote=a.upstream_remote,
             head_remote=a.head_remote,
             state_root=listener_root,
         )
-        listen_argv += ["--on-argv", active_types[1], handler_argv_json(rework_handler_argv)]
+        listen_argv += ["--on-argv", secondary_type, handler_argv_json(secondary_handler_argv)]
     if a.enable_preflight and config_path is not None:
         preflight_root = listener_root
         listen_argv += [
@@ -637,6 +727,31 @@ def main(argv: list[str] | None = None) -> int:
                 )
             ),
         ]
+        if a.role == "architect" and on_type == DEFAULT_ON_TYPE["architect"]:
+            if not a.profile_path or not a.profile_sha256:
+                die("Plan start registration requires an exact profile binding")
+            listen_argv += [
+                "--on-argv",
+                PLAN_START_TYPE,
+                handler_argv_json(
+                    build_plan_start_handler_argv(
+                        sys.executable,
+                        plan_script,
+                        repo=repo,
+                        profile_path=a.profile_path,
+                        profile_sha256=a.profile_sha256,
+                        tool=a.tool,
+                        model=a.model,
+                        config_path=config_path.resolve(),
+                        authority_manifest=a.authority_manifest.resolve(),
+                        state_root=listener_root,
+                        upstream_remote=a.upstream_remote,
+                        head_remote=a.head_remote,
+                        head_repo=a.head_repo,
+                        gh_bin=a.gh_bin,
+                    )
+                ),
+            ]
 
     try:
         lease_path = acquire_listener_lease(

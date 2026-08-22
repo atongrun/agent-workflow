@@ -248,7 +248,7 @@ def main() -> int:
 import os
 import sys
 from pathlib import Path
-from agent_workflow import cli, node, runtime, status
+from agent_workflow import cli, node, plan_loop, runtime, status
 from agent_workflow.resources import operations_dir, schemas_dir, templates_dir
 
 operations = operations_dir()
@@ -259,6 +259,7 @@ required = [
     operations / "awf_listen.py",
     operations / "awf_role.py",
     operations / "awf_dispatch.py",
+    operations / "awf_plan.py",
     operations / "authority-manifest.example.json",
     operations / "agent_adapters" / "pi.py",
     operations / "model-bin" / "model_git_guard.py",
@@ -281,15 +282,18 @@ import awf_control_plane
 import awf_dispatch
 import awf_feedback
 import awf_listen
+import awf_plan
 import awf_role
 assert Path(awf_listen.__file__).resolve().is_relative_to(operations)
 assert Path(awf_role.__file__).resolve().is_relative_to(operations)
 assert awf_control_plane.DEFAULT_ROUTES
 assert callable(awf_dispatch.main)
+assert callable(awf_plan.start_plan)
 assert awf_feedback.EVENT_TYPE == "feedback:awf-finding-v1"
 assert status.STATUS_FORMAT == "awf.node-status.v1"
 assert node.READINESS_FORMAT == "awf.node-readiness.v2"
 assert runtime.RUN_SPEC_FORMAT == "awf.runtime-v2.run-spec.v1"
+assert plan_loop.PLAN_RUN_FORMAT == "awf.plan-run.v1"
 assert Path(runtime.__file__).resolve().parent.name == "runtime"
 assert Path(cli._ops_module().__file__).resolve().is_relative_to(operations)
 assert cli._authority_manifest_for_repo(Path.cwd()) == (
@@ -346,6 +350,16 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
         assert "--roles" in init_help.stdout
         assert "--architect-runtime" in init_help.stdout
         assert "--finding-enabled" in init_help.stdout
+        plan_start_help = subprocess.run(
+            [str(awf), "plan", "start", "--help"],
+            check=True,
+            cwd=outside,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+        )
+        assert "--one-card" in plan_start_help.stdout
+        assert "--milestone" in plan_start_help.stdout
         root_help = subprocess.run(
             [str(awf), "--help"],
             check=True,

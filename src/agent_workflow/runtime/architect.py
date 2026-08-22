@@ -19,7 +19,8 @@ from .artifact import (
 _MAX_TASKCARD_BYTES = 64 * 1024
 _TASK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _TASK_ID_SECTION = re.compile(
-    r"(?m)^## Task ID[ \t]*\r?\n(?:[ \t]*\r?\n)*([A-Za-z0-9][A-Za-z0-9._-]*)[ \t]*$"
+    r"(?m)^## Task ID[ \t]*\r?\n(?:[ \t]*\r?\n)*`?"
+    r"([A-Za-z0-9][A-Za-z0-9._-]*)`?[ \t]*$"
 )
 _TASK_BRANCH = re.compile(r"(?m)^- \*\*Task branch\*\*: `([^`]+)`\s*$")
 _POSTFLIGHT = re.compile(r"<!--\s*awf-postflight\s*\n(.*?)\n\s*-->", re.DOTALL)

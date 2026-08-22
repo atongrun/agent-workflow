@@ -1551,6 +1551,16 @@ def test_model_env_preserves_credential_free_proxy(monkeypatch):
     assert awf_role.model_env()["HTTPS_PROXY"] == "http://127.0.0.1:7890"
 
 
+def test_model_env_canonicalizes_equal_no_proxy_case_variants(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "github.com,api.github.com")
+    monkeypatch.setenv("no_proxy", "github.com,api.github.com")
+
+    environment = awf_role.model_env()
+
+    assert environment["NO_PROXY"] == "github.com,api.github.com"
+    assert "no_proxy" not in environment
+
+
 def test_model_env_preserves_external_pi_runtime_directories(monkeypatch, tmp_path):
     pi_config = tmp_path / "pi-config"
     pi_sessions = tmp_path / "pi-sessions"
@@ -2306,6 +2316,7 @@ def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
     def fake_spawn(argv, **kwargs):
         captured["argv"] = argv
         captured["kwargs"] = kwargs
+        captured["context"] = Path(argv[-2][1:]).read_text(encoding="utf-8")
         return 0
 
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
@@ -2350,11 +2361,12 @@ def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
     assert captured["argv"][-2].startswith("@")
     context_path = Path(captured["argv"][-2][1:])
     assert context_path == tmp_path / ".awf" / "pi-review-context.md"
-    context = context_path.read_text(encoding="utf-8")
+    context = captured["context"]
     assert "--- Trusted committed diff ---\n\ntrusted diff" in context
     assert "<!-- awf-review-report" in context
     assert "--- TaskCard (acceptance criteria to verify) ---" in context
     assert "against base ref `main`" in captured["argv"][-1]
+    assert not context_path.exists()
 
 
 def test_spawn_rendered_rejects_file_input_drift_before_provider(monkeypatch, tmp_path):
@@ -3983,6 +3995,7 @@ def test_reviewer_routes_exactly_one_valid_verdict(
     assert payload["review_report_path"] == ns.review_report
     assert payload["tool"] == "opencode"
     assert payload["model"] == ""
+    assert not (Path(os.environ["AWF_REPO_DIR"]) / ns.review_report).exists()
 
 
 def test_pi_reviewer_rework_routes_back_to_frozen_opencode_coder(monkeypatch, tmp_path):
@@ -4306,7 +4319,7 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     assert len(send_calls) == 1
     assert len(pr_checks) == 2
     assert send_calls[0][0][3]["review_report"]["blocked_reason"] == ""
-    assert trusted_report.is_file()
+    assert not trusted_report.exists()
 
     monkeypatch.setattr(
         awf_role,

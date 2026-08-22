@@ -1,50 +1,50 @@
 # Repository Handoff
 
-> Current through the 2026-08-12 Dogfood Finding Phase A implementation follow-up, the accepted
-> 2026-08-09 three-TaskCard downstream dogfood, and the 2026-08-10 `v0.3.0` release documentation.
+> Current through the 2026-08-23 Phase 5-02/5-03 product closure and `0.4.0rc1` release preparation.
 > The minimum
 > dispatch floor is the merge containing this handoff; repository files and live Git refs are
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-22 Phase 5-01 Candidate
+## Current Handoff State: 2026-08-23 Phase 5 Product Closure
 
-PR #120 merged the accepted Phase 4B head into `main` as
-`6ce518273cc21cabdf9821ab01958e9f7f7a01ac`. Phase 5-01 then completed on reviewed candidate
-`d9f470c` in Draft PR #121. Integration of #121 remains an owner boundary; Phase 5-02 has not
-started.
+Phase 5-01 merged through PR #121 as `8f13b80`. Phase 5-02 and Phase 5-03 are implementation,
+targeted-review and real-dogfood complete on Draft PR #122. The branch prepares `0.4.0rc1`; tag,
+GitHub release and integration remain an owner Release boundary.
 
-`awf init` is now capability-first and configures only the current machine. It can bind any subset
-of Architect, Coder and Reviewer to the closed supported matrix: Pi Architect, OpenCode Coder, and
-OpenCode/Pi/Codex Reviewer. Every role has a distinct exact profile/workspace while one installed
-Agent Tool may serve several roles. Same OpenCode/same explicit model is legal and warns only that
-review independence may be weaker.
+The normal Human journey is `awf init`, passive `awf status`, and safe aggregate `awf stop`. Init
+configures only the current machine, starts one exact managed listener per selected RoleBinding,
+registers existing Preflight handlers, and prints Ready only after exact process/profile/lease plus
+Agent Bus connected evidence. One tool installation may serve several roles but each binding keeps
+its own profile, token, workspace and lifecycle identity.
 
-Machine config persists `tool-default` versus one opaque explicit Agent Tool-native model ref. Empty
-profile model means the renderer omits the override; explicit refs are passed unchanged. Agent Tool
-authentication, provider endpoints/catalogs/defaults and model provisioning remain external and
-are never mutated or remotely discovered by AWF.
+The non-Human Agent-facing start is `awf plan start --plan <tracked-plan> --one-card|--milestone`.
+It binds exact Plan path/commit/Git blob/repository/main and the configured Pi Architect, persists a
+minimal PlanRun, runs existing Fast/Deep internally, and durably hands start to the managed
+Architect listener. Pi is invoked fresh to author one complete TaskCard; a Human does not create or
+submit TaskCards. Existing Windows OpenCode Coder, trusted import/commit/push/PR, exact-head
+Reviewer, bounded rework, outbox/inbox and ACK operations remain the sole execution path.
 
-Pi Architect is a real closed read-only renderer plus a trusted create-only TaskCard stdout
-validation/persistence helper. It returns only a non-authorizing Artifact fact and is not connected
-to LocalRuntimeApplication, RunSpec, Store/journal, transport, listener transitions or TaskCard
-execution in Phase 5-01.
+Only a fresh Pi terminal approve enters exact-head CI and trusted merge. Each merge produces one
+immutable CompletedCardFact. Milestone mode then freshly fetches exact upstream main and invokes Pi
+again for one `NextTaskCard`, exact `MILESTONE_COMPLETE`, or `BLOCKED`; it never pre-generates a
+queue. Status projects these recorded facts without running doctor, Preflight, logs or resume.
 
-Init and node doctor require `agent-bus.listen.on-argv.v1` from a local capability probe and record
-credential-free executable/help provenance instead of trusting the ambiguous 0.3.0 version. Agent
-Bus remains separately deployed; a formal compatible client release is still required before real
-Phase 5 dogfood.
+Accepted Phase 5-02 evidence is downstream PR #57 / merge `41239ebd...`, PlanRun
+`plan-6d33b101abdaa25380ba529f`. Accepted Phase 5-03 evidence is PlanRun
+`plan-5c3c56d8fcf45dadfc8f7c37`, downstream PRs #66/#67, merges `41d4ce4f...` and `310a2af4...`,
+Card 2 frozen base exactly equal to the Card 1 merge, two immutable CompletedCardFacts, exact
+single-line `MILESTONE_COMPLETE`, Finding off and Architect/Coder/Reviewer queues zero. Failed
+fresh identities remain retained as failed evidence and were never manually ACKed, requeued,
+replayed or rewritten as PASS. See the
+[Phase 5-02 closeout](docs/tasks/phase5-02-architect-one-card-closure-report.md) and
+[Phase 5-03 closeout](docs/tasks/phase5-03-architect-led-plan-loop-report.md).
 
-Finding is off by profile omission: normal prompts, capture and status do not expose it. Explicit
-`finding_enabled=true` preserves existing Phase A only. The candidate passed focused `470/2`, full
-`913/5`, fresh installed-wheel verification, ordinary CI `32574488604`, Binary Feasibility
-`32574488742`, and independent L2 Review after one recoverable machine-config batch repair. See the
-[TaskCard](docs/tasks/phase5-01-capability-init.md) and
-[closeout](docs/tasks/phase5-01-capability-init-report.md).
-
-STOP: do not begin Phase 5-02, invoke a model/business event, change Runtime defaults, migrate state,
-publish a release or delete compatibility from this candidate. The only next legal implementation
-is a separately owner-approved/frozen fresh `awf run <TaskCard>` Phase 5-02 TaskCard.
+STOP: do not begin Deferred Recovery/Resume. Human stop/resume, active Architect/process-crash
+recovery, partial Coder workspace takeover, provider session restoration, automatic mutation/ACK or
+merge-ambiguity reconciliation, Plan hot update, Architect hot swap, concurrent milestones,
+retained-state migration, Runtime v2 default switch and final compatibility CLI cleanup remain
+future separately authorized work.
 
 ## Current Handoff State: 2026-08-20 Runtime v2 Decision Plan
 
