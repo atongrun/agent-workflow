@@ -264,7 +264,8 @@ production change. Phase 4B itself remains open. The next safe milestone is sepa
 exists but may not install it or operate business events. Windows logout/login or reboot remains a
 disruptive external action requiring an explicitly scheduled owner window.
 
-RTS-046 remains **EXTERNAL_BLOCKED** on Linux qualification; Windows logout/login is separately
+RTS-046 initially stopped **EXTERNAL_BLOCKED** on Linux qualification; Windows logout/login was
+separately
 `BLOCKED_BY_OWNER_AUTHORIZATION`. Fresh macOS identity `-01` exposed native definition re-entry
 resolving the venv shim to a base Python without Agent Workflow. RTS-047 preserved the invoked
 absolute venv path across all manager argv/install/checksum facts and passed independent L3 Review,
@@ -280,23 +281,12 @@ events, queues or ACK state. Fresh RTS-046 `-03` then completed the full launchd
 non-disruptive Task Scheduler sequence. Windows survived SSH session A into session B, restarted to
 a new exact incarnation with creation identity, and exact stop/uninstall removed all manager state.
 
-Linux entry audits found no suitable existing user with both linger enabled and AWF/Bus configuration;
-RTS-046 did not enable or deploy either. All three macOS scopes were normally uninstalled;
-Windows `-03` was exactly stopped/uninstalled. Definitions/install/process/lease manager state is
-absent and credential-safe logs are retained. No model, business event, ACK/retry/requeue or
-production state changed.
-
-Phase 4B remains open and Phase 5 did not start. The only legal continuation is an
-already-lingering/configured Linux user and an owner-scheduled Windows logout/login window, followed
-by another fresh RTS-046 identity. Before Phase 5, separately consider a formal Agent Bus client
-release (likely v0.3.1) so the structured contract is versioned rather than commit-probed; no release
-is authorized here.
-
-The owner then authorized one exact Linux user and one Windows logout. Linux linger was temporarily
-enabled and exact Bus/Workflow environments were built inside the declared disposable root without
-OS package changes. The safety approval boundary still refused exporting credential values to the
-remote root, so no config/profile/systemd state was created. The root was inventoried/removed,
-linger restored to `no`, enabled-unit count remained eight and unit/registry/state stayed absent.
+The initial Linux audit did not use the real owner topology. The later `la-codex-node` assumption is
+explicitly invalid: the owner confirmed no such Agent Workflow host exists, so its claimed Linux
+environment/cleanup facts are withdrawn from all acceptance. Valid Linux evidence is only the later
+fresh `tx-vps` scope below. Before Phase 5, separately consider a formal Agent Bus client release
+(likely v0.3.1) so the structured contract is versioned rather than commit-probed; no release is
+authorized here.
 
 Windows fresh `-04` completed pre-logout exact identity and native WTS logout. After owner login,
 console session advanced from 1 to 2, but the logon reconcile hit transient Bus readiness and
@@ -307,15 +297,25 @@ L3 re-review, 884 local tests, ordinary CI `32551160937` and Binary Feasibility 
 Reviewed code exactly cleaned `-04`; task/process/lease/definition/install state is absent and logs
 remain. `-04` is failure evidence forever.
 
-Phase 4B is still open only on Linux. Windows fresh `-05` used reviewed RTS-048 code and the exact
+Windows fresh `-05` used reviewed RTS-048 code and the exact
 compatible Bus client, performed one owner-authorized native logout, reconnected through RustDesk,
 completed the real PIN login and advanced console session 2 to 3. The same Scheduled Task converged
 without manual restart from old absent PID `11028` to exact new PID/lease `17492`, launch
 `2a7293c12e3d4c93a79b25677386c194`, with matching creation/profile/state-root facts. Status and Bus
 doctor passed; the Clash service remained running in Session 0. Exact stop/uninstall removed the
 process, lease, definition, install record, task and registries. `-04` remains failure evidence.
-Linux still requires a security-layer-permitted credential path into its disposable acceptance;
-Phase 5 remains prohibited.
+
+Fresh Linux `-06` then used the only valid host, existing `tx-vps` root/systemd-user and unchanged
+system Agent Bus Server. Exact Workflow `87ceb3a` and Bus client `6ca8f281...` completed
+doctor/install/start/status/logs/restart/status/exact-stop/uninstall. First and second exact
+incarnations were PID/lease/MainPID `1681549` launch `19375d...` and `1682597` launch `2b2a0d...`;
+profile/state-root stayed fixed and desired advanced 2 -> 4 -> 5. Temporary linger returned
+`no`; enabled user units returned to six with the exact baseline hash; disposable root/config/
+clients/snapshot/unit/process/lease/install/registries were removed. Agent Bus Server PID/start/
+health/unit/env hashes were unchanged; no event, queue, ACK, retry or database operation occurred.
+
+Final independent closeout review returned `PASS` with zero blocking findings. RTS-046 and Phase 4B
+are complete. Phase 5 did not start and requires a separate owner-approved plan.
 
 ## Current Handoff State: 2026-08-17
 

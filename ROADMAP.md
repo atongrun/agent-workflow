@@ -73,19 +73,21 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   with independent L3 Review and exact-head CI.
 - [x] Complete RTS-048 bounded Windows login-recovery repair for transient pre-listener readiness and
   PID-reuse exact stale cleanup, with independent L3 re-review and exact-head CI.
-- [ ] RTS-046 passes real macOS launchd and non-disruptive Windows Task Scheduler under fresh `-03`,
-  and fresh `-05` passes real Windows logout/login; Linux remains `EXTERNAL_BLOCKED`.
+- [x] RTS-046 passes real macOS launchd, fresh `tx-vps` Linux systemd-user, non-disruptive Windows
+  Task Scheduler under `-03`, and real Windows logout/login under `-05`.
   Do not count failed macOS `-01`/`-02` or Windows `-04` as PASS.
 - [ ] Before Phase 5, separately consider a formal Agent Bus client release (likely v0.3.1) carrying
   `agent-bus.listen.on-argv.v1`; do not publish or redesign Agent Bus through RTS-046.
 
-Current last passed TaskCard gate is RTS-048; Phase 3 and Phase 4A are complete, and the local
-Phase 4B lifecycle conformance gate is closed. Phase 4B remains open only for real Linux
-systemd-user native-manager acceptance. Independent review rejected a new lifecycle abstraction and
+Current last passed implementation TaskCard gate is RTS-048; Phase 3 and Phase 4A are complete, and
+local Phase 4B lifecycle conformance is closed. Fresh RTS-046 evidence now passes all three native
+managers and Windows login. Independent review rejected a new lifecycle abstraction and
 closed exact-identity defects through RTS-045, native venv re-entry through RTS-047 and login stale
-convergence through RTS-048. RTS-046 proves macOS/non-disruptive Windows, but Linux credential setup
-remains safety-blocked. Fresh Windows `-05` completed the one authorized logout, RustDesk PIN login,
-automatic exact Task Scheduler convergence and exact stop/uninstall with reviewed RTS-048 code.
+convergence through RTS-048. Fresh Windows `-05` completed the one authorized logout, RustDesk PIN
+login, automatic exact Task Scheduler convergence and exact stop/uninstall. Fresh Linux `-06` used
+the owner-corrected `tx-vps` root/systemd-user and unchanged local Bus Server, produced two exact
+incarnations, exact stop/uninstall and complete disposable cleanup with linger/unit/server baselines
+restored. The prior `la-codex-node` assumption is invalid and excluded.
 ADR-0006 selects
 `PYTHON + NATIVE LAUNCHER` with a checksummed atomic-file RunStore/per-invocation journal, one
 logical writer and no physical Coordinator. The semantic contract and 39-case/11-outcome matrix
@@ -100,16 +102,16 @@ receive/preparation boundary; RTS-041 adds the exact Store-owned outgoing intent
 attempt-before-I/O adapter. RTS-042-01 remains failed and permanently excluded from PASS;
 RTS-042-02 alone proves the fresh isolated Mac-to-Windows request/result, two real children, two
 ACKed events and `0/0 -> 0/0`. Rust remains a comparison oracle, RTS-023 does not enter, SQLite is
-not selected, and launcher work remains deferred. The next safe action is only the separately
-authorized Linux systemd-user continuation after a security-layer-permitted disposable credential
-path exists. Windows needs no further logout. Agent Bus is not
-installed or absorbed by AWF. Before Phase 5, consider a small formal
+not selected, and launcher work remains deferred. Final independent RTS-046 evidence review returned
+PASS with zero blocking findings; Phase 4B is closed. STOP: Phase 5 needs a separate owner-approved
+replan and must not start from this branch. Agent Bus is not installed or absorbed by AWF. Before any
+Phase 5 plan, consider a small formal
 client release (likely v0.3.1) for the already-implemented structured argv contract; publishing is
-not authorized. Phase 5 is not eligible. No
+not authorized. Phase 5 is not started or authorized. No
 production/retained Bus operation, production Store adoption or dual write, default, migration,
 release, retained-event operation or destructive cleanup is authorized. See the
 [development plan](docs/plans/runtime-v2-development-plan.md) and
-[RTS-046 blocked report](docs/tasks/runtime-v2-rts-046-native-manager-acceptance-report.md).
+[RTS-046 acceptance report](docs/tasks/runtime-v2-rts-046-native-manager-acceptance-report.md).
 
 ## 2026-08-17 Usability Remediation Final Gate
 

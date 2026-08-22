@@ -2,14 +2,14 @@
 
 ## Outcome
 
-`EXTERNAL_BLOCKED` on Linux qualification.
-
-Windows fresh `-05` real logout/login validation is `PASS`. Phase 4B remains open solely on Linux,
-and Phase 5 did not start.
+`PASS`. Fresh macOS launchd, Linux systemd-user and Windows Task Scheduler/login acceptance now
+jointly satisfy RTS-046 and the frozen Phase 4B exit criteria. Phase 4B is closed. Phase 5 did not
+start and requires a separate owner-approved plan.
 
 Two preserved macOS scopes remain immutable failures. A third fresh scope resolves only the
 owner-authorized client-skew prerequisite and passes real macOS plus Windows manager acceptance,
-including the real login boundary under `-05`. Linux remains pre-install blocked.
+including the real login boundary under `-05`. Owner-corrected Linux scope `-06` is the only valid
+Linux acceptance.
 
 ## Acceptance scope
 
@@ -22,12 +22,14 @@ including the real login boundary under `-05`. Linux remains pre-install blocked
 | `rts046-live-20260822-04` | Windows real logout/login | failed post-login recovery; exactly cleaned after repair | never PASS |
 | RTS-048 repair | local/CI five-target evidence | PASS | bounded login readiness and creation-aware stale cleanup |
 | `rts046-live-20260822-05` | Windows real logout/login with reviewed RTS-048 code | PASS | only successful Windows login acceptance |
-| Linux entry audit | multiple existing Linux user hosts | blocked before install | no existing linger plus no existing AWF/Bus config on suitable hosts |
+| discarded Linux assumption | `la-codex-node` | invalid topology; excluded | owner confirmed no such real host/topology exists |
+| `rts046-live-20260822-06` | `tx-vps`, existing root systemd-user, local existing Bus server | PASS | only valid Linux acceptance; full lifecycle and exact cleanup |
 | Windows login gate | existing Windows interactive-console user | PASS | one owner-authorized logout, RustDesk login and automatic Task Scheduler convergence |
 
 ## Environment and identity rules
 
-- Candidate: exact RTS-047 reviewed/CI-green installed application descended from RTS-046.
+- Candidate: exact RTS-047/RTS-048 reviewed, CI-green application; `-06` installed exact clean
+  Workflow head `87ceb3a` containing reviewed Runtime code `59123f2`.
 - Every macOS scope used a fresh venv, source profile, installed snapshot/registry, state root, log,
   empty control route and deterministic LaunchAgent label.
 - Profiles used `role=architect`, `tool=none`; no provider/model was applicable.
@@ -155,13 +157,13 @@ record and scheduled task absent; desired state was stopped at generation 5 and 
 
 No logout/login was attempted.
 
-## Remaining blockers
+## Corrected Linux topology
 
-### Linux prerequisites
-
-No audited suitable Linux user host already had both linger enabled and an AWF/Agent Bus
-configuration. Enabling linger changes host login/service policy, and deploying/configuring Agent
-Bus is outside RTS-046. The systemd acceptance therefore correctly stopped before installation.
+The earlier `la-codex-node` assumption was not real repository/host topology. Its claimed Linux
+environment facts are withdrawn and cannot contribute to acceptance. The owner identified the only
+valid host as `tx-vps`, where the current root account owns the systemd-user manager and the existing
+system `agent-bus.service` remains an external dependency. One OS account hosting multiple Workflow
+roles does not collapse role/profile identity.
 
 ### Resolved Windows owner window
 
@@ -173,29 +175,24 @@ login evidence occurred.
 
 - No model, provider, business handler, TaskCard run, business event, ACK, retry, requeue, recovery or
   dispatch occurred.
-- No Agent Bus server/state/credential, OS security, login policy, linger, Runtime Core, Finding,
-  Agent Host or onboarding setting changed. Only isolated client installations/config copies were
-  created under explicit authorization.
+- No Agent Bus server/state/credential, Runtime Core, Finding, Agent Host or onboarding setting
+  changed. Windows and Linux used isolated client/config copies under explicit authorization.
+  Linux linger changed only `no -> yes -> no` for the selected existing account.
 - No manual process signal, process-name scan, record edit, PYTHONPATH or base-interpreter install
   was used.
 - Both macOS definitions/install records/registries were removed through normal exact uninstall.
 - Failed-scope logs and desired-state evidence remain retained in disposable local roots.
-- Linux created no acceptance manager/state resources. Every completed Windows manager scope was
-  removed through exact stop/uninstall; isolated client/workflow roots plus desired/log and immutable
-  snapshot evidence remain, with no installed registry reference or Scheduled Task.
+- Linux `-06` and every completed Windows manager scope were removed through exact stop/uninstall.
+  The Linux disposable root, credential copy, clients, snapshot and volatile failed-unit cache were
+  also removed after exact validation; unrelated user units and the Bus Server remained unchanged.
 
 ## Limitations and legal next action
 
-RTS-046 now proves real launchd steady running/restart/exact-stop and Task Scheduler post-SSH,
-restart, real logout/login convergence and exact-stop/uninstall. It still does not prove any
-systemd-user sequence. Phase 4B cannot close.
-
-The only legal continuation is a fresh Linux acceptance after the owner provisions the selected
-disposable host with the required credential-bearing AWF/Bus configuration through an execution
-path permitted by the security layer. Windows needs no further logout/login evidence.
-
-Do not alter Runtime/lifecycle identity, deploy Agent Bus from AWF, or start Phase 5 to clear these
-blocks.
+RTS-046 proves real launchd, systemd-user and Task Scheduler lifecycle, including distinct restart
+incarnations, exact stop/uninstall, Windows SSH-session survival and real logout/login recovery.
+Together with RTS-044/045 local conformance and RTS-047/048 repairs, all Phase 4B exit criteria are
+satisfied. The next legal action is the separate Phase 5 replanning/owner gate; this closeout does
+not authorize Phase 5 implementation, release, default, migration or launcher work.
 
 Before Phase 5, separately consider a small formal Agent Bus client release (likely v0.3.1) so the
 structured contract is identified by a release version instead of only commit/capability evidence.
@@ -203,19 +200,12 @@ No release is published or authorized by RTS-046.
 
 ## Scope `rts046-live-20260822-04`
 
-### Linux bounded attempt
+### Invalidated Linux assumption
 
-The owner selected one exact disposable Linux principal and authorized reversible linger. Original
-facts were linger `no`, eight enabled user units and absent disposable root/unit/registry. Linger was
-enabled only for that user. Because system Python lacked ensurepip/pip, an official standalone
-`virtualenv.pyz` was kept inside the disposable root and successfully installed exact Bus/Workflow
-clients without OS package changes.
-
-The safety approval boundary then rejected exporting existing credential values into the remote
-temporary config. This authorization was not bypassed. No profile, systemd unit, process, lease,
-event or lifecycle state was created. The exact root was inventoried and removed, linger restored to
-`no`, enabled-unit count reverified as eight, and unit/registry/state absence passed. Linux remains
-`EXTERNAL_BLOCKED` before manager acceptance.
+The previous Linux subsection was based on the now-corrected `la-codex-node` assumption. The owner
+confirmed that no such real host/topology exists. Those claimed host, linger, unit-count, environment
+and cleanup facts are withdrawn and excluded from every PASS claim. They did not prove Linux
+systemd-user behavior. Valid Linux evidence is only scope `-06` below.
 
 ### Windows pre-logout checkpoint
 
@@ -353,5 +343,58 @@ file, source profile, strict credential copy, desired state and 35-line zero-err
 disposable root as bounded evidence; the snapshot has zero registry references and cannot authorize
 an installed lifecycle. `-04` remains permanently failed and untouched.
 
-Windows logout/login acceptance is `PASS`. RTS-046 and Phase 4B remain `EXTERNAL_BLOCKED` only on
-the Linux systemd-user acceptance, and Phase 5 did not start.
+Windows logout/login acceptance is `PASS`. Phase 5 did not start.
+
+## Scope `rts046-live-20260822-06`
+
+### tx-vps Linux systemd-user PASS
+
+The owner corrected the topology to the existing `tx-vps` host and current root account. Minimal
+entry checks proved systemd-user running, linger `no`, six enabled user units, and an existing active
+system `agent-bus.service`. The server baseline recorded PID `2652165`, its start identity, healthy
+local endpoint and SHA-256 digests of the existing unit/env files. No Agent Bus CLI was installed for
+root, while the server env contained a locally reusable architect token map under owner-only `0600`
+permissions.
+
+Scope `-06` declared one absent disposable root/profile/route/unit. Linger changed temporarily from
+`no` to `yes`. Exact clean Workflow head `87ceb3a0a5b0d6bb919c1d426bcebd02b326c5cb`
+and Agent Bus source `6ca8f2812be0286607bbbe3f14cc51783637b0b5` were installed into isolated
+CPython 3.11 venvs. The host system Python 3.10 was ineligible; the accepted venvs therefore used the
+already-present Agent Bus base CPython 3.11 without changing the service environment. A stalled uv
+3.12 seed process was exact-cmdline terminated and its acceptance-created temp directory later
+removed. The compatible client proved `--on-argv`.
+
+The server env was parsed only in remote memory to create a unique root-owned `0600` config. No
+endpoint/token value appeared in argv, output or evidence. The first doctor rejected one mechanical
+key-name mismatch before manager state; renaming only that disposable key produced a strict PASS:
+configured/connected true, Agent Bus layer pass, model not applicable/not invoked, and next action
+install. Profile digest was `8514e0b5...`; state-root digest was `64e3fff6...`.
+
+The required sequence then completed:
+
+```text
+doctor -> install -> start -> status -> logs -> restart -> status -> exact stop -> uninstall
+```
+
+- install created only unit `awf-node-rts046-linux-systemd-txvps-20260822-06.service`, exact
+  install/snapshot records and definition digest `b3ec8262...`; enabled user units moved 6 -> 7;
+- first start reached truthful current/running with systemd MainPID, process and lease PID `1681549`,
+  launch `19375d706ca341bca51e92070aa16bce` and exact profile/repo/state-root join;
+- restart removed that PID and produced new MainPID/process/lease `1682597`, new launch
+  `2b2a0d9ef69e455b887faa4441c880e6`, preserved identity and desired generation 4;
+- logs were read through the existing lifecycle API and contained zero `ERROR` lines;
+- pre-stop exact process/lease/MainPID/launch/state-root identity was revalidated; normal stop removed
+  PID/process/lease and wrote desired `stopped`, generation 5;
+- normal uninstall removed definition/install/registry and disabled the unit; exact `reset-failed`
+  cleared only the deleted unit's volatile failed cache, yielding unit status not-found; and
+- no model, business handler, event, ACK, retry, requeue, recovery or provider action occurred.
+
+Final cleanup removed the unique root (including the credential copy and both clients), the
+unreferenced immutable profile snapshot and the identified uv temp. Linger returned to `no`. Enabled
+user units returned to six with exact baseline hash `5430a5ef...`. Root, process, lease, definition,
+install, registry, snapshot, unit and process references were absent. Agent Bus Server active/running
+state, PID/start identity, health and unit/env hashes exactly matched the baseline. No server code,
+config, database, token, event, queue or ACK state was modified or inspected.
+
+Linux systemd-user acceptance is `PASS`. Final independent Gate Review returned `PASS` with zero
+blocking findings. RTS-046 and Phase 4B are complete. Phase 5 did not start.

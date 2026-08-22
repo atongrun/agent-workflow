@@ -114,10 +114,11 @@ After all required evidence and independent Review, closeout may additionally up
 
 ## Acceptance criteria
 
-- [ ] Task ID equals branch leaf; repository changes remain documentation/evidence only and in scope.
-- [ ] Every host proves exact candidate/application/profile/manager-definition identity before start.
+- [x] The owner explicitly continued RTS-046 on the existing RTS-048 Draft-PR branch; repository
+      changes after the reviewed repair remain documentation/evidence only and in scope.
+- [x] Every host proves exact candidate/application/profile/manager-definition identity before start.
 - [x] macOS launchd completes the full real action sequence with correct running/restart/stop facts.
-- [ ] Linux systemd-user completes the full sequence, including a new exact restart incarnation.
+- [x] Linux systemd-user completes the full sequence, including a new exact restart incarnation.
 - [x] Windows Task Scheduler completes install/start/status/logs/restart/status/exact-stop/uninstall,
       and session-B evidence proves the session-A listener survived SSH exit.
 - [x] Windows logout/login evidence is either real and owner-authorized or explicitly remains
@@ -127,8 +128,8 @@ After all required evidence and independent Review, closeout may additionally up
 - [x] Normal `run/status/stop` boundaries and optional Finding separation remain unchanged.
 - [x] Credential/private-path-safe evidence records environments, commands, observations, limits and
       exact cleanup state without publishing secrets or private endpoints.
-- [x] Independent Gate Review returns `PASS` only if every Phase 4B criterion is proved; otherwise it
-      returns the exact blocked status without weakening the contract.
+- [x] Final independent Gate Review returns `PASS` with zero blocking findings after verifying every
+      frozen Phase 4B criterion and the owner-corrected Linux topology.
 - [x] Phase 5 is not started under any outcome.
 
 ## Failure handling
@@ -173,24 +174,18 @@ Linux and Windows logout/login boundaries are unchanged. Scope `-03` may proceed
 client setup and non-disruptive manager actions, but may not enable Linux linger or trigger Windows
 logout/login without their existing prerequisites/owner window.
 
-## Owner-authorized final acceptance window
+## Invalidated prior Linux assumption and Windows `-04` window
 
-The owner subsequently authorized one bounded continuation:
+The earlier continuation named SSH alias `la-codex-node` as a Linux target. The owner later clarified
+that no such real Agent Workflow host/topology exists. All claimed Linux facts from that assumption
+are withdrawn from acceptance and must never be cited as RTS-046 evidence. This correction is not a
+Runtime or lifecycle architecture change.
+
+The same earlier window separately authorized Windows scope `rts046-live-20260822-04` and profile
+`rts046-win-task-20260822-04`:
 
 - **Fresh scope**: `rts046-live-20260822-04`
-- **Linux host/user**: SSH alias `la-codex-node`, exact principal `root` (`uid=0`)
-- **Original Linux linger**: `no`; restore to `no` after acceptance
-- **Existing enabled user-unit count**: 8; no existing unit may be changed
-- **Disposable Linux root**: `$HOME/.local/share/awf-rts046-linux-r4-20260822`
-- **Disposable systemd unit**: `awf-node-rts046-linux-systemd-20260822-04.service`
-- **Disposable profile name**: `rts046-linux-systemd-20260822-04`
 - **Windows profile/task**: `rts046-win-task-20260822-04`
-
-Pre-mutation audit proved the Linux root, unit and installed-profile name registry absent. For this
-scope only, linger may be enabled for the selected Linux principal, temporary exact-master Agent Bus
-client/config and Workflow resources may be created, and the full lifecycle sequence may run. After
-exact stop/uninstall, remove only this root/unit/registry and restore linger to `no`; verify the
-enabled-unit count remains 8.
 
 The owner also authorized one Windows logout/login sequence for the `-04` Task Scheduler identity.
 Before logout, capture exact definition/install/process/lease/launch/creation identity. Logout may
@@ -213,4 +208,28 @@ authorized exactly one new Windows logout/login sequence without another preflig
 This scope alone may perform one exact Task Scheduler install/start, native logout, RustDesk login,
 post-login verification, exact stop and uninstall. It must preserve `-04` as failed evidence, must
 not attempt a second logout, and must stop on any unavailable/ambiguous login credential or identity.
-Linux remains `EXTERNAL_BLOCKED` and is not part of this continuation.
+At that point Linux remained blocked and was not part of the Windows-only continuation.
+
+## Owner-corrected Linux final acceptance
+
+The owner supplied the only real Linux topology and authorized one bounded final scope:
+
+- **Fresh scope**: `rts046-live-20260822-06`
+- **Host/account**: SSH alias `tx-vps`, existing `root` account (`uid=0`)
+- **Existing external dependency**: system `agent-bus.service`; server/config/database/tokens/events
+  remain read-only
+- **Original linger**: `no`; restore to `no`
+- **Original enabled systemd-user unit count**: 6; preserve exact set hash
+- **Disposable root**: `/root/.local/share/awf-rts046-linux-txvps-r6-20260822`
+- **Profile**: `rts046-linux-systemd-txvps-20260822-06`
+- **Route**: `control:rts046-linux-lifecycle-txvps-20260822-06`
+- **Unit**: `awf-node-rts046-linux-systemd-txvps-20260822-06.service`
+- **Workflow head**: `87ceb3a0a5b0d6bb919c1d426bcebd02b326c5cb`
+- **Compatible Bus client source**: `6ca8f2812be0286607bbbe3f14cc51783637b0b5`
+
+This scope may locally derive one `0600` architect config from the existing server env without
+displaying or exporting the credential, temporarily enable linger, and run the complete existing
+systemd-user lifecycle. Cleanup must restore linger and the exact enabled-unit set, remove every
+disposable root/profile/config/client/snapshot/unit/process/lease/install/registry artifact, and
+prove the existing Agent Bus service identity/config/health unchanged. It may not inspect or operate
+events, queues, ACK or retry state.

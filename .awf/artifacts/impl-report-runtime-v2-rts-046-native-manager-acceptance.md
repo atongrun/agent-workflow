@@ -2,8 +2,9 @@
 
 ## Final status
 
-`EXTERNAL_BLOCKED` on the Linux prerequisite. macOS launchd, Windows Task Scheduler and fresh `-05`
-real logout/login acceptance pass. Phase 4B is not complete solely because Linux is still blocked.
+`PASS`. macOS launchd, Linux systemd-user, Windows Task Scheduler and fresh `-05` real logout/login
+acceptance pass. Final independent closeout review returned `PASS` with zero blocking findings.
+RTS-046 and Phase 4B are complete. Phase 5 did not start.
 
 No model, business event, provider, Runtime Core, Agent Bus server/state/credential mutation or
 Finding workflow occurred. Only owner-authorized isolated Agent Bus client installations were added.
@@ -103,14 +104,15 @@ configuration/Agent Bus client binding. One configured host was unavailable. The
 forbids enabling linger or deploying/configuring Agent Bus, so no checkout, profile, service,
 process, lease or event was created.
 
-## Failure classification and next action
+## Intermediate failure classification and next action
 
 - macOS/Windows initial blocker: resolved as isolated client installation skew, without changing the
   server or existing clients;
 - Linux: external prerequisite absent (existing linger and AWF/Bus configuration);
 - Windows login: explicit owner-authorization window absent.
 
-Agent Workflow does not replace or auto-deploy Agent Bus. The legal next action is an
+At that intermediate point, Agent Workflow did not replace or auto-deploy Agent Bus. The legal next
+action was an
 already-lingering/configured Linux user host plus a scheduled Windows logout/login window. No Phase 5
 work is authorized.
 
@@ -180,29 +182,12 @@ authorize that release.
 
 ## Owner-authorized final scope `rts046-live-20260822-04`
 
-### Linux selected-user result
+### Invalidated Linux assumption
 
-The selected scope was SSH alias `la-codex-node`, principal `root` (`uid=0`), original linger `no`,
-eight existing enabled user units, disposable root
-`$HOME/.local/share/awf-rts046-linux-r4-20260822`, unit
-`awf-node-rts046-linux-systemd-20260822-04.service` and matching fresh profile name. Root, unit and
-profile registry were absent before mutation.
-
-Linger was enabled only for this principal. System Python 3.12 lacked ensurepip/pip, so the first
-venv creation stopped before manager/config/state. An official `virtualenv.pyz` was then contained
-inside the disposable root and created isolated exact Bus/Workflow environments; source heads were
-`6ca8f281...` and `5561e4c...`, and Bus capability passed.
-
-The required credential-bearing config copy to this remote root was rejected by the safety approval
-boundary because the owner had not explicitly authorized exporting those secret values to this
-destination. No workaround was attempted. Before any systemd profile/install/start:
-
-- the validated disposable root (4,006 entries, 10 symlinks) was removed without following links;
-- linger was restored to `no`;
-- enabled user-unit count remained 8; and
-- disposable unit, registry and lifecycle state remained absent.
-
-Linux therefore remains `EXTERNAL_BLOCKED` before manager mutation.
+The prior `la-codex-node` subsection is withdrawn: the owner confirmed no such real Agent Workflow
+host/topology exists. Its claimed host, linger, unit and environment facts are excluded from
+acceptance and cannot support Phase 4B. This is a documentation/topology correction, not a Runtime
+architecture change. The only valid Linux evidence is fresh `tx-vps` scope `-06` below.
 
 ### Windows pre-logout evidence
 
@@ -313,5 +298,43 @@ removed definition, install record, Scheduled Task and installed-profile registr
 RTS-046 task remains. Source profile, strict disposable config, desired/log and the immutable but
 unreferenced snapshot remain as evidence. `-04` remains failed forever and untouched.
 
-Windows login acceptance is `PASS`; Linux systemd-user remains the sole `EXTERNAL_BLOCKED` gate.
-Phase 4B remains open and Phase 5 did not start.
+Windows login acceptance is `PASS`. Phase 5 did not start.
+
+## Fresh Linux `-06` systemd-user PASS
+
+The owner identified the existing `tx-vps` root account as the only valid Linux host/account. The
+systemd-user manager was running; linger baseline was `no`; enabled user-unit count/hash was
+6/`5430a5ef...`. Existing system `agent-bus.service` was active/running at PID `2652165`; its start,
+unit/env hashes and local health were captured without reading events or database state.
+
+One absent disposable root/profile/route/unit was created. Linger changed only `no -> yes -> no`.
+Exact clean Workflow `87ceb3a` and compatible Bus `6ca8f281...` sources were installed into isolated
+CPython 3.11 venvs using the existing service base runtime without altering it. The Bus client proved
+`--on-argv`. A stalled uv 3.12 seed was exact-cmdline terminated; its current temp was removed during
+cleanup. Server env was parsed only in remote memory to write one root-owned `0600` architect config;
+no value was displayed, logged or exported.
+
+The first doctor denied the disposable key `AWF_ARCHITECT_TOKEN`; a mechanical rename to current
+`AWF_ARCH_TOKEN` fixed only that isolated config. Strict doctor then passed configured/connected,
+Agent Bus health, model-not-applicable and no invocation before manager state existed.
+
+The complete existing lifecycle passed:
+
+- install: one exact systemd-user unit/install/snapshot/definition, definition digest `b3ec8262...`;
+- first start/status: MainPID/process/lease `1681549`, launch `19375d706ca341bca51e92070aa16bce`,
+  current/running and exact profile/repo/state-root;
+- logs: existing API returned successfully with zero errors;
+- restart/status: old PID absent, new MainPID/process/lease `1682597`, new launch
+  `2b2a0d9ef69e455b887faa4441c880e6`, preserved exact identity, generation 4;
+- exact stop: complete identity revalidated, process/lease absent, stopped generation 5; and
+- uninstall: definition/install/registries disabled/absent; exact volatile unit cache reset to
+  not-found.
+
+Cleanup removed the root/config/clients, unreferenced snapshot and acceptance-created uv temp.
+Linger returned `no`; enabled units returned to the exact six-unit baseline hash. All disposable
+process/lease/definition/install/registry/snapshot/unit/process references were absent. Agent Bus
+PID/start/health and unit/env hashes matched baseline exactly. No model, event, ACK/retry/requeue,
+provider, server or database operation occurred.
+
+Linux acceptance is `PASS`. All frozen Phase 4B criteria are evidenced and final independent
+closeout review passed. Phase 5 is not authorized by this report.
