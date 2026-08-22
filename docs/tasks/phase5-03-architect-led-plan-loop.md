@@ -90,9 +90,11 @@ or recovery/resume mechanism is authorized.
 - `docs/tasks/phase5-03-architect-led-plan-loop.md`
 - `src/agent_workflow/cli.py`
 - `src/agent_workflow/plan_loop.py`
+- `src/agent_workflow/runtime/renderers.py`
 - `scripts/awf_plan.py`
 - `tests/test_cli.py`
 - `tests/test_plan_loop.py`
+- `tests/test_runtime_provider_renderers.py`
 - `tests/test_awf_plan.py`
 - `.awf/artifacts/impl-report-phase5-03-architect-led-plan-loop.md`
 - `.awf/artifacts/review-report-phase5-03-architect-led-plan-loop.md`
@@ -105,9 +107,11 @@ Closeout may also update `README.md`, `HANDOFF.md`, `ROADMAP.md`, `CHANGELOG.md`
   "allowed_paths": [
     "src/agent_workflow/cli.py",
     "src/agent_workflow/plan_loop.py",
+    "src/agent_workflow/runtime/renderers.py",
     "scripts/awf_plan.py",
     "tests/test_cli.py",
     "tests/test_plan_loop.py",
+    "tests/test_runtime_provider_renderers.py",
     "tests/test_awf_plan.py",
     ".awf/artifacts/impl-report-phase5-03-architect-led-plan-loop.md",
     ".awf/artifacts/review-report-phase5-03-architect-led-plan-loop.md"
@@ -119,4 +123,3 @@ Closeout may also update `README.md`, `HANDOFF.md`, `ROADMAP.md`, `CHANGELOG.md`
   ]
 }
 -->
-
