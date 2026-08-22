@@ -194,9 +194,13 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 
 ### 8. Normal CLI behavior
 
-- `awf run <TaskCard>` loads Phase 5-01 machine config, compiles fresh RunSpec, safely starts only
-  exact local profiles where needed, performs readiness, initializes the new Store and runs/waits for
-  one card to terminal or a truthful block.
+- `awf run <TaskCard>` loads Phase 5-01 machine config, safely starts only exact local profiles where
+  needed, then sends no-model remote readiness and verifies all fresh binding facts. Only after
+  readiness succeeds does it compile and persist the final RunSpec v2 from those exact local/remote
+  facts, initialize the new Store and issue the first business command. Readiness is pre-authority:
+  failure creates neither a business command nor a RunStore. Any ephemeral readiness nonce/run hint
+  is not final Workflow authority. The command then runs/waits for one card to terminal or a truthful
+  block.
 - `awf status` remains read-only and projects the active/last fresh Store first blocker, owner,
   stage, role/model invocation evidence, PR/CI/merge/completion and one legal action. It performs no
   recovery, send, merge or provider action.
