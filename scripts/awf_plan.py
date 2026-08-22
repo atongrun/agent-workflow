@@ -260,6 +260,8 @@ def _run_dispatch_preflight(
 ) -> dict[str, object]:
     import awf_preflight
 
+    if store.load().get("stop_requested") is True:
+        raise PlanOperationError("PlanRun stop was requested before business dispatch")
     preflight_args = _preflight_args(args, repo=repo, intent="remote-dispatch")
     fast = awf_preflight.run_fast(preflight_args).report
     report = fast
@@ -328,12 +330,30 @@ def _invoke_taskcard_architect(
         input_text=context,
         report_path="docs/tasks/architect-generated.md",
     )
-    rc = spawn_rendered(
-        render_provider_invocation(spec),
-        stdout_path=str(output),
-        stdout_max_bytes=64 * 1024,
-    )
+    try:
+        rc = spawn_rendered(
+            render_provider_invocation(spec),
+            stdout_path=str(output),
+            stdout_max_bytes=64 * 1024,
+        )
+    except BaseException:
+        store.update(
+            status="architect_ambiguous",
+            stop_reason="Pi Architect outcome is ambiguous; provider replay is forbidden",
+        )
+        raise
+    finally:
+        context_path.unlink(missing_ok=True)
     if rc != 0:
+        store.update(
+            status="architect_failed_no_replay",
+            architect_invocation={
+                "kind": "taskcard",
+                "status": "failed_no_replay",
+                "authorization_sha256": authorization,
+            },
+            stop_reason="Pi Architect exited non-zero; provider replay is forbidden",
+        )
         raise PlanOperationError("Pi Architect TaskCard invocation failed")
     raw = output.read_bytes()
     task_id, branch = validate_taskcard_binding(
@@ -374,8 +394,13 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     store = PlanRunStore(Path(args.state_root), str(value["run_id"]))
     store.create(value, repo=repo)
     existing = store.load()
+    if existing.get("stop_requested") is True:
+        raise PlanOperationError("PlanRun stop was requested; no new Architect work is legal")
     if existing.get("status") == "card_active":
         return existing
+    invocation = existing.get("architect_invocation")
+    if isinstance(invocation, dict):
+        raise PlanOperationError("Architect invocation already started; Pi replay is forbidden")
     plan_bytes = _checkout_plan_main(repo, plan)
     _run_authoring_fast(args, store=store, repo=repo)
     coder = dict(value["coder"])
@@ -539,12 +564,30 @@ def _invoke_terminal_decision(
         report_path=f".awf/architect-decisions/{task_id}.md",
         provider_args=("terminal-decision",),
     )
-    rc = spawn_rendered(
-        render_provider_invocation(spec),
-        stdout_path=str(output),
-        stdout_max_bytes=64 * 1024,
-    )
+    try:
+        rc = spawn_rendered(
+            render_provider_invocation(spec),
+            stdout_path=str(output),
+            stdout_max_bytes=64 * 1024,
+        )
+    except BaseException:
+        store.update(
+            status="architect_ambiguous",
+            stop_reason="Pi terminal Decision outcome is ambiguous; provider replay is forbidden",
+        )
+        raise
+    finally:
+        input_path.unlink(missing_ok=True)
     if rc != 0:
+        store.update(
+            status="architect_failed_no_replay",
+            architect_invocation={
+                "kind": "terminal-decision",
+                "status": "failed_no_replay",
+                "authorization_sha256": authorization,
+            },
+            stop_reason="Pi terminal Decision exited non-zero; provider replay is forbidden",
+        )
         raise PlanOperationError("Pi Architect terminal Decision invocation failed")
     decision = parse_decision(output.read_bytes())
     store.update(

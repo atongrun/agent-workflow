@@ -120,6 +120,7 @@ v0.3.0 production operations path and must not adopt the Runtime v2 Store as the
 - `src/agent_workflow/plan_loop.py`
 - `src/agent_workflow/runtime/architect.py`
 - `src/agent_workflow/runtime/renderers.py`
+- `schemas/node-profile.schema.json`
 - `scripts/awf_dispatch.py`
 - `scripts/awf_listen.py`
 - `scripts/awf_plan.py`
@@ -151,6 +152,7 @@ Closeout may also update `README.md`, `HANDOFF.md`, `ROADMAP.md`, `CHANGELOG.md`
     "src/agent_workflow/plan_loop.py",
     "src/agent_workflow/runtime/architect.py",
     "src/agent_workflow/runtime/renderers.py",
+    "schemas/node-profile.schema.json",
     "scripts/awf_dispatch.py",
     "scripts/awf_listen.py",
     "scripts/awf_plan.py",

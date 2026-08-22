@@ -444,6 +444,7 @@ class PlanRunStore:
             "last_completion": None,
             "architect_invocation": None,
             "preflight": None,
+            "stop_requested": False,
             "stop_reason": "",
             "created_at": _utc_now(),
             "updated_at": _utc_now(),
@@ -458,6 +459,7 @@ class PlanRunStore:
             "last_completion",
             "architect_invocation",
             "preflight",
+            "stop_requested",
             "stop_reason",
         }
         if set(changes) - allowed:
@@ -653,5 +655,6 @@ def plan_status_lines(run: Mapping[str, object]) -> tuple[str, ...]:
         f"preflight: authoring={authoring_value.get('status', 'not_recorded')} "
         f"remote_dispatch={remote_value.get('status', 'not_recorded')} "
         f"deep_current={deep_value.get('current', 'not_recorded')}",
+        f"stop_requested={run.get('stop_requested', False)}",
         f"first_blocker={run.get('stop_reason') or 'none'}",
     )

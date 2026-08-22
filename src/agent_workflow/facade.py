@@ -100,7 +100,9 @@ def _resolved_tool(config: Mapping[str, str], tool: str) -> str:
     configured = str(config.get(key, fallback))
     resolved = shutil.which(configured)
     if resolved:
-        return str(Path(resolved).resolve())
+        # Preserve an installed shim/symlink entrypoint. Dereferencing a Node
+        # tool to its JavaScript target loses the interpreter-bearing PATH.
+        return os.path.abspath(resolved)
     candidate = Path(configured).expanduser()
     return str(candidate.resolve()) if candidate.is_file() else ""
 
@@ -123,7 +125,7 @@ def discover_machine_capabilities(
         raise FacadeError("awf init --repo must name the Git worktree root")
     _run_checked([git, "--version"])
     _run_checked([gh, "--version"])
-    _run_checked([gh, "auth", "status"])
+    _run_checked([gh, "auth", "status", "--active", "--hostname", "github.com"])
 
     awf_config, _awf_listen = node._operations_modules()
     selected_config = (config_path or node.default_config_path()).expanduser().resolve()
@@ -231,6 +233,7 @@ def _profile_values(
     upstream_remote: str,
     head_remote: str,
     base_ref: str,
+    tool_executable: str = "",
 ) -> dict[str, object]:
     route = _role_route(role)
     values: dict[str, object] = {
@@ -251,6 +254,8 @@ def _profile_values(
     }
     if lifecycle == "managed":
         values["lifecycle"] = {"mode": "managed", "manager": "auto", "scope": "user"}
+    if tool_executable:
+        values["tool_executable"] = os.path.abspath(os.path.expanduser(tool_executable))
     return values
 
 
@@ -537,6 +542,7 @@ def initialize_machine(
             upstream_remote=upstream_remote,
             head_remote=head_remote,
             base_ref=base_ref,
+            tool_executable=str(tools[tool]["executable"]),
         )
         values["config"] = str(selected_config)
         values["finding_enabled"] = finding_enabled
@@ -679,7 +685,13 @@ def load_machine(repo: Path) -> MachineContract:
         }:
             raise FacadeError(f"machine {role} binding is invalid")
         reference = str(binding["profile"])
-        profile = node.load_installed_profile(reference) or node.load_profile(reference)
+        authoring = node.load_profile(reference)
+        installed = node.load_installed_profile(reference)
+        profile = (
+            installed
+            if installed is not None and installed.digest == binding["profile_sha256"]
+            else authoring
+        )
         if profile.role != role:
             raise FacadeError(f"machine {role} profile identity drifted")
         model_selection = binding["model_selection"]
@@ -945,6 +957,17 @@ def activate_machine(
                 if node.install(profile):
                     raise FacadeError(f"listener install failed for role={profile.role}")
                 active = node.load_installed_profile(str(profile.authoring_path)) or profile
+            elif facts.get("installation", {}).get("status") == "stale":
+                installed = node.load_installed_profile(str(profile.authoring_path))
+                if installed is None:
+                    raise FacadeError(
+                        f"stale listener installation has no exact snapshot for role={profile.role}"
+                    )
+                if node.upgrade(installed, replacement=profile):
+                    raise FacadeError(f"listener reconcile failed for role={profile.role}")
+                active = node.load_installed_profile(str(profile.authoring_path)) or profile
+                was_running = True
+                newly_started.append(active)
             elif facts.get("installed") is not True:
                 status = facts.get("installation", {}).get("status", "unknown")
                 raise FacadeError(
@@ -1008,7 +1031,7 @@ def activate_machine(
         if isinstance(exc, FacadeError):
             raise FacadeError(str(exc) + suffix) from exc
         raise FacadeError(
-            "machine listener activation failed; configuration was preserved" + suffix
+            f"machine listener activation failed: {exc}; configuration was preserved" + suffix
         ) from exc
     return tuple(ready)
 
@@ -1034,7 +1057,38 @@ def status(repo: Path, *, role: str = "", explain: bool = False) -> int:
 
 def stop(repo: Path, *, role: str = "") -> int:
     contract = _load_profile_contract(repo)
-    for profile in _selected(contract, role):
+    profiles = _selected(contract, role)
+    if isinstance(contract, MachineContract) and not role and contract.profiles:
+        from agent_workflow.plan_loop import find_plan_run
+
+        plan_run = find_plan_run(contract.profiles[0].state_root, repo=contract.repo)
+        if plan_run is not None:
+            run = plan_run.update(
+                stop_requested=True,
+                stop_reason="operator requested no new work and exact local stop",
+            )
+            if run.get("status") in {
+                "start_sending",
+                "architect_taskcard_running",
+                "card_dispatching",
+                "architect_decision_running",
+                "merge_intent",
+            }:
+                raise FacadeError(
+                    f"stop denied: PlanRun authority is active at {run['status']}; inspect status"
+                )
+    observations = [(profile, factual_status._queue(profile)) for profile in profiles]
+    for profile, queue in observations:
+        pending = queue.get("pending")
+        if queue.get("status") != "observed" or not isinstance(pending, int):
+            raise FacadeError(
+                f"stop denied for profile={profile.name}: queue is not safely observed"
+            )
+        if pending != 0:
+            raise FacadeError(
+                f"stop denied for profile={profile.name}: pending deliveries={pending}"
+            )
+    for profile, _queue in observations:
         result = node.stop(profile)
         if result:
             return result

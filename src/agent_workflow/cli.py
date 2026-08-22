@@ -564,20 +564,20 @@ def _cmd_legacy_init(args: argparse.Namespace) -> int:
 
 def _print_detected_capabilities(capabilities: dict[str, object]) -> None:
     print("Checking dependencies...")
-    print(f"✓ Agent Workflow {__version__}")
+    print(f"[ok] Agent Workflow {__version__}")
     bus = capabilities["agent_bus"]
     assert isinstance(bus, dict)
-    print("✓ Agent Bus")
+    print("[ok] Agent Bus")
     for capability in bus["capabilities"]:
-        print(f"  ✓ {capability}")
-    print("✓ Git / GitHub")
+        print(f"  [ok] {capability}")
+    print("[ok] Git / GitHub")
     print("Detected agent tools:")
     tools = capabilities["tools"]
     assert isinstance(tools, dict)
     for tool in ("opencode", "pi", "codex"):
         facts = tools[tool]
         assert isinstance(facts, dict)
-        marker = "✓" if facts["available"] else "○"
+        marker = "[ok]" if facts["available"] else "[--]"
         print(f"{marker} {tool.title() if tool != 'opencode' else 'OpenCode'}")
 
 
@@ -728,7 +728,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     print("Configured roles on this machine:")
     for profile in contract.profiles:
         print(
-            f"✓ {profile.role.title():9} {profile.values['tool']} / "
+            f"[ok] {profile.role.title():9} {profile.values['tool']} / "
             f"{profile.values.get('model') or 'tool-default'}"
         )
         print(f"  profile={profile.path}")
@@ -741,7 +741,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         for report in ready:
             profile = report["profile"]
             print(
-                f"✓ {str(profile['role']).title():9} running / connected / "
+                f"[ok] {str(profile['role']).title():9} running / connected / "
                 "preflight-handlers-registered"
             )
     print("Ready. All selected local RoleBindings can receive events.")

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from agent_workflow import node
+
+SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 
 def profile(tmp_path: Path, *, finding_enabled: bool) -> node.NodeProfile:
@@ -14,6 +19,7 @@ def profile(tmp_path: Path, *, finding_enabled: bool) -> node.NodeProfile:
             "role": "reviewer",
             "repo": str((tmp_path / "repo").resolve()),
             "tool": "opencode",
+            "tool_executable": str((tmp_path / "bin/opencode").resolve()),
             "model": "model",
             "on_type": "task:awf-review-v3",
             "upstream_repo": "owner/project",
@@ -39,6 +45,7 @@ def test_profile_binds_plan_start_and_existing_preflight_registration(tmp_path: 
 
     assert argv[argv.index("--profile-path") + 1] == str(selected.authoring_path)
     assert argv[argv.index("--profile-sha256") + 1] == selected.digest
+    assert argv[argv.index("--tool-executable") + 1] == selected.values["tool_executable"]
     assert "--enable-preflight" in argv
 
 
@@ -67,3 +74,15 @@ def test_plan_start_handler_uses_structured_payload_and_exact_profile(tmp_path: 
     assert "{payload.plan}" in argv
     assert "{payload.architect}" in argv
     assert argv[argv.index("--profile-sha256") + 1] == "sha256:" + "a" * 64
+
+
+def test_listener_bypasses_bus_and_supported_github_hosts() -> None:
+    import awf_listen
+
+    environment = {"NO_PROXY": "localhost", "no_proxy": "localhost"}
+
+    awf_listen.configure_network_bypass(environment, "http://100.81.0.1:8800")
+
+    expected = {"localhost", "100.81.0.1", "github.com", "api.github.com"}
+    assert set(environment["NO_PROXY"].split(",")) == expected
+    assert environment["no_proxy"] == environment["NO_PROXY"]

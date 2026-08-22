@@ -10,6 +10,7 @@ import pytest
 
 from agent_workflow import cli, facade, node
 from agent_workflow.manifest import load_compiled_report, load_manifest
+from agent_workflow.plan_loop import ArchitectBinding, PlanFact, PlanRunStore, plan_start_payload
 
 
 def _machine_repo(tmp_path: Path) -> Path:
@@ -129,8 +130,26 @@ def test_dependency_discovery_is_capability_first_and_read_only(monkeypatch, tmp
     assert facts["agent_bus"]["capabilities"] == ("agent-bus.listen.on-argv.v1",)
     assert facts["tools"]["pi"]["available"] is True
     assert facts["tools"]["opencode"]["available"] is False
+    assert ["/tools/gh", "auth", "status", "--active", "--hostname", "github.com"] in commands
     assert all("doctor" not in argv for argv in commands)
     assert not facade.default_machine_config_path(repo).exists()
+
+
+def test_tool_discovery_preserves_interpreter_bearing_symlink_entrypoint(
+    monkeypatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "lib" / "pi.js"
+    target.parent.mkdir()
+    target.write_text("script\n", encoding="utf-8")
+    shim = tmp_path / "bin" / "pi"
+    shim.parent.mkdir()
+    shim.symlink_to(target)
+    monkeypatch.setattr(facade.shutil, "which", lambda _value: str(shim))
+
+    resolved = facade._resolved_tool({}, "pi")
+
+    assert resolved == str(shim.absolute())
+    assert resolved != str(target.resolve())
 
 
 def _card(repo: Path) -> Path:
@@ -282,6 +301,11 @@ def test_seven_command_synthetic_journey_uses_generated_contracts(monkeypatch, t
     assert explicit == [True]
     assert cli.main(["status", "--repo", str(repo), "--explain"]) == 0
     commands += 1
+    monkeypatch.setattr(
+        facade.factual_status,
+        "_queue",
+        lambda _profile: {"status": "observed", "pending": 0},
+    )
     assert cli.main(["stop", "--repo", str(repo)]) == 0
     commands += 1
 
@@ -466,6 +490,9 @@ def test_machine_init_reuses_one_opencode_for_distinct_coder_reviewer_workspaces
     assert [profile.role for profile in contract.profiles] == ["coder", "reviewer"]
     assert len({profile.repo for profile in contract.profiles}) == 2
     assert {profile.values["tool"] for profile in contract.profiles} == {"opencode"}
+    assert {profile.values["tool_executable"] for profile in contract.profiles} == {
+        "/tools/opencode"
+    }
     assert len({profile.config_path for profile in contract.profiles}) == 1
     assert {profile.values["model"] for profile in contract.profiles} == {"deepseek"}
     assert all(profile.values["finding_enabled"] is False for profile in contract.profiles)
@@ -511,6 +538,7 @@ def test_machine_init_supports_pi_architect_only(monkeypatch, tmp_path: Path) ->
     profile = contract.profiles[0]
     assert profile.role == "architect"
     assert profile.values["tool"] == "pi"
+    assert profile.values["tool_executable"] == "/tools/pi"
     assert profile.values["model"] == ""
     assert profile.values["on_type"] == "decision:awf-ready-v3"
     assert profile.values["enable_preflight"] is True
@@ -520,6 +548,20 @@ def test_machine_init_supports_pi_architect_only(monkeypatch, tmp_path: Path) ->
         "mode": "tool-default",
         "ref": "",
     }
+
+    stale_values = dict(profile.values)
+    stale_values["model"] = "stale-model"
+    stale = node.NodeProfile(
+        tmp_path / "installed-stale.json",
+        stale_values,
+        source_path=profile.authoring_path,
+    )
+    monkeypatch.setattr(node, "load_installed_profile", lambda _value: stale)
+
+    reloaded = facade.load_machine(repo)
+
+    assert reloaded.profiles[0].digest == profile.digest
+    assert reloaded.profiles[0].values["model"] == ""
 
 
 def _activation_profile(tmp_path: Path, role: str) -> node.NodeProfile:
@@ -579,6 +621,64 @@ def test_activate_machine_starts_each_exact_role_and_waits_for_ready(monkeypatch
     assert [item["profile"]["role"] for item in ready] == ["coder", "reviewer"]
 
 
+def test_activate_machine_reconciles_one_stale_installed_profile(monkeypatch, tmp_path):
+    replacement = _activation_profile(tmp_path, "coder")
+    stale_values = dict(replacement.values)
+    stale_values["model"] = "old-model"
+    stale = node.NodeProfile(
+        tmp_path / "installed-old.json",
+        stale_values,
+        source_path=replacement.authoring_path,
+    )
+    contract = facade.MachineContract(
+        repo=tmp_path,
+        config_path=tmp_path / ".awf/machine.json",
+        machine="windows",
+        project="sample",
+        finding_enabled=False,
+        profiles=(replacement,),
+    )
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {"installed": None, "running": False, "installation": {"status": "stale"}},
+    )
+    loaded = iter((stale, replacement))
+    monkeypatch.setattr(node, "load_installed_profile", lambda _value: next(loaded))
+    upgraded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        node,
+        "upgrade",
+        lambda current, *, replacement: (
+            upgraded.append((current.values["model"], replacement.values["model"])) or 0
+        ),
+    )
+    monkeypatch.setattr(
+        node,
+        "start",
+        lambda _profile: (_ for _ in ()).throw(AssertionError("upgrade already starts exact role")),
+    )
+    monkeypatch.setattr(node, "doctor", lambda _profile, **_kwargs: 0)
+    monkeypatch.setattr(node, "_local_readiness", lambda _profile: object())
+    monkeypatch.setattr(
+        node,
+        "doctor_report",
+        lambda profile, *_args, **_kwargs: {
+            "profile": {"role": profile.role},
+            "configured": True,
+            "installed": True,
+            "running": True,
+            "connected": True,
+            "listener": {"lease_bound": True},
+        },
+    )
+
+    ready = facade.activate_machine(contract, readiness_timeout_seconds=1)
+
+    assert upgraded == [("old-model", "")]
+    assert ready[0]["profile"]["role"] == "coder"
+
+
 def test_activate_machine_rolls_back_only_newly_started_exact_listeners(monkeypatch, tmp_path):
     profiles = (_activation_profile(tmp_path, "coder"), _activation_profile(tmp_path, "reviewer"))
     contract = facade.MachineContract(
@@ -623,6 +723,70 @@ def test_activate_machine_rolls_back_only_newly_started_exact_listeners(monkeypa
         facade.activate_machine(contract, readiness_timeout_seconds=1)
 
     assert stopped == ["coder"]
+
+
+def test_normal_stop_records_no_new_work_and_requires_all_queues_safe(monkeypatch, tmp_path):
+    profiles = (_activation_profile(tmp_path, "coder"), _activation_profile(tmp_path, "reviewer"))
+    contract = facade.MachineContract(
+        repo=tmp_path,
+        config_path=tmp_path / ".awf/machine.json",
+        machine="windows",
+        project="sample",
+        finding_enabled=False,
+        profiles=profiles,
+    )
+    binding = ArchitectBinding(
+        profile=str(tmp_path / "architect.json"),
+        profile_sha256="sha256:" + "a" * 64,
+        workspace=str(tmp_path),
+        tool="pi",
+        model_mode="tool-default",
+        model_ref="",
+    )
+    plan = PlanFact(
+        repository="owner/project",
+        upstream_remote="upstream",
+        base_ref="main",
+        path="docs/plan.md",
+        commit="1" * 40,
+        blob_oid="2" * 40,
+        blob_sha256="3" * 64,
+        main_sha="4" * 40,
+    )
+    payload = plan_start_payload(
+        plan,
+        binding,
+        mode="one-card",
+        coder_tool="opencode",
+        coder_model="",
+        reviewer_tool="opencode",
+        reviewer_model="",
+    )
+    store = PlanRunStore(profiles[0].state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    monkeypatch.setattr(facade, "_load_profile_contract", lambda _repo: contract)
+    stopped: list[str] = []
+    monkeypatch.setattr(node, "stop", lambda profile: stopped.append(profile.role) or 0)
+    queues = iter(
+        [
+            {"status": "observed", "pending": 0},
+            {"status": "observed", "pending": 1},
+        ]
+    )
+    monkeypatch.setattr(facade.factual_status, "_queue", lambda _profile: next(queues))
+
+    with pytest.raises(facade.FacadeError, match="pending deliveries=1"):
+        facade.stop(tmp_path)
+
+    assert stopped == []
+    assert store.load()["stop_requested"] is True
+    monkeypatch.setattr(
+        facade.factual_status,
+        "_queue",
+        lambda _profile: {"status": "observed", "pending": 0},
+    )
+    assert facade.stop(tmp_path) == 0
+    assert stopped == ["coder", "reviewer"]
 
 
 def test_three_role_machine_has_static_supported_bindings_and_distinct_workspaces(

@@ -58,6 +58,12 @@ DEFAULT_ON_TYPE = {
 }
 
 
+def configure_network_bypass(environment: dict[str, str], bus_url: str) -> None:
+    """Keep the private Bus and the only supported GitHub boundary off stale proxies."""
+    for url in (bus_url, "https://github.com", "https://api.github.com"):
+        add_url_host_to_no_proxy(environment, url)
+
+
 def _pid_alive(pid: object) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
@@ -514,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--profile-path", default="", help=argparse.SUPPRESS)
     p.add_argument("--profile-sha256", default="", help=argparse.SUPPRESS)
     p.add_argument("--tool", default="opencode")
+    p.add_argument("--tool-executable", default="", help=argparse.SUPPRESS)
     p.add_argument("--model", default="")
     p.add_argument("--on-type", dest="on_type", default="")
     p.add_argument("--base", default="master")
@@ -610,7 +617,7 @@ def main(argv: list[str] | None = None) -> int:
     # from defaulting to the gbk locale codec and crashing on non-ASCII output.
     os.environ["PYTHONUTF8"] = "1"
     os.environ["PYTHONIOENCODING"] = "utf-8"
-    add_url_host_to_no_proxy(os.environ, url)
+    configure_network_bypass(os.environ, url)
 
     # Config the handler needs is passed via the ENVIRONMENT (inherited by the
     # agent-bus listener and thus by each handler process it spawns).
@@ -619,6 +626,19 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AWF_PROFILE_PATH"] = a.profile_path
     os.environ["AWF_PROFILE_SHA256"] = a.profile_sha256
     os.environ["AWF_TOOL"] = a.tool
+    if a.tool_executable:
+        tool_key = {
+            "codex": "AWF_CODEX_BIN",
+            "opencode": "AWF_OPENCODE_BIN",
+            "pi": "AWF_PI_BIN",
+        }.get(a.tool)
+        if tool_key is None:
+            die("selected tool has no executable binding")
+        os.environ[tool_key] = a.tool_executable
+        tool_parent = str(Path(a.tool_executable).expanduser().absolute().parent)
+        os.environ["PATH"] = os.pathsep.join(
+            item for item in (tool_parent, os.environ.get("PATH", "")) if item
+        )
     os.environ["AWF_MODEL"] = a.model
     os.environ["AWF_BASE"] = a.base
     os.environ["AWF_UPSTREAM_REPO"] = a.upstream_repo
