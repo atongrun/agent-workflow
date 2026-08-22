@@ -63,15 +63,19 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 
 ### 2. Fresh RunSpec v2 and no legacy adoption
 
-- Introduce a versioned fresh-only RunSpec representation that binds Architect, Coder and Reviewer
+- The new fresh-only format is exactly `awf.runtime-v2.run-spec.v2`; this path accepts only its
+  canonical bytes and exact SHA-256. It binds Architect, Coder and Reviewer
   `ProviderSelection`, attempts/rework capacity, TaskCard/report paths, role routes, exact repository,
   base/branch, semantic contract and state-root identity.
 - Existing Runtime v2 disposable v1 representations remain test/oracle evidence and are never read,
   migrated, rewritten or silently defaulted into the fresh path. Unknown/old format fails closed.
 - No RunLedger/checkpoint/outbox/inbox write or read is permitted in the new path. Legacy `awf
   enroll/setup/dispatch/resume/status --run` remains callable only for legacy runs.
-- `.awf/active-run.json` may be a small rebuildable local pointer for zero-argument status/stop; it
-  is never authority and must exactly bind the RunSpec/Store before use.
+- `.awf/active-run.json` is a small rebuildable local pointer for zero-argument status/stop. It
+  contains the exact RunSpec SHA-256 and Store identity/path; the reader must re-read both objects
+  and accept the pointer only after both bindings match. It is never authority. A missing or invalid
+  pointer falls back only to factual machine status and never scans or interprets legacy RunLedger
+  state.
 
 ### 3. Role selection and remote readiness
 
@@ -83,7 +87,10 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
   unchanged. No provider configuration/catalog/auth mutation or silent fallback.
 - Before any business command, `awf run` sends fresh bounded no-model readiness probes to every
   required remote role. Existing local roles use ordinary node doctor/lifecycle facts. Probe replies
-  bind role, route, profile digest, repo, tool/model, AWF version and Agent Bus structured capability.
+  bind a bounded nonce/expiry, role, route, exact profile digest, role-workspace source commit,
+  resolved executable/version/provenance, tool/model, AWF version and the
+  `agent-bus.listen.on-argv.v1` capability. Agent Bus v0.3.1 is diagnostic provenance; capability is
+  the safety gate. Readiness evidence is never reusable as command authorization.
 - Missing, timed-out, stale or mismatched remote readiness fails before business dispatch with one
   remediation. AWF never SSH-starts, installs or kills a remote role.
 
@@ -92,18 +99,38 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 - Add one installed structured-argv handler entry for Runtime v2 readiness, command and result
   routes; do not use legacy `--on`.
 - The source writer creates the immutable command/result delivery identity and persists outgoing
-  attempt-before-I/O facts. Send non-zero/timeout/exception is ambiguous and never automatically
-  creates a replacement identity or repeats a provider.
-- A role worker validates RunSpec, command, role/profile/selection, source commit and TaskCard/context
-  before recording local launch intent. Exact duplicate command returns/resends the same persisted
-  result without another provider. Same identity/different bytes denies.
+  attempt-before-I/O facts. Each immutable command payload carries the canonical fresh RunSpec v2
+  bytes and hash, canonical stage request/authorization identity, and the required TaskCard source
+  commit/path/hash. Send non-zero/timeout/exception is ambiguous and never automatically creates a
+  replacement identity or repeats a provider.
+- Before any provider launch, a role worker recomputes all hashes, confirms its exact local profile
+  digest/role/tool/model/route, and obtains the TaskCard with `git show <frozen_base>:<path>` from its
+  already configured role checkout. A missing or drifted source commit fails before business
+  dispatch with one remediation to manually refresh or re-run `awf init` for that named role
+  workspace; `awf run` does not update the remote checkout.
+- Trusted worker code materializes a distinct event workspace at the specified immutable commit/tree
+  from configured trusted remotes, verifies that exact commit/tree before launch, and never lets the
+  provider operate the profile checkout or authenticated source-writer state. Reviewer materializes
+  the source writer's exact committed/pushed PR head/tree. Coder returns a canonical bounded delta
+  that source trusted code revalidates before its single import/commit/push/PR operation. Rework uses
+  only the exact durable Coder event-workspace manifest.
+- The worker journal identity includes RunSpec hash, profile digest, command delivery ID and
+  canonical command hash. It records launch intent before provider I/O and an immutable result before
+  result send. Same command ID/same hash never invokes again and resends only those result bytes;
+  same ID/different hash fails closed.
+- A result-send exception, timeout or unknown outcome is not provider replay: the worker returns
+  nonzero so Agent Bus leaves the command unACKed for redelivery, and redelivery may resend only the
+  stored result. The worker may return success only after the stable result has an unambiguous
+  enqueue/send fact.
 - Worker records are explicitly execution-host evidence, not Workflow authority. They contain no
   next-stage or terminal decision.
 - Coder results return bounded exact workspace delta, ImplementationReport and process/result facts
   to the source writer. Reviewer results return the bounded raw/normalized ReviewReport and exact
   reviewed commit/tree facts. Source revalidates all results before adopting them.
-- Result handlers persist an exact source inbox before success permits Agent Bus ACK. Duplicate exact
-  result is idempotent; conflict fails with no ACK.
+- A source result handler durably records and revalidates its exact inbox/result before handler
+  success permits Agent Bus ACK. Exact duplicate result is idempotent; conflict or foreign result
+  fails and remains unACKed. A crash after inbox/adoption resumes from that durable source fact and
+  never invokes the provider again.
 
 ### 5. Trusted Coder/Reviewer/rework path
 
@@ -121,26 +148,37 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 
 ### 6. Pi Architect terminal decision
 
-- Reviewer PASS/BLOCKED becomes a handoff to a new Architect stage, not Runtime terminal.
+- The fresh Store transition table adds `ARCHITECT`. A valid adopted Reviewer PASS or BLOCKED first
+  records the exact Review fact, then authorizes exactly one local Architect invocation; it is not
+  Runtime terminal.
 - Extend the existing Pi Architect renderer with one explicit terminal mode. It receives a bounded
   trusted context containing TaskCard identity/criteria, Implementation/Review summaries, exact
   commit/tree/PR and current CI observation, plus BLOCKED/escalation facts where applicable. Full
   raw history/diff is not included by default.
-- Pi output is persisted by trusted code and validated as the existing method-level Decision with a
-  closed Phase 5-02 verdict set: `accept`, `request_changes`, `blocked`, `reject`, `escalate`.
-- Only `accept` may proceed to merge. Other verdicts preserve the Architect journal/evidence and
-  produce a blocked/owner decision; they do not invent rework or next work.
+- The Architect uses a normal per-invocation journal: authorization, launch intent before Pi I/O,
+  process/result and validated Decision. Launch or result uncertainty is
+  `AMBIGUOUS_NO_REPLAY`; neither `awf run`, `awf status` nor `awf stop` may re-invoke Pi.
+- A narrow terminal parser in `runtime/architect.py` validates the existing Decision Markdown
+  template and accepts only its existing `approve|request_changes|reject|escalate` verdicts.
+  `approve` is the sole mapping to Runtime `accept`; there is no invented `blocked` Decision verdict.
+  A Reviewer BLOCKED lineage can never authorize merge even if Pi emits `approve`.
+- `request_changes`, `reject` and `escalate` preserve the typed Decision and evidence and reach the
+  defined non-merge owner/blocked/rejected outcome. They do not authorize provider rework or create
+  a next TaskCard.
 - Pi cannot run shell orchestration, send/ACK Bus events, mutate Git/GitHub or write Runtime state.
 
 ### 7. Trusted CI/merge/completion
 
-- After Architect accept, trusted code freshly verifies exact upstream/head repo/ref/SHA/PR tuple and
-  required CI success using the existing Git/GitHub provenance rules. No generic SCM abstraction.
+- After Architect accept, trusted code freshly verifies that the PR is `OPEN`, plus exact
+  upstream/head repository, base/head ref, prior head SHA and required CI success for that exact head
+  using the existing Git/GitHub provenance rules. No generic SCM abstraction, `--auto` merge or
+  automatic branch deletion is allowed.
 - The RunStore persists a merge attempt/intent before `gh pr merge`. A non-zero, timeout, exception
   or unconfirmed result is `AMBIGUOUS_NO_REPLAY`; automatic merge retry is forbidden.
 - After explicit CLI success, trusted code re-reads the PR by exact number and proves `MERGED`, exact
-  prior head SHA and a valid merge commit. Only that durable observation can authorize Runtime
-  terminal `completed`.
+  prior head SHA and the configured GitHub merge method's exact resultant head/merge-SHA rule. Any
+  mismatch is ambiguity/no replay. Only that durable observation can authorize Runtime terminal
+  `completed`.
 - Provider exit zero, Reviewer prose/PASS, Architect prose, branch name, PID/liveness or pending-zero
   is never completion.
 - Completion facts remain typed/durable and independently readable so a later milestone loop can
@@ -171,25 +209,35 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 4. REQUEST_CHANGES: exactly one implement, one rework and two reviews; no duplicate provider on
    command/result redelivery or restart; both reviews remain distinct fresh authorizations.
 5. BLOCKED/Architect non-accept preserves evidence without merge or automatic rework.
-6. Same OpenCode installation/model Coder+Reviewer works with distinct role/workspace/invocation
+6. Architect stage records authorization/launch/result/Decision exactly once; launch/result crash or
+   uncertainty cannot replay Pi, and an invalid/foreign Decision is denied. Reviewer BLOCKED cannot
+   merge under any Pi verdict.
+7. Same OpenCode installation/model Coder+Reviewer works with distinct role/workspace/invocation
    identities.
-7. Tool-default omits model flags; explicit refs are passed exactly and never fall back.
-8. Provider launch-intent crash, command send ambiguity, result conflict and merge ambiguity preserve
+8. Tool-default omits model flags; explicit refs are passed exactly and never fall back.
+9. Provider launch-intent crash, command send ambiguity, result conflict and merge ambiguity preserve
    facts and forbid automatic replay/mutation.
-9. Legacy RunLedger/state is neither read nor changed; old active run is not adopted.
-10. Finding off creates no prompt/capture/status/Feedback dependency.
-11. `status` is mutation-free; `stop` is exact/idempotent and cannot authorize remote lifecycle.
-12. One isolated multi-process acceptance uses separate source/coder/reviewer roots and a disposable
+10. Worker result-send ambiguity leaves the command unACKed and redelivery resends only the exact
+    immutable result without provider replay.
+11. Source result-handler crash after inbox/adoption resumes from the same durable result and ACKs
+    only after exact revalidation; no worker gains Workflow authority.
+12. Legacy RunLedger/state is neither read nor changed; old active run is not adopted. Invalid fresh
+    pointers never cause a legacy scan.
+13. Finding off creates no prompt/capture/status/Feedback dependency.
+14. `status` is mutation-free; `stop` is exact/idempotent and cannot authorize remote lifecycle.
+15. One isolated multi-process acceptance uses separate source/coder/reviewer roots and a disposable
     Agent Bus-compatible fake or local server to prove structured argv, handler-success ACK ordering,
     stable result replay and source-only Workflow authority. No real model is required; scripted
     providers and fake GitHub are acceptable for deterministic PASS/rework/merge ambiguity rows.
-13. Built wheel runs the accepted normal journey from an unrelated cwd.
+16. Built wheel runs the accepted normal journey from an unrelated cwd.
 
 ## Risk and verification
 
 This is an L3 fresh-default/adoption seam. Reuse existing Runtime Store/application/transport,
 workspace/Artifact fixtures, RTS-011 rework rows, Phase 4 envelope/outgoing tests and trusted
-Git/GitHub helpers. Add only focused rows for the new source/worker/Architect/merge seams. Do not
+Git/GitHub helpers. Add only focused rows for the new source/worker/Architect journal and invalid
+Decision, command/result ACK ambiguity, exact materialization, pointer, readiness and merge-method
+seams. Do not
 recreate the 39-case matrix, storage/Rust comparison or real three-OS lifecycle campaign.
 
 One independent L3 architecture/authority Review is required before freeze. One different
