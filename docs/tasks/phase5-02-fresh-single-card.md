@@ -1,7 +1,7 @@
 # TaskCard: Phase 5-02 Fresh Runtime v2 Single-Card Adoption
 
-Status: Draft for independent architecture/authority review. No implementation is authorized until
-this card is reviewed, repaired if needed, marked Frozen, committed and pushed.
+Status: Frozen after independent architecture/authority review PASS at `fd4b4d8`. Implementation is
+authorized only within the scope and authority rules below.
 
 ## Task ID
 
