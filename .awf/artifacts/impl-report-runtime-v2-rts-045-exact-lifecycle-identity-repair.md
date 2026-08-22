@@ -49,6 +49,10 @@ No existing test was weakened or duplicated into another module.
 - Ruff format check: PASS.
 - `git diff --check`: PASS.
 - Full repository suite: **876 passed, 5 skipped**.
+- Exact-head ordinary CI `32544625110`: PASS across Linux, Windows recovery/configuration, macOS
+  runtime and all three installed-wheel jobs.
+- Exact-head Binary Feasibility `32544625218`: PASS across all five native cells, all five retained
+  Rust oracle cells and both aggregates.
 - Production diff: 33 additions / 16 deletions, net +17 and within the 45-line budget.
 - Focused test diff: 103 additions, within the 180-line budget.
 - No dependency, format, persistent representation, migration or external operation was added.

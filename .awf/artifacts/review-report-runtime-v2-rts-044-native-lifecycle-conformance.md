@@ -2,16 +2,16 @@
 
 ## Verdict
 
-`REQUEST_CHANGES`
+`PASS` after RTS-045 repair and focused re-review.
 
 The current multi-record `awf node` surface is an acceptable single behavioral/API boundary and
-does not need an `AgentInstallation` class, new Store or migration. Two local L3 identity joins are
-incomplete, so RTS-044 cannot pass until one bounded repair is implemented and independently
-re-reviewed.
+does not need an `AgentInstallation` class, new Store or migration. Initial review found two local
+L3 identity gaps. RTS-045 repaired both at exact candidate `37ea274`; independent repair review,
+full local validation and exact-head CI passed with no residual finding.
 
-## Findings
+## Closed findings
 
-### P1 — managed process/incarnation root identity is incomplete
+### P1 — managed process/incarnation root identity was incomplete
 
 The Frozen contract and RTS-044 require process record, state-root binding, lease and live
 observation to agree before native signal. `_bound_live_listener_pid` validates process-record
@@ -24,7 +24,7 @@ native calls.
 The exact-dead stale-state cleanup repeats the partial record check, so it may also remove a dead
 record whose root evidence is not exact.
 
-### P1 — installed manager target and definition path are not verified
+### P1 — installed manager target and definition path were not verified
 
 The install record writes `manager_id`, definition path and definition digest. `_require_installed`
 does not compare `manager_id` or definition path with the deterministic current adapter target; it
@@ -50,9 +50,9 @@ desired-state mutation. The conformance report was corrected accordingly.
 - The focused **64 passed, 1 skipped** run is proportionate but cannot cover the two missing cases.
 - Phase 4B correctly remains open.
 
-## Required repair
+## Repair disposition
 
-Freeze one bounded TaskCard that:
+RTS-045 completed the bounded repair:
 
 1. requires strict current process-record state-root path/binding for managed stop and exact-dead
    cleanup while leaving explicitly scoped legacy compatibility unchanged elsewhere;
@@ -61,17 +61,24 @@ Freeze one bounded TaskCard that:
 3. adds only focused regressions proving missing/drifted root and manager-target/definition-path
    facts produce zero native calls.
 
-No AgentInstallation abstraction, record migration, native-manager operation, Agent Bus change or
-product decision is required.
+The repair added no AgentInstallation abstraction, record migration, native-manager operation,
+Agent Bus change or product decision. Focused re-review returns `PASS`; Phase 4B remains open for
+fresh real manager and Windows login-lifecycle acceptance.
 
 <!-- awf-review-report
 {
-  "verdict": "REQUEST_CHANGES",
+  "verdict": "PASS",
   "reviewed_head": "146853c",
   "critical": 0,
-  "high": 2,
-  "medium": 1,
+  "high": 0,
+  "medium": 0,
   "low": 0,
-  "next_gate": "runtime-v2-rts-045-exact-lifecycle-identity-repair"
+  "closed_high": 2,
+  "closed_medium": 1,
+  "repair_head": "37ea2740a2c9a29656408b5347bd3391009a1c15",
+  "focused_rereview": "PASS",
+  "ci_run": "32544625110",
+  "binary_run": "32544625218",
+  "next_gate": "runtime-v2-rts-046-native-manager-acceptance"
 }
 -->

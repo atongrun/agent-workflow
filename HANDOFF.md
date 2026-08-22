@@ -247,6 +247,23 @@ replacement delivery, manufactured completion or third identity occurred. Phase 
 next safe action is a separately frozen Phase 4B TaskCard; no lifecycle implementation is authorized
 inside this closeout.
 
+RTS-044 next reused the current lifecycle implementation instead of adding a speculative
+`AgentInstallation` abstraction. Its initial independent Review returned `REQUEST_CHANGES` for two
+real exact-identity gaps: managed native stop did not strictly require process-record state-root
+evidence, and installed state did not bind manager ID/definition path to the deterministic adapter
+target. RTS-045 repaired only those joins. Missing/partial/drifted process roots now produce zero
+native calls and remain ineligible for exact-dead cleanup; foreign manager IDs or self-consistent
+alternate definition paths no longer project current installation or authorize upgrade stop.
+
+RTS-045 independent L3 Review returned `PASS` at `37ea274`; focused validation passed 75 tests with
+one platform skip, the full suite passed 876 with five skips, ordinary CI `32544625110` passed and
+Binary Feasibility `32544625218` passed all cells/aggregates. RTS-044 local lifecycle conformance is
+therefore closed without a new record, migration, native-manager operation, Agent Bus action or
+production change. Phase 4B itself remains open. The next safe milestone is separately frozen
+**RTS-046 fresh isolated three-OS native-manager acceptance**. It may assume Agent Bus already
+exists but may not install it or operate business events. Windows logout/login or reboot remains a
+disruptive external action requiring an explicitly scheduled owner window.
+
 ## Current Handoff State: 2026-08-17
 
 The final fresh-machine no-model usability gate is green. The original benchmark's disposable

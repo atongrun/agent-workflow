@@ -621,6 +621,17 @@ contract or Runtime/Agent Bus ownership. The missing-closeout and tracked-artifa
 findings were repaired, and final focused independent re-review returned `PASS` with no residual
 findings. Phase 4A is closed; no additional live event occurred or is required by this gate.
 
+RTS-044 then adjudicated the existing multi-record `awf node` surface as the selected local
+AgentInstallation/incarnation API shape rather than adding another abstraction. Initial independent
+Review found two incomplete exact identity joins: managed stop omitted strict process-record
+state-root evidence, and current installation did not bind manager ID/definition path to the
+deterministic adapter target. RTS-045 repaired only those joins with two table-driven regressions.
+Independent L3 Review returned `PASS` at `37ea274`; full local validation passed 876 tests with five
+platform skips, ordinary CI `32544625110` passed, and Binary Feasibility `32544625218` passed every
+cell and aggregate. Local lifecycle conformance is closed without a new record, migration or
+external operation. Phase 4B remains open for separately frozen RTS-046 fresh real three-OS
+native-manager and current Windows login-lifecycle acceptance.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -891,8 +902,11 @@ remains terminal failed, retained and permanently excluded from PASS; RTS-042-02
 fresh isolated Mac-to-Windows request/result, two child-success, two external ACK and queue
 convergence evidence. RTS-043's independent adjudication found the combined Phase 4A evidence
 semantically complete; final focused re-review passed after documentation-only closeout findings
-were repaired. Phase 4A is closed. The next action is a separately frozen Phase 4B TaskCard. No
-production/retained Bus operation, Store adoption or dual write,
+were repaired. Phase 4A is closed. RTS-044/045 then closed local Phase 4B lifecycle conformance after
+repairing strict process-root and manager-target identity joins; no new lifecycle abstraction or
+state representation was added. Phase 4B remains open. The next action is separately frozen RTS-046
+fresh isolated three-OS native-manager acceptance, subject to an explicit owner window before any
+Windows logout/login or reboot. No production/retained Bus operation, Store adoption or dual write,
 default switch, production state migration, native-launcher acceptance, release, retained-event
 operation or destructive cleanup is authorized.
 

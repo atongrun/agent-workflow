@@ -82,22 +82,22 @@ After implementation, CI and independent Review PASS, closeout may additionally 
 
 ## Acceptance criteria
 
-- [ ] Task ID equals branch leaf and every changed path is in the frozen writable scope.
-- [ ] Managed stop and exact-dead cleanup require present, exact process-record state-root path and
+- [x] Task ID equals branch leaf and every changed path is in the frozen writable scope.
+- [x] Managed stop and exact-dead cleanup require present, exact process-record state-root path and
       binding while leaving `node._record_matches_profile` and session compatibility unchanged.
-- [ ] Missing, partial and explicitly drifted process-root facts deny before any systemd, launchd or
+- [x] Missing, partial and explicitly drifted process-root facts deny before any systemd, launchd or
       Task Scheduler native call and leave evidence intact.
-- [ ] `_require_installed` rejects manager-ID drift and a record-selected alternate definition path,
+- [x] `_require_installed` rejects manager-ID drift and a record-selected alternate definition path,
       even when the alternate file and digest are self-consistent.
-- [ ] Upgrade stop retains its bounded stale-action-record purpose but rejects manager identifier or
+- [x] Upgrade stop retains its bounded stale-action-record purpose but rejects manager identifier or
       definition-path target drift before native calls.
-- [ ] Existing current install/stop/reinstall/upgrade behavior remains green for all three adapters.
-- [ ] Only one or two focused table-driven regressions are added; no broad test-matrix duplication.
-- [ ] Production implementation grows by no more than 45 nonblank/noncomment lines and focused tests
+- [x] Existing current install/stop/reinstall/upgrade behavior remains green for all three adapters.
+- [x] Only one or two focused table-driven regressions are added; no broad test-matrix duplication.
+- [x] Production implementation grows by no more than 45 nonblank/noncomment lines and focused tests
       by no more than 180; no dependency or persistent representation is added.
-- [ ] Focused lifecycle tests, Ruff/format and exact-head ordinary cross-platform CI pass.
-- [ ] Independent L3 Gate Review returns `PASS`; any semantic repair receives focused re-review.
-- [ ] RTS-044 focused re-review may then close local conformance, while Phase 4B remains open for a
+- [x] Focused lifecycle tests, Ruff/format and exact-head ordinary cross-platform CI pass.
+- [x] Independent L3 Gate Review returns `PASS`; any semantic repair receives focused re-review.
+- [x] RTS-044 focused re-review may then close local conformance, while Phase 4B remains open for a
       separately frozen fresh three-OS native-manager acceptance.
 
 ## Verification

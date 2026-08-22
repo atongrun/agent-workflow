@@ -33,7 +33,8 @@ base `6a3954d`. No critical, high, medium or low findings remain.
 - Focused lifecycle suite: **75 passed, 1 skipped**.
 - Full repository suite: **876 passed, 5 skipped**.
 - Compileall, Ruff, Ruff format and `git diff --check`: PASS.
-- Exact-head ordinary cross-platform CI remains the final publication gate.
+- Exact-head ordinary CI `32544625110`: PASS.
+- Exact-head Binary Feasibility `32544625218`: PASS.
 
 ## RTS-044 disposition
 
@@ -51,6 +52,8 @@ three-OS native-manager and current Windows login-lifecycle acceptance.
   "medium": 0,
   "low": 0,
   "focused_tests": "75 passed, 1 skipped",
-  "full_tests": "876 passed, 5 skipped"
+  "full_tests": "876 passed, 5 skipped",
+  "ci_run": "32544625110",
+  "binary_run": "32544625218"
 }
 -->
