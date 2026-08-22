@@ -655,13 +655,13 @@ Windows fresh `-04` performed real logout/login but exposed transient logon read
 stale convergence. Status denied the reused PID and normal stop made no signal. RTS-048 repaired only
 bounded pre-listener Bus readiness retry and strict creation-aware exact stale cleanup. Independent
 L3 re-review passed; ordinary CI `32551160937` and Binary Feasibility `32551160941` passed. Reviewed
-code exactly removed failed `-04` manager state without signal. The owner authorized one fresh
-Windows logout only after a RustDesk recovery preflight. The automatic Session 0 RustDesk service
-and locked-screen disconnect/reconnect/control checks passed, but the executor had no authorized
-Windows PIN to unlock and confirm normal desktop recovery. The preflight stopped as
-`WAITING_FOR_OWNER_PHYSICAL_ACCESS`; `-05` was not created and no logout occurred. Phase 4B remains
-open: Linux needs an approved credential path and Windows needs owner physical login to finish the
-preflight. Phase 5 must not start.
+code exactly removed failed `-04` manager state without signal. The owner then authorized one fresh
+Windows logout after accepting the RustDesk recovery preflight. Fresh `-05` used exact reviewed
+RTS-048 code, completed native logout, RustDesk PIN login, automatic new process/lease/launch/
+creation convergence, live Bus/Clash health, exact stop and uninstall. `-04` remains failed evidence;
+no second logout, record edit or manual restart occurred. Phase 4B remains open only because Linux
+still needs a security-layer-permitted credential path for its real systemd-user acceptance. Phase
+5 must not start.
 
 Deliverables:
 
@@ -938,9 +938,11 @@ repairing strict process-root and manager-target identity joins; no new lifecycl
 state representation was added. RTS-047 closed native venv re-entry; RTS-048 closed bounded login
 readiness and PID-reuse stale convergence. RTS-046 resolved client skew and `-03` passed macOS plus
 non-disruptive Windows lifecycle, but Linux credential export remains safety-blocked and failed
-Windows `-04` requires a fresh owner-authorized `-05` logout to prove the repair. Phase 4B remains
-open and Phase 5 is not eligible. The next action is those external authorizations followed by a
-fresh RTS-046 identity, not an AWF Bus installer or boundary fallback.
+Windows `-04` remains permanently excluded. Fresh `-05` passed one real owner-authorized logout,
+RustDesk login, automatic exact recovery and exact stop/uninstall with reviewed RTS-048 code. Phase
+4B remains open only on Linux and Phase 5 is not eligible. The next action is a fresh Linux RTS-046
+identity after a security-layer-permitted disposable credential path exists, not an AWF Bus
+installer or boundary fallback.
 No production/retained Bus operation, Store adoption or dual write,
 default switch, production state migration, native-launcher acceptance, release, retained-event
 operation or destructive cleanup is authorized.

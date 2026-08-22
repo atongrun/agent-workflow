@@ -307,13 +307,15 @@ L3 re-review, 884 local tests, ordinary CI `32551160937` and Binary Feasibility 
 Reviewed code exactly cleaned `-04`; task/process/lease/definition/install state is absent and logs
 remain. `-04` is failure evidence forever.
 
-Phase 4B is still open. Linux requires a preconfigured credential path that the execution safety
-layer permits. The owner authorized one new Windows logout only after a RustDesk recovery preflight.
-The service was running automatically in Session 0, and an intentional RustDesk disconnect/reconnect
-reached and controlled the locked Windows PIN screen. The executor did not have an authorized
-Windows PIN/login credential, so it could not unlock and prove normal desktop recovery. Execution is
-`WAITING_FOR_OWNER_PHYSICAL_ACCESS`; `-05` was not created, no logout or network/lifecycle mutation
-occurred, and Phase 5 remains prohibited.
+Phase 4B is still open only on Linux. Windows fresh `-05` used reviewed RTS-048 code and the exact
+compatible Bus client, performed one owner-authorized native logout, reconnected through RustDesk,
+completed the real PIN login and advanced console session 2 to 3. The same Scheduled Task converged
+without manual restart from old absent PID `11028` to exact new PID/lease `17492`, launch
+`2a7293c12e3d4c93a79b25677386c194`, with matching creation/profile/state-root facts. Status and Bus
+doctor passed; the Clash service remained running in Session 0. Exact stop/uninstall removed the
+process, lease, definition, install record, task and registries. `-04` remains failure evidence.
+Linux still requires a security-layer-permitted credential path into its disposable acceptance;
+Phase 5 remains prohibited.
 
 ## Current Handoff State: 2026-08-17
 

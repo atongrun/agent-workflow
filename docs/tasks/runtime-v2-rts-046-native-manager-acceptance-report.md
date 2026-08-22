@@ -4,12 +4,12 @@
 
 `EXTERNAL_BLOCKED` on Linux qualification.
 
-Windows fresh repair validation is separately `OWNER_AUTHORIZATION_REQUIRED`. Phase 4B remains open
+Windows fresh `-05` real logout/login validation is `PASS`. Phase 4B remains open solely on Linux,
 and Phase 5 did not start.
 
 Two preserved macOS scopes remain immutable failures. A third fresh scope resolves only the
-owner-authorized client-skew prerequisite and passes real macOS plus non-disruptive Windows manager
-acceptance. Linux remains pre-install blocked.
+owner-authorized client-skew prerequisite and passes real macOS plus Windows manager acceptance,
+including the real login boundary under `-05`. Linux remains pre-install blocked.
 
 ## Acceptance scope
 
@@ -21,8 +21,9 @@ acceptance. Linux remains pre-install blocked.
 | `rts046-live-20260822-03` | exact compatible isolated Bus clients; new macOS and Windows identities | macOS PASS; Windows non-disruptive PASS | only successful manager evidence |
 | `rts046-live-20260822-04` | Windows real logout/login | failed post-login recovery; exactly cleaned after repair | never PASS |
 | RTS-048 repair | local/CI five-target evidence | PASS | bounded login readiness and creation-aware stale cleanup |
+| `rts046-live-20260822-05` | Windows real logout/login with reviewed RTS-048 code | PASS | only successful Windows login acceptance |
 | Linux entry audit | multiple existing Linux user hosts | blocked before install | no existing linger plus no existing AWF/Bus config on suitable hosts |
-| Windows login gate | existing Windows interactive-console user | owner-blocked after safe lifecycle PASS | logout/login owner window absent |
+| Windows login gate | existing Windows interactive-console user | PASS | one owner-authorized logout, RustDesk login and automatic Task Scheduler convergence |
 
 ## Environment and identity rules
 
@@ -162,11 +163,11 @@ No audited suitable Linux user host already had both linger enabled and an AWF/A
 configuration. Enabling linger changes host login/service policy, and deploying/configuring Agent
 Bus is outside RTS-046. The systemd acceptance therefore correctly stopped before installation.
 
-### Windows owner window
+### Resolved Windows owner window
 
-The Windows identity matched the current interactive-console user, and all non-disruptive Task
-Scheduler gates passed. No owner-authorized logout/login window was supplied. Logout/login was not
-simulated, inferred or triggered.
+The Windows identity matched the current interactive-console user. The owner later supplied exactly
+one fresh logout/login window; `-05` used it and passed. No second logout, simulation or inferred
+login evidence occurred.
 
 ## Safety and cleanup
 
@@ -179,21 +180,19 @@ simulated, inferred or triggered.
   was used.
 - Both macOS definitions/install records/registries were removed through normal exact uninstall.
 - Failed-scope logs and desired-state evidence remain retained in disposable local roots.
-- Linux created no acceptance manager/state resources. Windows manager/state resources were removed
-  through exact stop/uninstall; its isolated client/workflow roots and log remain for owner-window
-  continuation evidence.
+- Linux created no acceptance manager/state resources. Every completed Windows manager scope was
+  removed through exact stop/uninstall; isolated client/workflow roots plus desired/log and immutable
+  snapshot evidence remain, with no installed registry reference or Scheduled Task.
 
 ## Limitations and legal next action
 
 RTS-046 now proves real launchd steady running/restart/exact-stop and Task Scheduler post-SSH,
-restart and exact-stop. It still does not prove any systemd-user sequence or Windows logout/login.
-Phase 4B cannot close.
+restart, real logout/login convergence and exact-stop/uninstall. It still does not prove any
+systemd-user sequence. Phase 4B cannot close.
 
-The only legal continuation is a new fresh acceptance identity after all external prerequisites are
-provided:
-
-1. an already-lingering Linux user host with existing AWF/Bus configuration; and
-2. an explicitly scheduled Windows logout/login authorization window.
+The only legal continuation is a fresh Linux acceptance after the owner provisions the selected
+disposable host with the required credential-bearing AWF/Bus configuration through an execution
+path permitted by the security layer. Windows needs no further logout/login evidence.
 
 Do not alter Runtime/lifecycle identity, deploy Agent Bus from AWF, or start Phase 5 to clear these
 blocks.
@@ -316,3 +315,43 @@ Immediately before the authorized logout, exact evidence recorded:
 No model, provider, business event, ACK/retry/requeue/recovery or Phase 5 action occurred. This
 checkpoint is `READY_FOR_AUTHORIZED_LOGOUT`; only native `WTSLogoffSession` for the revalidated
 active console session may advance it.
+
+### Windows logout/login PASS
+
+Native `WTSLogoffSession` returned success only after revalidating the exact session-2 console,
+profile, state-root, launch, creation, desired and task identity. RustDesk then reconnected to the
+normal Windows sign-in screen. The owner-authorized PIN completed a real interactive login; it was
+not stored or written to evidence. The normal desktop became controllable and the active console
+advanced legitimately from session 2 to session 3. No second logout or reboot occurred.
+
+Without a manual restart or record edit, the same `-05` Scheduled Task logon trigger converged to a
+new listener:
+
+- old PID `11028` was absent and was never signaled after login;
+- new process/lease PID `17492`, launch ID `2a7293c12e3d4c93a79b25677386c194` and creation FILETIME
+  `134318498467181730` matched the live process exactly;
+- profile and state-root digests remained identical to the pre-logout checkpoint;
+- installation stayed `current`, running observation became `running`, and desired remained
+  `running`, generation 2;
+- the task logon run began at `2026-08-22T05:24:05Z`; the exact listener process began at
+  `2026-08-22T05:24:06.718173Z`;
+- the credential-safe log grew to 33 lines with 19 listen/connect markers and zero task-reconcile,
+  Agent Bus readiness or other `ERROR` lines; and
+- a fresh `awf node doctor` passed `configured`, `connected` and Agent Bus health while model status
+  remained `not_applicable`/not invoked.
+
+The real login encountered no transient Bus failure, so no fault was manufactured merely to enter
+the retry branch. The reviewed RTS-048 focused/full/CI evidence remains the proof of the bounded
+transient retry and PID-reuse denial cases; this fresh acceptance proves that code converges across
+the actual logout/login boundary. The existing Clash service remained running in Session 0, and the
+live Agent Bus health probe passed without changing Clash or Bus configuration.
+
+Normal exact stop removed PID `17492`, its process record and lease, and wrote desired `stopped`,
+generation 3. Normal uninstall then removed the native definition, install record, Scheduled Task
+and installed-profile registry references. No RTS-046 Scheduled Task remains. The immutable snapshot
+file, source profile, strict credential copy, desired state and 35-line zero-error log remain in the
+disposable root as bounded evidence; the snapshot has zero registry references and cannot authorize
+an installed lifecycle. `-04` remains permanently failed and untouched.
+
+Windows logout/login acceptance is `PASS`. RTS-046 and Phase 4B remain `EXTERNAL_BLOCKED` only on
+the Linux systemd-user acceptance, and Phase 5 did not start.

@@ -2,9 +2,8 @@
 
 ## Final status
 
-`EXTERNAL_BLOCKED` on the Linux prerequisite, with Windows login evidence
-`BLOCKED_BY_OWNER_AUTHORIZATION`. macOS launchd and non-disruptive Windows Task Scheduler acceptance
-now pass. Phase 4B is not complete.
+`EXTERNAL_BLOCKED` on the Linux prerequisite. macOS launchd, Windows Task Scheduler and fresh `-05`
+real logout/login acceptance pass. Phase 4B is not complete solely because Linux is still blocked.
 
 No model, business event, provider, Runtime Core, Agent Bus server/state/credential mutation or
 Finding workflow occurred. Only owner-authorized isolated Agent Bus client installations were added.
@@ -293,3 +292,26 @@ model-not-applicable with no model invocation. Install/start produced one exact 
 Installer and active console user matched in session 2. No event, provider, model, ACK/retry/requeue
 or Phase 5 action occurred. The scope is `READY_FOR_AUTHORIZED_LOGOUT` and may advance only through
 the one authorized native session-2 logout.
+
+## Fresh Windows `-05` logout/login PASS
+
+The exact pre-logout identity was revalidated, and native `WTSLogoffSession` returned success only
+for active console session 2. RustDesk reached the real sign-in screen; the owner-authorized PIN
+completed normal interactive login and desktop control, advancing the console to session 3. The PIN
+was not persisted or included in evidence. No second logout or reboot occurred.
+
+The existing `-05` logon trigger converged without a manual restart or record edit. Old PID `11028`
+was absent. New process/lease PID `17492`, launch `2a7293c12e3d4c93a79b25677386c194`, creation
+FILETIME `134318498467181730`, profile and state-root identity all matched live facts. Status was
+current/running and a fresh doctor passed Agent Bus health. The existing Clash service remained
+running in Session 0. The log had zero reconcile, Bus-readiness or other errors. No transient Bus
+failure happened during this login, so the fault was not manufactured; RTS-048 reviewed tests/CI
+remain the causal retry/PID-reuse proof while this scope supplies the real boundary acceptance.
+
+Normal exact stop removed the bound process/lease and wrote stopped generation 3. Normal uninstall
+removed definition, install record, Scheduled Task and installed-profile registry references. No
+RTS-046 task remains. Source profile, strict disposable config, desired/log and the immutable but
+unreferenced snapshot remain as evidence. `-04` remains failed forever and untouched.
+
+Windows login acceptance is `PASS`; Linux systemd-user remains the sole `EXTERNAL_BLOCKED` gate.
+Phase 4B remains open and Phase 5 did not start.
