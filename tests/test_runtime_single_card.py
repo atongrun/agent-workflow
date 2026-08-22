@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,10 +31,26 @@ from agent_workflow.runtime import (
     WorkflowStage,
 )
 from agent_workflow.runtime.renderers import ARCHITECT_TERMINAL
+from agent_workflow.runtime.single_card import (
+    REQUIRED_BUS_CAPABILITY,
+    ReadinessFact,
+    active_run_path,
+    compile_fresh_run_spec,
+    read_active_run,
+    write_active_run,
+)
 
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def git(repo: Path | None, *args: str) -> str:
+    argv = ["git"]
+    if repo is not None:
+        argv += ["-C", str(repo)]
+    result = subprocess.run(argv + list(args), capture_output=True, text=True, check=True)
+    return result.stdout.strip()
 
 
 def binding(tmp_path: Path, role: str, tool: str, model: ModelSelection) -> RoleBinding:
@@ -274,3 +292,96 @@ def test_local_application_compiles_exact_fresh_architect_invocation(tmp_path: P
     assert invocation.model == ""
     assert invocation.provider_args == (ARCHITECT_TERMINAL,)
     assert invocation.report_path == str(workspace / spec.decision_report)
+
+
+def test_compile_fresh_spec_uses_only_committed_card_and_known_bindings(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(None, "init", "-q", "-b", "main", str(repo))
+    git(repo, "config", "user.name", "Fresh Test")
+    git(repo, "config", "user.email", "fresh@example.invalid")
+    card = repo / "docs" / "tasks" / "CARD-001.md"
+    card.parent.mkdir(parents=True)
+    card.write_text(
+        "# Card\n\n## Task ID\n\nCARD-001\n\n- **Task branch**: `codex/CARD-001`\n",
+        encoding="utf-8",
+    )
+    plan = repo / "docs" / "plans" / "runtime-v2-development-plan.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("# Frozen semantic contract\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "freeze card")
+    seed = fresh_spec(tmp_path)
+    bindings = {
+        "architect": seed.architect,
+        "coder": seed.coder,
+        "reviewer": seed.reviewer,
+    }
+
+    compiled = compile_fresh_run_spec(
+        repo=repo,
+        card=card,
+        repository="owner/repo",
+        state_root=tmp_path / "state",
+        bindings=bindings,
+    )
+
+    assert compiled.format == "awf.runtime-v2.run-spec.v2"
+    assert compiled.task_id == "CARD-001"
+    assert compiled.frozen_base == git(repo, "rev-parse", "HEAD")
+    assert compiled.architect == seed.architect
+    card.write_text(card.read_text(encoding="utf-8") + "\ndrift\n", encoding="utf-8")
+    with pytest.raises(Exception, match="working bytes differ"):
+        compile_fresh_run_spec(
+            repo=repo,
+            card=card,
+            repository="owner/repo",
+            state_root=tmp_path / "other-state",
+            bindings=bindings,
+        )
+
+
+def test_fresh_active_pointer_revalidates_store_and_never_reads_legacy(tmp_path: Path) -> None:
+    spec = fresh_spec(tmp_path)
+    state = tmp_path / "state"
+    store = AtomicRunStore(state, spec.run_id, "writer-phase5-02")
+    store.initialize(spec)
+    repo = tmp_path / "project"
+    (repo / ".awf").mkdir(parents=True)
+    (repo / ".awf" / "legacy-run-ledger.json").write_text("not-json", encoding="utf-8")
+    authority = state / "runtime-v2" / "runs" / spec.run_id / "authority.json"
+    write_active_run(repo, spec, authority)
+
+    assert read_active_run(repo)["run_id"] == spec.run_id  # type: ignore[index]
+    pointer = json.loads(active_run_path(repo).read_text(encoding="utf-8"))
+    pointer["run_spec_sha256"] = "0" * 64
+    active_run_path(repo).write_text(json.dumps(pointer), encoding="utf-8")
+    assert read_active_run(repo) is None
+
+
+def test_readiness_requires_structured_argv_capability(tmp_path: Path) -> None:
+    spec = fresh_spec(tmp_path)
+    fact = ReadinessFact(
+        nonce="a" * 32,
+        expires_at=2_000_000_000,
+        binding=spec.coder,
+        source_commit=spec.frozen_base,
+        tool_executable="/usr/bin/true",
+        tool_version_sha256=digest("tool"),
+        bus_executable="/usr/bin/true",
+        bus_provenance_sha256=digest("bus"),
+        bus_capabilities=(REQUIRED_BUS_CAPABILITY,),
+    )
+    assert fact.binding.model_selection.mode == "explicit"
+    with pytest.raises(Exception, match="capability"):
+        ReadinessFact(
+            nonce="b" * 32,
+            expires_at=2_000_000_000,
+            binding=spec.coder,
+            source_commit=spec.frozen_base,
+            tool_executable="/usr/bin/true",
+            tool_version_sha256=digest("tool"),
+            bus_executable="/usr/bin/true",
+            bus_provenance_sha256=digest("bus"),
+            bus_capabilities=(),
+        )
