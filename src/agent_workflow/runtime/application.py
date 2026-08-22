@@ -722,6 +722,34 @@ class LocalRuntimeApplication:
                 OutgoingIntent.from_envelope(outgoing),
             )
             return
+        if isinstance(run_spec, FreshRunSpec):
+            outgoing = ResultEnvelope.create(
+                run_id=run_spec.run_id,
+                task_id=run_spec.task_id,
+                run_spec_sha256=run_spec.sha256,
+                source_role="reviewer",
+                target_role="architect",
+                route=run_spec.architect_route,
+                source_invocation_id=command.invocation_id,
+                source_authorization_sha256=command.authorization_sha256,
+                target_invocation_id=request.outgoing_target_invocation_id,
+                causation_delivery_id=request.delivery_id,
+                payload=payload,
+            )
+            store.record_handoff(
+                HandoffCommand(
+                    run_spec.sha256,
+                    command.invocation_id,
+                    command.authorization_sha256,
+                    outgoing.delivery_id,
+                    outgoing.payload_sha256.removeprefix("sha256:"),
+                    run_spec.architect_route,
+                    "architect",
+                ),
+                effect,
+                OutgoingIntent.from_envelope(outgoing),
+            )
+            return
         terminal = TerminalOutcome.COMPLETED if verdict == "PASS" else TerminalOutcome.BLOCKED
         outgoing = ResultEnvelope.create(
             run_id=run_spec.run_id,

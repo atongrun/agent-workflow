@@ -17,13 +17,16 @@ from agent_workflow.runtime import (
     AtomicRunStore,
     CommandEnvelope,
     DecisionOutcome,
+    FreshRunSpec,
     LocalRuntimeApplication,
     LocalStageRequest,
     LocalTransportBoundary,
+    ModelSelection,
     PostflightObservation,
     ProcessResult,
     ProviderSelection,
     ResultEnvelope,
+    RoleBinding,
     RunSpec,
     StoreError,
     SubprocessProviderLauncher,
@@ -260,6 +263,45 @@ def files(path: Path) -> dict[str, bytes]:
     }
 
 
+def as_fresh(fixture: Fixture) -> FreshRunSpec:
+    spec = fixture.spec
+
+    def role_binding(role: str, provider: str, model: str) -> RoleBinding:
+        return RoleBinding(
+            role,
+            provider,
+            ModelSelection("explicit", model),
+            f"profile-{role}",
+            digest(f"profile-{role}"),
+            str((fixture.root / f"role-{role}").resolve()),
+        )
+
+    return FreshRunSpec(
+        run_id=spec.run_id,
+        task_id=spec.task_id,
+        task_card=spec.task_card,
+        task_card_sha256=spec.task_card_sha256,
+        repository=spec.repository,
+        frozen_base=spec.frozen_base,
+        task_branch=spec.task_branch,
+        state_root_sha256=spec.state_root_sha256,
+        semantic_contract_sha256=spec.semantic_contract_sha256,
+        architect=role_binding("architect", "pi", "architect/model"),
+        coder=role_binding("coder", spec.coder.provider, spec.coder.model),
+        reviewer=role_binding("reviewer", spec.reviewer.provider, spec.reviewer.model),
+        implement_attempts=spec.implement_attempts,
+        review_attempts=spec.review_attempts,
+        rework_budget=spec.rework_budget,
+        implement_route=spec.implement_route,
+        review_route=spec.review_route,
+        rework_route=spec.rework_route,
+        architect_route="decision:awf-runtime-v2-architect-v1",
+        implementation_report=spec.implementation_report,
+        review_report=spec.review_report,
+        decision_report=".awf/artifacts/decision-runtime-v2-local-application-fixture.md",
+    )
+
+
 def authority_path(fixture: Fixture) -> Path:
     return fixture.state / "runtime-v2" / "runs" / fixture.spec.run_id / "authority.json"
 
@@ -443,6 +485,28 @@ def test_installed_application_records_blocked_terminal(local_runtime: Fixture) 
         fixture.request(WorkflowStage.REVIEW, "review", 1, verdict="BLOCKED"),
     )
     assert final.terminal is TerminalOutcome.BLOCKED
+
+
+@pytest.mark.parametrize("verdict", ["PASS", "BLOCKED"])
+def test_fresh_review_hands_off_to_architect_instead_of_terminal(
+    local_runtime: Fixture, verdict: str
+) -> None:
+    fixture = replace(local_runtime, spec=as_fresh(local_runtime))
+    fixture.app.run(fixture.spec, fixture.request(WorkflowStage.IMPLEMENT, "implement", 1))
+
+    snapshot = fixture.app.run(
+        fixture.spec,
+        fixture.request(WorkflowStage.REVIEW, "review", 1, verdict=verdict),
+    )
+
+    assert snapshot.stage is WorkflowStage.ARCHITECT
+    assert snapshot.terminal is None
+    incoming = AtomicRunStore(
+        fixture.state, fixture.spec.run_id, "writer-local-fixture"
+    ).pending_handoff()
+    assert incoming is not None
+    assert incoming.route == fixture.spec.architect_route
+    assert incoming.target_role == "architect"
 
 
 @pytest.mark.parametrize(
