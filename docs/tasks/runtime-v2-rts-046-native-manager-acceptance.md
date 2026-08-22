@@ -148,3 +148,27 @@ After all required evidence and independent Review, closeout may additionally up
 - one independent Gate ReviewReport;
 - aligned HANDOFF, ROADMAP and plan status;
 - Phase 4B `PASS` only with genuine Windows login evidence, otherwise preserved owner block.
+
+## Owner-authorized client-skew continuation
+
+After scopes `-01` and `-02` were preserved as failures, the owner independently verified and
+authorized a client-only compatibility continuation:
+
+- **Fresh acceptance scope**: `rts046-live-20260822-03`
+- **Agent Bus repository**: `atongrun/agent-bus`, default branch `master`
+- **Exact compatible source**: `6ca8f2812be0286607bbbe3f14cc51783637b0b5`
+- **Producer contract**: `awf.handler-argv.v1`
+- **Consumer contract**: `agent-bus.listen.on-argv.v1`
+
+The compatible client must be installed into new isolated macOS and Windows environments. Existing
+client installations, server code/deployment/database, endpoint/token values, retained events,
+queues and ACK state are read-only. The disposable acceptance profiles must bind the exact isolated
+client executable and prove `--on-argv` before manager start. No legacy `--on` fallback exists.
+
+Agent Bus master still declares project version 0.3.0 while the formal v0.3.0 tag lacks this
+contract, so capability plus exact source/module provenance is required. A small formal client
+release is a later productization item; RTS-046 does not publish one.
+
+Linux and Windows logout/login boundaries are unchanged. Scope `-03` may proceed through compatible
+client setup and non-disruptive manager actions, but may not enable Linux linger or trigger Windows
+logout/login without their existing prerequisites/owner window.
