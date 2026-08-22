@@ -1429,7 +1429,9 @@ def _model_base_env() -> dict[str, str]:
         if upper in _PROXY_ENV_KEYS:
             _reject_credential_proxy(key, value)
         if upper in _MODEL_ENV_ALLOWLIST or upper.startswith("LC_"):
-            e[key] = value
+            if upper in e and e[upper] != value:
+                die(f"conflicting case-insensitive model environment key {upper}")
+            e[upper] = value
     trusted_root = Path(__file__).resolve().parent.parent
     trusted_text = str(trusted_root)
     path_entries = []

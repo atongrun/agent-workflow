@@ -1551,6 +1551,16 @@ def test_model_env_preserves_credential_free_proxy(monkeypatch):
     assert awf_role.model_env()["HTTPS_PROXY"] == "http://127.0.0.1:7890"
 
 
+def test_model_env_canonicalizes_equal_no_proxy_case_variants(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "github.com,api.github.com")
+    monkeypatch.setenv("no_proxy", "github.com,api.github.com")
+
+    environment = awf_role.model_env()
+
+    assert environment["NO_PROXY"] == "github.com,api.github.com"
+    assert "no_proxy" not in environment
+
+
 def test_model_env_preserves_external_pi_runtime_directories(monkeypatch, tmp_path):
     pi_config = tmp_path / "pi-config"
     pi_sessions = tmp_path / "pi-sessions"
