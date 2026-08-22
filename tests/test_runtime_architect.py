@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_workflow.runtime.architect import persist_architect_taskcard
+from agent_workflow.runtime.architect import parse_architect_decision, persist_architect_taskcard
 from agent_workflow.runtime.artifact import ArtifactError
 
 
@@ -113,3 +113,30 @@ def test_trusted_architect_boundary_denies_symlink_parent(tmp_path: Path) -> Non
             stdout=taskcard(),
         )
     assert not (outside / "task.md").exists()
+
+
+def decision(verdict: str = "approve") -> str:
+    return (
+        "# Decision\n\n"
+        "## Verdict\n\n"
+        f"**Verdict:** {verdict}\n\n"
+        "## Rationale\n\nEvidence is sufficient.\n\n"
+        "## Mandatory Actions\n\n- None.\n\n"
+        "## Optional Actions\n\n- None.\n\n"
+        "## Next Stage\n\ntrusted-merge\n"
+    )
+
+
+def test_terminal_architect_parser_accepts_only_existing_decision_verdicts(tmp_path: Path) -> None:
+    path = tmp_path / "decision.md"
+    path.write_text(decision(), encoding="utf-8")
+
+    verdict, fact = parse_architect_decision(path, ".awf/artifacts/decision.md")
+
+    assert verdict == "approve"
+    assert fact.path == ".awf/artifacts/decision.md"
+    assert fact.size == len(decision().encode())
+
+    path.write_text(decision("blocked"), encoding="utf-8")
+    with pytest.raises(ArtifactError, match="one supported verdict"):
+        parse_architect_decision(path, ".awf/artifacts/decision.md")

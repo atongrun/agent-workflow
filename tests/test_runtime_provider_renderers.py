@@ -12,6 +12,7 @@ from agent_workflow.runtime import (
     InvocationSpec,
     render_provider_invocation,
 )
+from agent_workflow.runtime.renderers import ARCHITECT_TERMINAL
 from scripts.agent_adapters.codex import render_reviewer_invocation as legacy_codex_review
 from scripts.agent_adapters.opencode import render_executor_argv as legacy_opencode_coder
 from scripts.agent_adapters.opencode import render_reviewer_argv as legacy_opencode_review
@@ -239,6 +240,29 @@ def test_pi_architect_is_a_real_read_only_renderer(tmp_path: Path) -> None:
     assert rendered.file_inputs[0].content == context.encode("utf-8")
     default_rendered = render_provider_invocation(dataclasses.replace(spec, model=""))
     assert "--model" not in default_rendered.argv
+
+
+def test_pi_architect_terminal_mode_requests_existing_decision_only(tmp_path: Path) -> None:
+    context_path = tmp_path / ".awf" / "terminal-context.md"
+    decision_path = tmp_path / ".awf" / "decision.md"
+    spec = invocation_spec(
+        tmp_path,
+        role="architect",
+        provider="pi",
+        model="",
+        executable="pi-test",
+        input_path=context_path,
+        input_text="bounded trusted decision context\n",
+        report_path=decision_path,
+        provider_args=(ARCHITECT_TERMINAL,),
+    )
+
+    rendered = render_provider_invocation(spec)
+
+    assert "--model" not in rendered.argv
+    assert "--no-approve" in rendered.argv
+    assert any("approve, request_changes, reject, or escalate" in item for item in rendered.argv)
+    assert all("TaskCard Markdown" not in item for item in rendered.argv)
 
 
 def test_invocation_and_rendered_identity_drift_with_every_process_input(tmp_path: Path) -> None:

@@ -23,6 +23,10 @@ _TASK_ID_SECTION = re.compile(
 )
 _TASK_BRANCH = re.compile(r"(?m)^- \*\*Task branch\*\*: `([^`]+)`\s*$")
 _POSTFLIGHT = re.compile(r"<!--\s*awf-postflight\s*\n(.*?)\n\s*-->", re.DOTALL)
+_DECISION_VERDICT = re.compile(
+    r"(?m)^\*\*Verdict:\*\*[ \t]*(approve|request_changes|reject|escalate)[ \t]*$"
+)
+_DECISION_SECTIONS = ("## Verdict", "## Rationale", "## Mandatory Actions", "## Next Stage")
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -142,3 +146,29 @@ def persist_architect_taskcard(
         resolved.unlink(missing_ok=True)
         raise ArtifactError("Architect TaskCard could not be persisted durably") from exc
     return ArtifactFact(relative, len(stdout), hashlib.sha256(stdout).hexdigest())
+
+
+def parse_architect_decision(path: str | Path, expected_path: str) -> tuple[str, ArtifactFact]:
+    """Validate the existing Decision Markdown template without inventing new verdicts."""
+    candidate = Path(path)
+    if candidate.is_symlink() or not candidate.is_file():
+        raise ArtifactError("Architect Decision is missing or redirected")
+    try:
+        raw = candidate.read_bytes()
+    except OSError as exc:
+        raise ArtifactError("Architect Decision is unreadable") from exc
+    if not raw or len(raw) > _MAX_TASKCARD_BYTES:
+        raise ArtifactError("Architect Decision must be bounded non-empty bytes")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ArtifactError("Architect Decision is not valid UTF-8") from exc
+    if any(section not in text for section in _DECISION_SECTIONS):
+        raise ArtifactError("Architect Decision does not match the existing template")
+    matches = _DECISION_VERDICT.findall(text)
+    if len(matches) != 1:
+        raise ArtifactError("Architect Decision must contain one supported verdict")
+    secret = scan_secret_text(text)
+    if secret:
+        raise ArtifactError(f"Architect Decision contains prohibited {secret} material")
+    return matches[0], ArtifactFact(expected_path, len(raw), hashlib.sha256(raw).hexdigest())

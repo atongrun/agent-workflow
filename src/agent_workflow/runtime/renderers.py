@@ -33,6 +33,7 @@ Omit the block when there is no safe concrete finding.
 """
 
 ATTACH_INPUT = "attach-input"
+ARCHITECT_TERMINAL = "terminal-decision"
 
 
 def _require(spec: InvocationSpec, provider: str, roles: set[str]) -> None:
@@ -136,15 +137,26 @@ class PiArchitectRenderer:
 
     def render(self, spec: InvocationSpec) -> RenderedInvocation:
         _require(spec, "pi", {"architect"})
-        if spec.provider_args:
-            raise ContractError("Pi architect does not accept provider options")
-        message = (
-            "Reason from the attached trusted project context as the Agent Workflow Architect. "
-            "Use only read-only repository inspection tools. Return one complete self-contained "
-            "TaskCard Markdown document as stdout. The trusted runner validates and persists the "
-            "output; do not claim you wrote or authorized a TaskCard. "
-            f"Proposed TaskCard output path: {spec.report_path}"
-        )
+        if spec.provider_args not in {(), (ARCHITECT_TERMINAL,)}:
+            raise ContractError("Pi architect mode is invalid")
+        if spec.provider_args == (ARCHITECT_TERMINAL,):
+            message = (
+                "Make the terminal Agent Workflow decision from the attached bounded trusted "
+                "context. Use only read-only repository inspection tools. Return the complete "
+                "existing Decision Markdown template as stdout with exactly one verdict: approve, "
+                "request_changes, reject, or escalate. Do not run commands, mutate Git/GitHub, "
+                "dispatch work, or claim completion. "
+                f"Decision output path: {spec.report_path}"
+            )
+        else:
+            message = (
+                "Reason from the attached trusted project context as the Agent Workflow Architect. "
+                "Use only read-only repository inspection tools. Return one complete "
+                "self-contained TaskCard Markdown document as stdout. The trusted runner validates "
+                "and persists the "
+                "output; do not claim you wrote or authorized a TaskCard. "
+                f"Proposed TaskCard output path: {spec.report_path}"
+            )
         argv = [
             "--print",
             "--mode",
