@@ -774,8 +774,7 @@ def _continue_milestone(
     if not completions or not isinstance(last_completion, dict):
         raise PlanOperationError("milestone continuation requires a CompletedCardFact")
     if not any(
-        completion.get("sha256") == last_completion.get("sha256")
-        for completion in completions
+        completion.get("sha256") == last_completion.get("sha256") for completion in completions
     ):
         raise PlanOperationError("PlanRun last completion does not match immutable facts")
     for completion in completions:
