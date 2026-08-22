@@ -29,13 +29,21 @@ reason, deterministic rework, human intervention, and TaskCard completion.
   Review found one partial-init split-binding risk.
 - [x] Pass local focused `470/2`, full `913/5`, installed-wheel, ordinary CI `32574488604`, Binary
   Feasibility `32574488742` and independent focused re-review at candidate `d9f470c`.
-- [ ] Owner integrates Draft PR #121 after reviewing Phase 5-01 closeout.
-- [ ] Freeze Phase 5-02 separately; do not infer authority to implement `awf run <TaskCard>` from
-  Phase 5-01.
+- [x] Owner integrated Phase 5-01 through PR #121 as `8f13b80`.
+- [x] Close Phase 5-02 on one real Pi-authored downstream card: exact PlanFact, internal Fast/Deep,
+  Windows OpenCode, trusted PR/CI/AWF merge, CompletedCardFact and zero queues.
+- [x] Close Phase 5-03 on one real two-card milestone: fresh main after Card 1, dynamically authored
+  Card 2 bound to that main, two immutable completion facts, two PR/CI/AWF merges, exact
+  `MILESTONE_COMPLETE` and zero queues.
+- [x] Prepare `0.4.0rc1`, release notes, installed-wheel evidence and Draft PR #122 for owner Release
+  review; stop feature work at this boundary.
 
-Phase 5-01 adds no model invocation, business event, Runtime default/adoption, Agent Bus server
-change, Host/scheduler/registry, migration, release, native launcher or legacy deletion. A formal
-Agent Bus client release carrying `agent-bus.listen.on-argv.v1` remains a pre-dogfood prerequisite.
+Phase 5 reuses the production v0.3.0 operations path and Agent Bus v0.3.1 transport. It adds no
+Runtime v2 default/adoption, second worker/Git pipeline, Host/scheduler/TaskCard queue, migration,
+native launcher or compatibility deletion. Deferred Recovery/Resume remains explicitly out of the
+release candidate: Human stop/resume, active Architect/process-crash recovery, partial Coder
+workspace takeover, provider session resume, mutation/ACK or merge ambiguity reconciliation, Plan
+hot update, Architect hot swap, concurrent milestones, retained-state migration and V2 cutover.
 
 ## 2026-08-19 Runtime Simplification Decision Program
 

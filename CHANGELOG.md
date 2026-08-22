@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
+## [0.4.0-rc.1] — 2026-08-23
+
 ### Added
+
+- Close the Agent-facing committed-Plan product path. `awf plan start` binds an exact PlanFact and
+  Pi Architect RoleBinding, runs the existing Fast/Deep gates internally, durably hands start to a
+  managed listener, dynamically creates one TaskCard at a time, and reuses the established Windows
+  OpenCode Coder, trusted Git/PR, exact-head Reviewer and bounded rework operations.
+- Add trusted terminal Pi Decision, exact-head CI/merge intent/effect/observation,
+  `CompletedCardFact`, and the Phase 5-03 serial milestone loop. Each merge is followed by a fresh
+  upstream-main observation and fresh Pi `NextTaskCard | MILESTONE_COMPLETE | BLOCKED` decision;
+  no TaskCard queue, second worker/Git pipeline, AgentBusClient or Runtime v2 default cutover is
+  introduced.
+- Make normal `awf init` install/reconcile/start every selected local RoleBinding and report Ready
+  only after exact managed listener/profile/lease/Agent Bus evidence. Normal `awf stop` records
+  no-new-work, requires safe empty queues, and exact-stops the selected local listeners; status is
+  passive and projects PlanRun, Preflight, PR/merge and completion facts.
+- Pass one real Phase 5-02 one-card downstream acceptance and one real Phase 5-03 two-card milestone
+  acceptance. The accepted milestone used Pi-authored cards, Windows OpenCode, two independent
+  PR/CI/AWF merges, exact Card 2 fresh-base binding, two immutable CompletedCardFacts, exact
+  single-line `MILESTONE_COMPLETE`, Finding off and zero role queues.
 
 - Derive a deterministic production-binary readiness artifact from the complete credential-free
   15-cell feasibility evidence. It rejects patching one freezer candidate because all 15 cells
@@ -294,7 +314,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.4.0-rc.1...HEAD
+[0.4.0-rc.1]: https://github.com/atongrun/agent-workflow/compare/v0.3.0...v0.4.0-rc.1
 [0.3.0]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.7...v0.3.0
 [0.3.0-rc.7]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.6...v0.3.0-rc.7
 [0.3.0-rc.6]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.5...v0.3.0-rc.6
