@@ -34,6 +34,7 @@ Task Scheduler and exact-stop regressions remain in the focused suite.
 
 - Compileall: PASS.
 - Focused lifecycle suite: **76 passed, 1 skipped**.
+- Full repository suite: **877 passed, 5 skipped**.
 - Ruff: PASS.
 - Ruff format check: PASS.
 - `git diff --check`: PASS.
@@ -44,6 +45,6 @@ Task Scheduler and exact-stop regressions remain in the focused suite.
 ## Scope and next gate
 
 Only `node_service.py`, `test_node_service.py` and frozen TaskCard/evidence files changed. RTS-047
-does not itself operate a native manager or claim acceptance. Independent L3 Review and exact-head
-CI must pass before RTS-046 may resume with a fresh scope; the failed macOS `-01` scope remains
-failure evidence forever.
+does not itself operate a native manager or claim acceptance. Independent L3 Review returned `PASS`
+at `e35dca5`; exact-head CI remains before RTS-046 may resume with a fresh scope. The failed macOS
+`-01` scope remains failure evidence forever.
