@@ -44,13 +44,17 @@ from .artifact import (
     validate_stage_artifact_contract,
 )
 from .contracts import (
+    FRESH_RUN_SPEC_FORMAT,
     INVOCATION_SPEC_FORMAT,
     RUN_SPEC_FORMAT,
     ContractError,
+    FreshRunSpec,
     InvocationSpec,
+    ModelSelection,
     ProviderSelection,
     RenderedInputFile,
     RenderedInvocation,
+    RoleBinding,
     RunSpec,
 )
 from .outgoing import (
@@ -128,6 +132,7 @@ from .workspace import (
 
 __all__ = [
     "INVOCATION_SPEC_FORMAT",
+    "FRESH_RUN_SPEC_FORMAT",
     "RUN_SPEC_FORMAT",
     "ENVELOPE_FORMAT",
     "AUTHORITY_FORMAT",
@@ -138,6 +143,7 @@ __all__ = [
     "AtomicStatusReader",
     "AuthorizationCommand",
     "ContractError",
+    "FreshRunSpec",
     "CODEX_FINDING_INSTRUCTIONS",
     "CodexReviewerRenderer",
     "CommandEnvelope",
@@ -151,6 +157,7 @@ __all__ = [
     "LocalRuntimeApplication",
     "LocalStageRequest",
     "LocalTransportBoundary",
+    "ModelSelection",
     "ProcessObservation",
     "ProcessResult",
     "PreparedWorkspace",
@@ -171,6 +178,7 @@ __all__ = [
     "RunDecision",
     "RunSnapshot",
     "RunSpec",
+    "RoleBinding",
     "RunStore",
     "StartedProvider",
     "StatusReader",

@@ -199,8 +199,10 @@ focused re-review; mechanical fixes do not reopen architecture.
 - `docs/tasks/phase5-02-fresh-single-card.md`
 - `src/agent_workflow/cli.py`
 - `src/agent_workflow/facade.py`
+- `src/agent_workflow/node.py`
 - `src/agent_workflow/status.py`
 - `src/agent_workflow/runtime/application.py`
+- `src/agent_workflow/runtime/__init__.py`
 - `src/agent_workflow/runtime/architect.py`
 - `src/agent_workflow/runtime/contracts.py`
 - `src/agent_workflow/runtime/outgoing.py`
@@ -215,6 +217,7 @@ focused re-review; mechanical fixes do not reopen architecture.
 - `scripts/awf_taskcard.py`
 - `tests/test_cli.py`
 - `tests/test_facade.py`
+- `tests/test_node.py`
 - `tests/test_status.py`
 - `tests/test_runtime_application.py`
 - `tests/test_runtime_architect.py`
@@ -273,8 +276,10 @@ Goal -> Architect -> TaskCard -> single-card primitive -> Architect
   "allowed_paths": [
     "src/agent_workflow/cli.py",
     "src/agent_workflow/facade.py",
+    "src/agent_workflow/node.py",
     "src/agent_workflow/status.py",
     "src/agent_workflow/runtime/application.py",
+    "src/agent_workflow/runtime/__init__.py",
     "src/agent_workflow/runtime/architect.py",
     "src/agent_workflow/runtime/contracts.py",
     "src/agent_workflow/runtime/outgoing.py",
@@ -289,6 +294,7 @@ Goal -> Architect -> TaskCard -> single-card primitive -> Architect
     "scripts/awf_taskcard.py",
     "tests/test_cli.py",
     "tests/test_facade.py",
+    "tests/test_node.py",
     "tests/test_status.py",
     "tests/test_runtime_application.py",
     "tests/test_runtime_architect.py",

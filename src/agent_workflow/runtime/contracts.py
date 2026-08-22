@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 RUN_SPEC_FORMAT = "awf.runtime-v2.run-spec.v1"
+FRESH_RUN_SPEC_FORMAT = "awf.runtime-v2.run-spec.v2"
 INVOCATION_SPEC_FORMAT = "awf.runtime-v2.invocation-spec.v1"
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
@@ -208,6 +209,93 @@ class ProviderSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelSelection:
+    mode: str
+    ref: str
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"tool-default", "explicit"}:
+            raise ContractError("model selection mode is unsupported")
+        if not isinstance(self.ref, str):
+            raise ContractError("model selection ref must be text")
+        if self.mode == "tool-default":
+            if self.ref:
+                raise ContractError("tool-default model selection must have an empty ref")
+        else:
+            _strict_text("explicit model ref", self.ref, maximum=200)
+            if any(char.isspace() for char in self.ref):
+                raise ContractError("explicit model ref must be one opaque tool-native token")
+
+    @classmethod
+    def from_mapping(cls, value: object) -> ModelSelection:
+        mapping = _strict_mapping(value, "model_selection", frozenset({"mode", "ref"}))
+        return cls(mode=mapping["mode"], ref=mapping["ref"])
+
+    def to_mapping(self) -> dict[str, str]:
+        return {"mode": self.mode, "ref": self.ref}
+
+
+@dataclass(frozen=True, slots=True)
+class RoleBinding:
+    role: str
+    agent_tool: str
+    model_selection: ModelSelection
+    profile: str
+    profile_sha256: str
+    workspace: str
+
+    def __post_init__(self) -> None:
+        allowed = {
+            "architect": _ARCHITECT_PROVIDERS,
+            "coder": _CODER_PROVIDERS,
+            "reviewer": _REVIEWER_PROVIDERS,
+        }
+        if self.role not in allowed or self.agent_tool not in allowed[self.role]:
+            raise ContractError("role binding tool is unsupported for role")
+        if not isinstance(self.model_selection, ModelSelection):
+            raise ContractError("role binding model_selection is invalid")
+        _strict_text("profile", self.profile, maximum=4096)
+        _sha256("profile_sha256", self.profile_sha256)
+        _absolute_path("workspace", self.workspace)
+
+    @classmethod
+    def from_mapping(cls, value: object, name: str) -> RoleBinding:
+        mapping = _strict_mapping(
+            value,
+            name,
+            frozenset(
+                {"role", "agent_tool", "model_selection", "profile", "profile_sha256", "workspace"}
+            ),
+        )
+        return cls(
+            role=mapping["role"],
+            agent_tool=mapping["agent_tool"],
+            model_selection=ModelSelection.from_mapping(mapping["model_selection"]),
+            profile=mapping["profile"],
+            profile_sha256=mapping["profile_sha256"],
+            workspace=mapping["workspace"],
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "agent_tool": self.agent_tool,
+            "model_selection": self.model_selection.to_mapping(),
+            "profile": self.profile,
+            "profile_sha256": self.profile_sha256,
+            "workspace": self.workspace,
+        }
+
+    @property
+    def provider(self) -> str:
+        return self.agent_tool
+
+    @property
+    def model(self) -> str:
+        return self.model_selection.ref
+
+
+@dataclass(frozen=True, slots=True)
 class RunSpec:
     run_id: str
     task_id: str
@@ -338,6 +426,171 @@ class RunSpec:
             "rework_route": self.rework_route,
             "implementation_report": self.implementation_report,
             "review_report": self.review_report,
+        }
+
+    @property
+    def canonical_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_mapping())
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.canonical_bytes).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class FreshRunSpec:
+    run_id: str
+    task_id: str
+    task_card: str
+    task_card_sha256: str
+    repository: str
+    frozen_base: str
+    task_branch: str
+    state_root_sha256: str
+    semantic_contract_sha256: str
+    architect: RoleBinding
+    coder: RoleBinding
+    reviewer: RoleBinding
+    implement_attempts: int
+    review_attempts: int
+    rework_budget: int
+    implement_route: str
+    review_route: str
+    rework_route: str
+    architect_route: str
+    implementation_report: str
+    review_report: str
+    decision_report: str
+    format: str = FRESH_RUN_SPEC_FORMAT
+
+    _KEYS = frozenset(
+        {
+            "format",
+            "run_id",
+            "task_id",
+            "task_card",
+            "task_card_sha256",
+            "repository",
+            "frozen_base",
+            "task_branch",
+            "state_root_sha256",
+            "semantic_contract_sha256",
+            "architect",
+            "coder",
+            "reviewer",
+            "implement_attempts",
+            "review_attempts",
+            "rework_budget",
+            "implement_route",
+            "review_route",
+            "rework_route",
+            "architect_route",
+            "implementation_report",
+            "review_report",
+            "decision_report",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        if self.format != FRESH_RUN_SPEC_FORMAT:
+            raise ContractError("FreshRunSpec format is unsupported")
+        _identifier("run_id", self.run_id)
+        _identifier("task_id", self.task_id)
+        _repo_relative_path("task_card", self.task_card)
+        _sha256("task_card_sha256", self.task_card_sha256)
+        _strict_text("repository", self.repository, maximum=500)
+        _git_sha("frozen_base", self.frozen_base)
+        _strict_text("task_branch", self.task_branch, maximum=300)
+        _sha256("state_root_sha256", self.state_root_sha256)
+        _sha256("semantic_contract_sha256", self.semantic_contract_sha256)
+        for role, binding in (
+            ("architect", self.architect),
+            ("coder", self.coder),
+            ("reviewer", self.reviewer),
+        ):
+            if not isinstance(binding, RoleBinding) or binding.role != role:
+                raise ContractError(f"{role} must be an exact RoleBinding")
+        _capacity("implement_attempts", self.implement_attempts, minimum=1)
+        _capacity("review_attempts", self.review_attempts, minimum=1)
+        _capacity("rework_budget", self.rework_budget, minimum=0)
+        routes = tuple(
+            _identifier(name, value)
+            for name, value in (
+                ("implement_route", self.implement_route),
+                ("review_route", self.review_route),
+                ("rework_route", self.rework_route),
+                ("architect_route", self.architect_route),
+            )
+        )
+        if len(set(routes)) != 4:
+            raise ContractError("fresh RunSpec routes must be distinct")
+        reports = tuple(
+            _repo_relative_path(name, value)
+            for name, value in (
+                ("implementation_report", self.implementation_report),
+                ("review_report", self.review_report),
+                ("decision_report", self.decision_report),
+            )
+        )
+        if len(set(reports)) != 3:
+            raise ContractError("fresh RunSpec report paths must be distinct")
+        if len({self.architect.workspace, self.coder.workspace, self.reviewer.workspace}) != 3:
+            raise ContractError("fresh role workspaces must be distinct")
+
+    @classmethod
+    def from_mapping(cls, value: object) -> FreshRunSpec:
+        mapping = _strict_mapping(value, "FreshRunSpec", cls._KEYS)
+        return cls(
+            format=mapping["format"],
+            run_id=mapping["run_id"],
+            task_id=mapping["task_id"],
+            task_card=mapping["task_card"],
+            task_card_sha256=mapping["task_card_sha256"],
+            repository=mapping["repository"],
+            frozen_base=mapping["frozen_base"],
+            task_branch=mapping["task_branch"],
+            state_root_sha256=mapping["state_root_sha256"],
+            semantic_contract_sha256=mapping["semantic_contract_sha256"],
+            architect=RoleBinding.from_mapping(mapping["architect"], "architect"),
+            coder=RoleBinding.from_mapping(mapping["coder"], "coder"),
+            reviewer=RoleBinding.from_mapping(mapping["reviewer"], "reviewer"),
+            implement_attempts=mapping["implement_attempts"],
+            review_attempts=mapping["review_attempts"],
+            rework_budget=mapping["rework_budget"],
+            implement_route=mapping["implement_route"],
+            review_route=mapping["review_route"],
+            rework_route=mapping["rework_route"],
+            architect_route=mapping["architect_route"],
+            implementation_report=mapping["implementation_report"],
+            review_report=mapping["review_report"],
+            decision_report=mapping["decision_report"],
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "format": self.format,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "task_card": self.task_card,
+            "task_card_sha256": self.task_card_sha256,
+            "repository": self.repository,
+            "frozen_base": self.frozen_base,
+            "task_branch": self.task_branch,
+            "state_root_sha256": self.state_root_sha256,
+            "semantic_contract_sha256": self.semantic_contract_sha256,
+            "architect": self.architect.to_mapping(),
+            "coder": self.coder.to_mapping(),
+            "reviewer": self.reviewer.to_mapping(),
+            "implement_attempts": self.implement_attempts,
+            "review_attempts": self.review_attempts,
+            "rework_budget": self.rework_budget,
+            "implement_route": self.implement_route,
+            "review_route": self.review_route,
+            "rework_route": self.rework_route,
+            "architect_route": self.architect_route,
+            "implementation_report": self.implementation_report,
+            "review_report": self.review_report,
+            "decision_report": self.decision_report,
         }
 
     @property

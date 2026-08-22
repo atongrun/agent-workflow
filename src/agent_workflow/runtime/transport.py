@@ -22,6 +22,7 @@ _MAX_JSON_NODES = 8192
 _DELIVERY_RE = re.compile(r"awfv2:[0-9a-f]{64}")
 _ROLE_PAIRS = frozenset(
     {
+        ("architect", "architect"),
         ("architect", "coder"),
         ("coder", "reviewer"),
         ("reviewer", "coder"),

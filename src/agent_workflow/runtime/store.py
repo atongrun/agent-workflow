@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .contracts import ContractError, RunSpec, _canonical_bytes, _identifier, _sha256
+from .contracts import ContractError, FreshRunSpec, RunSpec, _canonical_bytes, _identifier, _sha256
 from .outgoing import (
     OutgoingIntent,
     OutgoingStatus,
@@ -73,7 +73,7 @@ class WriterBusy(StoreError):
 @dataclass(frozen=True, slots=True)
 class _Authority:
     payload: dict[str, Any]
-    run_spec: RunSpec
+    run_spec: RunSpec | FreshRunSpec
     stage: WorkflowStage
     terminal: TerminalCommand | None
     stopped: StopCommand | None
@@ -197,23 +197,34 @@ def _decode_journal(invocation_id: str, value: object) -> JournalSnapshot:
     return JournalSnapshot(*dataclasses.astuple(authorization), launch, process, result, effect)
 
 
-def _capacity(spec: RunSpec, stage: WorkflowStage) -> int:
+def _capacity(spec: RunSpec | FreshRunSpec, stage: WorkflowStage) -> int:
+    if stage is WorkflowStage.ARCHITECT:
+        return 1
     if stage is WorkflowStage.REWORK:
         return spec.rework_budget
     return spec.review_attempts if stage is WorkflowStage.REVIEW else spec.implement_attempts
 
 
-def _next_stage(spec: RunSpec, stage: WorkflowStage, command: HandoffCommand) -> WorkflowStage:
+def _next_stage(
+    spec: RunSpec | FreshRunSpec, stage: WorkflowStage, command: HandoffCommand
+) -> WorkflowStage:
     if stage in {WorkflowStage.IMPLEMENT, WorkflowStage.REWORK}:
         if command.route == spec.review_route and command.target_role == "reviewer":
             return WorkflowStage.REVIEW
-    elif command.route == spec.rework_route and command.target_role == "coder":
-        return WorkflowStage.REWORK
+    elif stage is WorkflowStage.REVIEW:
+        if command.route == spec.rework_route and command.target_role == "coder":
+            return WorkflowStage.REWORK
+        if (
+            isinstance(spec, FreshRunSpec)
+            and command.route == spec.architect_route
+            and command.target_role == "architect"
+        ):
+            return WorkflowStage.ARCHITECT
     raise _deny("handoff route or target is illegal for the current Workflow Stage")
 
 
 def _validate_outgoing(
-    spec: RunSpec,
+    spec: RunSpec | FreshRunSpec,
     command: HandoffCommand | TerminalCommand,
     intent: OutgoingIntent,
     source: AuthorizationCommand,
@@ -252,7 +263,14 @@ def _validate_payload(payload: object) -> _Authority:
             owner="owner",
         )
     try:
-        spec = RunSpec.from_mapping(data["run_spec"])
+        raw_spec = data["run_spec"]
+        if not isinstance(raw_spec, Mapping):
+            raise ContractError("RunSpec must be an object")
+        spec = (
+            FreshRunSpec.from_mapping(raw_spec)
+            if raw_spec.get("format") == "awf.runtime-v2.run-spec.v2"
+            else RunSpec.from_mapping(raw_spec)
+        )
         _sha256("run_spec_sha256", data["run_spec_sha256"])
         _identifier("run_id", data["run_id"])
         _sha256("state_root_sha256", data["state_root_sha256"])
@@ -308,7 +326,10 @@ def _validate_payload(payload: object) -> _Authority:
                 raise _deny("authorization does not consume the exact incoming handoff")
             if command.stage is not stage:
                 raise _deny("authorization Stage does not match current authority")
-            expected_role = "reviewer" if stage is WorkflowStage.REVIEW else "coder"
+            expected_role = {
+                WorkflowStage.REVIEW: "reviewer",
+                WorkflowStage.ARCHITECT: "architect",
+            }.get(stage, "coder")
             if command.role != expected_role:
                 raise _deny("authorization role does not match current Stage")
             counts[stage] += 1
@@ -359,7 +380,11 @@ def _validate_payload(payload: object) -> _Authority:
                 raise _deny("handoff source authorization or result is absent")
             if command.delivery_id in deliveries or command.source_invocation_id in handed_off:
                 raise _deny("handoff identity is reused")
-            if stage is WorkflowStage.REVIEW and counts[WorkflowStage.REWORK] >= spec.rework_budget:
+            if (
+                stage is WorkflowStage.REVIEW
+                and command.target_role == "coder"
+                and counts[WorkflowStage.REWORK] >= spec.rework_budget
+            ):
                 raise _deny("rework capacity is exhausted")
             if (
                 source[0].stage is not stage
@@ -385,16 +410,24 @@ def _validate_payload(payload: object) -> _Authority:
             journal = journals.get(command.source_invocation_id)
             if source is None or journal is None or journal.result is None:
                 raise _deny("terminal source authorization or result is absent")
+            terminal_stage = (
+                WorkflowStage.ARCHITECT if isinstance(spec, FreshRunSpec) else WorkflowStage.REVIEW
+            )
+            allowed_outcomes = (
+                set(TerminalOutcome)
+                if isinstance(spec, FreshRunSpec)
+                else {TerminalOutcome.COMPLETED, TerminalOutcome.BLOCKED}
+            )
             if (
                 command.delivery_id in deliveries
                 or command.source_invocation_id in handed_off
-                or stage is not WorkflowStage.REVIEW
+                or stage is not terminal_stage
             ):
                 raise _deny("terminal delivery or Stage is invalid")
-            if command.outcome not in {TerminalOutcome.COMPLETED, TerminalOutcome.BLOCKED}:
+            if command.outcome not in allowed_outcomes:
                 raise _deny("terminal outcome has no owner in this Store")
             if (
-                source[0].stage is not WorkflowStage.REVIEW
+                source[0].stage is not terminal_stage
                 or command.run_spec_sha256 != spec.sha256
                 or command.source_authorization_sha256 != source[0].authorization_sha256
                 or journal.validation_effect != effect
@@ -701,8 +734,8 @@ class AtomicRunStore:
                 raise WriterBusy("authority replacement outcome is ambiguous") from exc
             return authority, result
 
-    def initialize(self, run_spec: RunSpec) -> RunSnapshot:
-        if not isinstance(run_spec, RunSpec):
+    def initialize(self, run_spec: RunSpec | FreshRunSpec) -> RunSnapshot:
+        if not isinstance(run_spec, (RunSpec, FreshRunSpec)):
             raise _deny("initialize requires an immutable RunSpec")
         if run_spec.run_id != self.run_id:
             raise _deny("RunSpec run identity drift")

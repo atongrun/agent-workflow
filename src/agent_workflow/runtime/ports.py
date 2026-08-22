@@ -32,6 +32,7 @@ class WorkflowStage(str, Enum):
     IMPLEMENT = "implement"
     REVIEW = "review"
     REWORK = "rework"
+    ARCHITECT = "architect"
 
 
 class TerminalOutcome(str, Enum):
@@ -73,7 +74,7 @@ class AuthorizationCommand:
         _sha256("authorization_sha256", self.authorization_sha256)
         if not isinstance(self.stage, WorkflowStage):
             raise ContractError("stage must be a WorkflowStage")
-        if self.role not in {"coder", "reviewer"}:
+        if self.role not in {"architect", "coder", "reviewer"}:
             raise ContractError("role is unsupported")
         _capacity("attempt", self.attempt, minimum=1)
         _identifier("delivery_id", self.delivery_id)
