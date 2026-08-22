@@ -37,6 +37,7 @@ from agent_workflow.runtime.single_card import (
     COMMAND_TYPE,
     REQUIRED_BUS_CAPABILITY,
     AgentBusClient,
+    FreshStageCoordinator,
     ReadinessFact,
     active_run_path,
     compile_fresh_run_spec,
@@ -478,3 +479,71 @@ def test_agent_bus_adapter_uses_versioned_tags_and_exact_result_files(
         "control:awf-runtime-v2-readiness-v1",
         "task:awf-runtime-v2-command-v1",
     ]
+
+
+def test_stage_coordinator_adopts_exact_worker_result_without_duplicate_send(
+    tmp_path: Path,
+) -> None:
+    spec = fresh_spec(tmp_path)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.results: dict[str, ResultEnvelope] = {}
+
+        def invoke(self, command: CommandEnvelope) -> ResultEnvelope:
+            self.calls += 1
+            authorization = command.payload["authorization_sha256"]
+            result = ResultEnvelope.create(
+                run_id=command.run_id,
+                task_id=command.task_id,
+                run_spec_sha256=command.run_spec_sha256,
+                source_role="coder",
+                target_role="architect",
+                route="result:awf-runtime-v2-result-v1",
+                source_invocation_id=command.target_invocation_id,
+                source_authorization_sha256=authorization,
+                target_invocation_id="source-coder",
+                causation_delivery_id=command.delivery_id,
+                payload={
+                    "kind": "coder",
+                    "process_identity_sha256": digest("process"),
+                    "workspace_manifest_sha256": "sha256:" + digest("workspace"),
+                },
+            )
+            self.results[command.delivery_id] = result
+            return result
+
+        def existing_result(self, command: CommandEnvelope) -> ResultEnvelope | None:
+            return self.results.get(command.delivery_id)
+
+    client = FakeClient()
+    coordinator = FreshStageCoordinator(
+        state_root=tmp_path / "state",
+        writer_id="writer-stage-test",
+        stage_client=client,  # type: ignore[arg-type]
+        executables={"coder": "/usr/bin/true", "reviewer": "/usr/bin/true"},
+    )
+    store = coordinator.initialize(spec, tmp_path / "project")
+
+    first = coordinator.invoke(
+        store,
+        spec,
+        stage=WorkflowStage.IMPLEMENT,
+        attempt=1,
+        expected_commit=spec.frozen_base,
+        input_text="implement exact card",
+    )
+    replay = coordinator.invoke(
+        store,
+        spec,
+        stage=WorkflowStage.IMPLEMENT,
+        attempt=1,
+        expected_commit=spec.frozen_base,
+        input_text="implement exact card",
+    )
+
+    assert first.envelope.encode() == replay.envelope.encode()
+    assert client.calls == 1
+    journal = store.journal(first.command.invocation_id).snapshot()
+    assert journal.result is not None

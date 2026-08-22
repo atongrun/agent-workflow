@@ -16,7 +16,17 @@ from typing import Mapping
 from agent_workflow.node import NodeProfile
 
 from .contracts import FreshRunSpec, ModelSelection, RoleBinding, _canonical_bytes
+from .ports import (
+    AuthorizationCommand,
+    JournalAuthorization,
+    LaunchIntent,
+    ProcessObservation,
+    ProviderResult,
+    WorkflowStage,
+)
+from .store import AtomicRunStore
 from .transport import CommandEnvelope, ResultEnvelope
+from .worker import command_authorization_sha256
 
 READINESS_REQUEST_TYPE = "control:awf-runtime-v2-readiness-v1"
 READINESS_RESULT_TYPE = "control:awf-runtime-v2-readiness-result-v1"
@@ -201,6 +211,9 @@ class AgentBusClient:
         )
 
     def invoke(self, envelope: CommandEnvelope) -> ResultEnvelope:
+        existing = self.existing_result(envelope)
+        if existing is not None:
+            return existing
         self._send(
             to_role=envelope.target_role,
             event_type=COMMAND_TYPE,
@@ -221,6 +234,169 @@ class AgentBusClient:
         raise SingleCardError(
             "worker result was not observed; preserve the same command identity and inspect status"
         )
+
+    def existing_result(self, envelope: CommandEnvelope) -> ResultEnvelope | None:
+        inbox = self.state_root / "runtime-v2" / "inbox" / envelope.run_id
+        if not inbox.is_dir():
+            return None
+        for path in sorted(inbox.glob("*.json")):
+            try:
+                result = ResultEnvelope.decode(path.read_bytes())
+            except (OSError, ValueError):
+                continue
+            if result.causation_delivery_id == envelope.delivery_id:
+                return result
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteStageResult:
+    command: AuthorizationCommand
+    envelope: ResultEnvelope
+
+
+class FreshStageCoordinator:
+    """Authorize and adopt remote provider facts without owning Git or GitHub operations."""
+
+    def __init__(
+        self,
+        *,
+        state_root: str | Path,
+        writer_id: str,
+        stage_client: AgentBusClient,
+        executables: Mapping[str, str],
+    ) -> None:
+        self.state_root = Path(state_root).resolve()
+        self.writer_id = writer_id
+        self.stage_client = stage_client
+        self.executables = dict(executables)
+
+    def initialize(self, spec: FreshRunSpec, repo: str | Path) -> AtomicRunStore:
+        store = AtomicRunStore(self.state_root, spec.run_id, self.writer_id)
+        store.initialize(spec)
+        write_active_run(repo, spec, store.path)
+        return store
+
+    def invoke(
+        self,
+        store: AtomicRunStore,
+        spec: FreshRunSpec,
+        *,
+        stage: WorkflowStage,
+        attempt: int,
+        expected_commit: str,
+        input_text: str,
+    ) -> RemoteStageResult:
+        if stage not in {WorkflowStage.IMPLEMENT, WorkflowStage.REVIEW, WorkflowStage.REWORK}:
+            raise SingleCardError("only Coder/Reviewer stages may use the remote worker adapter")
+        role = "reviewer" if stage is WorkflowStage.REVIEW else "coder"
+        binding = spec.reviewer if role == "reviewer" else spec.coder
+        executable = self.executables.get(role, "")
+        if not executable or not Path(executable).is_absolute():
+            raise SingleCardError(f"verified {role} executable is unavailable")
+        invocation_id = f"{stage.value}-{attempt}-{spec.task_id}"
+        authorization = command_authorization_sha256(
+            run_spec_sha256=spec.sha256,
+            invocation_id=invocation_id,
+            stage=stage,
+            attempt=attempt,
+            expected_commit=expected_commit,
+            input_text=input_text,
+            role=role,
+        )
+        provider_args: list[str] = []
+        if role == "coder" and binding.agent_tool == "opencode":
+            provider_args = ["attach-input"]
+        elif role == "reviewer" and binding.agent_tool == "pi":
+            provider_args = [spec.frozen_base]
+        payload = {
+            "run_spec": spec.to_mapping(),
+            "authorization_sha256": authorization,
+            "stage": stage.value,
+            "attempt": attempt,
+            "input_text": input_text,
+            "expected_commit": expected_commit,
+            "provider_executable": executable,
+            "provider_args": provider_args,
+        }
+        envelope = CommandEnvelope.create(
+            run_id=spec.run_id,
+            task_id=spec.task_id,
+            run_spec_sha256=spec.sha256,
+            source_role="architect",
+            target_role=role,
+            route={
+                WorkflowStage.IMPLEMENT: spec.implement_route,
+                WorkflowStage.REVIEW: spec.review_route,
+                WorkflowStage.REWORK: spec.rework_route,
+            }[stage],
+            source_invocation_id="source-writer",
+            source_authorization_sha256=hashlib.sha256(
+                ("source-writer\0" + spec.sha256).encode()
+            ).hexdigest(),
+            target_invocation_id=invocation_id,
+            payload=payload,
+        )
+        incoming = store.pending_handoff()
+        command = AuthorizationCommand(
+            spec.sha256,
+            invocation_id,
+            authorization,
+            stage,
+            role,
+            attempt,
+            incoming.delivery_id if incoming else envelope.delivery_id,
+            incoming.payload_sha256
+            if incoming
+            else envelope.payload_sha256.removeprefix("sha256:"),
+        )
+        store.authorize(
+            command,
+            JournalAuthorization(
+                spec.sha256,
+                invocation_id,
+                authorization,
+                hashlib.sha256(_canonical_bytes(payload)).hexdigest(),
+            ),
+        )
+        journal = store.journal(invocation_id)
+        current = journal.snapshot()
+        if current.launch_intent is None:
+            journal.record_launch_intent(
+                LaunchIntent(authorization, hashlib.sha256(envelope.encode()).hexdigest())
+            )
+            result = self.stage_client.invoke(envelope)
+        elif current.result is None:
+            raise SingleCardError(
+                "remote provider outcome is ambiguous; automatic replay is forbidden"
+            )
+        else:
+            result = self.stage_client.existing_result(envelope)
+            if result is None:
+                raise SingleCardError("durable worker result inbox is unavailable")
+        if (
+            result.causation_delivery_id != envelope.delivery_id
+            or result.run_spec_sha256 != spec.sha256
+            or result.source_role != role
+            or result.source_invocation_id != invocation_id
+            or result.source_authorization_sha256 != authorization
+        ):
+            raise SingleCardError("worker result identity drifted")
+        process_identity = str(result.payload.get("process_identity_sha256", ""))
+        workspace_manifest = str(result.payload.get("workspace_manifest_sha256", ""))
+        process = ProcessObservation(authorization, process_identity)
+        if current.result is None:
+            journal.record_process_observation(process)
+            journal.record_result(
+                ProviderResult(
+                    authorization,
+                    process_identity,
+                    0,
+                    hashlib.sha256(result.encode()).hexdigest(),
+                    workspace_manifest,
+                )
+            )
+        return RemoteStageResult(command, result)
 
 
 def _git(repo: Path, *args: str, input_bytes: bytes | None = None) -> bytes:
