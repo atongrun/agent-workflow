@@ -181,6 +181,64 @@ def test_pi_reviewer_matches_legacy_with_frozen_workspace_path_substitution(
     assert len(rendered.file_inputs) == 1
     assert rendered.file_inputs[0].path == str(context_path)
     assert rendered.file_inputs[0].content == context.encode("utf-8")
+    default_rendered = render_provider_invocation(dataclasses.replace(spec, model=""))
+    assert "--model" not in default_rendered.argv
+
+
+def test_pi_reviewer_finding_prompt_requires_explicit_bound_environment(tmp_path: Path) -> None:
+    context_path = tmp_path / ".awf" / "pi-review-context.md"
+    report = tmp_path / ".awf" / "review.md"
+    spec = invocation_spec(
+        tmp_path,
+        role="reviewer",
+        provider="pi",
+        model="",
+        executable="pi-test",
+        input_path=context_path,
+        input_text="trusted context\n",
+        report_path=report,
+        provider_args=("base-sha",),
+    )
+
+    default_rendered = render_provider_invocation(spec)
+    enabled_rendered = render_provider_invocation(
+        dataclasses.replace(
+            spec,
+            environment=tuple(sorted((*ENVIRONMENT, ("AWF_FINDING_ENABLED", "1")))),
+        )
+    )
+
+    assert all("awf-dogfood-finding" not in token for token in default_rendered.argv)
+    assert any("awf-dogfood-finding" in token for token in enabled_rendered.argv)
+
+
+def test_pi_architect_is_a_real_read_only_renderer(tmp_path: Path) -> None:
+    context_path = tmp_path / ".awf" / "pi-architect-context.md"
+    taskcard_path = tmp_path / "docs" / "tasks" / "planned-task.md"
+    context = "trusted project and milestone context\n"
+    spec = invocation_spec(
+        tmp_path,
+        role="architect",
+        provider="pi",
+        model="provider/model",
+        executable="pi-test",
+        input_path=context_path,
+        input_text=context,
+        report_path=taskcard_path,
+    )
+
+    rendered = render_provider_invocation(spec)
+
+    assert rendered.executable == "pi-test"
+    assert rendered.cwd == str(tmp_path)
+    assert "read,grep,find,ls" in rendered.argv
+    assert "--no-approve" in rendered.argv
+    assert "--model" in rendered.argv
+    assert all("awf-dogfood-finding" not in token for token in rendered.argv)
+    assert rendered.file_inputs[0].path == str(context_path)
+    assert rendered.file_inputs[0].content == context.encode("utf-8")
+    default_rendered = render_provider_invocation(dataclasses.replace(spec, model=""))
+    assert "--model" not in default_rendered.argv
 
 
 def test_invocation_and_rendered_identity_drift_with_every_process_input(tmp_path: Path) -> None:
@@ -242,6 +300,8 @@ def test_closed_dispatch_rejects_unsupported_selection_or_options(tmp_path: Path
         render_provider_invocation(
             invocation_spec(tmp_path, role="coder", provider="codex", **common)
         )
+    with pytest.raises(ContractError, match="provider is unsupported for role"):
+        invocation_spec(tmp_path, role="architect", provider="opencode", **common)
     with pytest.raises(ContractError, match="options are invalid"):
         render_provider_invocation(
             invocation_spec(

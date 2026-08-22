@@ -12,6 +12,31 @@ Before UI, a generic engine, arbitrary DAGs, Plugin SDK, Agent Host integration,
 automation, complete one downstream Phase that records model role, invocation class, escalation
 reason, deterministic rework, human intervention, and TaskCard completion.
 
+## 2026-08-22 Phase 5 Productization
+
+- [x] Merge Phase 4B PR #120 into `main` as `6ce5182` without unrelated changes.
+- [x] Freeze and independently review one Phase 5-01 capability-first current-machine init TaskCard.
+- [x] Configure any Architect/Coder/Reviewer subset with exact profiles and distinct deterministic
+  role checkouts while permitting one Agent Tool installation/model to serve several roles.
+- [x] Add the first real Architect provider capability as Pi read-only rendering plus a trusted,
+  create-only, non-authorizing TaskCard stdout boundary.
+- [x] Persist model selection as tool-default or one opaque explicit Agent Tool-native reference;
+  never own provider auth/config/catalog/defaults or silent fallback.
+- [x] Require Agent Bus structured argv capability before health/event work and record safe client
+  provenance rather than trusting ambiguous version text.
+- [x] Make Finding profile opt-in/default-off across prompts, capture and normal status.
+- [x] Repair and regression-lock recoverable profile/machine-config replacement after independent
+  Review found one partial-init split-binding risk.
+- [x] Pass local focused `470/2`, full `913/5`, installed-wheel, ordinary CI `32574488604`, Binary
+  Feasibility `32574488742` and independent focused re-review at candidate `d9f470c`.
+- [ ] Owner integrates Draft PR #121 after reviewing Phase 5-01 closeout.
+- [ ] Freeze Phase 5-02 separately; do not infer authority to implement `awf run <TaskCard>` from
+  Phase 5-01.
+
+Phase 5-01 adds no model invocation, business event, Runtime default/adoption, Agent Bus server
+change, Host/scheduler/registry, migration, release, native launcher or legacy deletion. A formal
+Agent Bus client release carrying `agent-bus.listen.on-argv.v1` remains a pre-dogfood prerequisite.
+
 ## 2026-08-19 Runtime Simplification Decision Program
 
 - [x] Preserve the owner Review, adversarial double review and gated Runtime v2 development plan.

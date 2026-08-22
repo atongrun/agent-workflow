@@ -105,7 +105,12 @@ def _git_read(repo: Path, *args: str):
         die(f"workspace readiness failed: cannot run Git: {exc}")
 
 
-def check_workspace_readiness(repo: Path, role: str) -> Path:
+def check_workspace_readiness(
+    repo: Path,
+    role: str,
+    *,
+    require_clean: bool | None = None,
+) -> Path:
     """Require a role-owned Git root before any event can be consumed."""
     resolved = repo.resolve()
     if not resolved.is_dir():
@@ -116,7 +121,9 @@ def check_workspace_readiness(repo: Path, role: str) -> Path:
     top = _git_read(resolved, "rev-parse", "--show-toplevel")
     if top.returncode != 0 or Path(top.stdout.strip()).resolve() != resolved:
         die(f"workspace ownership failed: --repo must name the Git root: {resolved}")
-    if role in {"coder", "reviewer"}:
+    if require_clean is None:
+        require_clean = role in {"coder", "reviewer"}
+    if require_clean:
         status = _git_read(resolved, "status", "--porcelain")
         if status.returncode != 0:
             die(f"workspace readiness failed: Git status unavailable: {resolved}")
@@ -455,6 +462,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="register the no-model disposable Preflight control handlers",
     )
+    p.add_argument(
+        "--enable-finding",
+        action="store_true",
+        help="enable the maintainer-only Dogfood Finding Phase A prompt/capture path",
+    )
     p.add_argument("--exit-after-idle", dest="idle", type=int, default=None)
     p.add_argument("--no-push", dest="no_push", action="store_true")
     p.add_argument(
@@ -546,6 +558,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["AWF_GH_BIN"] = a.gh_bin
     os.environ["AWF_NO_PUSH"] = "1" if a.no_push else "0"
     os.environ["AWF_CONTROL_PLANE"] = "1"
+    os.environ["AWF_FINDING_ENABLED"] = "1" if a.enable_finding else "0"
     os.environ["AWF_AUTHORITY_MANIFEST"] = str(a.authority_manifest.resolve())
     if a.enable_preflight and config_path is not None:
         os.environ["AWF_DISPATCH_ENV"] = str(config_path.resolve())

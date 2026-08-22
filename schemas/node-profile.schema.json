@@ -24,6 +24,7 @@
     "config": {"type": "string", "minLength": 1},
     "gh_bin": {"type": "string", "minLength": 1},
     "enable_preflight": {"type": "boolean"},
+    "finding_enabled": {"type": "boolean"},
     "no_push": {"type": "boolean"},
     "lifecycle": {
       "type": "object",

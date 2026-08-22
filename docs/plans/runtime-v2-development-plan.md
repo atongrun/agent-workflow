@@ -740,9 +740,41 @@ Phase 4 rollback:
   compatibility was proven before upgrade.
 - Unknown compatibility fails closed and leaves exact state/evidence intact.
 
-### Phase 5 — Distribution, Real Dogfood, and Default Decision
+### Phase 5 — Usable Product Path and Real Value
 
-Dependencies: Phase 4 passes. Release work starts only for the target matrix actually claimed.
+Dependencies: Phase 4 passes. The owner-approved Phase 5 replan replaces the old combined
+distribution/default gate with small sequential product milestones. Native launcher, broad supply
+chain, default switch and Phase 6 cleanup are not Phase 5-01 requirements.
+
+#### Phase 5-01 — Capability-first current-machine init
+
+Result: **PASS candidate** at `d9f470c`; Draft PR #121 integration remains owner-controlled.
+
+- `awf init` detects Git/GitHub, configured Agent Bus structured argv capability and locally
+  installed Agent Tools before mutation.
+- One machine may provide any Architect/Coder/Reviewer subset. Static support is Pi Architect,
+  OpenCode Coder and OpenCode/Pi/Codex Reviewer.
+- Each binding owns an exact profile/workspace/lifecycle identity; one Agent Tool installation may
+  serve multiple roles.
+- Model selection is tool-default or one opaque explicit tool-native ref. Agent Tool auth,
+  provider/model configuration, catalogs and defaults remain external.
+- Pi Architect is a real read-only renderer and trusted non-authorizing TaskCard output seam; no
+  business workflow/application/transport adoption occurs.
+- Agent Bus compatibility is capability/provenance-first; no install/server change or event occurs.
+- Finding is off unless an exact profile explicitly opts into existing Phase A.
+- Local and CI evidence plus one independent L2 Review pass after the one partial-config commit
+  finding is repaired. See
+  [`phase5-01-capability-init-report.md`](../tasks/phase5-01-capability-init-report.md).
+
+STOP: Phase 5-02 has not started. It requires a separately frozen owner-approved TaskCard and may
+cover only the fresh `awf run <TaskCard>` production vertical path. No TaskCard execution, Runtime
+default, migration, release or compatibility deletion follows from Phase 5-01.
+
+#### Later Phase 5 gates
+
+The following former combined exit criteria remain future decision inputs only after the fresh-run
+path and real product-value dogfood justify them. Release work starts only for the target matrix
+actually claimed.
 
 Exit criteria:
 

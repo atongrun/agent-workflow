@@ -25,6 +25,7 @@ def render_executor_argv(
     prompt: str,
     implementation_report_path: str,
     normalized_review_feedback: str = "",
+    finding_enabled: bool = False,
 ) -> list[str]:
     """Render the OpenCode executor argv without reading files or starting a process."""
     argv = [binary, "run", "--dir", workspace, "-f", card_file]
@@ -34,7 +35,8 @@ def render_executor_argv(
     instructions += (
         f"\n\nWrite the complete ImplementationReport to exactly: {implementation_report_path}\n"
     )
-    instructions += _FINDING_INSTRUCTIONS
+    if finding_enabled:
+        instructions += _FINDING_INSTRUCTIONS
     if normalized_review_feedback:
         instructions += "\n\n--- Structured reviewer feedback to correct ---\n\n"
         instructions += normalized_review_feedback
@@ -50,6 +52,7 @@ def render_reviewer_argv(
     model: str,
     prompt: str,
     review_report_path: str,
+    finding_enabled: bool = False,
 ) -> list[str]:
     """Render the OpenCode reviewer argv without reading files or starting a process."""
     argv = [binary, "run", "--dir", workspace]
@@ -59,6 +62,7 @@ def render_reviewer_argv(
         argv += ["-m", model]
     instructions = prompt
     instructions += f"\n\nWrite the complete ReviewReport to exactly: {review_report_path}\n"
-    instructions += _FINDING_INSTRUCTIONS
+    if finding_enabled:
+        instructions += _FINDING_INSTRUCTIONS
     argv += ["--", instructions]
     return argv

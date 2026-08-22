@@ -23,6 +23,7 @@ def render_reviewer_argv(
     model: str,
     review_report_path: str,
     context_file: str,
+    finding_enabled: bool = False,
 ) -> list[str]:
     """Render the Pi reviewer argv without reading files or starting a process."""
     message = (
@@ -31,7 +32,7 @@ def render_reviewer_argv(
         "Return the complete filled-in Markdown ReviewReport as stdout. "
         "The trusted runner will persist stdout to the exact ReviewReport path; do not "
         f"claim you wrote a file. ReviewReport output path: {review_report_path}"
-        + _FINDING_INSTRUCTIONS
+        + (_FINDING_INSTRUCTIONS if finding_enabled else "")
     )
 
     argv = [

@@ -85,19 +85,22 @@ def test_node_write_paths_cannot_dirty_the_role_repository(monkeypatch, tmp_path
     assert not (state_root / "nodes" / "reviewer-mac" / "process.json").exists()
 
 
-def test_profile_preserves_pi_reviewer_only_boundary(tmp_path: Path):
+def test_profile_preserves_pi_coder_boundary(tmp_path: Path):
     path = write_profile(tmp_path, role="coder", tool="pi")
 
-    with pytest.raises(node.NodeError, match="reviewer-only"):
+    with pytest.raises(node.NodeError, match="not a supported coder"):
         node.load_profile(str(path))
 
 
-def test_architect_profile_makes_the_no_model_boundary_explicit(tmp_path: Path):
-    valid = write_profile(tmp_path, role="architect", tool="none")
-    assert node.load_profile(str(valid)).role == "architect"
+@pytest.mark.parametrize("tool", ["none", "pi"])
+def test_architect_profile_accepts_internal_terminal_or_pi(tmp_path: Path, tool: str):
+    valid = write_profile(tmp_path, role="architect", tool=tool)
+    loaded = node.load_profile(str(valid))
+    assert loaded.role == "architect"
+    assert loaded.values["tool"] == tool
 
     invalid = write_profile(tmp_path, role="architect", tool="codex")
-    with pytest.raises(node.NodeError, match="tool must be none"):
+    with pytest.raises(node.NodeError, match="tool must be Pi"):
         node.load_profile(str(invalid))
 
 
@@ -126,7 +129,7 @@ def test_local_readiness_captures_only_tool_version_hash(monkeypatch, tmp_path: 
             pass
 
         @staticmethod
-        def check_workspace_readiness(repo, role):
+        def check_workspace_readiness(repo, role, **_kwargs):
             return repo
 
         @staticmethod
@@ -137,6 +140,15 @@ def test_local_readiness_captures_only_tool_version_hash(monkeypatch, tmp_path: 
             return subprocess.CompletedProcess(argv, 0, "healthy", "")
 
     monkeypatch.setattr(node, "_operations_modules", lambda: (Config, Listen))
+    monkeypatch.setattr(
+        node,
+        "probe_agent_bus_client",
+        lambda value: {
+            "executable": "/tools/agent-bus",
+            "capabilities": ("agent-bus.listen.on-argv.v1",),
+            "provenance_sha256": "sha256:" + "2" * 64,
+        },
+    )
     monkeypatch.setattr(node.shutil, "which", lambda value: f"/tools/{value}")
     monkeypatch.setitem(
         sys.modules,
@@ -150,6 +162,47 @@ def test_local_readiness_captures_only_tool_version_hash(monkeypatch, tmp_path: 
     assert ["pi", "--version"] in calls
     assert result.tool_version_sha256 == node._version_sha256("pi 1.2.3", "")
     assert result.config["AWF_REVIEWER_TOKEN"] == "top-secret"
+
+
+def test_agent_bus_capability_probe_denies_missing_on_argv(monkeypatch, tmp_path: Path):
+    executable = tmp_path / "agent-bus"
+    executable.write_text("client", encoding="utf-8")
+
+    class Listen:
+        class ExecutionFailure(RuntimeError):
+            pass
+
+        @staticmethod
+        def run_command(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 0, "Usage: listen --on TYPE COMMAND", "")
+
+    monkeypatch.setattr(node, "_operations_modules", lambda: (object(), Listen))
+
+    with pytest.raises(node.NodeError, match="agent-bus.listen.on-argv.v1"):
+        node.probe_agent_bus_client(str(executable))
+
+
+def test_agent_bus_capability_probe_records_executable_and_help_provenance(
+    monkeypatch, tmp_path: Path
+):
+    executable = tmp_path / "agent-bus"
+    executable.write_text("compatible-client", encoding="utf-8")
+
+    class Listen:
+        class ExecutionFailure(RuntimeError):
+            pass
+
+        @staticmethod
+        def run_command(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 0, "Usage: listen --on-argv TYPE JSON", "")
+
+    monkeypatch.setattr(node, "_operations_modules", lambda: (object(), Listen))
+
+    facts = node.probe_agent_bus_client(str(executable))
+
+    assert facts["capabilities"] == ("agent-bus.listen.on-argv.v1",)
+    assert facts["executable"] == str(executable)
+    assert str(facts["provenance_sha256"]).startswith("sha256:")
 
 
 def test_listener_snapshot_treats_profile_drift_as_stale(monkeypatch, tmp_path: Path):
@@ -258,6 +311,8 @@ def readiness(profile: node.NodeProfile, **changes: object) -> node.LocalReadine
         "config": {"AGENT_BUS_URL": "https://bus.invalid", "AWF_REVIEWER_TOKEN": "secret"},
         "repo": profile.repo,
         "bus_executable": "/tools/agent-bus",
+        "bus_capabilities": ("agent-bus.listen.on-argv.v1",),
+        "bus_provenance_sha256": "sha256:" + "2" * 64,
         "tool_executable": "/tools/pi",
         "tool_version_sha256": "sha256:" + "1" * 64,
     }

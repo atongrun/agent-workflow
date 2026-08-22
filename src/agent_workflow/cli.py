@@ -471,8 +471,10 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_init(args: argparse.Namespace) -> int:
+def _cmd_legacy_init(args: argparse.Namespace) -> int:
     """Generate durable profiles, then reuse the existing setup/compiler path."""
+    coder_runtime = args.coder_runtime or "opencode"
+    reviewer_runtime = args.reviewer_runtime or "pi"
     try:
         repo = Path(args.repo).resolve()
         manifest_path = default_manifest_path(repo)
@@ -487,9 +489,9 @@ def cmd_init(args: argparse.Namespace) -> int:
             repo=repo,
             machine=machine,
             project=project,
-            coder_runtime=args.coder_runtime,
+            coder_runtime=coder_runtime,
             coder_model=args.coder_model,
-            reviewer_runtime=args.reviewer_runtime,
+            reviewer_runtime=reviewer_runtime,
             reviewer_model=args.reviewer_model,
             lifecycle=args.lifecycle,
             upstream_repo=args.upstream_repo,
@@ -512,9 +514,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         state_root=str(state_root),
         profile=[f"{profile.role}={profile.path}" for profile in profiles],
         branch=args.branch,
-        tool=args.coder_runtime,
+        tool=coder_runtime,
         model=args.coder_model,
-        reviewer_tool=args.reviewer_runtime,
+        reviewer_tool=reviewer_runtime,
         reviewer_model=args.reviewer_model,
         rework_budget=args.rework_budget,
         upstream_repo=args.upstream_repo,
@@ -529,11 +531,177 @@ def cmd_init(args: argparse.Namespace) -> int:
     if result == 0:
         print(
             f"enrolled machine={machine} project={project} "
-            f"coder_runtime={args.coder_runtime} reviewer_runtime={args.reviewer_runtime}"
+            f"coder_runtime={coder_runtime} reviewer_runtime={reviewer_runtime}"
         )
         for profile in profiles:
             print(f"generated profile: role={profile.role} source={profile.path}")
     return result
+
+
+def _print_detected_capabilities(capabilities: dict[str, object]) -> None:
+    print("Checking dependencies...")
+    print(f"✓ Agent Workflow {__version__}")
+    bus = capabilities["agent_bus"]
+    assert isinstance(bus, dict)
+    print("✓ Agent Bus")
+    for capability in bus["capabilities"]:
+        print(f"  ✓ {capability}")
+    print("✓ Git / GitHub")
+    print("Detected agent tools:")
+    tools = capabilities["tools"]
+    assert isinstance(tools, dict)
+    for tool in ("opencode", "pi", "codex"):
+        facts = tools[tool]
+        assert isinstance(facts, dict)
+        marker = "✓" if facts["available"] else "○"
+        print(f"{marker} {tool.title() if tool != 'opencode' else 'OpenCode'}")
+
+
+def _selected_roles(value: str | None) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if value.strip().lower() in {"", "none"}:
+        return ()
+    roles = tuple(item.strip().lower() for item in value.split(",") if item.strip())
+    if len(roles) != len(set(roles)) or any(role not in facade.ROLE_ORDER for role in roles):
+        raise facade.FacadeError("--roles must contain unique architect,coder,reviewer values")
+    return roles
+
+
+def _configured_bindings(
+    args: argparse.Namespace,
+    capabilities: dict[str, object],
+) -> dict[str, tuple[str, str]]:
+    recommended = facade.recommended_bindings(capabilities)
+    roles = _selected_roles(args.roles)
+    interactive = roles is None and not args.non_interactive and sys.stdin.isatty()
+    if roles is None:
+        roles = tuple(role for role in facade.ROLE_ORDER if role in recommended)
+    if interactive:
+        print("Recommended setup:")
+        for role in facade.ROLE_ORDER:
+            if role in recommended:
+                tool, model = recommended[role]
+                print(f"  {role.title():9} {tool} / {model or 'tool-default'}")
+        choice = input("Press Enter to accept, or C to customize: ").strip().lower()
+        if choice not in {"", "c"}:
+            raise facade.FacadeError("init selection must be Enter or C")
+        if choice == "c":
+            selected: list[str] = []
+            tools = capabilities["tools"]
+            assert isinstance(tools, dict)
+            overrides: dict[str, tuple[str, str]] = {}
+            for role in facade.ROLE_ORDER:
+                enabled = (
+                    input(
+                        f"Enable {role.title()} on this machine? "
+                        f"[{'Y/n' if role in recommended else 'y/N'}]: "
+                    )
+                    .strip()
+                    .lower()
+                )
+                use_role = (
+                    enabled in {"", "y", "yes"}
+                    if role in recommended
+                    else enabled
+                    in {
+                        "y",
+                        "yes",
+                    }
+                )
+                if not use_role:
+                    continue
+                available = [
+                    tool
+                    for tool in facade.ROLE_PROVIDER_CAPABILITIES[role]
+                    if isinstance(tools.get(tool), dict) and tools[tool]["available"]
+                ]
+                if not available:
+                    raise facade.FacadeError(f"no installed agent tool supports {role}")
+                default_tool = recommended.get(role, (available[0], ""))[0]
+                selected_tool = (
+                    input(f"{role.title()} agent {available} [{default_tool}]: ").strip()
+                    or default_tool
+                )
+                model = input(
+                    f"{role.title()} model [tool-default; enter tool-native ref]: "
+                ).strip()
+                selected.append(role)
+                overrides[role] = (selected_tool, model)
+            roles = tuple(selected)
+            recommended = overrides
+
+    explicit = {
+        "architect": (args.architect_runtime, args.architect_model),
+        "coder": (args.coder_runtime, args.coder_model),
+        "reviewer": (args.reviewer_runtime, args.reviewer_model),
+    }
+    bindings: dict[str, tuple[str, str]] = {}
+    for role in roles:
+        tool, model = explicit[role]
+        if not tool:
+            try:
+                tool, default_model = recommended[role]
+            except KeyError as exc:
+                raise facade.FacadeError(
+                    f"no detected supported agent tool is available for {role}"
+                ) from exc
+            model = model or default_model
+        bindings[role] = (tool, model)
+    return bindings
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    """Configure current-machine role bindings without creating a Workflow run."""
+    if args.card:
+        if not args.upstream_repo or not args.head_repo:
+            print(
+                "ERROR: init failed: legacy --card mode requires --upstream-repo and --head-repo",
+                file=sys.stderr,
+            )
+            return 1
+        return _cmd_legacy_init(args)
+    try:
+        repo = Path(args.repo).resolve()
+        capabilities = facade.discover_machine_capabilities(
+            repo,
+            config_path=Path(args.config).expanduser() if args.config else None,
+        )
+        _print_detected_capabilities(capabilities)
+        bindings = _configured_bindings(args, capabilities)
+        machine = args.machine or platform.node() or "local"
+        project = args.project or repo.name
+        contract, warnings = facade.initialize_machine(
+            repo=repo,
+            machine=machine,
+            project=project,
+            bindings=bindings,
+            capabilities=capabilities,
+            lifecycle=args.lifecycle,
+            upstream_repo=args.upstream_repo,
+            head_repo=args.head_repo,
+            upstream_remote=args.upstream_remote,
+            head_remote=args.head_remote,
+            base_ref=args.base_ref,
+            finding_enabled=args.finding_enabled,
+            replace=args.replace,
+        )
+    except (facade.FacadeError, node.NodeError, OSError) as exc:
+        print(f"ERROR: init failed: {exc}", file=sys.stderr)
+        return 1
+    print("Configured roles on this machine:")
+    for profile in contract.profiles:
+        print(
+            f"✓ {profile.role.title():9} {profile.values['tool']} / "
+            f"{profile.values.get('model') or 'tool-default'}"
+        )
+        print(f"  profile={profile.path}")
+        print(f"  workspace={profile.repo}")
+    for warning in warnings:
+        print(f"Note: {warning}")
+    print(f"Finding: {'on' if contract.finding_enabled else 'off'}")
+    print("Ready. Run awf doctor to verify server and lifecycle readiness.")
+    return 0
 
 
 def _facade_error(action: str, exc: Exception) -> int:
@@ -576,6 +744,13 @@ def cmd_facade_drain(args: argparse.Namespace) -> int:
         return facade.drain(Path(args.repo), role=args.role)
     except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
         return _facade_error("drain", exc)
+
+
+def cmd_facade_logs(args: argparse.Namespace) -> int:
+    try:
+        return facade.logs(Path(args.repo), role=args.role, lines=args.lines)
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("logs", exc)
 
 
 def cmd_facade_check(args: argparse.Namespace) -> int:
@@ -945,33 +1120,67 @@ def main(argv: list[str] | None = None) -> int:
     setup_parser.add_argument("--replace", action="store_true")
     setup_parser.set_defaults(func=cmd_setup)
 
-    for name in ("init", "enroll"):
-        init_parser = subparsers.add_parser(
-            name,
-            help="Generate durable profiles and compile the default project run",
-        )
-        init_parser.add_argument("--repo", default=".")
-        init_parser.add_argument("--card", required=True)
-        init_parser.add_argument("--machine", default="")
-        init_parser.add_argument("--project", default="")
-        init_parser.add_argument(
-            "--coder-runtime", choices=("codex", "opencode"), default="opencode"
-        )
-        init_parser.add_argument("--coder-model", default="")
-        init_parser.add_argument(
-            "--reviewer-runtime", choices=("codex", "opencode", "pi"), default="pi"
-        )
-        init_parser.add_argument("--reviewer-model", default="")
-        init_parser.add_argument("--lifecycle", choices=("managed", "session"), default="managed")
-        init_parser.add_argument("--branch", default="")
-        init_parser.add_argument("--rework-budget", type=int, default=1)
-        init_parser.add_argument("--upstream-repo", required=True)
-        init_parser.add_argument("--head-repo", required=True)
-        init_parser.add_argument("--upstream-remote", default="upstream")
-        init_parser.add_argument("--head-remote", default="fork")
-        init_parser.add_argument("--base-ref", default="main")
-        init_parser.add_argument("--replace", action="store_true")
-        init_parser.set_defaults(func=cmd_init)
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Detect dependencies and configure roles provided by this machine",
+    )
+    init_parser.add_argument("--repo", default=".")
+    init_parser.add_argument("--card", default="", help=argparse.SUPPRESS)
+    init_parser.add_argument("--machine", default="")
+    init_parser.add_argument("--project", default="")
+    init_parser.add_argument(
+        "--roles",
+        default=None,
+        help="Comma-separated architect,coder,reviewer subset; use none for zero roles",
+    )
+    init_parser.add_argument("--non-interactive", action="store_true")
+    init_parser.add_argument("--architect-runtime", choices=("pi",), default="")
+    init_parser.add_argument("--architect-model", default="")
+    init_parser.add_argument("--coder-runtime", default="", metavar="opencode")
+    init_parser.add_argument("--coder-model", default="")
+    init_parser.add_argument("--reviewer-runtime", choices=("codex", "opencode", "pi"), default="")
+    init_parser.add_argument("--reviewer-model", default="")
+    init_parser.add_argument("--config", default="")
+    init_parser.add_argument("--lifecycle", choices=("managed", "session"), default="managed")
+    init_parser.add_argument("--branch", default="", help=argparse.SUPPRESS)
+    init_parser.add_argument("--rework-budget", type=int, default=1, help=argparse.SUPPRESS)
+    init_parser.add_argument("--upstream-repo", default="")
+    init_parser.add_argument("--head-repo", default="")
+    init_parser.add_argument("--upstream-remote", default="upstream")
+    init_parser.add_argument("--head-remote", default="fork")
+    init_parser.add_argument("--base-ref", default="main")
+    init_parser.add_argument(
+        "--finding-enabled",
+        action="store_true",
+        help="enable maintainer-only Dogfood Finding Phase A for these profiles",
+    )
+    init_parser.add_argument("--replace", action="store_true")
+    init_parser.set_defaults(func=cmd_init)
+
+    enroll_parser = subparsers.add_parser(
+        "enroll",
+        help="Compatibility: generate coder/reviewer profiles and compile one TaskCard run",
+    )
+    enroll_parser.add_argument("--repo", default=".")
+    enroll_parser.add_argument("--card", required=True)
+    enroll_parser.add_argument("--machine", default="")
+    enroll_parser.add_argument("--project", default="")
+    enroll_parser.add_argument("--coder-runtime", choices=("codex", "opencode"), default="opencode")
+    enroll_parser.add_argument("--coder-model", default="")
+    enroll_parser.add_argument(
+        "--reviewer-runtime", choices=("codex", "opencode", "pi"), default="pi"
+    )
+    enroll_parser.add_argument("--reviewer-model", default="")
+    enroll_parser.add_argument("--lifecycle", choices=("managed", "session"), default="managed")
+    enroll_parser.add_argument("--branch", default="")
+    enroll_parser.add_argument("--rework-budget", type=int, default=1)
+    enroll_parser.add_argument("--upstream-repo", required=True)
+    enroll_parser.add_argument("--head-repo", required=True)
+    enroll_parser.add_argument("--upstream-remote", default="upstream")
+    enroll_parser.add_argument("--head-remote", default="fork")
+    enroll_parser.add_argument("--base-ref", default="main")
+    enroll_parser.add_argument("--replace", action="store_true")
+    enroll_parser.set_defaults(func=_cmd_legacy_init)
 
     plan_parser = subparsers.add_parser("plan", help="Compile or lint owner run intent")
     plan_commands = plan_parser.add_subparsers(dest="plan_command", required=True)
@@ -1064,7 +1273,7 @@ def main(argv: list[str] | None = None) -> int:
     status_parser = subparsers.add_parser("status", help="Explain the project or one bounded run")
     status_parser.add_argument("--repo", default=".")
     status_parser.add_argument("--run", default="")
-    status_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+    status_parser.add_argument("--role", choices=facade.ROLE_ORDER, default="")
     status_parser.add_argument("--explain", action="store_true")
     status_parser.add_argument(
         "--state-root", default=str(Path.home() / ".local/state/agent-workflow")
@@ -1080,29 +1289,35 @@ def main(argv: list[str] | None = None) -> int:
         operator_parser.set_defaults(func=handler)
 
     doctor_parser = subparsers.add_parser(
-        "doctor", help="Check every profile in the compiled project"
+        "doctor", help="Check every role profile configured for this machine or project"
     )
     doctor_parser.add_argument("--repo", default=".")
-    doctor_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+    doctor_parser.add_argument("--role", choices=facade.ROLE_ORDER, default="")
     doctor_parser.add_argument("--explain", action="store_true")
     doctor_parser.add_argument("--ttl-seconds", type=int, default=3600)
     doctor_parser.set_defaults(func=cmd_facade_doctor)
 
     start_parser = subparsers.add_parser(
-        "start", help="Install when explicitly absent, then start exact project profiles"
+        "start", help="Install when explicitly absent, then start exact local role profiles"
     )
     start_parser.add_argument("--repo", default=".")
-    start_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+    start_parser.add_argument("--role", choices=facade.ROLE_ORDER, default="")
     start_parser.add_argument("--allow-session-bound", action="store_true")
     start_parser.set_defaults(func=cmd_facade_start)
 
     for name, handler in (("stop", cmd_facade_stop), ("drain", cmd_facade_drain)):
         lifecycle_parser = subparsers.add_parser(
-            name, help=f"{name.title()} exact profiles from the compiled project"
+            name, help=f"{name.title()} exact local role profiles"
         )
         lifecycle_parser.add_argument("--repo", default=".")
-        lifecycle_parser.add_argument("--role", choices=("coder", "reviewer"), default="")
+        lifecycle_parser.add_argument("--role", choices=facade.ROLE_ORDER, default="")
         lifecycle_parser.set_defaults(func=handler)
+
+    logs_parser = subparsers.add_parser("logs", help="Read exact local role listener logs")
+    logs_parser.add_argument("--repo", default=".")
+    logs_parser.add_argument("--role", choices=facade.ROLE_ORDER, default="")
+    logs_parser.add_argument("--lines", type=int, default=100)
+    logs_parser.set_defaults(func=cmd_facade_logs)
 
     node_parser = subparsers.add_parser("node", help="Operate one local role listener")
     node_commands = node_parser.add_subparsers(dest="node_command", required=True)

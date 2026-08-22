@@ -3,12 +3,134 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from agent_workflow import cli, facade, node
 from agent_workflow.manifest import load_compiled_report, load_manifest
+
+
+def _machine_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "project"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    (repo / "README.md").write_text("project\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "add",
+            "upstream",
+            "https://github.com/owner/project.git",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "add",
+            "fork",
+            "https://github.com/contributor/project.git",
+        ],
+        check=True,
+    )
+    return repo
+
+
+def _capabilities(tmp_path: Path, *available: str) -> dict[str, object]:
+    config = tmp_path / "dispatch.env"
+    return {
+        "repo": str(tmp_path / "project"),
+        "git": "/tools/git",
+        "github": "/tools/gh",
+        "config_path": str(config),
+        "configured_keys": frozenset(
+            {"AGENT_BUS_URL", "AWF_ARCH_TOKEN", "AWF_CODER_TOKEN", "AWF_REVIEWER_TOKEN"}
+        ),
+        "agent_bus": {
+            "executable": "/tools/agent-bus",
+            "capabilities": ("agent-bus.listen.on-argv.v1",),
+            "provenance_sha256": "sha256:" + "1" * 64,
+        },
+        "tools": {
+            tool: {
+                "available": tool in available,
+                "executable": f"/tools/{tool}" if tool in available else "",
+                "version_sha256": "sha256:" + "2" * 64 if tool in available else "",
+            }
+            for tool in ("codex", "opencode", "pi")
+        },
+    }
+
+
+def test_dependency_discovery_is_capability_first_and_read_only(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config_path = tmp_path / "dispatch.env"
+    config = {
+        "AGENT_BUS_URL": "https://bus.invalid",
+        "AWF_BUS_BIN": "agent-bus",
+        "AWF_ARCH_TOKEN": "secret",
+        "AWF_PI_BIN": "pi",
+    }
+    commands: list[list[str]] = []
+
+    class Config:
+        class ConfigError(RuntimeError):
+            pass
+
+        @staticmethod
+        def load_config(path):
+            assert path == config_path
+            return config
+
+        @staticmethod
+        def native_executable(value):
+            return value
+
+    def checked(argv, **_kwargs):
+        commands.append(argv)
+        stdout = str(repo) if "--show-toplevel" in argv else "tool version"
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+    monkeypatch.setattr(facade, "_run_checked", checked)
+    monkeypatch.setattr(facade.node, "_operations_modules", lambda: (Config, object()))
+    monkeypatch.setattr(
+        facade.node,
+        "probe_agent_bus_client",
+        lambda value: {
+            "executable": "/tools/agent-bus",
+            "capabilities": ("agent-bus.listen.on-argv.v1",),
+            "provenance_sha256": "sha256:" + "1" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        facade.shutil,
+        "which",
+        lambda value: f"/tools/{value}" if value in {"git", "gh", "agent-bus", "pi"} else None,
+    )
+
+    facts = facade.discover_machine_capabilities(repo, config_path=config_path)
+
+    assert facts["agent_bus"]["capabilities"] == ("agent-bus.listen.on-argv.v1",)
+    assert facts["tools"]["pi"]["available"] is True
+    assert facts["tools"]["opencode"]["available"] is False
+    assert all("doctor" not in argv for argv in commands)
+    assert not facade.default_machine_config_path(repo).exists()
 
 
 def _card(repo: Path) -> Path:
@@ -311,3 +433,283 @@ def test_start_and_drain_gate_every_profile_before_mutation(monkeypatch, tmp_pat
         == 0
     )
     assert legacy == [("task-legacy", str(state_root))]
+
+
+def test_machine_init_reuses_one_opencode_for_distinct_coder_reviewer_workspaces(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    state_root = tmp_path / "state" / "agent-workflow"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: state_root)
+
+    contract, warnings = facade.initialize_machine(
+        repo=repo,
+        machine="windows-lab",
+        project="sample",
+        bindings={
+            "coder": ("opencode", "deepseek"),
+            "reviewer": ("opencode", "deepseek"),
+        },
+        capabilities=_capabilities(tmp_path, "opencode"),
+        lifecycle="managed",
+        upstream_repo="",
+        head_repo="",
+        upstream_remote="upstream",
+        head_remote="fork",
+        base_ref="main",
+        finding_enabled=False,
+        replace=False,
+    )
+
+    assert [profile.role for profile in contract.profiles] == ["coder", "reviewer"]
+    assert len({profile.repo for profile in contract.profiles}) == 2
+    assert {profile.values["tool"] for profile in contract.profiles} == {"opencode"}
+    assert len({profile.config_path for profile in contract.profiles}) == 1
+    assert {profile.values["model"] for profile in contract.profiles} == {"deepseek"}
+    assert all(profile.values["finding_enabled"] is False for profile in contract.profiles)
+    assert all(profile.repo.is_dir() for profile in contract.profiles)
+    assert warnings == (
+        "Coder and Reviewer use the same agent tool and model; review independence may be weaker.",
+    )
+    checked: list[str] = []
+    monkeypatch.setattr(
+        node,
+        "doctor",
+        lambda profile, **_kwargs: checked.append(profile.role) or 0,
+    )
+    assert facade.doctor(repo) == 0
+    assert checked == ["coder", "reviewer"]
+
+
+def test_machine_init_supports_pi_architect_only(monkeypatch, tmp_path: Path) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+
+    contract, warnings = facade.initialize_machine(
+        repo=repo,
+        machine="mac",
+        project="sample",
+        bindings={"architect": ("pi", "")},
+        capabilities=_capabilities(tmp_path, "pi"),
+        lifecycle="managed",
+        upstream_repo="",
+        head_repo="",
+        upstream_remote="upstream",
+        head_remote="fork",
+        base_ref="main",
+        finding_enabled=False,
+        replace=False,
+    )
+
+    assert warnings == ()
+    assert len(contract.profiles) == 1
+    profile = contract.profiles[0]
+    assert profile.role == "architect"
+    assert profile.values["tool"] == "pi"
+    assert profile.values["model"] == ""
+    assert profile.values["on_type"] == "decision:awf-ready-v3"
+    assert node.load_profile(str(profile.path)).digest == profile.digest
+    machine = json.loads(contract.config_path.read_text(encoding="utf-8"))
+    assert machine["roles"]["architect"]["model_selection"] == {
+        "mode": "tool-default",
+        "ref": "",
+    }
+
+
+def test_three_role_machine_has_static_supported_bindings_and_distinct_workspaces(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = _machine_repo(tmp_path)
+    monkeypatch.setattr(node, "default_config_home", lambda: tmp_path / "config" / "awf")
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+
+    contract, _warnings = facade.initialize_machine(
+        repo=repo,
+        machine="one-machine",
+        project="sample",
+        bindings={
+            "architect": ("pi", "architect-model"),
+            "coder": ("opencode", "execution-model"),
+            "reviewer": ("opencode", "execution-model"),
+        },
+        capabilities=_capabilities(tmp_path, "pi", "opencode"),
+        lifecycle="managed",
+        upstream_repo="",
+        head_repo="",
+        upstream_remote="upstream",
+        head_remote="fork",
+        base_ref="main",
+        finding_enabled=False,
+        replace=False,
+    )
+
+    assert [profile.role for profile in contract.profiles] == list(facade.ROLE_ORDER)
+    assert len({profile.name for profile in contract.profiles}) == 3
+    assert len({profile.repo for profile in contract.profiles}) == 3
+
+
+def test_machine_init_rejects_unsupported_binding_before_mutation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+
+    with pytest.raises(facade.FacadeError, match="architect does not support"):
+        facade.initialize_machine(
+            repo=repo,
+            machine="mac",
+            project="sample",
+            bindings={"architect": ("opencode", "model")},
+            capabilities=_capabilities(tmp_path, "opencode"),
+            lifecycle="managed",
+            upstream_repo="",
+            head_repo="",
+            upstream_remote="upstream",
+            head_remote="fork",
+            base_ref="main",
+            finding_enabled=False,
+            replace=False,
+        )
+
+    assert not facade.default_machine_config_path(repo).exists()
+    assert not (config_home / "profiles").exists()
+    assert not (config_home / "workspaces").exists()
+
+
+def test_machine_init_rejects_invalid_explicit_model_ref_before_mutation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+
+    with pytest.raises(facade.FacadeError, match="tool-native token"):
+        facade.initialize_machine(
+            repo=repo,
+            machine="mac",
+            project="sample",
+            bindings={"architect": ("pi", " provider/model ")},
+            capabilities=_capabilities(tmp_path, "pi"),
+            lifecycle="managed",
+            upstream_repo="",
+            head_repo="",
+            upstream_remote="upstream",
+            head_remote="fork",
+            base_ref="main",
+            finding_enabled=False,
+            replace=False,
+        )
+
+    assert not facade.default_machine_config_path(repo).exists()
+    assert not (config_home / "profiles").exists()
+
+
+def test_machine_config_rejects_profile_binding_drift(monkeypatch, tmp_path: Path) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+    contract, _warnings = facade.initialize_machine(
+        repo=repo,
+        machine="mac",
+        project="sample",
+        bindings={"architect": ("pi", "model")},
+        capabilities=_capabilities(tmp_path, "pi"),
+        lifecycle="managed",
+        upstream_repo="",
+        head_repo="",
+        upstream_remote="upstream",
+        head_remote="fork",
+        base_ref="main",
+        finding_enabled=False,
+        replace=False,
+    )
+    profile_path = contract.profiles[0].path
+    values = json.loads(profile_path.read_text(encoding="utf-8"))
+    values["model"] = "drifted-model"
+    profile_path.write_text(json.dumps(values), encoding="utf-8")
+
+    with pytest.raises(facade.FacadeError, match="profile binding drifted"):
+        facade.load_machine(repo)
+
+
+@pytest.mark.parametrize("replace_existing", [False, True])
+@pytest.mark.parametrize("failure_target", ["reviewer-profile", "machine-config"])
+def test_machine_init_file_batch_rolls_back_fresh_and_replace_failures(
+    monkeypatch,
+    tmp_path: Path,
+    replace_existing: bool,
+    failure_target: str,
+) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+    capabilities = _capabilities(tmp_path, "opencode")
+    common = {
+        "repo": repo,
+        "machine": "lab",
+        "project": "sample",
+        "capabilities": capabilities,
+        "lifecycle": "managed",
+        "upstream_repo": "",
+        "head_repo": "",
+        "upstream_remote": "upstream",
+        "head_remote": "fork",
+        "base_ref": "main",
+        "finding_enabled": False,
+    }
+    if replace_existing:
+        facade.initialize_machine(
+            **common,
+            bindings={
+                "coder": ("opencode", "old-model"),
+                "reviewer": ("opencode", "old-model"),
+            },
+            replace=False,
+        )
+
+    profile_paths = {
+        role: config_home / "profiles" / f"sample-lab-{role}.json" for role in ("coder", "reviewer")
+    }
+    machine_path = facade.default_machine_config_path(repo)
+    watched = (*profile_paths.values(), machine_path)
+    before = {path: path.read_bytes() for path in watched if path.exists()}
+    target = profile_paths["reviewer"] if failure_target == "reviewer-profile" else machine_path
+    real_replace = facade._replace_file
+
+    def fail_selected_stage(source: Path, destination: Path) -> None:
+        if Path(destination) == target and "backup-" not in Path(source).name:
+            raise OSError("injected batch commit failure")
+        real_replace(Path(source), Path(destination))
+
+    monkeypatch.setattr(facade, "_replace_file", fail_selected_stage)
+
+    with pytest.raises(facade.FacadeError, match="rolled back"):
+        facade.initialize_machine(
+            **common,
+            bindings={
+                "coder": ("opencode", "new-model"),
+                "reviewer": ("opencode", "new-model"),
+            },
+            replace=replace_existing,
+        )
+
+    if replace_existing:
+        assert {path: path.read_bytes() for path in watched} == before
+        restored = facade.load_machine(repo)
+        assert {profile.values["model"] for profile in restored.profiles} == {"old-model"}
+    else:
+        assert all(not path.exists() for path in watched)
+        assert not (config_home / "workspaces" / "sample-lab-coder").exists()
+        assert not (config_home / "workspaces" / "sample-lab-reviewer").exists()
+    assert not list((config_home / "profiles").glob("awf-init-profiles-*"))
+    assert not list(machine_path.parent.glob(".machine.json.stage-*"))
+    assert not list(machine_path.parent.glob(".machine.json.backup-*"))

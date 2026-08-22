@@ -94,13 +94,56 @@ class PiReviewerRenderer:
         if len(spec.provider_args) != 1:
             raise ContractError("Pi reviewer requires one exact base ref")
         base = spec.provider_args[0]
+        finding = (
+            PI_FINDING_INSTRUCTIONS
+            if dict(spec.environment).get("AWF_FINDING_ENABLED") == "1"
+            else ""
+        )
         message = (
             f"Review the attached trusted context against base ref `{base}`. "
             "Use only read-only repository inspection tools. "
             "Return the complete filled-in Markdown ReviewReport as stdout. "
             "The trusted runner will persist stdout to the exact ReviewReport path; do not "
-            f"claim you wrote a file. ReviewReport output path: {spec.report_path}"
-            + PI_FINDING_INSTRUCTIONS
+            f"claim you wrote a file. ReviewReport output path: {spec.report_path}" + finding
+        )
+        argv = [
+            "--print",
+            "--mode",
+            "text",
+            "--no-session",
+            "--no-approve",
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-context-files",
+            "--tools",
+            "read,grep,find,ls",
+        ]
+        if spec.model:
+            argv += ["--model", spec.model]
+        argv += [f"@{spec.input_path}", message]
+        return RenderedInvocation(
+            spec.executable,
+            tuple(argv),
+            spec.workspace,
+            environment=spec.environment,
+            file_inputs=(RenderedInputFile(spec.input_path, spec.input_text.encode("utf-8")),),
+        )
+
+
+class PiArchitectRenderer:
+    """Render one non-authorizing Pi planning invocation over trusted context."""
+
+    def render(self, spec: InvocationSpec) -> RenderedInvocation:
+        _require(spec, "pi", {"architect"})
+        if spec.provider_args:
+            raise ContractError("Pi architect does not accept provider options")
+        message = (
+            "Reason from the attached trusted project context as the Agent Workflow Architect. "
+            "Use only read-only repository inspection tools. Return one complete self-contained "
+            "TaskCard Markdown document as stdout. The trusted runner validates and persists the "
+            "output; do not claim you wrote or authorized a TaskCard. "
+            f"Proposed TaskCard output path: {spec.report_path}"
         )
         argv = [
             "--print",
@@ -128,6 +171,8 @@ class PiReviewerRenderer:
 
 
 def render_provider_invocation(spec: InvocationSpec) -> RenderedInvocation:
+    if spec.provider == "pi" and spec.role == "architect":
+        return PiArchitectRenderer().render(spec)
     if spec.provider == "opencode":
         return OpenCodeRenderer().render(spec)
     if spec.provider == "codex" and spec.role == "reviewer":

@@ -18,6 +18,7 @@ _GIT_SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 _ENV_NAME_RE = re.compile(r"[^=\x00-\x1f\x7f]+")
 _SENSITIVE_ENV_PARTS = ("TOKEN", "PASSWORD", "SECRET", "CREDENTIAL", "PRIVATE_KEY")
+_ARCHITECT_PROVIDERS = frozenset({"pi"})
 _CODER_PROVIDERS = frozenset({"codex", "opencode"})
 _REVIEWER_PROVIDERS = frozenset({"codex", "opencode", "pi"})
 _MAX_PROVIDER_INPUT_BYTES = 256 * 1024
@@ -393,9 +394,14 @@ class InvocationSpec:
         _identifier("run_id", self.run_id)
         _identifier("task_id", self.task_id)
         _sha256("authorization_sha256", self.authorization_sha256)
-        if self.role not in {"coder", "reviewer"}:
+        providers_by_role = {
+            "architect": _ARCHITECT_PROVIDERS,
+            "coder": _CODER_PROVIDERS,
+            "reviewer": _REVIEWER_PROVIDERS,
+        }
+        if self.role not in providers_by_role:
             raise ContractError("role is unsupported")
-        allowed = _CODER_PROVIDERS if self.role == "coder" else _REVIEWER_PROVIDERS
+        allowed = providers_by_role[self.role]
         if self.provider not in allowed:
             raise ContractError("provider is unsupported for role")
         if self.model:

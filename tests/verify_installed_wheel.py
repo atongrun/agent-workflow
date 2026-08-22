@@ -335,6 +335,26 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
         assert "status" in feedback_help.stdout
         assert "flush" in feedback_help.stdout
         assert "ingest" in feedback_help.stdout
+        init_help = subprocess.run(
+            [str(awf), "init", "--help"],
+            check=True,
+            cwd=outside,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+        )
+        assert "--roles" in init_help.stdout
+        assert "--architect-runtime" in init_help.stdout
+        assert "--finding-enabled" in init_help.stdout
+        root_help = subprocess.run(
+            [str(awf), "--help"],
+            check=True,
+            cwd=outside,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+        )
+        assert "logs" in root_help.stdout
         missing_profile = subprocess.run(
             [str(awf), "node", "status", "--profile", "missing-profile"],
             cwd=outside,
