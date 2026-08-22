@@ -1,7 +1,8 @@
 # TaskCard: Phase 5-02 Fresh Runtime v2 Single-Card Adoption
 
-Status: Frozen after independent architecture/authority review PASS at `fd4b4d8`. Implementation is
-authorized only within the scope and authority rules below.
+Status: Draft for one bounded implementation-readiness re-review after the owner corrected the
+review boundary. No implementation is authorized until this bounded review passes and the card is
+marked Frozen again.
 
 ## Task ID
 
@@ -49,158 +50,92 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 - Phase 5-01 machine config is local per machine; the Architect must learn remote role readiness and
   exact tool/model/profile facts without SSH ownership or dynamic discovery.
 
-## Frozen architecture
+## Inherited canonical contract
 
-### 1. One logical Workflow writer
+This card adopts rather than redesigns the Frozen Runtime v2 semantics. The canonical sources are:
 
-- The machine running `awf run` must provide the exact Pi Architect binding and owns the sole fresh
-  Runtime v2 RunStore/writer for this card.
-- Remote Coder/Reviewer processes never write Workflow stage, terminal, merge or routing authority.
-- No network Coordinator, database service, shared filesystem, leader election or distributed lock
-  is introduced. Agent Bus transports opaque command/result/readiness envelopes only.
-- A role worker owns only exact local invocation/process/result/workspace/outbox facts needed to
-  prevent duplicate provider execution and return the same stable result on redelivery.
+- Runtime v2 plan §3 non-negotiable semantic invariants;
+- RTS-030 through RTS-035 for RunSpec, Store/journal, renderer, isolated workspace, trusted import,
+  Artifact validation and local application composition;
+- RTS-040/041 and Phase 4A for the versioned Stage-blind envelope, Store-owned outgoing intent,
+  ambiguous no-replay and handler-success/transport-ACK ordering;
+- RTS-011 for exact-lineage bounded rework;
+- Phase 4B for exact local lifecycle ownership and stop;
+- `constitution.md` §§9 and 13 for Reviewer/Decider authority and completion.
 
-### 2. Fresh RunSpec v2 and no legacy adoption
+Those definitions govern persistence/replay, worker evidence versus Workflow authority, workspace
+materialization/provenance, result/ACK ordering, idempotency/recovery and bounded rework. This card
+does not duplicate or extend them. A contradiction exposed during implementation is repaired only as
+the smallest separately identified contract delta.
 
-- The new fresh-only format is exactly `awf.runtime-v2.run-spec.v2`; this path accepts only its
-  canonical bytes and exact SHA-256. It defines a narrow fresh-v2 `RoleBinding` containing exactly
-  role, Agent Tool, `model_selection {mode, ref}`, profile digest/identity and workspace identity for
-  Architect, Coder and Reviewer. It also binds attempts/rework capacity, TaskCard/report paths, role
-  routes, exact repository, base/branch, semantic contract and state-root identity. It does not reuse
-  or broaden the v1 `ProviderSelection`, and is not a provider/model registry or Agent Tool
-  configuration abstraction.
-- Existing Runtime v2 disposable v1 representations remain test/oracle evidence and are never read,
-  migrated, rewritten or silently defaulted into the fresh path. Unknown/old format fails closed.
-- No RunLedger/checkpoint/outbox/inbox write or read is permitted in the new path. Legacy `awf
-  enroll/setup/dispatch/resume/status --run` remains callable only for legacy runs.
-- `.awf/active-run.json` is a small rebuildable local pointer for zero-argument status/stop. It
-  contains the exact RunSpec SHA-256 and Store identity/path; the reader must re-read both objects
-  and accept the pointer only after both bindings match. It is never authority. A missing or invalid
-  pointer falls back only to factual machine status and never scans or interprets legacy RunLedger
-  state.
+## Phase 5-02 genuine delta
 
-### 3. Role selection and remote readiness
+### 1. Fresh production adoption and ownership
 
-- Architect selection comes from the current Phase 5-01 machine binding.
-- Coder/Reviewer selection comes from exact local bindings when present, otherwise the existing
-  committed TaskCard `awf-reviewer-selection` block. That legacy block is only a compile-time input:
-  `model: ""` maps to `model_selection {mode: "tool-default", ref: ""}` and a nonblank model maps to
-  `{mode: "explicit", ref: <exact opaque value>}`; only the resulting v2 RoleBinding is persisted in
-  RunSpec authority. The command envelope carries the exact expected role, tool, model mode/ref,
-  profile identity/digest and workspace identity, and the remote handler must match every binding to
-  its local profile before provider authorization.
-- At the renderer boundary, tool-default maps to `model=""` and omits the model flag; explicit maps
-  to its exact opaque tool-native ref. Mode/ref drift is denied. There is no provider
-  configuration/catalog/auth mutation and an explicit ref never silently falls back.
-- Before any business command, `awf run` sends fresh bounded no-model readiness probes to every
-  required remote role. Existing local roles use ordinary node doctor/lifecycle facts. Probe replies
-  bind a bounded nonce/expiry, role, route, exact profile digest, role-workspace source commit,
-  resolved executable/version/provenance, tool/model, AWF version and the
-  `agent-bus.listen.on-argv.v1` capability. Agent Bus v0.3.1 is diagnostic provenance; capability is
-  the safety gate. Readiness evidence is never reusable as command authorization.
-- Missing, timed-out, stale or mismatched remote readiness fails before business dispatch with one
-  remediation. AWF never SSH-starts, installs or kills a remote role.
+- The machine running `awf run` must provide the exact Pi Architect binding and becomes the sole
+  logical writer of one new fresh Runtime v2 RunStore.
+- The accepted fresh-only format is `awf.runtime-v2.run-spec.v2`; no legacy RunLedger,
+  checkpoint/outbox/inbox or v1 RunSpec is read, imported, dual-written or used as fallback.
+- Remote workers retain only canonical per-invocation execution evidence. They never acquire
+  Workflow transition, terminal, routing or merge authority.
 
-### 4. Stage-blind Bus command/result worker
+### 2. Phase 5-01 RoleBinding compilation
 
-- Add one installed structured-argv handler entry for Runtime v2 readiness, command and result
-  routes; do not use legacy `--on`.
-- The source writer creates the immutable command/result delivery identity and persists outgoing
-  attempt-before-I/O facts. Each immutable command payload carries the canonical fresh RunSpec v2
-  bytes and hash, canonical stage request/authorization identity, and the required TaskCard source
-  commit/path/hash. Send non-zero/timeout/exception is ambiguous and never automatically creates a
-  replacement identity or repeats a provider.
-- Before any provider launch, a role worker recomputes all hashes, confirms its exact local profile
-  digest/role/tool/model/route, and obtains the TaskCard with `git show <frozen_base>:<path>` from its
-  already configured role checkout. A missing or drifted source commit fails before business
-  dispatch with one remediation to manually refresh or re-run `awf init` for that named role
-  workspace; `awf run` does not update the remote checkout.
-- Trusted worker code materializes a distinct event workspace at the specified immutable commit/tree
-  from configured trusted remotes, verifies that exact commit/tree before launch, and never lets the
-  provider operate the profile checkout or authenticated source-writer state. Reviewer materializes
-  the source writer's exact committed/pushed PR head/tree. Coder returns a canonical bounded delta
-  that source trusted code revalidates before its single import/commit/push/PR operation. Rework uses
-  only the exact durable Coder event-workspace manifest.
-- The worker journal identity includes RunSpec hash, profile digest, command delivery ID and
-  canonical command hash. It records launch intent before provider I/O and an immutable result before
-  result send. Same command ID/same hash never invokes again and resends only those result bytes;
-  same ID/different hash fails closed.
-- A result-send exception, timeout or unknown outcome is not provider replay: the worker returns
-  nonzero so Agent Bus leaves the command unACKed for redelivery, and redelivery may resend only the
-  stored result. The worker may return success only after the stable result has an unambiguous
-  enqueue/send fact.
-- Worker records are explicitly execution-host evidence, not Workflow authority. They contain no
-  next-stage or terminal decision.
-- Coder results return bounded exact workspace delta, ImplementationReport and process/result facts
-  to the source writer. Reviewer results return the bounded raw/normalized ReviewReport and exact
-  reviewed commit/tree facts. Source revalidates all results before adopting them.
-- A source result handler durably records and revalidates its exact inbox/result before handler
-  success permits Agent Bus ACK. Exact duplicate result is idempotent; conflict or foreign result
-  fails and remains unACKed. A crash after inbox/adoption resumes from that durable source fact and
-  never invokes the provider again.
+- Fresh RunSpec v2 adds only the narrow role binding required by Phase 5-01: role, Agent Tool,
+  `model_selection {mode, ref}`, profile identity/digest and workspace identity for Architect, Coder
+  and Reviewer. It is not a provider/model registry and does not modify v1 `ProviderSelection`.
+- Local bindings come from `.awf/machine.json`. When an allowed remote Coder/Reviewer selection comes
+  from the committed `awf-reviewer-selection` block, empty model compiles to `tool-default` and
+  nonblank model to the exact opaque explicit ref. Only the compiled v2 RoleBinding is authority.
+- At rendering, tool-default omits the model override and explicit passes the exact ref. Binding drift
+  denies before provider launch; explicit never falls back.
 
-### 5. Trusted Coder/Reviewer/rework path
+### 3. Readiness before authority
 
-- The source writer authorizes Coder before command send. After exact result adoption, trusted code
-  validates postflight/allowed paths/secrets/delta, imports it, commits, pushes to the configured
-  contribution fork, creates/verifies one exact PR tuple and persists those facts.
-- Reviewer command binds that exact trusted commit/tree/PR tuple and cannot review prose or an
-  unverified branch name.
-- `REQUEST_CHANGES` uses the existing normalized deterministic feedback, exact prior implement
-  lineage and one bounded rework slot. Remote Coder reuses only its exact durable prior workspace;
-  rework then produces a fresh review authorization. Do not redesign RTS-011 semantics.
-- `BLOCKED` routes to Architect and never becomes automatic rework.
-- Same OpenCode executable/explicit model for Coder/Reviewer remains valid; role/invocation/workspace
-  identities stay distinct.
+- Exact local lifecycle/readiness is reused. Missing remote roles receive one bounded no-model
+  readiness probe; it must prove the configured role/profile/workspace/tool/model binding and
+  `agent-bus.listen.on-argv.v1`. Version v0.3.1 is diagnostic; capability is authoritative.
+- Readiness is pre-authority. Only after all bindings pass may `awf run` compile/persist RunSpec v2,
+  initialize the Store and issue a business command. Failure creates neither Store nor business
+  delivery and reports one manual start/refresh/re-init remediation; AWF never SSH-manages a host.
 
-### 6. Pi Architect terminal decision
+### 4. Production structured-argv handoff
 
-- The fresh Store transition table adds `ARCHITECT`. A valid adopted Reviewer PASS or BLOCKED first
-  records the exact Review fact, then authorizes exactly one local Architect invocation; it is not
-  Runtime terminal.
-- Extend the existing Pi Architect renderer with one explicit terminal mode. It receives a bounded
-  trusted context containing TaskCard identity/criteria, Implementation/Review summaries, exact
-  commit/tree/PR and current CI observation, plus BLOCKED/escalation facts where applicable. Full
-  raw history/diff is not included by default.
-- The Architect uses a normal per-invocation journal: authorization, launch intent before Pi I/O,
-  process/result and validated Decision. Launch or result uncertainty is
-  `AMBIGUOUS_NO_REPLAY`; neither `awf run`, `awf status` nor `awf stop` may re-invoke Pi.
-- A narrow terminal parser in `runtime/architect.py` validates the existing Decision Markdown
-  template and accepts only its existing `approve|request_changes|reject|escalate` verdicts.
-  `approve` is the sole mapping to Runtime `accept`; there is no invented `blocked` Decision verdict.
-  A Reviewer BLOCKED lineage can never authorize merge even if Pi emits `approve`.
-- `request_changes`, `reject` and `escalate` preserve the typed Decision and evidence and reach the
-  defined non-merge owner/blocked/rejected outcome. They do not authorize provider rework or create
-  a next TaskCard.
-- Pi cannot run shell orchestration, send/ACK Bus events, mutate Git/GitHub or write Runtime state.
+- Promote the accepted Stage-blind command/result envelope and outgoing-intent adapter to one
+  installed production worker/source-handler path; preserve all inherited durability and authority
+  semantics without adding a Coordinator, Host, shared Store or Agent Bus change.
+- Agent Bus messages retain explicit versioned type tags:
+  `control:awf-runtime-v2-readiness-v1`, `control:awf-runtime-v2-readiness-result-v1`,
+  `task:awf-runtime-v2-command-v1` and `result:awf-runtime-v2-result-v1`. They use only `--on-argv`;
+  no untyped event or legacy `--on` fallback is allowed.
+- The command carries canonical RunSpec v2 plus the exact stage authorization and source identity
+  needed by the inherited workspace/provenance contract. Coder returns its bounded result for
+  trusted source import/commit/push/PR; Reviewer receives and reports on that exact trusted head.
 
-### 7. Trusted CI/merge/completion
+### 5. Pi Architect terminal delta
 
-- After Architect accept, trusted code freshly verifies that the PR is `OPEN`, plus exact
-  upstream/head repository, base/head ref, prior head SHA and required CI success for that exact head
-  using the existing Git/GitHub provenance rules. No generic SCM abstraction, `--auto` merge or
-  automatic branch deletion is allowed.
-- The RunStore persists a merge attempt/intent before `gh pr merge`. A non-zero, timeout, exception
-  or unconfirmed result is `AMBIGUOUS_NO_REPLAY`; automatic merge retry is forbidden.
-- After explicit CLI success, trusted code re-reads the PR by exact number and proves `MERGED`, exact
-  prior head SHA and the configured GitHub merge method's exact resultant head/merge-SHA rule. Any
-  mismatch is ambiguity/no replay. Only that durable observation can authorize Runtime terminal
-  `completed`.
-- Provider exit zero, Reviewer prose/PASS, Architect prose, branch name, PID/liveness or pending-zero
-  is never completion.
-- Completion facts remain typed/durable and independently readable so a later milestone loop can
-  consume them; this card defines no `NEXT_TASK_CARD` or `MILESTONE_COMPLETE` loop.
+- Reviewer PASS or BLOCKED now authorizes one local `ARCHITECT` stage rather than becoming terminal.
+  The existing journal/no-replay contract applies to that invocation.
+- Extend the existing Pi renderer with a narrow terminal mode containing bounded trusted TaskCard,
+  Artifact, review, CI and exact PR/provenance facts, not raw implementation history.
+- Parse the existing Decision template and verdicts only. `approve` is the sole mapping that may
+  enter merge, and Reviewer BLOCKED can never merge. Other decisions preserve a typed non-merge
+  outcome; they do not create rework, next-card or shell/Git/Bus authority for Pi.
 
-### 8. Normal CLI behavior
+### 6. Trusted merge/completion delta
 
-- `awf run <TaskCard>` loads Phase 5-01 machine config, safely starts only exact local profiles where
-  needed, then sends no-model remote readiness and verifies all fresh binding facts. Only after
-  readiness succeeds does it compile and persist the final RunSpec v2 from those exact local/remote
-  facts, initialize the new Store and issue the first business command. Readiness is pre-authority:
-  failure creates neither a business command nor a RunStore. Any ephemeral readiness nonce/run hint
-  is not final Workflow authority. The command then runs/waits for one card to terminal or a truthful
-  block.
+- After Reviewer PASS, exact-head required CI and Architect approve, reuse the existing trusted
+  Git/GitHub provenance machinery for one deterministic merge attempt.
+- Persist merge intent before external mutation. Ambiguous outcome is no-replay. Completion is
+  recorded only after exact PR/head/method-specific merged observation; no `--auto`, automatic branch
+  deletion or generic SCM abstraction is introduced.
+- The typed completed-card fact remains independently readable for a later milestone loop, but this
+  card defines no next-card behavior.
+
+### 7. Normal CLI behavior
+
+- `awf run <TaskCard>` performs the ordered readiness, fresh compilation, one-card dispatch and
+  trusted progress above, starting only exact local profiles where existing lifecycle permits.
 - `awf status` remains read-only and projects the active/last fresh Store first blocker, owner,
   stage, role/model invocation evidence, PR/CI/merge/completion and one legal action. It performs no
   recovery, send, merge or provider action.
@@ -248,14 +183,17 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 
 This is an L3 fresh-default/adoption seam. Reuse existing Runtime Store/application/transport,
 workspace/Artifact fixtures, RTS-011 rework rows, Phase 4 envelope/outgoing tests and trusted
-Git/GitHub helpers. Add only focused rows for the new source/worker/Architect journal and invalid
-Decision, command/result ACK ambiguity, exact materialization, pointer, readiness and merge-method
-seams. Do not
-recreate the 39-case matrix, storage/Rust comparison or real three-OS lifecycle campaign.
+Git/GitHub helpers. Add only focused rows for the new production adoption, RoleBinding, Architect,
+readiness, CLI/pointer and merge/completion deltas. Reuse existing fault fixtures for inherited
+protocol behavior; do not recreate the 39-case matrix, storage/Rust comparison or real three-OS
+lifecycle campaign.
 
-One independent L3 architecture/authority Review is required before freeze. One different
-independent L3 candidate Review is required after exact-head tests/CI. Concrete findings receive
-bounded repair and focused re-review; mechanical fixes do not reopen architecture.
+One bounded independent implementation-readiness Review is required before freeze. It may block only
+on a canonical-contract violation, an uncovered genuine Phase 5-02 delta, a defect that directly
+prevents execution/recovery/acceptance, or scope exceeding one card. It must not reopen inherited
+protocol semantics for theoretical improvement. One different independent L3 candidate Review is
+required after exact-head tests/CI. Concrete implementation findings receive bounded repair and
+focused re-review; mechanical fixes do not reopen architecture.
 
 ## Frozen implementation scope after Review PASS
 
