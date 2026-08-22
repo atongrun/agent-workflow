@@ -114,6 +114,8 @@ tool. Unsupported selections fail before profile/workspace/machine-config mutati
 - Resource validation: roles `6/6`, workflows `4/4`, examples `3/3` PASS.
 - Fresh wheel from unrelated cwd: PASS for exact wheel SHA-256
   `a9d44e394df6bc68a1f306b56d949a64213e89b289ca21f318499609f8f2d9b5`.
+- Exact repaired-head ordinary CI `32574488604`: PASS.
+- Exact repaired-head Binary Feasibility `32574488742`: PASS.
 - No provider/model invocation, Agent Bus event, ACK/retry/requeue, remote service, lifecycle
   manager or retained state operation was used for acceptance.
 

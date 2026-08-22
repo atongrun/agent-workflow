@@ -7,6 +7,45 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
+## Current Handoff State: 2026-08-22 Phase 5-01 Candidate
+
+PR #120 merged the accepted Phase 4B head into `main` as
+`6ce518273cc21cabdf9821ab01958e9f7f7a01ac`. Phase 5-01 then completed on reviewed candidate
+`d9f470c` in Draft PR #121. Integration of #121 remains an owner boundary; Phase 5-02 has not
+started.
+
+`awf init` is now capability-first and configures only the current machine. It can bind any subset
+of Architect, Coder and Reviewer to the closed supported matrix: Pi Architect, OpenCode Coder, and
+OpenCode/Pi/Codex Reviewer. Every role has a distinct exact profile/workspace while one installed
+Agent Tool may serve several roles. Same OpenCode/same explicit model is legal and warns only that
+review independence may be weaker.
+
+Machine config persists `tool-default` versus one opaque explicit Agent Tool-native model ref. Empty
+profile model means the renderer omits the override; explicit refs are passed unchanged. Agent Tool
+authentication, provider endpoints/catalogs/defaults and model provisioning remain external and
+are never mutated or remotely discovered by AWF.
+
+Pi Architect is a real closed read-only renderer plus a trusted create-only TaskCard stdout
+validation/persistence helper. It returns only a non-authorizing Artifact fact and is not connected
+to LocalRuntimeApplication, RunSpec, Store/journal, transport, listener transitions or TaskCard
+execution in Phase 5-01.
+
+Init and node doctor require `agent-bus.listen.on-argv.v1` from a local capability probe and record
+credential-free executable/help provenance instead of trusting the ambiguous 0.3.0 version. Agent
+Bus remains separately deployed; a formal compatible client release is still required before real
+Phase 5 dogfood.
+
+Finding is off by profile omission: normal prompts, capture and status do not expose it. Explicit
+`finding_enabled=true` preserves existing Phase A only. The candidate passed focused `470/2`, full
+`913/5`, fresh installed-wheel verification, ordinary CI `32574488604`, Binary Feasibility
+`32574488742`, and independent L2 Review after one recoverable machine-config batch repair. See the
+[TaskCard](docs/tasks/phase5-01-capability-init.md) and
+[closeout](docs/tasks/phase5-01-capability-init-report.md).
+
+STOP: do not begin Phase 5-02, invoke a model/business event, change Runtime defaults, migrate state,
+publish a release or delete compatibility from this candidate. The only next legal implementation
+is a separately owner-approved/frozen fresh `awf run <TaskCard>` Phase 5-02 TaskCard.
+
 ## Current Handoff State: 2026-08-20 Runtime v2 Decision Plan
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
