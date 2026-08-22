@@ -77,6 +77,7 @@ def write_managed_incarnation(
     process_creation_filetime: int | None,
     process_pid: int = 4321,
     lease_pid: int = 8765,
+    lease_root: bool = True,
 ) -> tuple[Path, Path]:
     profile.node_dir.mkdir(parents=True, exist_ok=True)
     record = {
@@ -94,19 +95,18 @@ def write_managed_incarnation(
     profile.process_path.write_text(json.dumps(record), encoding="utf-8")
     lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
     lease_path.parent.mkdir(parents=True, exist_ok=True)
-    lease_path.write_text(
-        json.dumps(
-            {
-                "pid": lease_pid,
-                "launch_id": "a" * 32,
-                "role": profile.role,
-                "repo": str(profile.repo),
-                "state_root": str(profile.state_root),
-                "state_root_sha256": node.state_root_binding(profile.state_root),
-            }
-        ),
-        encoding="utf-8",
-    )
+    lease = {
+        "pid": lease_pid,
+        "launch_id": "a" * 32,
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+    if lease_root:
+        lease.update(
+            state_root=str(profile.state_root),
+            state_root_sha256=node.state_root_binding(profile.state_root),
+        )
+    lease_path.write_text(json.dumps(lease), encoding="utf-8")
     return profile.process_path, lease_path
 
 
@@ -702,14 +702,27 @@ def test_task_scheduler_stop_clears_reused_pid_without_taskkill(
     assert any(argv[0].lower().endswith("schtasks.exe") and "/End" in argv for argv in calls)
 
 
-def test_task_scheduler_stop_preserves_unknown_creation_identity(
+@pytest.mark.parametrize(
+    ("creation", "lease_root", "live_pids", "error"),
+    [
+        (None, True, {4321}, "unbound live listener"),
+        (111, False, {4321}, "unbound live listener"),
+        (111, True, {4321, 8765}, "process creation identity drift"),
+    ],
+)
+def test_task_scheduler_stop_preserves_incomplete_or_live_lease_on_pid_reuse(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    creation: int | None,
+    lease_root: bool,
+    live_pids: set[int],
+    error: str,
 ):
     profile = load_managed_profile(tmp_path, manager="task-scheduler")
     process_path, lease_path = write_managed_incarnation(
         profile,
-        process_creation_filetime=None,
+        process_creation_filetime=creation,
+        lease_root=lease_root,
     )
     calls: list[list[str]] = []
     manager = node_service.TaskSchedulerAdapter(
@@ -717,24 +730,27 @@ def test_task_scheduler_stop_preserves_unknown_creation_identity(
         run_command=lambda argv, **kwargs: calls.append(argv) or "",
         current_user=node_service._current_windows_user(),
     )
-    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 4321)
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid in live_pids)
     monkeypatch.setattr(node, "_windows_process_creation_filetime", lambda pid: 222)
+    monkeypatch.setattr(
+        node_service,
+        "_process_creation_identity_matches",
+        lambda record, pid: False,
+    )
 
-    with pytest.raises(node_service.NodeServiceError, match="unbound live listener"):
+    with pytest.raises(node_service.NodeServiceError, match=error):
         manager.stop()
     assert process_path.exists()
     assert lease_path.exists()
     assert calls == []
-    monkeypatch.setattr(node, "_pid_alive", lambda pid: False)
-    assert (
-        node_service._clear_exact_dead_stale_state(
+    if creation is None:
+        monkeypatch.setattr(node, "_pid_alive", lambda pid: False)
+        assert not node_service._clear_exact_dead_stale_state(
             profile,
             require_creation_identity=True,
         )
-        is False
-    )
-    assert process_path.exists()
-    assert lease_path.exists()
+        assert process_path.exists()
+        assert lease_path.exists()
 
 
 def test_reconcile_clears_exact_reused_incarnation_before_foreground(

@@ -5,6 +5,10 @@
 Candidate repair complete for the two causal Windows `-04` logout/login defects. No state format,
 lifecycle API, Task Scheduler topology, Agent Bus behavior or product boundary changed.
 
+Independent L3 Review initially found one high strict-lease gap. The focused repair requires exact
+lease state-root path/binding in Windows creation-aware cleanup; focused re-review returned `PASS`
+with zero residual findings.
+
 ## Bounded transient readiness
 
 Agent Bus health-probe failure now has one internal `TransientBusReadinessError` subtype. Profile,
@@ -30,6 +34,8 @@ the same semantically dead PID.
 
 Missing creation evidence, incomplete record/lease, any profile/root/launch drift or a different
 live lease PID remains preserved and denied.
+Windows strict cleanup additionally requires lease state-root path/binding to be explicitly present
+and current; the broader legacy lease matcher remains unchanged elsewhere.
 
 Managed reconcile attempts this exact cleanup only after desired `running` and before listener
 snapshot/foreground acquisition. Task Scheduler stop/upgrade-stop attempts the same cleanup before
@@ -44,6 +50,7 @@ Task Scheduler target may receive `/End`, after which normal uninstall can conve
 - reused live PID plus exact record/lease/creation mismatch clears evidence, performs no taskkill and
   uses only the exact task target;
 - missing creation evidence remains preserved even when PIDs later appear dead; and
+- missing lease root/binding or a distinct live lease PID remains preserved with zero native calls;
 - reconcile clears exact reused evidence before acquiring a fresh foreground identity.
 
 Existing matching-creation taskkill, process-root drift, installed target, POSIX manager and facade
@@ -51,16 +58,16 @@ regressions remain green.
 
 ## Verification
 
-- Focused lifecycle suite: **81 passed, 1 skipped**.
-- Full repository suite: **882 passed, 5 skipped**.
+- Focused lifecycle suite: **83 passed, 1 skipped**.
+- Full repository suite: **884 passed, 5 skipped**.
 - Compileall, Ruff, Ruff format and `git diff --check`: PASS.
-- Production diff: 66 additions / 8 deletions, net +58; within 70-line budget.
-- Focused test diff: 204 additions; within 220-line budget.
+- Production added nonblank/noncomment lines: 65; within 70-line budget.
+- Focused test added nonblank/noncomment lines: 192; raw additions 220, within budget.
 - No dependency, representation, migration or external operation.
 
 ## Scope and continuation
 
 Only `node.py`, `node_service.py`, `test_node_service.py` and frozen evidence files changed. The
 preserved Windows `-04` identity remains failed with desired stopped and stale records/task intact.
-Independent L3 Review and exact-head CI must pass before reviewed code may clean `-04`; acceptance
-must then use fresh `-05`. Phase 5 remains prohibited.
+Independent L3 Review is `PASS`; exact-head CI remains before reviewed code may clean `-04`.
+Acceptance must then use fresh `-05`. Phase 5 remains prohibited.

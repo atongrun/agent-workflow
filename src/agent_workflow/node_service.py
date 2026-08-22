@@ -964,6 +964,11 @@ def _clear_exact_dead_stale_state(
         return False
     if not node._lease_matches(profile, lease, record.get("pid"), launch_id):
         return False
+    if require_creation_identity and (
+        lease.get("state_root") != str(profile.state_root)
+        or lease.get("state_root_sha256") != node.state_root_binding(profile.state_root)
+    ):
+        return False
     record_pid = record.get("pid")
     lease_pid = lease.get("pid")
     if not isinstance(record_pid, int) or not isinstance(lease_pid, int):
