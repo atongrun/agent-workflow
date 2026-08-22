@@ -64,9 +64,12 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 ### 2. Fresh RunSpec v2 and no legacy adoption
 
 - The new fresh-only format is exactly `awf.runtime-v2.run-spec.v2`; this path accepts only its
-  canonical bytes and exact SHA-256. It binds Architect, Coder and Reviewer
-  `ProviderSelection`, attempts/rework capacity, TaskCard/report paths, role routes, exact repository,
-  base/branch, semantic contract and state-root identity.
+  canonical bytes and exact SHA-256. It defines a narrow fresh-v2 `RoleBinding` containing exactly
+  role, Agent Tool, `model_selection {mode, ref}`, profile digest/identity and workspace identity for
+  Architect, Coder and Reviewer. It also binds attempts/rework capacity, TaskCard/report paths, role
+  routes, exact repository, base/branch, semantic contract and state-root identity. It does not reuse
+  or broaden the v1 `ProviderSelection`, and is not a provider/model registry or Agent Tool
+  configuration abstraction.
 - Existing Runtime v2 disposable v1 representations remain test/oracle evidence and are never read,
   migrated, rewritten or silently defaulted into the fresh path. Unknown/old format fails closed.
 - No RunLedger/checkpoint/outbox/inbox write or read is permitted in the new path. Legacy `awf
@@ -81,10 +84,15 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
 
 - Architect selection comes from the current Phase 5-01 machine binding.
 - Coder/Reviewer selection comes from exact local bindings when present, otherwise the existing
-  committed TaskCard `awf-reviewer-selection` block. The command envelope carries the exact expected
-  tool/model and the remote handler must match it to its local profile before provider authorization.
-- Tool-default remains empty at the renderer boundary; explicit opaque tool-native refs are passed
-  unchanged. No provider configuration/catalog/auth mutation or silent fallback.
+  committed TaskCard `awf-reviewer-selection` block. That legacy block is only a compile-time input:
+  `model: ""` maps to `model_selection {mode: "tool-default", ref: ""}` and a nonblank model maps to
+  `{mode: "explicit", ref: <exact opaque value>}`; only the resulting v2 RoleBinding is persisted in
+  RunSpec authority. The command envelope carries the exact expected role, tool, model mode/ref,
+  profile identity/digest and workspace identity, and the remote handler must match every binding to
+  its local profile before provider authorization.
+- At the renderer boundary, tool-default maps to `model=""` and omits the model flag; explicit maps
+  to its exact opaque tool-native ref. Mode/ref drift is denied. There is no provider
+  configuration/catalog/auth mutation and an explicit ref never silently falls back.
 - Before any business command, `awf run` sends fresh bounded no-model readiness probes to every
   required remote role. Existing local roles use ordinary node doctor/lifecycle facts. Probe replies
   bind a bounded nonce/expiry, role, route, exact profile digest, role-workspace source commit,
@@ -214,7 +222,8 @@ It is one-card only and must stop before next-card or milestone-loop behavior.
    merge under any Pi verdict.
 7. Same OpenCode installation/model Coder+Reviewer works with distinct role/workspace/invocation
    identities.
-8. Tool-default omits model flags; explicit refs are passed exactly and never fall back.
+8. Tool-default omits model flags; explicit refs are passed exactly and never fall back. RoleBinding
+   mode/ref, tool, profile or workspace drift is denied before provider launch.
 9. Provider launch-intent crash, command send ambiguity, result conflict and merge ambiguity preserve
    facts and forbid automatic replay/mutation.
 10. Worker result-send ambiguity leaves the command unACKed and redelivery resends only the exact
