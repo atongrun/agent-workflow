@@ -2,13 +2,14 @@
 
 ## Outcome
 
-`EXTERNAL_BLOCKED / evidence preserved`.
+`EXTERNAL_BLOCKED` on Linux qualification.
 
 Windows logout/login is separately `BLOCKED_BY_OWNER_AUTHORIZATION`. Phase 4B remains open and
 Phase 5 did not start.
 
-Two fresh macOS scopes reached successive fail-closed boundaries. No Linux or Windows manager was
-mutated because read-only entry checks proved their required external prerequisites absent.
+Two preserved macOS scopes remain immutable failures. A third fresh scope resolves only the
+owner-authorized client-skew prerequisite and passes real macOS plus non-disruptive Windows manager
+acceptance. Linux remains pre-install blocked.
 
 ## Acceptance scope
 
@@ -17,8 +18,9 @@ mutated because read-only entry checks proved their required external prerequisi
 | `rts046-live-20260822-01` | macOS arm64, Python 3.12, fresh installed venv, unique launchd profile/state/log/label | failed before listener entry | exposed venv symlink resolution defect; never PASS |
 | RTS-047 repair | local/CI five-target evidence | PASS | preserves invoked venv interpreter path; does not itself prove manager acceptance |
 | `rts046-live-20260822-02` | macOS arm64, new venv/profile/state/log/label | failed at Agent Bus listener capability | confirms executable repair; never PASS |
+| `rts046-live-20260822-03` | exact compatible isolated Bus clients; new macOS and Windows identities | macOS PASS; Windows non-disruptive PASS | only successful manager evidence |
 | Linux entry audit | multiple existing Linux user hosts | blocked before install | no existing linger plus no existing AWF/Bus config on suitable hosts |
-| Windows entry audit | existing Windows interactive-console user | blocked before Task Scheduler mutation | Agent Bus lacks structured `--on-argv`; logout/login owner window absent |
+| Windows login gate | existing Windows interactive-console user | owner-blocked after safe lifecycle PASS | logout/login owner window absent |
 
 ## Environment and identity rules
 
@@ -26,12 +28,14 @@ mutated because read-only entry checks proved their required external prerequisi
 - Every macOS scope used a fresh venv, source profile, installed snapshot/registry, state root, log,
   empty control route and deterministic LaunchAgent label.
 - Profiles used `role=architect`, `tool=none`; no provider/model was applicable.
-- Existing Agent Bus configuration was referenced only as an independent dependency. No Bus install,
-  upgrade, endpoint/token change or event operation occurred.
+- Existing Agent Bus configuration was used only as the unchanged source for isolated owner-only
+  copies. Existing Bus installs were not upgraded; only new isolated clients were installed. No
+  endpoint/token change or event operation occurred.
 - Repository worktree remained clean at the exact acceptance head.
 
-Private paths, endpoints, usernames and credentials are deliberately omitted. Repository evidence
-retains only opaque identity digests and boolean/payload-blind observations where needed.
+Endpoints, usernames and credentials are deliberately omitted. Exact executable paths are included
+only where the owner explicitly required client provenance; other environment identity uses opaque
+digests and boolean/payload-blind observations.
 
 ## Commands exercised
 
@@ -95,14 +99,60 @@ existing config/client presence. Windows commands were limited to OS/Python/Git,
 Task Scheduler service, console-user equality and Agent Bus listener-help capability. No manager
 install/start/stop/restart/uninstall command ran on either host.
 
-## Observed blockers
+## Resolved Agent Bus client skew
 
-### External Agent Bus compatibility
+Agent Bus master/PR/tag facts were re-verified locally. Exact master
+`6ca8f2812be0286607bbbe3f14cc51783637b0b5` contains producer `awf.handler-argv.v1`, consumer
+`agent-bus.listen.on-argv.v1` and `--on-argv`; v0.3.0 does not. Master still reports version 0.3.0.
 
-The existing macOS and Windows Agent Bus clients do not accept the structured `--on-argv` listener
-contract required by current Agent Workflow. Falling back to legacy `--on`, shell text or manual
-handler wiring would weaken the structured execution boundary and is prohibited. Agent Workflow
-does not own Agent Bus installation or upgrade.
+Credential-free provenance proved the macOS client was an editable install at older source commit
+`6b3955d...`, while Windows used a formal non-editable v0.3.0 venv; both lacked the capability.
+Owner-authorized fresh isolated client venvs were built from exact `6ca8f281...`. macOS installed
+module hash matched the exact Git blob, and both hosts proved `--on-argv` before manager start.
+Existing clients, formal config, Bus server/deployment/database, endpoint/token values, events,
+queues and ACK state were untouched. Isolated owner-only config copies preserved every value except
+their explicit `AWF_BUS_BIN` binding.
+
+| Host/client | Exact executable | Capability | Source/package provenance |
+|---|---|---|---|
+| macOS stale | `$HOME/AI/01_Project/agent-bus-single-card-20260802/.venv/bin/agent-bus` | `--on-argv=false` | editable source `6b3955d...`; CLI SHA-256 `492431ab...`; version 0.3.0 |
+| Windows stale | `%LOCALAPPDATA%\agent-bus\venvs\v0.3.0\Scripts\agent-bus.exe` | `--on-argv=false` | non-editable v0.3.0; CLI SHA-256 `95b7ad4a...` |
+| macOS compatible | `/private/tmp/awf-rts046-bus-mac03.KPNsvr/venv/bin/agent-bus` | `--on-argv=true` | exact source `6ca8f281...`; CLI SHA-256 `0b2d9a6d...` equals Git blob |
+| Windows compatible | `%TEMP%\awf-rts046-win-r3-bus-20260822\venv\Scripts\agent-bus.exe` | `--on-argv=true` | clean exact source `6ca8f281...`; installed CLI SHA-256 `dd16e118...`; version 0.3.0 |
+
+No legacy `--on` fallback or second implementation was introduced.
+
+## Scope `rts046-live-20260822-03`
+
+### macOS launchd
+
+The fresh exact candidate and compatible client completed:
+
+```text
+capability -> doctor -> install -> start -> status -> logs
+-> restart -> status -> exact stop -> uninstall
+```
+
+The first running incarnation had matching process/lease launch ID and state-root binding, current
+definition/install digest and desired generation 2. Restart advanced generation to 4 and produced a
+distinct exact launch ID. Stop removed process/lease; uninstall removed the unique definition and
+install record. No log error, handler, model or business event occurred.
+
+### Windows Task Scheduler
+
+The fresh Windows scope used exact Agent Bus source/venv and exact Workflow source/venv. Before any
+manager mutation, a PowerShell UTF-8 BOM profile fixture was corrected without changing its semantic
+identity; a failed read-only missing-task probe also had no side effect.
+
+SSH session A completed doctor/install/start and exited. Session B observed a live listener with
+matching process/lease launch ID, canonical state-root identity, current definition digest and
+Windows creation FILETIME. Restart advanced desired generation from 2 to 4 and produced a distinct
+live exact launch identity. Exact stop/uninstall then left process, lease, task definition, install
+record and scheduled task absent; desired state was stopped at generation 5 and the log remained.
+
+No logout/login was attempted.
+
+## Remaining blockers
 
 ### Linux prerequisites
 
@@ -112,33 +162,40 @@ Bus is outside RTS-046. The systemd acceptance therefore correctly stopped befor
 
 ### Windows owner window
 
-The Windows identity matched the current interactive-console user and Task Scheduler was available,
-but the Bus compatibility blocker prevented safe listener start. Independently, no owner-authorized
-logout/login window was supplied. Logout/login was not simulated, inferred or triggered.
+The Windows identity matched the current interactive-console user, and all non-disruptive Task
+Scheduler gates passed. No owner-authorized logout/login window was supplied. Logout/login was not
+simulated, inferred or triggered.
 
 ## Safety and cleanup
 
 - No model, provider, business handler, TaskCard run, business event, ACK, retry, requeue, recovery or
   dispatch occurred.
-- No Agent Bus, OS security, login policy, linger, Runtime Core, Finding, Agent Host or onboarding
-  setting changed.
+- No Agent Bus server/state/credential, OS security, login policy, linger, Runtime Core, Finding,
+  Agent Host or onboarding setting changed. Only isolated client installations/config copies were
+  created under explicit authorization.
 - No manual process signal, process-name scan, record edit, PYTHONPATH or base-interpreter install
   was used.
 - Both macOS definitions/install records/registries were removed through normal exact uninstall.
 - Failed-scope logs and desired-state evidence remain retained in disposable local roots.
-- Linux and Windows created no acceptance manager/state resources.
+- Linux created no acceptance manager/state resources. Windows manager/state resources were removed
+  through exact stop/uninstall; its isolated client/workflow roots and log remain for owner-window
+  continuation evidence.
 
 ## Limitations and legal next action
 
-RTS-046 does not prove real launchd steady running/restart/stop, any systemd-user sequence, Task
-Scheduler post-SSH/restart/exact-stop, or Windows logout/login. Phase 4B cannot close.
+RTS-046 now proves real launchd steady running/restart/exact-stop and Task Scheduler post-SSH,
+restart and exact-stop. It still does not prove any systemd-user sequence or Windows logout/login.
+Phase 4B cannot close.
 
 The only legal continuation is a new fresh acceptance identity after all external prerequisites are
 provided:
 
-1. independently versioned Agent Bus clients with `--on-argv` on macOS and Windows;
-2. an already-lingering Linux user host with existing AWF/Bus configuration; and
-3. an explicitly scheduled Windows logout/login authorization window.
+1. an already-lingering Linux user host with existing AWF/Bus configuration; and
+2. an explicitly scheduled Windows logout/login authorization window.
 
 Do not alter Runtime/lifecycle identity, deploy Agent Bus from AWF, or start Phase 5 to clear these
 blocks.
+
+Before Phase 5, separately consider a small formal Agent Bus client release (likely v0.3.1) so the
+structured contract is identified by a release version instead of only commit/capability evidence.
+No release is published or authorized by RTS-046.

@@ -2,11 +2,12 @@
 
 ## Final status
 
-`EXTERNAL_BLOCKED / evidence preserved`, with Windows login evidence additionally
-`BLOCKED_BY_OWNER_AUTHORIZATION`. Phase 4B is not complete.
+`EXTERNAL_BLOCKED` on the Linux prerequisite, with Windows login evidence
+`BLOCKED_BY_OWNER_AUTHORIZATION`. macOS launchd and non-disruptive Windows Task Scheduler acceptance
+now pass. Phase 4B is not complete.
 
-No model, business event, provider, Runtime Core, Agent Bus mutation, Finding workflow, remote
-manager or Windows session operation occurred.
+No model, business event, provider, Runtime Core, Agent Bus server/state/credential mutation or
+Finding workflow occurred. Only owner-authorized isolated Agent Bus client installations were added.
 
 ## Entry audit
 
@@ -105,12 +106,75 @@ process, lease or event was created.
 
 ## Failure classification and next action
 
-- macOS/Windows: external Agent Bus version/capability mismatch at the structured listener boundary;
+- macOS/Windows initial blocker: resolved as isolated client installation skew, without changing the
+  server or existing clients;
 - Linux: external prerequisite absent (existing linger and AWF/Bus configuration);
 - Windows login: explicit owner-authorization window absent.
 
-Agent Workflow does not replace or auto-deploy Agent Bus. The legal next action is external/operator
-prerequisite alignment: provide an independently versioned Agent Bus client supporting `--on-argv`
-on macOS/Windows, an already-lingering/configured Linux user host, and a scheduled Windows
-logout/login window. Only then may RTS-046 continue under another fresh identity. No Phase 5 work is
-authorized.
+Agent Workflow does not replace or auto-deploy Agent Bus. The legal next action is an
+already-lingering/configured Linux user host plus a scheduled Windows logout/login window. No Phase 5
+work is authorized.
+
+## Owner-authorized client provenance
+
+Local re-verification confirmed Agent Bus PR #27 merged to master commit
+`6ca8f2812be0286607bbbe3f14cc51783637b0b5`. That commit implements producer
+`awf.handler-argv.v1` / consumer `agent-bus.listen.on-argv.v1`; formal tag v0.3.0 lacks `--on-argv`,
+while master still declares version 0.3.0.
+
+- macOS stale client: editable source commit `6b3955d172d1d1709998af3b93205a40f2803b3a`,
+  module SHA-256 `492431ab...`, `--on-argv=false`.
+- Windows stale client: formal isolated v0.3.0 installation, non-editable module SHA-256
+  `95b7ad4a...`, `--on-argv=false`.
+- macOS compatible client: fresh isolated venv built from exact `6ca8f281...`; installed module
+  SHA-256 `0b2d9a6d...` exactly matched the Git blob; `--on-argv=true`.
+- Windows compatible client: fresh isolated venv and clean detached source checkout at exact
+  `6ca8f281...`; `--on-argv=true`.
+
+Existing client paths and official configuration remained unchanged. Each acceptance used an
+owner-only isolated config copy whose endpoint/token values were preserved and whose only changed
+value bound `AWF_BUS_BIN` to the exact compatible client.
+
+## Fresh scope `rts046-live-20260822-03`
+
+### macOS launchd PASS
+
+A third fresh venv/profile/route/state/log/LaunchAgent identity used the exact compatible client.
+Capability was verified before manager start. The sequence
+`doctor -> install -> start -> status -> logs -> restart -> status -> exact stop -> uninstall`
+completed.
+
+- initial running incarnation: process and lease launch IDs matched; canonical state-root bindings
+  matched; definition bytes matched the install-record digest; desired state was `running`,
+  generation 2;
+- restart: generation advanced to 4 and produced a distinct launch ID with matching process/lease
+  and the same profile/state-root/definition identity;
+- exact stop: process record and lease became absent;
+- uninstall: unique LaunchAgent definition and install record became absent.
+
+No handler/model/business event ran. The normal factual status projection observed only a
+payload-blind pending count of zero.
+
+### Windows Task Scheduler non-disruptive PASS
+
+Windows used a separate fresh compatible client source/venv, exact Workflow checkout/venv,
+owner-only config copy, profile/state/log and Task Scheduler identity. A pre-start PowerShell UTF-8
+BOM fixture issue was corrected before doctor; a read-only absent-task probe also produced a local
+shell error before doctor. Neither created manager state or changed identity.
+
+SSH session A then completed `doctor -> install -> start` and exited. Fresh session B proved the
+listener remained running with exact process/lease launch ID, state-root binding, definition digest,
+live process and recorded Windows creation FILETIME. Logs contained listening/connected markers and
+no error. Restart produced a distinct launch ID, generation 4, new live exact incarnation and
+creation identity. Exact stop/uninstall then proved process, lease, task definition, install record
+and scheduled task absent; desired state was stopped at generation 5 and the credential-safe log was
+retained.
+
+Logout/login was not attempted and remains `BLOCKED_BY_OWNER_AUTHORIZATION`.
+
+## Agent Bus productization follow-up
+
+Capability/commit probing is sufficient for this acceptance but not a desirable Phase 5 operator
+contract. Before Phase 5, consider a small formal Agent Bus client release (likely v0.3.1) that
+contains `agent-bus.listen.on-argv.v1` and exposes an unambiguous version. RTS-046 does not publish or
+authorize that release.

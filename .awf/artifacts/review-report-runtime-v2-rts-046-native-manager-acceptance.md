@@ -4,8 +4,9 @@
 
 `PASS_FOR_BLOCKED_ADJUDICATION`
 
-Zero findings. Evidence supports `EXTERNAL_BLOCKED / evidence preserved`, with Windows logout/login
-separately `BLOCKED_BY_OWNER_AUTHORIZATION`. It does not support Phase 4B PASS.
+Zero remaining findings after one focused evidence-safety repair. Evidence supports macOS and
+non-disruptive Windows PASS, Linux `EXTERNAL_BLOCKED`, and Windows logout/login
+`BLOCKED_BY_OWNER_AUTHORIZATION`. It does not support Phase 4B PASS.
 
 ## Adjudication
 
@@ -28,11 +29,31 @@ separately `BLOCKED_BY_OWNER_AUTHORIZATION`. It does not support Phase 4B PASS.
    live Windows post-SSH/login evidence. Those facts are absent and cannot be inferred from CI,
    doctor, mocks or the repair.
 
+## Owner-authorized client-skew continuation
+
+Agent Bus master `6ca8f281...` and PR #27 were re-verified locally. Master contains the pinned
+producer/consumer contracts and `--on-argv`; formal v0.3.0 does not, while both report version 0.3.0.
+Credential-free provenance proved stale macOS/Windows installations and exact isolated compatible
+clients without modifying the old clients, server, database, configuration values, events or ACK
+state.
+
+Fresh `rts046-live-20260822-03` then proved:
+
+- macOS launchd full lifecycle, distinct restart incarnation, exact stop and uninstall;
+- Windows Task Scheduler session-A-to-B survival, creation identity, distinct restart incarnation,
+  exact stop and uninstall; and
+- no model, business event or legacy handler fallback.
+
+Linux remains pre-install blocked, and Windows logout/login was not attempted.
+
+Initial focused review found real usernames in executable paths. They were replaced by `$HOME`,
+`%LOCALAPPDATA%` and `%TEMP%` expressions while retaining exact source/hash/capability/install-type/
+version provenance. Focused re-review closed the finding.
+
 ## Legal continuation
 
 External/operator prerequisites must be aligned without expanding Agent Workflow ownership:
 
-- independently versioned Agent Bus clients supporting `--on-argv` on macOS and Windows;
 - an already-lingering Linux user host with existing AWF/Bus configuration; and
 - an explicitly scheduled Windows logout/login window.
 
@@ -45,9 +66,11 @@ RTS-046 may then continue only with another fresh identity. Phase 5 is not autho
   "high": 0,
   "medium": 0,
   "low": 0,
-  "task_status": "EXTERNAL_BLOCKED",
+  "task_status": "PARTIAL_PASS_LINUX_EXTERNAL_BLOCKED",
   "owner_status": "BLOCKED_BY_OWNER_AUTHORIZATION",
   "phase_4b": "OPEN",
-  "phase_5": "NOT_STARTED"
+  "phase_5": "NOT_STARTED",
+  "closed_high": 1,
+  "focused_rereview": "PASS"
 }
 -->

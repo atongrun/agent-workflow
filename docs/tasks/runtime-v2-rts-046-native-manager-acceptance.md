@@ -116,9 +116,9 @@ After all required evidence and independent Review, closeout may additionally up
 
 - [ ] Task ID equals branch leaf; repository changes remain documentation/evidence only and in scope.
 - [ ] Every host proves exact candidate/application/profile/manager-definition identity before start.
-- [ ] macOS launchd completes the full real action sequence with correct running/restart/stop facts.
+- [x] macOS launchd completes the full real action sequence with correct running/restart/stop facts.
 - [ ] Linux systemd-user completes the full sequence, including a new exact restart incarnation.
-- [ ] Windows Task Scheduler completes install/start/status/logs/restart/status/exact-stop/uninstall,
+- [x] Windows Task Scheduler completes install/start/status/logs/restart/status/exact-stop/uninstall,
       and session-B evidence proves the session-A listener survived SSH exit.
 - [x] Windows logout/login evidence is either real and owner-authorized or explicitly remains
       `BLOCKED_BY_OWNER_AUTHORIZATION`; it is never simulated or inferred.

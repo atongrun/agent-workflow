@@ -632,18 +632,21 @@ cell and aggregate. Local lifecycle conformance is closed without a new record, 
 external operation. Phase 4B remains open for separately frozen RTS-046 fresh real three-OS
 native-manager and current Windows login-lifecycle acceptance.
 
-RTS-046 result: **EXTERNAL_BLOCKED / evidence preserved**; Windows login is additionally
+RTS-046 result: **EXTERNAL_BLOCKED** on Linux; Windows login is additionally
 `BLOCKED_BY_OWNER_AUTHORIZATION`. The first fresh macOS scope exposed native venv re-entry resolving
 to a base interpreter. Bounded RTS-047 preserved the invoked venv path, passed independent L3
 Review, 877 local tests, ordinary CI `32547035193` and Binary Feasibility `32547035173`. A second
 fresh macOS scope then entered installed AWF and stopped at an independent Agent Bus capability
 boundary: existing macOS and Windows clients do not support required structured `--on-argv`.
-Audited Linux users lacked already-enabled linger plus existing AWF/Bus configuration; none was
-modified. Both macOS scopes were normally uninstalled with failure logs retained; Linux/Windows
-created no manager state and no model/business event occurred. Phase 4B remains open. Continuation
-requires external Agent Bus version alignment, an already-lingering/configured Linux user host, an
-owner-scheduled Windows logout/login window and another fresh RTS-046 identity. Phase 5 must not
-start.
+Owner-authorized provenance then confirmed old client installation skew: exact Agent Bus master
+`6ca8f281...` contains `agent-bus.listen.on-argv.v1`, while formal v0.3.0 does not and master still
+reports 0.3.0. Isolated exact-master clients left old clients/server/state/credentials untouched.
+Fresh `-03` completed real launchd start/status/logs/restart/exact-stop/uninstall and Windows
+Task Scheduler session-A-to-B survival, status/restart/new incarnation/exact-stop/uninstall. Audited
+Linux users still lacked already-enabled linger plus existing AWF/Bus configuration; none was
+modified. Windows logout/login was not authorized. No model/business event occurred. Phase 4B
+remains open for Linux and Windows login evidence; Phase 5 must not start. Consider a small formal
+Agent Bus client release before Phase 5, but do not publish it in RTS-046.
 
 Deliverables:
 
@@ -918,11 +921,12 @@ semantically complete; final focused re-review passed after documentation-only c
 were repaired. Phase 4A is closed. RTS-044/045 then closed local Phase 4B lifecycle conformance after
 repairing strict process-root and manager-target identity joins; no new lifecycle abstraction or
 state representation was added. RTS-047 then closed the venv native re-entry defect exposed by the
-first real LaunchAgent scope. RTS-046 remains `EXTERNAL_BLOCKED`: the existing macOS/Windows Agent
-Bus clients lack `--on-argv`, no audited Linux user already has both linger and AWF/Bus configuration,
-and Windows logout/login lacks an owner window. Phase 4B remains open and Phase 5 is not eligible.
-The next action is external prerequisite alignment followed by a fresh RTS-046 identity, not an AWF
-Bus installer or boundary fallback. No production/retained Bus operation, Store adoption or dual write,
+first real LaunchAgent scope. RTS-046 then resolved old-client skew with isolated exact-master Bus
+clients and fresh `-03` passed real macOS plus non-disruptive Windows lifecycle evidence. No audited
+Linux user already has both linger and AWF/Bus configuration, and Windows logout/login lacks an owner
+window. Phase 4B remains open and Phase 5 is not eligible. The next action is those external
+prerequisites followed by a fresh RTS-046 identity, not an AWF Bus installer or boundary fallback.
+No production/retained Bus operation, Store adoption or dual write,
 default switch, production state migration, native-launcher acceptance, release, retained-event
 operation or destructive cleanup is authorized.
 
