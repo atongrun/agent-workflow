@@ -26,6 +26,8 @@ class NodeServiceError(RuntimeError):
 SUPPORTED_MANAGERS = {"launchd", "systemd", "task-scheduler"}
 _TEXT_ENCODING = "utf-8"
 _TEXT_ERRORS = "replace"
+_TASK_RECONCILE_ATTEMPTS = 4
+_TASK_RECONCILE_DELAY_SECONDS = 15
 
 
 def resolve_manager(manager: str, *, platform: str = sys.platform, os_name: str = os.name) -> str:
@@ -706,7 +708,16 @@ class TaskSchedulerAdapter:
     def stop(self, bound_pid: int | None = None, launch_id: str = "") -> int:
         if self.run_command is None:
             _require_installed(self.profile, "task-scheduler")
-        pid = bound_pid if bound_pid is not None else _bound_live_listener_pid(self.profile)
+        cleared = _clear_exact_dead_stale_state(
+            self.profile,
+            require_creation_identity=True,
+        )
+        if bound_pid is not None:
+            pid = bound_pid
+        elif cleared:
+            pid = None
+        else:
+            pid = _bound_live_listener_pid(self.profile)
         if pid is not None:
             self._call(["taskkill.exe", "/PID", str(pid), "/T", "/F"])
         self._call(["schtasks.exe", "/End", "/TN", self.task_name], check=False)
@@ -725,7 +736,11 @@ class TaskSchedulerAdapter:
 
     def stop_for_upgrade(self) -> int:
         _require_upgrade_target(self.profile, "task-scheduler", self.task_name)
-        pid = _bound_live_listener_pid(self.profile)
+        cleared = _clear_exact_dead_stale_state(
+            self.profile,
+            require_creation_identity=True,
+        )
+        pid = None if cleared else _bound_live_listener_pid(self.profile)
         if pid is not None:
             self._call(["taskkill.exe", "/PID", str(pid), "/T", "/F"])
         self._call(["schtasks.exe", "/End", "/TN", self.task_name], check=False)
@@ -929,7 +944,11 @@ def _after_manager_stop(profile, timeout: float = 20.0) -> int:
     )
 
 
-def _clear_exact_dead_stale_state(profile) -> bool:
+def _clear_exact_dead_stale_state(
+    profile,
+    *,
+    require_creation_identity: bool = os.name == "nt",
+) -> bool:
     from agent_workflow import node
 
     record = node._process_record(profile)
@@ -945,12 +964,42 @@ def _clear_exact_dead_stale_state(profile) -> bool:
         return False
     if not node._lease_matches(profile, lease, record.get("pid"), launch_id):
         return False
-    related_pids = [record.get("pid"), lease.get("pid")]
-    if any(node._pid_alive(pid) for pid in related_pids):
+    record_pid = record.get("pid")
+    lease_pid = lease.get("pid")
+    if not isinstance(record_pid, int) or not isinstance(lease_pid, int):
+        return False
+    record_alive = node._pid_alive(record_pid)
+    if require_creation_identity:
+        recorded_creation = record.get("process_creation_filetime")
+        if not isinstance(recorded_creation, int):
+            return False
+    if record_alive and require_creation_identity:
+        live_creation = node._windows_process_creation_filetime(record_pid)
+        if live_creation is None:
+            return False
+        record_alive = recorded_creation == live_creation
+    if record_alive:
+        return False
+    if lease_pid != record_pid and node._pid_alive(lease_pid):
         return False
     profile.process_path.unlink(missing_ok=True)
     (profile.state_root / "listeners" / f"{profile.role}.json").unlink(missing_ok=True)
     return True
+
+
+def _task_reconcile_with_retry(profile) -> int:
+    from agent_workflow import node
+
+    for attempt in range(_TASK_RECONCILE_ATTEMPTS):
+        try:
+            return node.reconcile(profile)
+        except node.TransientBusReadinessError:
+            if node._read_desired_state(profile)["state"] != "running":
+                return 0
+            if attempt + 1 == _TASK_RECONCILE_ATTEMPTS:
+                raise
+            time.sleep(_TASK_RECONCILE_DELAY_SECONDS)
+    raise AssertionError("unreachable task reconcile attempt state")
 
 
 def _tail_file(path: Path, lines: int) -> int:
@@ -1011,7 +1060,7 @@ def _task_reconcile(profile_value: str, log_value: str) -> int:
                             raise node.NodeError(
                                 "task reconcile log path drifted from the installed profile"
                             )
-                        return node.reconcile(profile)
+                        return _task_reconcile_with_retry(profile)
                     except (node.NodeError, NodeServiceError, OSError) as exc:
                         log.write(f"ERROR: task reconcile failed: {exc}\n")
                         return 1

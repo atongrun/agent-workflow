@@ -43,6 +43,10 @@ class NodeError(RuntimeError):
     """A credential-safe local node lifecycle failure."""
 
 
+class TransientBusReadinessError(NodeError):
+    """A bounded pre-listener Agent Bus health failure."""
+
+
 @dataclass(frozen=True)
 class NodeProfile:
     path: Path
@@ -693,9 +697,11 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
             allow_shell_wrapper=True,
         )
     except awf_listen.ExecutionFailure as exc:
-        raise NodeError("local readiness failed; Agent Bus health probe failed") from exc
+        raise TransientBusReadinessError(
+            "local readiness failed; Agent Bus health probe failed"
+        ) from exc
     if bus_probe.returncode != 0:
-        raise NodeError("local readiness failed; Agent Bus health probe failed")
+        raise TransientBusReadinessError("local readiness failed; Agent Bus health probe failed")
     tool = ""
     tool_version_sha256 = ""
     if profile.role != "architect":
@@ -1333,6 +1339,9 @@ def reconcile(profile: NodeProfile) -> int:
     desired = _read_desired_state(profile)
     if desired["state"] == "stopped":
         return 0
+    from agent_workflow import node_service
+
+    node_service._clear_exact_dead_stale_state(profile)
     snapshot = _listener_snapshot(profile)
     if snapshot.get("status") == "running":
         return 0

@@ -71,6 +71,45 @@ def write_desired(profile: node.NodeProfile, state: str, generation: int = 1) ->
     )
 
 
+def write_managed_incarnation(
+    profile: node.NodeProfile,
+    *,
+    process_creation_filetime: int | None,
+    process_pid: int = 4321,
+    lease_pid: int = 8765,
+) -> tuple[Path, Path]:
+    profile.node_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "pid": process_pid,
+        "launch_id": "a" * 32,
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "state_root": str(profile.state_root),
+        "state_root_sha256": node.state_root_binding(profile.state_root),
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+    if process_creation_filetime is not None:
+        record["process_creation_filetime"] = process_creation_filetime
+    profile.process_path.write_text(json.dumps(record), encoding="utf-8")
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True, exist_ok=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": lease_pid,
+                "launch_id": "a" * 32,
+                "role": profile.role,
+                "repo": str(profile.repo),
+                "state_root": str(profile.state_root),
+                "state_root_sha256": node.state_root_binding(profile.state_root),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return profile.process_path, lease_path
+
+
 def test_profile_without_lifecycle_keeps_session_compatibility(tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
 
@@ -160,6 +199,80 @@ def test_reconcile_running_keeps_desired_state_after_nonzero_foreground_exit(
     desired = json.loads(desired_path(profile).read_text(encoding="utf-8"))
     assert desired["state"] == "running"
     assert desired["generation"] == 4
+
+
+def test_task_reconcile_retries_only_transient_bus_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path)
+    attempts = 0
+    sleeps: list[int] = []
+
+    def reconcile(_profile: node.NodeProfile) -> int:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise node.TransientBusReadinessError("transient Bus health")
+        return 0
+
+    monkeypatch.setattr(node, "reconcile", reconcile)
+    monkeypatch.setattr(node, "_read_desired_state", lambda value: {"state": "running"})
+    monkeypatch.setattr(node_service.time, "sleep", sleeps.append)
+
+    assert node_service._task_reconcile_with_retry(profile) == 0
+    assert attempts == 3
+    assert sleeps == [15, 15]
+
+    attempts = 0
+    sleeps.clear()
+
+    def transient(_profile: node.NodeProfile) -> int:
+        raise node.TransientBusReadinessError("transient Bus health")
+
+    monkeypatch.setattr(node, "reconcile", transient)
+    monkeypatch.setattr(node, "_read_desired_state", lambda value: {"state": "stopped"})
+
+    assert node_service._task_reconcile_with_retry(profile) == 0
+    assert sleeps == []
+
+    attempts = 0
+
+    def exhausted(_profile: node.NodeProfile) -> int:
+        nonlocal attempts
+        attempts += 1
+        raise node.TransientBusReadinessError("transient Bus health")
+
+    monkeypatch.setattr(node, "reconcile", exhausted)
+    monkeypatch.setattr(node, "_read_desired_state", lambda value: {"state": "running"})
+    with pytest.raises(node.TransientBusReadinessError):
+        node_service._task_reconcile_with_retry(profile)
+    assert attempts == 4
+    assert sleeps == [15, 15, 15]
+
+
+def test_task_reconcile_does_not_retry_nontransient_node_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path)
+    attempts = 0
+
+    def reconcile(_profile: node.NodeProfile) -> int:
+        nonlocal attempts
+        attempts += 1
+        raise node.NodeError("identity drift")
+
+    monkeypatch.setattr(node, "reconcile", reconcile)
+    monkeypatch.setattr(
+        node_service.time,
+        "sleep",
+        lambda seconds: pytest.fail("nontransient error must not sleep"),
+    )
+
+    with pytest.raises(node.NodeError, match="identity drift"):
+        node_service._task_reconcile_with_retry(profile)
+    assert attempts == 1
 
 
 def test_start_and_stop_persist_desired_state_before_manager_action(
@@ -562,6 +675,97 @@ def test_windows_taskkill_requires_matching_kernel_creation_identity(
     assert not node_service._process_creation_identity_matches(
         {"process_creation_filetime": 111}, 4321, required=True
     )
+
+
+def test_task_scheduler_stop_clears_reused_pid_without_taskkill(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    process_path, lease_path = write_managed_incarnation(
+        profile,
+        process_creation_filetime=111,
+    )
+    calls: list[list[str]] = []
+    manager = node_service.TaskSchedulerAdapter(
+        profile,
+        run_command=lambda argv, **kwargs: calls.append(argv) or "",
+        current_user=node_service._current_windows_user(),
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 4321)
+    monkeypatch.setattr(node, "_windows_process_creation_filetime", lambda pid: 222)
+
+    assert manager.stop() == 0
+    assert not process_path.exists()
+    assert not lease_path.exists()
+    assert not any(argv[0].lower().endswith("taskkill.exe") for argv in calls)
+    assert any(argv[0].lower().endswith("schtasks.exe") and "/End" in argv for argv in calls)
+
+
+def test_task_scheduler_stop_preserves_unknown_creation_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    process_path, lease_path = write_managed_incarnation(
+        profile,
+        process_creation_filetime=None,
+    )
+    calls: list[list[str]] = []
+    manager = node_service.TaskSchedulerAdapter(
+        profile,
+        run_command=lambda argv, **kwargs: calls.append(argv) or "",
+        current_user=node_service._current_windows_user(),
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 4321)
+    monkeypatch.setattr(node, "_windows_process_creation_filetime", lambda pid: 222)
+
+    with pytest.raises(node_service.NodeServiceError, match="unbound live listener"):
+        manager.stop()
+    assert process_path.exists()
+    assert lease_path.exists()
+    assert calls == []
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: False)
+    assert (
+        node_service._clear_exact_dead_stale_state(
+            profile,
+            require_creation_identity=True,
+        )
+        is False
+    )
+    assert process_path.exists()
+    assert lease_path.exists()
+
+
+def test_reconcile_clears_exact_reused_incarnation_before_foreground(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    write_desired(profile, "running")
+    process_path, lease_path = write_managed_incarnation(
+        profile,
+        process_creation_filetime=111,
+    )
+    foreground: list[node.NodeProfile] = []
+    clear_stale = node_service._clear_exact_dead_stale_state
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: pid == 4321)
+    monkeypatch.setattr(node, "_windows_process_creation_filetime", lambda pid: 222)
+    monkeypatch.setattr(
+        node_service,
+        "_clear_exact_dead_stale_state",
+        lambda value: clear_stale(value, require_creation_identity=True),
+    )
+    monkeypatch.setattr(
+        node,
+        "foreground",
+        lambda value: foreground.append(value) or 17,
+    )
+
+    assert node.reconcile(profile) == 17
+    assert foreground == [profile]
+    assert not process_path.exists()
+    assert not lease_path.exists()
 
 
 def test_task_scheduler_commands_do_not_depend_on_localized_status_output(tmp_path: Path):
