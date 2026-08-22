@@ -259,5 +259,14 @@ passed independent L3 re-review, 884 local tests, ordinary CI `32551160937` and 
 `32551160941`. Reviewed code then cleaned failed `-04` through normal stop/uninstall: process/lease/
 definition/install/task are absent; desired/log evidence remains; no PID signal occurred.
 
-Fresh `-05` was not created because the current owner continuation explicitly says not to perform
-another logout. Windows login acceptance therefore remains owner-blocked despite the repair PASS.
+The owner later authorized one new logout only after a mandatory RustDesk recovery preflight.
+Read-only evidence at exact HEAD `06f075d737d5cdb77e9630bf8f4fc601793ef266` showed the Windows
+`RustDesk` service present, `Running`, `Auto` and backed by a Session 0 process. The Windows desktop
+was already locked. RustDesk was intentionally disconnected and reconnected from the Mac, then
+successfully controlled the secure screen from the clock page into the PIN prompt.
+
+The executor did not have an authorized Windows PIN/login credential, so it could not unlock the
+existing session and verify recovered normal desktop control. This mandatory preflight therefore
+stopped as `WAITING_FOR_OWNER_PHYSICAL_ACCESS`. RustDesk was disconnected; fresh `-05` was not
+created, no logout occurred, and no Clash/Agent Bus post-unlock network check or lifecycle mutation
+started. No RustDesk, security, firewall, Agent Bus or Runtime configuration changed.

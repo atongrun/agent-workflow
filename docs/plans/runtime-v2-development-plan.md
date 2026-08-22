@@ -655,9 +655,13 @@ Windows fresh `-04` performed real logout/login but exposed transient logon read
 stale convergence. Status denied the reused PID and normal stop made no signal. RTS-048 repaired only
 bounded pre-listener Bus readiness retry and strict creation-aware exact stale cleanup. Independent
 L3 re-review passed; ordinary CI `32551160937` and Binary Feasibility `32551160941` passed. Reviewed
-code exactly removed failed `-04` manager state without signal. Phase 4B remains open: Linux needs an
-approved credential path, and fresh Windows `-05` needs another logout authorization. Phase 5 must
-not start.
+code exactly removed failed `-04` manager state without signal. The owner authorized one fresh
+Windows logout only after a RustDesk recovery preflight. The automatic Session 0 RustDesk service
+and locked-screen disconnect/reconnect/control checks passed, but the executor had no authorized
+Windows PIN to unlock and confirm normal desktop recovery. The preflight stopped as
+`WAITING_FOR_OWNER_PHYSICAL_ACCESS`; `-05` was not created and no logout occurred. Phase 4B remains
+open: Linux needs an approved credential path and Windows needs owner physical login to finish the
+preflight. Phase 5 must not start.
 
 Deliverables:
 

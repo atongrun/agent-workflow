@@ -308,8 +308,12 @@ Reviewed code exactly cleaned `-04`; task/process/lease/definition/install state
 remain. `-04` is failure evidence forever.
 
 Phase 4B is still open. Linux requires a preconfigured credential path that the execution safety
-layer permits, and Windows requires a new owner-authorized logout for fresh `-05` because the current
-continuation explicitly prohibited another logout. Phase 5 remains prohibited.
+layer permits. The owner authorized one new Windows logout only after a RustDesk recovery preflight.
+The service was running automatically in Session 0, and an intentional RustDesk disconnect/reconnect
+reached and controlled the locked Windows PIN screen. The executor did not have an authorized
+Windows PIN/login credential, so it could not unlock and prove normal desktop recovery. Execution is
+`WAITING_FOR_OWNER_PHYSICAL_ACCESS`; `-05` was not created, no logout or network/lifecycle mutation
+occurred, and Phase 5 remains prohibited.
 
 ## Current Handoff State: 2026-08-17
 
