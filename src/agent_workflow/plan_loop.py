@@ -262,8 +262,8 @@ def compile_plan_fact(repo: Path, plan: Path, binding: ArchitectBinding) -> tupl
         raise PlanLoopError("Plan working-tree bytes differ from the committed Plan")
     blob_oid = str(_git(root, "rev-parse", f"{commit}:{relative}"))
     raw = _git(root, "cat-file", "blob", blob_oid, binary=True)
-    if not isinstance(raw, bytes) or (root / relative).read_bytes() != raw:
-        raise PlanLoopError("Plan bytes do not match the exact committed Git blob")
+    if not isinstance(raw, bytes):
+        raise PlanLoopError("exact committed Plan blob bytes are unavailable")
 
     profile_values = _profile_values(binding.profile)
     upstream_remote = str(profile_values.get("upstream_remote", "upstream"))

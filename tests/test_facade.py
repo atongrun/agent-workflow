@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -491,7 +492,7 @@ def test_machine_init_reuses_one_opencode_for_distinct_coder_reviewer_workspaces
     assert len({profile.repo for profile in contract.profiles}) == 2
     assert {profile.values["tool"] for profile in contract.profiles} == {"opencode"}
     assert {profile.values["tool_executable"] for profile in contract.profiles} == {
-        "/tools/opencode"
+        os.path.abspath("/tools/opencode")
     }
     assert len({profile.config_path for profile in contract.profiles}) == 1
     assert {profile.values["model"] for profile in contract.profiles} == {"deepseek"}
@@ -538,7 +539,7 @@ def test_machine_init_supports_pi_architect_only(monkeypatch, tmp_path: Path) ->
     profile = contract.profiles[0]
     assert profile.role == "architect"
     assert profile.values["tool"] == "pi"
-    assert profile.values["tool_executable"] == "/tools/pi"
+    assert profile.values["tool_executable"] == os.path.abspath("/tools/pi")
     assert profile.values["model"] == ""
     assert profile.values["on_type"] == "decision:awf-ready-v3"
     assert profile.values["enable_preflight"] is True
