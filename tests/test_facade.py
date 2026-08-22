@@ -789,6 +789,64 @@ def test_normal_stop_records_no_new_work_and_requires_all_queues_safe(monkeypatc
     assert stopped == ["coder", "reviewer"]
 
 
+def test_normal_stop_preserves_ambiguous_merge_intent(monkeypatch, tmp_path):
+    profile = _activation_profile(tmp_path, "architect")
+    contract = facade.MachineContract(
+        repo=tmp_path,
+        config_path=tmp_path / ".awf/machine.json",
+        machine="mac",
+        project="sample",
+        finding_enabled=False,
+        profiles=(profile,),
+    )
+    binding = ArchitectBinding(
+        profile=str(tmp_path / "architect.json"),
+        profile_sha256="sha256:" + "a" * 64,
+        workspace=str(tmp_path),
+        tool="pi",
+        model_mode="tool-default",
+        model_ref="",
+    )
+    plan = PlanFact(
+        repository="owner/project",
+        upstream_remote="upstream",
+        base_ref="main",
+        path="docs/plan.md",
+        commit="1" * 40,
+        blob_oid="2" * 40,
+        blob_sha256="3" * 64,
+        main_sha="4" * 40,
+    )
+    payload = plan_start_payload(
+        plan,
+        binding,
+        mode="one-card",
+        coder_tool="opencode",
+        coder_model="",
+        reviewer_tool="opencode",
+        reviewer_model="",
+    )
+    store = PlanRunStore(profile.state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(status="merge_intent")
+    monkeypatch.setattr(facade, "_load_profile_contract", lambda _repo: contract)
+    monkeypatch.setattr(
+        facade.factual_status,
+        "_queue",
+        lambda _profile: {"status": "observed", "pending": 0},
+    )
+    monkeypatch.setattr(
+        node,
+        "stop",
+        lambda _profile: (_ for _ in ()).throw(AssertionError("merge intent must not stop")),
+    )
+
+    with pytest.raises(facade.FacadeError, match="merge_intent"):
+        facade.stop(tmp_path)
+
+    assert store.load()["stop_requested"] is True
+
+
 def test_three_role_machine_has_static_supported_bindings_and_distinct_workspaces(
     monkeypatch, tmp_path: Path
 ) -> None:

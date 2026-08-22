@@ -29,7 +29,7 @@ PLAN_START_TYPE = "task:awf-plan-start-v1"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _GIT_OID = re.compile(r"[0-9a-f]{40,64}")
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
-_FROZEN_BASE = re.compile(r"(?m)^- \*\*Frozen base\*\*: `([0-9a-f]{40,64})`\s*$")
+_FROZEN_BASE = re.compile(r"(?m)^- \*\*Frozen base\*\*: `([0-9a-f]{40,64})`(?:\s+[^\r\n]*)?$")
 _SELECTION = re.compile(r"<!--\s*awf-reviewer-selection\s*\n(.*?)\n\s*-->", re.DOTALL)
 _DECISION = re.compile(r"(?mi)^\*\*Verdict:\*\*\s*(approve|request_changes|reject|escalate)\s*$")
 _CLOSED_NEXT = frozenset({"MILESTONE_COMPLETE", "BLOCKED"})
@@ -520,7 +520,10 @@ def validate_taskcard_binding(
     expected = {"coder": dict(coder), "reviewer": dict(reviewer)}
     if selection != expected:
         raise PlanLoopError("Architect TaskCard execution selection drifted")
-    task = re.search(r"(?m)^## Task ID\s*\n\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*$", text)
+    task = re.search(
+        r"(?m)^## Task ID\s*\n\s*`?([A-Za-z0-9][A-Za-z0-9._-]*)`?\s*$",
+        text,
+    )
     branch = re.search(r"(?m)^- \*\*Task branch\*\*: `([^`]+)`\s*$", text)
     if task is None or branch is None or branch.group(1).rsplit("/", 1)[-1] != task.group(1):
         raise PlanLoopError("Architect TaskCard task/branch identity is invalid")
@@ -556,7 +559,13 @@ def architect_context(
     )
     return (
         "# Trusted ArchitectContext\n\n"
-        "Use only these exact facts and the committed Plan. Produce one complete TaskCard.\n"
+        "Use only these exact facts and the committed Plan. Produce one complete TaskCard as raw "
+        "Markdown with no surrounding code fence.\n"
+        "Write `## Task ID`, a blank line, then the bare Task ID without backticks. Write the "
+        "Task branch and Frozen base as exact standalone lines with no suffix. The awf-postflight "
+        "allowed_paths must contain exactly one `.awf/artifacts/impl-report-<TASK_ID>.md` and one "
+        "`.awf/artifacts/review-report-<TASK_ID>.md`; the TaskCard path itself must not be "
+        "allowed.\n"
         f"The TaskCard must contain `- **Frozen base**: `{plan.main_sha}`` and exactly this "
         "awf-reviewer-selection JSON object: "
         f"`{selection_json}`.\n\n"

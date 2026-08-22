@@ -45,6 +45,7 @@ from agent_workflow.plan_loop import (
     validate_taskcard_binding,
 )
 from agent_workflow.runtime.architect import persist_architect_taskcard
+from agent_workflow.runtime.artifact import ArtifactError
 from agent_workflow.runtime.renderers import render_provider_invocation
 
 
@@ -356,12 +357,25 @@ def _invoke_taskcard_architect(
         )
         raise PlanOperationError("Pi Architect TaskCard invocation failed")
     raw = output.read_bytes()
-    task_id, branch = validate_taskcard_binding(
-        raw,
-        frozen_base=plan.main_sha,
-        coder=coder,
-        reviewer=reviewer,
-    )
+    try:
+        task_id, branch = validate_taskcard_binding(
+            raw,
+            frozen_base=plan.main_sha,
+            coder=coder,
+            reviewer=reviewer,
+        )
+    except PlanLoopError:
+        store.update(
+            status="architect_output_invalid_no_replay",
+            architect_invocation={
+                "kind": "taskcard",
+                "status": "result_invalid",
+                "authorization_sha256": authorization,
+                "result_sha256": hashlib.sha256(raw).hexdigest(),
+            },
+            stop_reason="Pi Architect TaskCard output is invalid; provider replay is forbidden",
+        )
+        raise
     store.update(
         architect_invocation={
             "kind": "taskcard",
@@ -417,7 +431,14 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     )
     destination = repo / "docs" / "tasks" / f"{task_id}.md"
     if raw:
-        persist_architect_taskcard(repo=str(repo), destination=str(destination), stdout=raw)
+        try:
+            persist_architect_taskcard(repo=str(repo), destination=str(destination), stdout=raw)
+        except ArtifactError as exc:
+            store.update(
+                status="architect_output_invalid_no_replay",
+                stop_reason=f"trusted TaskCard persistence rejected output: {exc}",
+            )
+            raise PlanOperationError("trusted TaskCard persistence rejected Pi output") from exc
     elif not destination.is_file():
         raise PlanOperationError("persisted Architect TaskCard is unavailable")
     selections = reviewer_selection_contract(

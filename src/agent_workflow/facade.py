@@ -1067,13 +1067,7 @@ def stop(repo: Path, *, role: str = "") -> int:
                 stop_requested=True,
                 stop_reason="operator requested no new work and exact local stop",
             )
-            if run.get("status") in {
-                "start_sending",
-                "architect_taskcard_running",
-                "card_dispatching",
-                "architect_decision_running",
-                "merge_intent",
-            }:
+            if run.get("status") == "merge_intent":
                 raise FacadeError(
                     f"stop denied: PlanRun authority is active at {run['status']}; inspect status"
                 )

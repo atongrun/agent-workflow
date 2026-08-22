@@ -120,6 +120,39 @@ def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     assert store.load()["preflight"]["remote_dispatch"] == report
 
 
+def test_invalid_pi_taskcard_result_is_persisted_and_never_replayed(monkeypatch, tmp_path):
+    binding, plan, payload = facts(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=repo)
+    args = handler_args(tmp_path, payload)
+
+    def invalid_result(_rendered, **kwargs):
+        Path(kwargs["stdout_path"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(kwargs["stdout_path"]).write_text("# invalid TaskCard\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(awf_plan, "spawn_rendered", invalid_result)
+
+    with pytest.raises(awf_plan.PlanLoopError):
+        awf_plan._invoke_taskcard_architect(
+            args,
+            store=store,
+            plan=plan,
+            binding=binding,
+            plan_bytes=b"# Plan\n",
+            repo=repo,
+            coder={"tool": "opencode", "model": ""},
+            reviewer={"tool": "opencode", "model": ""},
+        )
+
+    run = store.load()
+    assert run["status"] == "architect_output_invalid_no_replay"
+    assert run["architect_invocation"]["status"] == "result_invalid"
+    assert not (repo / ".awf" / f"architect-context-{run['run_id']}.md").exists()
+
+
 def test_handle_start_orders_fast_before_pi_and_deep_before_business_send(
     monkeypatch, tmp_path: Path
 ) -> None:

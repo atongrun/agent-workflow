@@ -162,6 +162,7 @@ def test_architect_context_and_taskcard_binding_are_closed(tmp_path: Path) -> No
 
     assert fact.blob_sha256 in context
     assert "# Exact Plan" in context
+    assert "review-report-<TASK_ID>.md" in context
     assert (task_id, branch) == ("CARD-001", "codex/CARD-001")
     with pytest.raises(PlanLoopError, match="fresh upstream main"):
         validate_taskcard_binding(
@@ -170,6 +171,24 @@ def test_architect_context_and_taskcard_binding_are_closed(tmp_path: Path) -> No
             coder=coder,
             reviewer=reviewer,
         )
+
+    decorated = (
+        taskcard(fact.main_sha)
+        .replace(
+            b"CARD-001\n\n- **Task branch**",
+            b"`CARD-001`\n\n- **Task branch**",
+        )
+        .replace(
+            f"`{fact.main_sha}`".encode(),
+            f"`{fact.main_sha}` (exact current main)".encode(),
+        )
+    )
+    assert validate_taskcard_binding(
+        decorated,
+        frozen_base=fact.main_sha,
+        coder=coder,
+        reviewer=reviewer,
+    ) == ("CARD-001", "codex/CARD-001")
 
 
 def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> None:
