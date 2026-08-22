@@ -24,6 +24,7 @@ _ROLE_PAIRS = frozenset(
     {
         ("architect", "architect"),
         ("architect", "coder"),
+        ("coder", "architect"),
         ("coder", "reviewer"),
         ("reviewer", "coder"),
         ("reviewer", "architect"),
