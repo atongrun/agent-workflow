@@ -3496,7 +3496,11 @@ def tool_pi_review(
             stdout_max_bytes=MAX_COMBINED_REPORT_BYTES,
         )
 
-    return invoke(Path(repo) / ".awf" / "pi-review-context.md")
+    context_path = Path(repo) / ".awf" / "pi-review-context.md"
+    try:
+        return invoke(context_path)
+    finally:
+        context_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------

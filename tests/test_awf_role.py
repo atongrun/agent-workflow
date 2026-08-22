@@ -2316,6 +2316,7 @@ def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
     def fake_spawn(argv, **kwargs):
         captured["argv"] = argv
         captured["kwargs"] = kwargs
+        captured["context"] = Path(argv[-2][1:]).read_text(encoding="utf-8")
         return 0
 
     monkeypatch.setattr(awf_role, "spawn", fake_spawn)
@@ -2360,11 +2361,12 @@ def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
     assert captured["argv"][-2].startswith("@")
     context_path = Path(captured["argv"][-2][1:])
     assert context_path == tmp_path / ".awf" / "pi-review-context.md"
-    context = context_path.read_text(encoding="utf-8")
+    context = captured["context"]
     assert "--- Trusted committed diff ---\n\ntrusted diff" in context
     assert "<!-- awf-review-report" in context
     assert "--- TaskCard (acceptance criteria to verify) ---" in context
     assert "against base ref `main`" in captured["argv"][-1]
+    assert not context_path.exists()
 
 
 def test_spawn_rendered_rejects_file_input_drift_before_provider(monkeypatch, tmp_path):
