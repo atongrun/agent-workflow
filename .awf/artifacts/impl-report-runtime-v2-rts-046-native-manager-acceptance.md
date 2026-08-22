@@ -225,3 +225,8 @@ No unrelated process/service action occurred. This evidence was committed before
 logout. The next action is the single owner-authorized logout of interactive session 1; connection
 loss is expected and not failure. After the owner logs back in, inspect the same `-04` identity,
 then exact stop/uninstall.
+
+The system did not provide `logoff.exe`; the first command therefore failed before session mutation.
+After revalidating the same profile/launch/lease/state-root/creation/session identity, the native
+`WTSLogoffSession(sessionId=1)` API returned success. This records logout dispatch only, not login
+continuity. Current status is `WAITING_FOR_OWNER_LOGIN`; do not create or replace the `-04` identity.

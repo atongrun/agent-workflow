@@ -232,3 +232,8 @@ isolated Bus client. Doctor/install/start passed. Before logout, the listener wa
 This checkpoint precedes the single owner-authorized logout. After manual login, the same `-04`
 identity must supply continuity/recovery evidence before exact stop/uninstall. No reboot is
 authorized.
+
+The system had no `logoff.exe`, so the first exact-session command failed before logout. A second
+same-shell identity check passed, and native `WTSLogoffSession` returned success for console session
+1. This proves logout dispatch, not recovery. The acceptance is now `WAITING_FOR_OWNER_LOGIN` and
+must resume the unchanged `-04` profile/task/state after the owner logs in interactively.
