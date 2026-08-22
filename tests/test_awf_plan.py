@@ -130,6 +130,11 @@ def test_internal_preflight_environment_is_deterministic_and_restored(monkeypatc
         encoding="utf-8",
     )
     config.chmod(0o600)
+    monkeypatch.setattr(
+        awf_plan,
+        "load_config",
+        lambda _path: {"AGENT_BUS_URL": "http://100.108.67.47:8800"},
+    )
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7897")
     monkeypatch.setenv("NO_PROXY", "original")
     monkeypatch.setenv("no_proxy", "original")
