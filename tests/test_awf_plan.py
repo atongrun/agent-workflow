@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -90,6 +91,7 @@ def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     store.create(payload, repo=tmp_path / "repo")
     args = handler_args(tmp_path, payload)
     calls: list[str] = []
+    monkeypatch.setattr(awf_plan, "_preflight_environment", lambda _path: nullcontext())
     fast = {
         "status": "FAIL",
         "allow_remote_dispatch": False,
@@ -118,6 +120,31 @@ def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     assert calls == ["deep"]
     assert report["allow_remote_dispatch"] is True
     assert store.load()["preflight"]["remote_dispatch"] == report
+
+
+def test_internal_preflight_environment_is_deterministic_and_restored(monkeypatch, tmp_path):
+    config = tmp_path / "dispatch.env"
+    config.write_text(
+        "AGENT_BUS_URL=http://100.108.67.47:8800\n"
+        "AWF_ARCH_TOKEN=arch\nAWF_CODER_TOKEN=coder\nAWF_REVIEWER_TOKEN=review\n",
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7897")
+    monkeypatch.setenv("NO_PROXY", "original")
+    monkeypatch.setenv("no_proxy", "original")
+
+    with awf_plan._preflight_environment(config):
+        assert "HTTP_PROXY" not in awf_plan.os.environ
+        assert set(awf_plan.os.environ["NO_PROXY"].split(",")) == {
+            "100.108.67.47",
+            "github.com",
+            "api.github.com",
+        }
+        assert awf_plan.os.environ["no_proxy"] == awf_plan.os.environ["NO_PROXY"]
+
+    assert awf_plan.os.environ["HTTP_PROXY"] == "http://127.0.0.1:7897"
+    assert awf_plan.os.environ["NO_PROXY"] == "original"
 
 
 def test_invalid_pi_taskcard_result_is_persisted_and_never_replayed(monkeypatch, tmp_path):

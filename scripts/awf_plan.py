@@ -16,10 +16,11 @@ import os
 import re
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from awf_artifact_contract import compile_implementation_report_path, compile_review_report_path
-from awf_config import ConfigError, load_into_environment, native_executable
+from awf_config import ConfigError, load_config, load_into_environment, native_executable
 from awf_dispatch import DispatchError
 from awf_executor import ExecutionFailure
 from awf_executor import run as run_command
@@ -249,6 +250,26 @@ def _preflight_args(
     )
 
 
+@contextmanager
+def _preflight_environment(config_path: Path):
+    """Bind Fast/Deep to one deterministic non-provider network environment."""
+    names = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy")
+    previous = {name: os.environ.get(name) for name in names}
+    try:
+        for name in names:
+            os.environ.pop(name, None)
+        config = load_config(config_path)
+        for url in (config["AGENT_BUS_URL"], "https://github.com", "https://api.github.com"):
+            add_url_host_to_no_proxy(os.environ, url)
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def _run_authoring_fast(
     args: argparse.Namespace,
     *,
@@ -257,7 +278,8 @@ def _run_authoring_fast(
 ) -> dict[str, object]:
     import awf_preflight
 
-    report = awf_preflight.run_fast(_preflight_args(args, repo=repo, intent="taskcard")).report
+    with _preflight_environment(Path(args.config).resolve()):
+        report = awf_preflight.run_fast(_preflight_args(args, repo=repo, intent="taskcard")).report
     current = store.load().get("preflight")
     preflight = dict(current) if isinstance(current, dict) else {}
     preflight["authoring"] = report
@@ -278,12 +300,13 @@ def _run_dispatch_preflight(
     if store.load().get("stop_requested") is True:
         raise PlanOperationError("PlanRun stop was requested before business dispatch")
     preflight_args = _preflight_args(args, repo=repo, intent="remote-dispatch")
-    fast = awf_preflight.run_fast(preflight_args).report
-    report = fast
-    if fast.get("allow_remote_dispatch") is not True:
-        if fast.get("required_next_action") != "run_deep_preflight":
-            raise PlanOperationError("Fast Preflight denied remote business dispatch")
-        report = awf_preflight.run_deep(preflight_args)
+    with _preflight_environment(Path(args.config).resolve()):
+        fast = awf_preflight.run_fast(preflight_args).report
+        report = fast
+        if fast.get("allow_remote_dispatch") is not True:
+            if fast.get("required_next_action") != "run_deep_preflight":
+                raise PlanOperationError("Fast Preflight denied remote business dispatch")
+            report = awf_preflight.run_deep(preflight_args)
     current = store.load().get("preflight")
     preflight = dict(current) if isinstance(current, dict) else {}
     preflight["remote_dispatch"] = report
