@@ -26,6 +26,8 @@ class NodeServiceError(RuntimeError):
 SUPPORTED_MANAGERS = {"launchd", "systemd", "task-scheduler"}
 _TEXT_ENCODING = "utf-8"
 _TEXT_ERRORS = "replace"
+_TASK_RECONCILE_ATTEMPTS = 4
+_TASK_RECONCILE_DELAY_SECONDS = 15
 
 
 def resolve_manager(manager: str, *, platform: str = sys.platform, os_name: str = os.name) -> str:
@@ -83,13 +85,17 @@ def _reconcile_arguments(profile) -> list[str]:
     ]
 
 
+def _python_executable() -> Path:
+    return Path(os.path.abspath(sys.executable))
+
+
 def _reconcile_argv(profile) -> list[str]:
-    return [str(Path(sys.executable).resolve()), *_reconcile_arguments(profile)]
+    return [str(_python_executable()), *_reconcile_arguments(profile)]
 
 
 def _task_reconcile_argv(profile) -> list[str]:
     return [
-        str(Path(sys.executable).resolve()),
+        str(_python_executable()),
         "-m",
         "agent_workflow.node_service",
         "task-reconcile",
@@ -277,6 +283,7 @@ def _write_install_record(
     from agent_workflow import __version__
 
     body = definition.read_bytes()
+    python = _python_executable()
     record = {
         "format": "awf.node-managed-install.v1",
         "manager": manager,
@@ -285,8 +292,8 @@ def _write_install_record(
         "profile_sha256": profile.digest,
         "definition": str(definition),
         "definition_sha256": "sha256:" + hashlib.sha256(body).hexdigest(),
-        "python": str(Path(sys.executable).resolve()),
-        "python_sha256": _sha256(Path(sys.executable).resolve()),
+        "python": str(python),
+        "python_sha256": _sha256(python),
         "awf_version": __version__,
         "action_argv": _manager_action_argv(profile, manager),
         **extra,
@@ -308,6 +315,19 @@ def _install_record(profile) -> dict[str, object]:
     return value
 
 
+def _manager_target(profile, manager: str) -> tuple[str, Path]:
+    if manager == "systemd":
+        adapter = SystemdAdapter(profile)
+        return adapter.unit, adapter.definition
+    if manager == "launchd":
+        adapter = LaunchdAdapter(profile)
+        return adapter.label, adapter.definition
+    if manager == "task-scheduler":
+        adapter = TaskSchedulerAdapter(profile)
+        return adapter.task_name, adapter.definition
+    raise NodeServiceError(f"unsupported managed lifecycle manager: {manager}")
+
+
 def _remove_install_record(profile) -> None:
     (_service_dir(profile) / "install.json").unlink(missing_ok=True)
 
@@ -316,32 +336,39 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
     from agent_workflow import __version__
 
     record = _install_record(profile)
+    manager_id, definition = _manager_target(profile, manager)
+    python = _python_executable()
     expected = {
         "manager": manager,
+        "manager_id": manager_id,
         "profile": str(Path(profile.path).resolve()),
         "profile_source": str(Path(profile.authoring_path).resolve()),
         "profile_sha256": profile.digest,
-        "python": str(Path(sys.executable).resolve()),
+        "definition": str(definition),
+        "python": str(python),
         "awf_version": __version__,
         "action_argv": _manager_action_argv(profile, manager),
     }
     if any(record.get(key) != value for key, value in expected.items()):
         raise NodeServiceError("managed lifecycle installation drifted; run upgrade")
-    definition = Path(str(record.get("definition", "")))
     if not definition.is_file() or _sha256(definition) != record.get("definition_sha256"):
         raise NodeServiceError("managed lifecycle definition digest does not match its record")
-    if _sha256(Path(sys.executable).resolve()) != record.get("python_sha256"):
+    if _sha256(python) != record.get("python_sha256"):
         raise NodeServiceError("installed Python digest does not match its record; run upgrade")
     return record
 
 
 def _require_upgrade_target(profile, manager: str, manager_id: str) -> dict[str, object]:
     record = _install_record(profile)
+    expected_manager_id, definition = _manager_target(profile, manager)
     expected = {
         "manager": manager,
-        "manager_id": manager_id,
+        "manager_id": expected_manager_id,
         "profile": str(Path(profile.path).resolve()),
+        "definition": str(definition),
     }
+    if manager_id != expected_manager_id:
+        raise NodeServiceError("managed lifecycle upgrade target identity drifted")
     if any(record.get(key) != value for key, value in expected.items()):
         raise NodeServiceError("managed lifecycle upgrade target identity drifted")
     return record
@@ -681,7 +708,16 @@ class TaskSchedulerAdapter:
     def stop(self, bound_pid: int | None = None, launch_id: str = "") -> int:
         if self.run_command is None:
             _require_installed(self.profile, "task-scheduler")
-        pid = bound_pid if bound_pid is not None else _bound_live_listener_pid(self.profile)
+        cleared = _clear_exact_dead_stale_state(
+            self.profile,
+            require_creation_identity=True,
+        )
+        if bound_pid is not None:
+            pid = bound_pid
+        elif cleared:
+            pid = None
+        else:
+            pid = _bound_live_listener_pid(self.profile)
         if pid is not None:
             self._call(["taskkill.exe", "/PID", str(pid), "/T", "/F"])
         self._call(["schtasks.exe", "/End", "/TN", self.task_name], check=False)
@@ -700,7 +736,11 @@ class TaskSchedulerAdapter:
 
     def stop_for_upgrade(self) -> int:
         _require_upgrade_target(self.profile, "task-scheduler", self.task_name)
-        pid = _bound_live_listener_pid(self.profile)
+        cleared = _clear_exact_dead_stale_state(
+            self.profile,
+            require_creation_identity=True,
+        )
+        pid = None if cleared else _bound_live_listener_pid(self.profile)
         if pid is not None:
             self._call(["taskkill.exe", "/PID", str(pid), "/T", "/F"])
         self._call(["schtasks.exe", "/End", "/TN", self.task_name], check=False)
@@ -838,13 +878,7 @@ def _bound_live_listener_pid(profile) -> int | None:
         return None
     if not record or not lease:
         raise NodeServiceError("managed stop refused incomplete listener state")
-    expected = {
-        "profile": str(profile.path),
-        "profile_sha256": profile.digest,
-        "role": profile.role,
-        "repo": str(profile.repo),
-    }
-    if any(record.get(key) != value for key, value in expected.items()):
+    if not _managed_record_matches_profile(profile, record):
         raise NodeServiceError("managed stop refused profile identity drift")
     pid = record.get("pid")
     launch_id = record.get("launch_id", "")
@@ -855,6 +889,16 @@ def _bound_live_listener_pid(profile) -> int | None:
     if not _process_creation_identity_matches(record, pid):
         raise NodeServiceError("managed stop refused Windows process creation identity drift")
     return pid
+
+
+def _managed_record_matches_profile(profile, record: dict[str, object]) -> bool:
+    from agent_workflow import node
+
+    return bool(
+        node._record_matches_profile(profile, record)
+        and record.get("state_root") == str(profile.state_root)
+        and record.get("state_root_sha256") == node.state_root_binding(profile.state_root)
+    )
 
 
 def _process_creation_identity_matches(
@@ -900,7 +944,11 @@ def _after_manager_stop(profile, timeout: float = 20.0) -> int:
     )
 
 
-def _clear_exact_dead_stale_state(profile) -> bool:
+def _clear_exact_dead_stale_state(
+    profile,
+    *,
+    require_creation_identity: bool = os.name == "nt",
+) -> bool:
     from agent_workflow import node
 
     record = node._process_record(profile)
@@ -910,24 +958,53 @@ def _clear_exact_dead_stale_state(profile) -> bool:
     if not record or not lease:
         return False
     launch_id = record.get("launch_id", "")
-    expected = {
-        "profile": str(profile.path),
-        "profile_sha256": profile.digest,
-        "role": profile.role,
-        "repo": str(profile.repo),
-    }
-    if any(record.get(key) != value for key, value in expected.items()):
+    if not _managed_record_matches_profile(profile, record):
         return False
     if not isinstance(launch_id, str) or not launch_id:
         return False
     if not node._lease_matches(profile, lease, record.get("pid"), launch_id):
         return False
-    related_pids = [record.get("pid"), lease.get("pid")]
-    if any(node._pid_alive(pid) for pid in related_pids):
+    if require_creation_identity and (
+        lease.get("state_root") != str(profile.state_root)
+        or lease.get("state_root_sha256") != node.state_root_binding(profile.state_root)
+    ):
+        return False
+    record_pid = record.get("pid")
+    lease_pid = lease.get("pid")
+    if not isinstance(record_pid, int) or not isinstance(lease_pid, int):
+        return False
+    record_alive = node._pid_alive(record_pid)
+    if require_creation_identity:
+        recorded_creation = record.get("process_creation_filetime")
+        if not isinstance(recorded_creation, int):
+            return False
+    if record_alive and require_creation_identity:
+        live_creation = node._windows_process_creation_filetime(record_pid)
+        if live_creation is None:
+            return False
+        record_alive = recorded_creation == live_creation
+    if record_alive:
+        return False
+    if lease_pid != record_pid and node._pid_alive(lease_pid):
         return False
     profile.process_path.unlink(missing_ok=True)
     (profile.state_root / "listeners" / f"{profile.role}.json").unlink(missing_ok=True)
     return True
+
+
+def _task_reconcile_with_retry(profile) -> int:
+    from agent_workflow import node
+
+    for attempt in range(_TASK_RECONCILE_ATTEMPTS):
+        try:
+            return node.reconcile(profile)
+        except node.TransientBusReadinessError:
+            if node._read_desired_state(profile)["state"] != "running":
+                return 0
+            if attempt + 1 == _TASK_RECONCILE_ATTEMPTS:
+                raise
+            time.sleep(_TASK_RECONCILE_DELAY_SECONDS)
+    raise AssertionError("unreachable task reconcile attempt state")
 
 
 def _tail_file(path: Path, lines: int) -> int:
@@ -988,7 +1065,7 @@ def _task_reconcile(profile_value: str, log_value: str) -> int:
                             raise node.NodeError(
                                 "task reconcile log path drifted from the installed profile"
                             )
-                        return node.reconcile(profile)
+                        return _task_reconcile_with_retry(profile)
                     except (node.NodeError, NodeServiceError, OSError) as exc:
                         log.write(f"ERROR: task reconcile failed: {exc}\n")
                         return 1

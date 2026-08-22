@@ -11,7 +11,7 @@
 
 The owner-authored Runtime simplification Review, independent adversarial double review and gated
 development plan are integrated by PR #96 at merge commit
-`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-035 is the last passed
+`712365b8a462f2c9ca27b461f91125fff344caca`. RTS-043 is the last passed
 TaskCard gate: the language-neutral semantic contract and machine-readable fault matrix are
 `Frozen`; the matrix contains 39 unique cases and
 11 normalized outcomes, and the current inventory names six authority domains plus 28 persistent
@@ -212,6 +212,110 @@ Bus/config/state/queue identities, run a real child handler, prove external succ
 scoped queues `0/0 -> 0/0`, and preserve exact identity. It must not invoke a model/business
 handler, touch production or retained events, adopt/dual-write production authority, change
 defaults, migrate state, begin lifecycle/launcher work, release or delete compatibility.
+
+RTS-042 is currently **EXTERNAL_BLOCKED / evidence preserved**, not accepted. The first isolated
+identity delivered its command to Windows, where the handler failed closed before its bounded
+child and before Store initialization. Agent Bus then owned the `/fail` transition and atomically
+wrote `retry_count=1`; no result event existed. Read-only diagnosis proved that both hosts had the
+same Git HEAD but the fixture hashed platform-normalized working-tree Markdown bytes, so Windows
+CRLF conversion split the immutable RunSpec. The failed event/database/log/state remains retained
+and was not retried, requeued, ACKed, replaced, deleted or counted as PASS.
+
+Bounded repair `037d514` derives the two frozen document hashes from exact candidate Git blobs.
+Ordinary CI `32386481057` and Binary Feasibility `32386481051` passed exact head. One separately
+owner-authorized identity then completed the real Mac-to-Windows command and Windows-to-Mac result:
+two bounded children returned zero, the Store recorded `attempting -> sent`, two isolated events
+were ACKed with zero retry/error facts, and scoped queues converged `0/0 -> 0/0`. Its exact resources
+were safely removed; all failed-identity roots were confirmed retained afterward. This validates
+the local fixture RCA but does not retroactively promote the failed identity or the TaskCard.
+
+The next safe TaskCard is an event-free **RTS-043 Phase 4A evidence adjudication and closeout**.
+It should perform the one independent Gate Review over the preserved failure, bounded repair and
+fresh-success evidence, then either close Phase 4A without another live event or record a concrete
+invariant conflict. It must not create a third acceptance identity, operate retained events, change
+production/default/migration, or begin Phase 4B before that review gate.
+
+RTS-043's independent Gate Review found no semantic or architecture conflict and adjudicated
+RTS-040, RTS-041 and RTS-042 as jointly satisfying all five Phase 4A exit criteria. Its sole
+semantic-review `REQUEST_CHANGES` finding was that the RTS-043 closeout artifacts and gate-status
+updates had not yet been written; a focused packaging finding then required the ignored artifact to
+be explicitly tracked. Both documentation-only findings are closed, and final focused re-review
+returned `PASS`. The closeout records that `rts042-live-20260820-01` remains
+terminal failed, `EXTERNAL_BLOCKED / evidence preserved`, and can never be future PASS evidence;
+`rts042-live-20260820-02` is the only successful acceptance. No retry, requeue, manual ACK,
+replacement delivery, manufactured completion or third identity occurred. Phase 4A is closed. The
+next safe action is a separately frozen Phase 4B TaskCard; no lifecycle implementation is authorized
+inside this closeout.
+
+RTS-044 next reused the current lifecycle implementation instead of adding a speculative
+`AgentInstallation` abstraction. Its initial independent Review returned `REQUEST_CHANGES` for two
+real exact-identity gaps: managed native stop did not strictly require process-record state-root
+evidence, and installed state did not bind manager ID/definition path to the deterministic adapter
+target. RTS-045 repaired only those joins. Missing/partial/drifted process roots now produce zero
+native calls and remain ineligible for exact-dead cleanup; foreign manager IDs or self-consistent
+alternate definition paths no longer project current installation or authorize upgrade stop.
+
+RTS-045 independent L3 Review returned `PASS` at `37ea274`; focused validation passed 75 tests with
+one platform skip, the full suite passed 876 with five skips, ordinary CI `32544625110` passed and
+Binary Feasibility `32544625218` passed all cells/aggregates. RTS-044 local lifecycle conformance is
+therefore closed without a new record, migration, native-manager operation, Agent Bus action or
+production change. Phase 4B itself remains open. The next safe milestone is separately frozen
+**RTS-046 fresh isolated three-OS native-manager acceptance**. It may assume Agent Bus already
+exists but may not install it or operate business events. Windows logout/login or reboot remains a
+disruptive external action requiring an explicitly scheduled owner window.
+
+RTS-046 initially stopped **EXTERNAL_BLOCKED** on Linux qualification; Windows logout/login was
+separately
+`BLOCKED_BY_OWNER_AUTHORIZATION`. Fresh macOS identity `-01` exposed native definition re-entry
+resolving the venv shim to a base Python without Agent Workflow. RTS-047 preserved the invoked
+absolute venv path across all manager argv/install/checksum facts and passed independent L3 Review,
+877 local tests, ordinary CI `32547035193` and Binary Feasibility `32547035173`. Fresh macOS `-02`
+then entered installed AWF and stopped at the next independent boundary: current macOS and Windows
+Agent Bus clients lack required structured `--on-argv`. Falling back to legacy `--on` is forbidden.
+
+Owner-authorized provenance checks confirmed installation skew rather than a missing Bus feature:
+Agent Bus PR #27 is merged at exact master `6ca8f281...`, while formal v0.3.0 lacks `--on-argv` and
+master still reports 0.3.0. Fresh isolated macOS/Windows clients from the exact master commit proved
+the capability without changing old clients, server/deployment/database, endpoint/token values,
+events, queues or ACK state. Fresh RTS-046 `-03` then completed the full launchd sequence and the
+non-disruptive Task Scheduler sequence. Windows survived SSH session A into session B, restarted to
+a new exact incarnation with creation identity, and exact stop/uninstall removed all manager state.
+
+The initial Linux audit did not use the real owner topology. The later `la-codex-node` assumption is
+explicitly invalid: the owner confirmed no such Agent Workflow host exists, so its claimed Linux
+environment/cleanup facts are withdrawn from all acceptance. Valid Linux evidence is only the later
+fresh `tx-vps` scope below. Before Phase 5, separately consider a formal Agent Bus client release
+(likely v0.3.1) so the structured contract is versioned rather than commit-probed; no release is
+authorized here.
+
+Windows fresh `-04` completed pre-logout exact identity and native WTS logout. After owner login,
+console session advanced from 1 to 2, but the logon reconcile hit transient Bus readiness and
+periodic triggers did not recover. The old PID was reused with a different creation FILETIME;
+status stayed stale and normal stop wrote desired stopped then denied without signal. RTS-048 added
+bounded pre-listener Bus readiness retry plus strict creation-aware stale cleanup, passed independent
+L3 re-review, 884 local tests, ordinary CI `32551160937` and Binary Feasibility `32551160941`.
+Reviewed code exactly cleaned `-04`; task/process/lease/definition/install state is absent and logs
+remain. `-04` is failure evidence forever.
+
+Windows fresh `-05` used reviewed RTS-048 code and the exact
+compatible Bus client, performed one owner-authorized native logout, reconnected through RustDesk,
+completed the real PIN login and advanced console session 2 to 3. The same Scheduled Task converged
+without manual restart from old absent PID `11028` to exact new PID/lease `17492`, launch
+`2a7293c12e3d4c93a79b25677386c194`, with matching creation/profile/state-root facts. Status and Bus
+doctor passed; the Clash service remained running in Session 0. Exact stop/uninstall removed the
+process, lease, definition, install record, task and registries. `-04` remains failure evidence.
+
+Fresh Linux `-06` then used the only valid host, existing `tx-vps` root/systemd-user and unchanged
+system Agent Bus Server. Exact Workflow `87ceb3a` and Bus client `6ca8f281...` completed
+doctor/install/start/status/logs/restart/status/exact-stop/uninstall. First and second exact
+incarnations were PID/lease/MainPID `1681549` launch `19375d...` and `1682597` launch `2b2a0d...`;
+profile/state-root stayed fixed and desired advanced 2 -> 4 -> 5. Temporary linger returned
+`no`; enabled user units returned to six with the exact baseline hash; disposable root/config/
+clients/snapshot/unit/process/lease/install/registries were removed. Agent Bus Server PID/start/
+health/unit/env hashes were unchanged; no event, queue, ACK, retry or database operation occurred.
+
+Final independent closeout review returned `PASS` with zero blocking findings. RTS-046 and Phase 4B
+are complete. Phase 5 did not start and requires a separate owner-approved plan.
 
 ## Current Handoff State: 2026-08-17
 

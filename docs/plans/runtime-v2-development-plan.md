@@ -1,10 +1,11 @@
 # Agent Workflow Runtime Simplification and Runtime v2 Decision Plan
 
-Status: Active gated repository plan after independent double review. Last passed gate:
-**RTS-024 / product-boundary and implementation choice (`PYTHON + NATIVE LAUNCHER`, 2026-08-20)**.
-ADR-0006 is accepted and the semantic contract/fault matrix are `Frozen` after independent
-Architecture and Adversarial Review PASS. Phase 3 enters through a separately frozen RTS-030
-TaskCard. This plan authorizes no production migration, default switch or release action by itself.
+Status: Active gated repository plan after independent double review. Current completed gate:
+**RTS-046 / Phase 4B native lifecycle (`PASS`, 2026-08-22)**. The controlling architecture decision
+remains **RTS-024 / `PYTHON + NATIVE LAUNCHER`**: ADR-0006 is accepted and the semantic
+contract/fault matrix are `Frozen` after independent Architecture and Adversarial Review PASS.
+Phases 3, 4A and 4B are complete. Phase 5 has not started and requires a separate owner-approved
+plan; this document authorizes no production migration, default switch or release action by itself.
 
 RTS-020 passed one-command implement/review/terminal execution and all eight shared fault families
 across 14 machine rows with one RunStore writer and one InvocationJournal API. Pre-final-review head
@@ -605,6 +606,68 @@ scoped queues `0/0 -> 0/0`. It cannot invoke a model/business handler, touch pro
 deliveries, adopt/dual-write production authority, migrate/change defaults, begin lifecycle or
 launcher work, release or delete compatibility.
 
+RTS-042 evidence result: the first identity, `rts042-live-20260820-01`, remains terminal failed and
+`EXTERNAL_BLOCKED / evidence preserved`; it is never PASS evidence. Agent Bus delivered its command
+to Windows and owned the listener `/fail` transition plus `retry_count=1` after the handler denied
+before its bounded child/Store. Bounded repair `037d514` reads frozen inputs from exact Git blobs and
+passed ordinary CI `32386481057` plus Binary Feasibility `32386481051`. The separately fresh
+`rts042-live-20260820-02` identity is the only successful acceptance: two real child processes
+returned zero, two isolated command/result events were ACKed with retry/error facts zero, the Store
+recorded `attempting -> sent`, and scoped queues converged `0/0 -> 0/0`. No retry, requeue, manual
+ACK, replacement delivery, manufactured completion or third identity occurred.
+
+RTS-043 independent evidence adjudication found that RTS-040, RTS-041 and the sole successful
+RTS-042-02 identity jointly satisfy all five Phase 4A exit criteria without changing the Frozen
+contract or Runtime/Agent Bus ownership. The missing-closeout and tracked-artifact documentation
+findings were repaired, and final focused independent re-review returned `PASS` with no residual
+findings. Phase 4A is closed; no additional live event occurred or is required by this gate.
+
+RTS-044 then adjudicated the existing multi-record `awf node` surface as the selected local
+AgentInstallation/incarnation API shape rather than adding another abstraction. Initial independent
+Review found two incomplete exact identity joins: managed stop omitted strict process-record
+state-root evidence, and current installation did not bind manager ID/definition path to the
+deterministic adapter target. RTS-045 repaired only those joins with two table-driven regressions.
+Independent L3 Review returned `PASS` at `37ea274`; full local validation passed 876 tests with five
+platform skips, ordinary CI `32544625110` passed, and Binary Feasibility `32544625218` passed every
+cell and aggregate. Local lifecycle conformance is closed without a new record, migration or
+external operation. Phase 4B remains open for separately frozen RTS-046 fresh real three-OS
+native-manager and current Windows login-lifecycle acceptance.
+
+RTS-046 initial result: **EXTERNAL_BLOCKED** on Linux; Windows login was additionally
+`BLOCKED_BY_OWNER_AUTHORIZATION`. The first fresh macOS scope exposed native venv re-entry resolving
+to a base interpreter. Bounded RTS-047 preserved the invoked venv path, passed independent L3
+Review, 877 local tests, ordinary CI `32547035193` and Binary Feasibility `32547035173`. A second
+fresh macOS scope then entered installed AWF and stopped at an independent Agent Bus capability
+boundary: existing macOS and Windows clients do not support required structured `--on-argv`.
+Owner-authorized provenance then confirmed old client installation skew: exact Agent Bus master
+`6ca8f281...` contains `agent-bus.listen.on-argv.v1`, while formal v0.3.0 does not and master still
+reports 0.3.0. Isolated exact-master clients left old clients/server/state/credentials untouched.
+Fresh `-03` completed real launchd start/status/logs/restart/exact-stop/uninstall and Windows
+Task Scheduler session-A-to-B survival, status/restart/new incarnation/exact-stop/uninstall. Audited
+Linux users still lacked already-enabled linger plus existing AWF/Bus configuration; none was
+modified. Windows logout/login was not authorized. No model/business event occurred. Phase 4B
+remains open for Linux and Windows login evidence; Phase 5 must not start. Consider a small formal
+Agent Bus client release before Phase 5, but do not publish it in RTS-046.
+
+A later owner window selected one Linux user and one Windows logout. Linux exact clients were built
+inside the disposable root and linger was enabled, but the execution safety layer refused remote
+credential export. No systemd lifecycle state was created; root and linger were restored exactly.
+Windows fresh `-04` performed real logout/login but exposed transient logon readiness plus PID-reuse
+stale convergence. Status denied the reused PID and normal stop made no signal. RTS-048 repaired only
+bounded pre-listener Bus readiness retry and strict creation-aware exact stale cleanup. Independent
+L3 re-review passed; ordinary CI `32551160937` and Binary Feasibility `32551160941` passed. Reviewed
+code exactly removed failed `-04` manager state without signal. The owner then authorized one fresh
+Windows logout after accepting the RustDesk recovery preflight. Fresh `-05` used exact reviewed
+RTS-048 code, completed native logout, RustDesk PIN login, automatic new process/lease/launch/
+creation convergence, live Bus/Clash health, exact stop and uninstall. `-04` remains failed evidence;
+no second logout, record edit or manual restart occurred. The owner then corrected the only valid
+Linux topology to existing `tx-vps` root/systemd-user with its unchanged system Agent Bus Server.
+Fresh `-06` completed exact doctor/install/start/status/logs/restart/status/stop/uninstall with two
+distinct exact incarnations and full disposable cleanup; linger/user-unit and server identity/hash/
+health baselines were restored. The prior `la-codex-node` assumption is invalid and excluded.
+Final independent RTS-046 closeout review returned `PASS` with zero blocking findings. RTS-046 and
+Phase 4B are complete. Phase 5 must not start.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -660,6 +723,15 @@ Exit criteria:
   prove them.
 - Lifecycle code cannot read, ACK, requeue, recover, or dispatch business deliveries.
 - The three-command golden path still works; OS-specific failures expose safe support actions.
+
+Phase 4B result: **PASS** after final independent RTS-046 closeout review returned zero blocking
+findings. RTS-044/045 provide
+the local exact-identity conformance and repairs. RTS-046 provides fresh real launchd, owner-corrected
+`tx-vps` systemd-user, Task Scheduler/post-SSH and Windows logout/login evidence. Linux `-06` used
+exact Workflow `87ceb3a` and compatible Bus `6ca8f281...`, produced distinct exact restart
+incarnations, restored linger/enabled-unit baselines, removed all disposable resources and left the
+existing Agent Bus Server identity/config/health unchanged. No business event or model occurred.
+Phase 5 is a separate owner-approved planning gate and did not start.
 
 Phase 4 rollback:
 
@@ -870,11 +942,24 @@ renderer, isolated workspace/trusted import and Artifact-validation seams withou
 authority. RTS-035 passed the complete disposable local application composition and closes Phase 3.
 RTS-040 passed the strict Stage-blind command/result envelope and no-I/O receive/preparation
 boundary. RTS-041 passed the Store-owned exact outgoing-intent and bounded Stage-blind adapter
-boundary after its concurrency/stopped-state repair and focused independent re-review. The next
-action is the separately frozen RTS-042 fresh isolated Mac-to-Windows no-model request/result
-acceptance. No production/retained Bus operation, Store adoption or dual write, default switch,
-production state migration, native-launcher acceptance, release, retained-event operation or
-destructive cleanup is authorized.
+boundary after its concurrency/stopped-state repair and focused independent re-review. RTS-042-01
+remains terminal failed, retained and permanently excluded from PASS; RTS-042-02 alone supplies the
+fresh isolated Mac-to-Windows request/result, two child-success, two external ACK and queue
+convergence evidence. RTS-043's independent adjudication found the combined Phase 4A evidence
+semantically complete; final focused re-review passed after documentation-only closeout findings
+were repaired. Phase 4A is closed. RTS-044/045 then closed local Phase 4B lifecycle conformance after
+repairing strict process-root and manager-target identity joins; no new lifecycle abstraction or
+state representation was added. RTS-047 closed native venv re-entry; RTS-048 closed bounded login
+readiness and PID-reuse stale convergence. RTS-046 resolved client skew and `-03` passed macOS plus
+non-disruptive Windows lifecycle; failed Windows `-04` remains permanently excluded. Fresh `-05`
+passed one real owner-authorized logout, RustDesk login, automatic exact recovery and exact
+stop/uninstall. Owner-corrected Linux `-06` on `tx-vps` passed the complete systemd-user sequence,
+two exact incarnations and exact cleanup while preserving the existing Bus Server. The invalid
+`la-codex-node` assumption is excluded. Final independent closeout review passed; RTS-046 and Phase
+4B are complete. Stop for a separate Phase 5 owner planning gate.
+No production/retained Bus operation, Store adoption or dual write,
+default switch, production state migration, native-launcher acceptance, release, retained-event
+operation or destructive cleanup is authorized.
 
 ## 12. Plan Completion Definition
 
