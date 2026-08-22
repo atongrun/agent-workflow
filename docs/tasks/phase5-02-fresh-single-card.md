@@ -1,8 +1,7 @@
 # TaskCard: Phase 5-02 Fresh Runtime v2 Single-Card Adoption
 
-Status: Draft for one bounded implementation-readiness re-review after the owner corrected the
-review boundary. No implementation is authorized until this bounded review passes and the card is
-marked Frozen again.
+Status: Frozen after the owner-bounded implementation-readiness Review PASS at `b57c137`.
+Implementation is authorized only within the genuine deltas and inherited-contract boundary below.
 
 ## Task ID
 
