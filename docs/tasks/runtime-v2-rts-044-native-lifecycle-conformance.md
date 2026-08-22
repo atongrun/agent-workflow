@@ -38,8 +38,9 @@ The independent Reviewer must determine whether the existing lifecycle API alrea
    profile/source/digest, definition/digest, executable/digest, AWF version and exact action argv;
 3. running/incarnation identity as a join of profile digest, role, repository, state root, launch ID,
    process record, listener lease, liveness and Windows process-creation identity where available;
-4. denial before native signal or mutation when any required identity is absent, stale, corrupt or
-   mismatched; PID, process name, desired state or liveness alone is never sufficient;
+4. denial before native signal or native-manager mutation when any required incarnation identity is
+   absent, stale, corrupt or mismatched; PID, process name, desired state or liveness alone is never
+   sufficient;
 5. read-only lifecycle/status projection that keeps configured, installed, running, connected and
    dispatch-capable orthogonal and names one safe support action;
 6. no lifecycle ownership of business payloads, delivery, ACK, retry, requeue, recovery, dispatch,
