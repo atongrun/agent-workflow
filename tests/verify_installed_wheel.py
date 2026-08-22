@@ -359,6 +359,7 @@ assert cli._authority_manifest_for_repo(Path.cwd()) == (
             text=True,
         )
         assert "--one-card" in plan_start_help.stdout
+        assert "--milestone" in plan_start_help.stdout
         root_help = subprocess.run(
             [str(awf), "--help"],
             check=True,

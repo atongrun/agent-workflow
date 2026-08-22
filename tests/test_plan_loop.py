@@ -275,6 +275,8 @@ def test_completed_card_facts_are_immutable_and_feed_minimal_next_context(tmp_pa
     assert '"fresh_main": "' + "d" * 40 + '"' in context
     assert '"completed_task_ids": [' in context
     assert "MILESTONE_COMPLETE" in context
+    assert "stdout must contain only the single line" in context
+    assert "Reason silently" in context
     assert "Do not pre-generate later cards" in context
     changed = {**completion, "completed_at": "changed"}
     with pytest.raises(PlanLoopError, match="malformed"):

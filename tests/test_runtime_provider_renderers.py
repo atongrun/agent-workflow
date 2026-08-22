@@ -284,6 +284,8 @@ def test_pi_architect_milestone_next_is_fresh_read_only_closed_mode(tmp_path: Pa
     assert "--no-session" in rendered.argv
     assert "--no-approve" in rendered.argv
     assert any("MILESTONE_COMPLETE" in token for token in rendered.argv)
+    assert any("reason silently" in token for token in rendered.argv)
+    assert any("stdout must be only the single line" in token for token in rendered.argv)
     assert any("pre-generate later cards" in token for token in rendered.argv)
     assert all("terminal decision" not in token.lower() for token in rendered.argv)
 

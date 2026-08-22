@@ -157,9 +157,11 @@ class PiArchitectRenderer:
             message = (
                 "Decide the next step for this exact Plan milestone from the attached durable "
                 "facts and freshly observed repository main. Use only read-only repository "
-                "inspection tools. Return exactly one closed outcome: one complete next TaskCard "
-                "as raw Markdown, exact MILESTONE_COMPLETE, or BLOCKED followed by a non-empty "
-                "reason. Do not edit files, pre-generate later cards, dispatch, or merge."
+                "inspection tools and reason silently. Return exactly one closed outcome: one "
+                "complete next TaskCard as raw Markdown, exact MILESTONE_COMPLETE, or BLOCKED "
+                "followed by a non-empty reason. For completion, stdout must be only the single "
+                "line MILESTONE_COMPLETE with no analysis, summary, or verification before or "
+                "after it. Do not edit files, pre-generate later cards, dispatch, or merge."
             )
         else:
             raise ContractError("Pi architect mode is unsupported")
