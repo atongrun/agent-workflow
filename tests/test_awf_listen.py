@@ -30,3 +30,25 @@ def test_profile_finding_opt_in_is_an_explicit_listener_argument(tmp_path: Path)
 
     assert "--enable-finding" in enabled
     assert "--enable-finding" not in disabled
+
+
+def test_installed_profile_listener_registers_runtime_v2_structured_handlers(
+    tmp_path: Path,
+) -> None:
+    selected = profile(tmp_path, finding_enabled=False)
+    argv = node._listener_argv(selected)
+    _awf_config, awf_listen = node._operations_modules()
+
+    assert argv[argv.index("--profile") + 1] == str(selected.path.resolve())
+    assert argv[argv.index("--profile-sha256") + 1] == selected.digest.removeprefix("sha256:")
+    handler = awf_listen.build_runtime_handler_argv(
+        "/usr/bin/python3",
+        "/installed/awf_runtime_v2.py",
+        "command",
+        profile=str(selected.path.resolve()),
+        profile_sha256=selected.digest.removeprefix("sha256:"),
+        state_root=selected.state_root,
+    )
+    assert handler[0:3] == ["/usr/bin/python3", "/installed/awf_runtime_v2.py", "command"]
+    assert "{payload}" in handler
+    assert "--profile" in handler

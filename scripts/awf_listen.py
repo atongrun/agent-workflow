@@ -49,6 +49,10 @@ from agent_workflow.state_root import state_root_binding
 
 PREFLIGHT_REQUEST_TYPE = "control:awf-preflight-v1"
 PREFLIGHT_RESULT_TYPE = "control:awf-preflight-result-v1"
+RUNTIME_READINESS_REQUEST_TYPE = "control:awf-runtime-v2-readiness-v1"
+RUNTIME_READINESS_RESULT_TYPE = "control:awf-runtime-v2-readiness-result-v1"
+RUNTIME_COMMAND_TYPE = "task:awf-runtime-v2-command-v1"
+RUNTIME_RESULT_TYPE = "result:awf-runtime-v2-result-v1"
 
 DEFAULT_ON_TYPE = {
     "architect": "decision:awf-ready-v3",
@@ -441,6 +445,29 @@ def handler_argv_json(argv: list[str]) -> str:
     return json.dumps([str(value) for value in argv], ensure_ascii=False, separators=(",", ":"))
 
 
+def build_runtime_handler_argv(
+    python_exe: str,
+    runtime_script: str,
+    command: str,
+    *,
+    profile: str,
+    profile_sha256: str,
+    state_root: Path,
+) -> list[str]:
+    argv = [
+        python_exe,
+        runtime_script,
+        command,
+        "--payload-json",
+        "{payload}",
+        "--state-root",
+        str(state_root),
+    ]
+    if profile:
+        argv += ["--profile", profile, "--profile-sha256", profile_sha256]
+    return argv
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="awf_listen")
     p.add_argument("--role", required=True)
@@ -456,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--base-ref", default="main")
     p.add_argument("--gh-bin", default="gh")
     p.add_argument("--state-root", type=Path, default=None)
+    p.add_argument("--profile", default="", help=argparse.SUPPRESS)
+    p.add_argument("--profile-sha256", default="", help=argparse.SUPPRESS)
     p.add_argument("--node-launch-id", default="", help=argparse.SUPPRESS)
     p.add_argument(
         "--enable-preflight",
@@ -513,6 +542,7 @@ def main(argv: list[str] | None = None) -> int:
     script_dir = Path(__file__).resolve().parent
     role_script = str(script_dir / "awf_role.py")
     preflight_script = str(script_dir / "awf_preflight.py")
+    runtime_script = str(script_dir / "awf_runtime_v2.py")
     if a.role not in DEFAULT_ON_TYPE and not a.on_type:
         die(f"role '{a.role}' has no default --on-type; pass --on-type")
     on_type = a.on_type or DEFAULT_ON_TYPE[a.role]
@@ -563,10 +593,28 @@ def main(argv: list[str] | None = None) -> int:
     if a.enable_preflight and config_path is not None:
         os.environ["AWF_DISPATCH_ENV"] = str(config_path.resolve())
     active_types = [on_type]
+    legacy_secondary = ""
     if a.role == "coder" and on_type == DEFAULT_ON_TYPE["coder"]:
-        active_types.append("task:awf-rework-v3")
+        legacy_secondary = "task:awf-rework-v3"
     elif a.role == "architect" and on_type == DEFAULT_ON_TYPE["architect"]:
-        active_types.append("decision:awf-blocked-v3")
+        legacy_secondary = "decision:awf-blocked-v3"
+    if legacy_secondary:
+        active_types.append(legacy_secondary)
+    if bool(a.profile) != bool(a.profile_sha256):
+        die("runtime profile path and digest must be supplied together")
+    runtime_handlers: list[tuple[str, str]] = []
+    if a.profile:
+        runtime_handlers.append((RUNTIME_READINESS_REQUEST_TYPE, "readiness-request"))
+        if a.role in {"coder", "reviewer"}:
+            runtime_handlers.append((RUNTIME_COMMAND_TYPE, "command"))
+        if a.role == "architect":
+            runtime_handlers.extend(
+                [
+                    (RUNTIME_READINESS_RESULT_TYPE, "readiness-result"),
+                    (RUNTIME_RESULT_TYPE, "result"),
+                ]
+            )
+        active_types.extend(event_type for event_type, _command in runtime_handlers)
     os.environ["AWF_ACTIVE_ROUTE_TYPES"] = ",".join(active_types)
     os.environ["AGENT_BUS_TOKEN"] = token
     os.environ["AGENT_BUS_AGENT"] = a.role
@@ -600,17 +648,17 @@ def main(argv: list[str] | None = None) -> int:
         state_root=listener_root,
     )
     listen_argv += ["--on-argv", on_type, handler_argv_json(handler_argv)]
-    if len(active_types) > 1:
+    if legacy_secondary:
         rework_handler_argv = build_handler_argv(
             sys.executable,
             role_script,
             a.role,
-            on_type=active_types[1],
+            on_type=legacy_secondary,
             upstream_remote=a.upstream_remote,
             head_remote=a.head_remote,
             state_root=listener_root,
         )
-        listen_argv += ["--on-argv", active_types[1], handler_argv_json(rework_handler_argv)]
+        listen_argv += ["--on-argv", legacy_secondary, handler_argv_json(rework_handler_argv)]
     if a.enable_preflight and config_path is not None:
         preflight_root = listener_root
         listen_argv += [
@@ -634,6 +682,21 @@ def main(argv: list[str] | None = None) -> int:
                     "handle-result",
                     config_path=config_path.resolve(),
                     state_root=preflight_root,
+                )
+            ),
+        ]
+    for event_type, runtime_command in runtime_handlers:
+        listen_argv += [
+            "--on-argv",
+            event_type,
+            handler_argv_json(
+                build_runtime_handler_argv(
+                    sys.executable,
+                    runtime_script,
+                    runtime_command,
+                    profile=a.profile,
+                    profile_sha256=a.profile_sha256,
+                    state_root=listener_root,
                 )
             ),
         ]
