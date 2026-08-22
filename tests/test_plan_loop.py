@@ -164,6 +164,7 @@ def test_architect_context_and_taskcard_binding_are_closed(tmp_path: Path) -> No
     assert "# Exact Plan" in context
     assert "review-report-<TASK_ID>.md" in context
     assert "equal the Task ID character-for-character" in context
+    assert "agent/<TASK_ID>" in context
     assert (task_id, branch) == ("CARD-001", "codex/CARD-001")
     with pytest.raises(PlanLoopError, match="fresh upstream main"):
         validate_taskcard_binding(
