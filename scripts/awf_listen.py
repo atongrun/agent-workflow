@@ -59,9 +59,8 @@ DEFAULT_ON_TYPE = {
 
 
 def configure_network_bypass(environment: dict[str, str], bus_url: str) -> None:
-    """Keep the private Bus and the only supported GitHub boundary off stale proxies."""
-    for url in (bus_url, "https://github.com", "https://api.github.com"):
-        add_url_host_to_no_proxy(environment, url)
+    """Keep only the private Bus off host proxy routes."""
+    add_url_host_to_no_proxy(environment, bus_url)
 
 
 def _pid_alive(pid: object) -> bool:

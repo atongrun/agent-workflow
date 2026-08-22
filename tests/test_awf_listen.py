@@ -76,13 +76,13 @@ def test_plan_start_handler_uses_structured_payload_and_exact_profile(tmp_path: 
     assert argv[argv.index("--profile-sha256") + 1] == "sha256:" + "a" * 64
 
 
-def test_listener_bypasses_bus_and_supported_github_hosts() -> None:
+def test_listener_bypasses_only_the_private_bus_host() -> None:
     import awf_listen
 
     environment = {"NO_PROXY": "localhost", "no_proxy": "localhost"}
 
     awf_listen.configure_network_bypass(environment, "http://100.81.0.1:8800")
 
-    expected = {"localhost", "100.81.0.1", "github.com", "api.github.com"}
+    expected = {"localhost", "100.81.0.1"}
     assert set(environment["NO_PROXY"].split(",")) == expected
     assert environment["no_proxy"] == environment["NO_PROXY"]
