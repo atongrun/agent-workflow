@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .architect import parse_architect_decision
 from .artifact import (
     ArtifactError,
     PostflightContract,
@@ -352,7 +353,10 @@ class LocalRuntimeApplication:
             request.invocation_id,
             authorization,
             request.stage,
-            "reviewer" if request.stage is WorkflowStage.REVIEW else "coder",
+            {
+                WorkflowStage.REVIEW: "reviewer",
+                WorkflowStage.ARCHITECT: "architect",
+            }.get(request.stage, "coder"),
             request.attempt,
             request.delivery_id,
             request.payload_sha256,
@@ -425,6 +429,8 @@ class LocalRuntimeApplication:
         try:
             if request.stage is WorkflowStage.REVIEW:
                 self._finish_review(store, run_spec, request, command, workspace)
+            elif request.stage is WorkflowStage.ARCHITECT:
+                self._finish_architect(store, run_spec, request, command, workspace)
             else:
                 self._finish_coder(store, run_spec, request, command, workspace)
         except ArtifactError as exc:
@@ -772,6 +778,79 @@ class LocalRuntimeApplication:
                 outgoing.delivery_id,
                 outgoing.payload_sha256.removeprefix("sha256:"),
                 terminal,
+                effect_sha256,
+            ),
+            effect,
+            OutgoingIntent.from_envelope(outgoing),
+        )
+
+    def _finish_architect(
+        self,
+        store: AtomicRunStore,
+        run_spec: RunSpec | FreshRunSpec,
+        request: LocalStageRequest,
+        command: AuthorizationCommand,
+        workspace: str,
+    ) -> None:
+        if not isinstance(run_spec, FreshRunSpec):
+            raise _deny_provider("architect terminal decision requires FreshRunSpec")
+        report_path = Path(workspace) / run_spec.decision_report
+        verdict, fact = parse_architect_decision(report_path, run_spec.decision_report)
+        trusted_report = resolve_repo_file(
+            Path(request.trusted_repo), run_spec.decision_report, "Decision"
+        )
+        trusted_report.parent.mkdir(parents=True, exist_ok=True)
+        trusted_report.write_bytes(report_path.read_bytes())
+        result = store.journal(command.invocation_id).snapshot().result
+        assert result is not None
+        effect_sha256 = _digest(
+            {
+                "artifact_sha256": fact.sha256,
+                "verdict": verdict,
+                "trusted_commit": request.expected_commit,
+            }
+        )
+        effect = ValidationEffect(
+            command.authorization_sha256,
+            result.result_sha256,
+            fact.sha256,
+            effect_sha256,
+        )
+        try:
+            context = json.loads(request.input_text)
+        except json.JSONDecodeError:
+            context = {}
+        review_verdict = context.get("review_verdict") if isinstance(context, dict) else None
+        if verdict == "approve" and review_verdict == "PASS":
+            return
+        outcome = {
+            "approve": TerminalOutcome.BLOCKED,
+            "request_changes": TerminalOutcome.BLOCKED,
+            "reject": TerminalOutcome.REJECTED,
+            "escalate": TerminalOutcome.BLOCKED,
+        }[verdict]
+        payload = {"verdict": verdict, "review_verdict": review_verdict}
+        outgoing = ResultEnvelope.create(
+            run_id=run_spec.run_id,
+            task_id=run_spec.task_id,
+            run_spec_sha256=run_spec.sha256,
+            source_role="architect",
+            target_role="architect",
+            route=f"result:{outcome.value}",
+            source_invocation_id=command.invocation_id,
+            source_authorization_sha256=command.authorization_sha256,
+            target_invocation_id=f"terminal-{run_spec.run_id}",
+            causation_delivery_id=request.delivery_id,
+            payload=payload,
+        )
+        store.record_terminal(
+            TerminalCommand(
+                run_spec.sha256,
+                command.invocation_id,
+                command.authorization_sha256,
+                outgoing.delivery_id,
+                outgoing.payload_sha256.removeprefix("sha256:"),
+                outcome,
                 effect_sha256,
             ),
             effect,

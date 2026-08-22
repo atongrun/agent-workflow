@@ -39,6 +39,7 @@ from agent_workflow.runtime import (
     parse_review_report,
 )
 from agent_workflow.runtime.contracts import RenderedInvocation
+from agent_workflow.runtime.renderers import ARCHITECT_TERMINAL
 from tests.fixtures.runtime_v2_local_application_provider import ScriptedProviderLauncher
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -302,6 +303,34 @@ def as_fresh(fixture: Fixture) -> FreshRunSpec:
     )
 
 
+@dataclass
+class _ArchitectHandle:
+    process_identity_sha256: str
+    result: ProcessResult
+
+    def wait(self) -> ProcessResult:
+        return self.result
+
+
+class _ArchitectLauncher:
+    def __init__(self, delegate: ScriptedProviderLauncher, verdict: str) -> None:
+        self.delegate = delegate
+        self.verdict = verdict
+
+    def start(self, invocation: RenderedInvocation):
+        if any("terminal Agent Workflow decision" in item for item in invocation.argv):
+            raw = (
+                "# Decision\n\n## Verdict\n\n"
+                f"**Verdict:** {self.verdict}\n\n"
+                "## Rationale\n\nBounded evidence.\n\n"
+                "## Mandatory Actions\n\n- None.\n\n"
+                "## Optional Actions\n\n- None.\n\n"
+                "## Next Stage\n\ntrusted-merge\n"
+            ).encode()
+            return _ArchitectHandle(digest(invocation.sha256), ProcessResult(0, raw, b""))
+        return self.delegate.start(invocation)
+
+
 def authority_path(fixture: Fixture) -> Path:
     return fixture.state / "runtime-v2" / "runs" / fixture.spec.run_id / "authority.json"
 
@@ -507,6 +536,65 @@ def test_fresh_review_hands_off_to_architect_instead_of_terminal(
     assert incoming is not None
     assert incoming.route == fixture.spec.architect_route
     assert incoming.target_role == "architect"
+
+
+@pytest.mark.parametrize(
+    ("review_verdict", "decision_verdict", "expected_terminal"),
+    [
+        ("PASS", "approve", None),
+        ("PASS", "reject", TerminalOutcome.REJECTED),
+        ("BLOCKED", "approve", TerminalOutcome.BLOCKED),
+    ],
+)
+def test_fresh_architect_decision_is_journaled_without_mutation_authority(
+    local_runtime: Fixture,
+    review_verdict: str,
+    decision_verdict: str,
+    expected_terminal: TerminalOutcome | None,
+) -> None:
+    fixture = replace(local_runtime, spec=as_fresh(local_runtime))
+    fixture.app.launcher = _ArchitectLauncher(fixture.launcher, decision_verdict)
+    fixture.app.run(fixture.spec, fixture.request(WorkflowStage.IMPLEMENT, "implement", 1))
+    fixture.app.run(
+        fixture.spec,
+        fixture.request(WorkflowStage.REVIEW, "review", 1, verdict=review_verdict),
+    )
+    incoming = AtomicRunStore(
+        fixture.state, fixture.spec.run_id, "writer-local-fixture"
+    ).pending_handoff()
+    assert incoming is not None
+    context = json.dumps(
+        {
+            "task_id": fixture.spec.task_id,
+            "review_verdict": review_verdict,
+            "trusted_head": fixture.head(),
+        },
+        sort_keys=True,
+    )
+    request = LocalStageRequest(
+        invocation_id="invoke-architect",
+        stage=WorkflowStage.ARCHITECT,
+        attempt=1,
+        delivery_id=incoming.delivery_id,
+        payload_sha256=incoming.payload_sha256,
+        outgoing_target_invocation_id="terminal-architect",
+        provider_executable=str(Path(sys.executable).resolve()),
+        provider_environment=fixture.env,
+        input_text=context,
+        provider_args=(ARCHITECT_TERMINAL,),
+        source_repo=str(fixture.repo),
+        trusted_repo=str(fixture.repo),
+        expected_commit=fixture.head(),
+        workspace_state_dir=str(fixture.workspaces),
+        python_executable=str(Path(sys.executable).resolve()),
+    )
+
+    snapshot = fixture.app.run(fixture.spec, request)
+
+    assert snapshot.stage is WorkflowStage.ARCHITECT
+    assert snapshot.terminal is expected_terminal
+    assert (fixture.repo / fixture.spec.decision_report).is_file()
+    assert fixture.launcher.calls == ["invoke-implement", "invoke-review"]
 
 
 @pytest.mark.parametrize(
