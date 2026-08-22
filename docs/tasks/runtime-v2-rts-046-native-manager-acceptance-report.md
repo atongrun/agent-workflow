@@ -199,3 +199,36 @@ blocks.
 Before Phase 5, separately consider a small formal Agent Bus client release (likely v0.3.1) so the
 structured contract is identified by a release version instead of only commit/capability evidence.
 No release is published or authorized by RTS-046.
+
+## Scope `rts046-live-20260822-04`
+
+### Linux bounded attempt
+
+The owner selected one exact disposable Linux principal and authorized reversible linger. Original
+facts were linger `no`, eight enabled user units and absent disposable root/unit/registry. Linger was
+enabled only for that user. Because system Python lacked ensurepip/pip, an official standalone
+`virtualenv.pyz` was kept inside the disposable root and successfully installed exact Bus/Workflow
+clients without OS package changes.
+
+The safety approval boundary then rejected exporting existing credential values into the remote
+temporary config. This authorization was not bypassed. No profile, systemd unit, process, lease,
+event or lifecycle state was created. The exact root was inventoried and removed, linger restored to
+`no`, enabled-unit count reverified as eight, and unit/registry/state absence passed. Linux remains
+`EXTERNAL_BLOCKED` before manager acceptance.
+
+### Windows pre-logout checkpoint
+
+Windows created one new `-04` Workflow/profile/state/Task Scheduler identity using the compatible
+isolated Bus client. Doctor/install/start passed. Before logout, the listener was running with:
+
+- profile SHA-256 `bc10e72d...`;
+- identical process/lease launch ID `35c23c3be55a4934a9c975c6295af9c8`;
+- matching state-root binding and current definition digest;
+- recorded creation FILETIME and live exact process;
+- desired `running`, generation 2;
+- listening/connected log markers and no error; and
+- one acceptance task, old `-03` absent, console session ID 1 exact.
+
+This checkpoint precedes the single owner-authorized logout. After manual login, the same `-04`
+identity must supply continuity/recovery evidence before exact stop/uninstall. No reboot is
+authorized.

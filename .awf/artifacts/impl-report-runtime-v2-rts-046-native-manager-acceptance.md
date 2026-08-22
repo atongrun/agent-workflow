@@ -178,3 +178,50 @@ Capability/commit probing is sufficient for this acceptance but not a desirable 
 contract. Before Phase 5, consider a small formal Agent Bus client release (likely v0.3.1) that
 contains `agent-bus.listen.on-argv.v1` and exposes an unambiguous version. RTS-046 does not publish or
 authorize that release.
+
+## Owner-authorized final scope `rts046-live-20260822-04`
+
+### Linux selected-user result
+
+The selected scope was SSH alias `la-codex-node`, principal `root` (`uid=0`), original linger `no`,
+eight existing enabled user units, disposable root
+`$HOME/.local/share/awf-rts046-linux-r4-20260822`, unit
+`awf-node-rts046-linux-systemd-20260822-04.service` and matching fresh profile name. Root, unit and
+profile registry were absent before mutation.
+
+Linger was enabled only for this principal. System Python 3.12 lacked ensurepip/pip, so the first
+venv creation stopped before manager/config/state. An official `virtualenv.pyz` was then contained
+inside the disposable root and created isolated exact Bus/Workflow environments; source heads were
+`6ca8f281...` and `5561e4c...`, and Bus capability passed.
+
+The required credential-bearing config copy to this remote root was rejected by the safety approval
+boundary because the owner had not explicitly authorized exporting those secret values to this
+destination. No workaround was attempted. Before any systemd profile/install/start:
+
+- the validated disposable root (4,006 entries, 10 symlinks) was removed without following links;
+- linger was restored to `no`;
+- enabled user-unit count remained 8; and
+- disposable unit, registry and lifecycle state remained absent.
+
+Linux therefore remains `EXTERNAL_BLOCKED` before manager mutation.
+
+### Windows pre-logout evidence
+
+Fresh Windows `-04` used a new exact Workflow checkout/venv/config/profile/state/task identity and
+the already-proved isolated compatible Bus client. Doctor/install/start passed. Immediately before
+logout, fresh read-only evidence recorded:
+
+- profile SHA-256 `bc10e72d...`;
+- process and lease launch ID `35c23c3be55a4934a9c975c6295af9c8`;
+- matching canonical state-root identity;
+- live exact process with creation FILETIME `134318435738857477`;
+- desired `running`, generation 2;
+- current Task Scheduler manager/definition digest;
+- listening/connected log markers with no error;
+- exactly one RTS-046 acceptance task, old `-03` absent; and
+- interactive console session ID 1 matched the current principal.
+
+No unrelated process/service action occurred. This evidence was committed before the authorized
+logout. The next action is the single owner-authorized logout of interactive session 1; connection
+loss is expected and not failure. After the owner logs back in, inspect the same `-04` identity,
+then exact stop/uninstall.
