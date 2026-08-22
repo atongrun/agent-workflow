@@ -423,6 +423,75 @@ def test_posix_managed_stop_refuses_identity_drift_before_manager_signal(
     assert calls == []
 
 
+@pytest.mark.parametrize("manager_name", ["systemd", "launchd", "task-scheduler"])
+@pytest.mark.parametrize("root_evidence", ["missing", "partial", "drifted"])
+def test_managed_stop_requires_exact_process_state_root_before_native_signal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    manager_name: str,
+    root_evidence: str,
+):
+    profile = load_managed_profile(tmp_path, manager=manager_name)
+    profile.node_dir.mkdir(parents=True)
+    record = {
+        "pid": 4321,
+        "launch_id": "a" * 32,
+        "profile": str(profile.path),
+        "profile_sha256": profile.digest,
+        "role": profile.role,
+        "repo": str(profile.repo),
+    }
+    if root_evidence == "partial":
+        record["state_root"] = str(profile.state_root)
+    elif root_evidence == "drifted":
+        record.update(
+            state_root=str(tmp_path / "other-state"),
+            state_root_sha256="sha256:" + "f" * 64,
+        )
+    profile.process_path.write_text(json.dumps(record), encoding="utf-8")
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "role": profile.role,
+                "repo": str(profile.repo),
+                "state_root": str(profile.state_root),
+                "state_root_sha256": node.state_root_binding(profile.state_root),
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(node_service, "_require_installed", lambda value, manager: {})
+    monkeypatch.setattr(
+        node_service,
+        "_run",
+        lambda argv, **kwargs: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    if manager_name == "task-scheduler":
+        manager = node_service.TaskSchedulerAdapter(
+            profile,
+            run_command=lambda argv, **kwargs: calls.append(argv) or "",
+            current_user=node_service._current_windows_user(),
+        )
+    elif manager_name == "systemd":
+        manager = node_service.SystemdAdapter(profile)
+    else:
+        manager = node_service.LaunchdAdapter(profile)
+
+    with pytest.raises(node_service.NodeServiceError, match="profile identity drift"):
+        manager.stop()
+    assert calls == []
+    assert profile.process_path.is_file()
+    monkeypatch.setattr(node, "_pid_alive", lambda pid: False)
+    assert node_service._clear_exact_dead_stale_state(profile) is False
+    assert profile.process_path.is_file()
+
+
 def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
     tmp_path: Path,
 ):
@@ -550,6 +619,40 @@ def test_task_scheduler_upgrade_replaces_a_drifted_action_record(tmp_path: Path)
     assert len(creates) == 2
     upgraded = json.loads(install_path.read_text(encoding="utf-8"))
     assert upgraded["action_argv"] == node_service._task_reconcile_argv(profile)
+
+
+@pytest.mark.parametrize("drift", ["manager_id", "definition"])
+def test_installed_record_rejects_manager_target_and_definition_path_drift(
+    tmp_path: Path,
+    drift: str,
+):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    manager = node_service.TaskSchedulerAdapter(
+        profile,
+        run_command=lambda argv, **kwargs: "",
+        current_user=node_service._current_windows_user(),
+    )
+    manager.install()
+    install_path = profile.node_dir / "managed" / "install.json"
+    node_service._require_installed(profile, "task-scheduler")
+    record = json.loads(install_path.read_text(encoding="utf-8"))
+    if drift == "manager_id":
+        record["manager_id"] = r"\AgentWorkflow-foreign"
+    else:
+        alternate = tmp_path / "foreign-task.xml"
+        alternate.write_bytes(manager.definition.read_bytes())
+        record["definition"] = str(alternate)
+        record["definition_sha256"] = node_service._sha256(alternate)
+    install_path.write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.raises(node_service.NodeServiceError, match="installation drifted"):
+        node_service._require_installed(profile, "task-scheduler")
+    with pytest.raises(node_service.NodeServiceError, match="upgrade target identity drifted"):
+        node_service._require_upgrade_target(
+            profile,
+            "task-scheduler",
+            manager.task_name,
+        )
 
 
 def test_launchd_uninstall_allows_clean_reinstall(

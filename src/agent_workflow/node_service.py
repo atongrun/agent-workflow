@@ -308,6 +308,19 @@ def _install_record(profile) -> dict[str, object]:
     return value
 
 
+def _manager_target(profile, manager: str) -> tuple[str, Path]:
+    if manager == "systemd":
+        adapter = SystemdAdapter(profile)
+        return adapter.unit, adapter.definition
+    if manager == "launchd":
+        adapter = LaunchdAdapter(profile)
+        return adapter.label, adapter.definition
+    if manager == "task-scheduler":
+        adapter = TaskSchedulerAdapter(profile)
+        return adapter.task_name, adapter.definition
+    raise NodeServiceError(f"unsupported managed lifecycle manager: {manager}")
+
+
 def _remove_install_record(profile) -> None:
     (_service_dir(profile) / "install.json").unlink(missing_ok=True)
 
@@ -316,18 +329,20 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
     from agent_workflow import __version__
 
     record = _install_record(profile)
+    manager_id, definition = _manager_target(profile, manager)
     expected = {
         "manager": manager,
+        "manager_id": manager_id,
         "profile": str(Path(profile.path).resolve()),
         "profile_source": str(Path(profile.authoring_path).resolve()),
         "profile_sha256": profile.digest,
+        "definition": str(definition),
         "python": str(Path(sys.executable).resolve()),
         "awf_version": __version__,
         "action_argv": _manager_action_argv(profile, manager),
     }
     if any(record.get(key) != value for key, value in expected.items()):
         raise NodeServiceError("managed lifecycle installation drifted; run upgrade")
-    definition = Path(str(record.get("definition", "")))
     if not definition.is_file() or _sha256(definition) != record.get("definition_sha256"):
         raise NodeServiceError("managed lifecycle definition digest does not match its record")
     if _sha256(Path(sys.executable).resolve()) != record.get("python_sha256"):
@@ -337,11 +352,15 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
 
 def _require_upgrade_target(profile, manager: str, manager_id: str) -> dict[str, object]:
     record = _install_record(profile)
+    expected_manager_id, definition = _manager_target(profile, manager)
     expected = {
         "manager": manager,
-        "manager_id": manager_id,
+        "manager_id": expected_manager_id,
         "profile": str(Path(profile.path).resolve()),
+        "definition": str(definition),
     }
+    if manager_id != expected_manager_id:
+        raise NodeServiceError("managed lifecycle upgrade target identity drifted")
     if any(record.get(key) != value for key, value in expected.items()):
         raise NodeServiceError("managed lifecycle upgrade target identity drifted")
     return record
@@ -838,13 +857,7 @@ def _bound_live_listener_pid(profile) -> int | None:
         return None
     if not record or not lease:
         raise NodeServiceError("managed stop refused incomplete listener state")
-    expected = {
-        "profile": str(profile.path),
-        "profile_sha256": profile.digest,
-        "role": profile.role,
-        "repo": str(profile.repo),
-    }
-    if any(record.get(key) != value for key, value in expected.items()):
+    if not _managed_record_matches_profile(profile, record):
         raise NodeServiceError("managed stop refused profile identity drift")
     pid = record.get("pid")
     launch_id = record.get("launch_id", "")
@@ -855,6 +868,16 @@ def _bound_live_listener_pid(profile) -> int | None:
     if not _process_creation_identity_matches(record, pid):
         raise NodeServiceError("managed stop refused Windows process creation identity drift")
     return pid
+
+
+def _managed_record_matches_profile(profile, record: dict[str, object]) -> bool:
+    from agent_workflow import node
+
+    return bool(
+        node._record_matches_profile(profile, record)
+        and record.get("state_root") == str(profile.state_root)
+        and record.get("state_root_sha256") == node.state_root_binding(profile.state_root)
+    )
 
 
 def _process_creation_identity_matches(
@@ -910,13 +933,7 @@ def _clear_exact_dead_stale_state(profile) -> bool:
     if not record or not lease:
         return False
     launch_id = record.get("launch_id", "")
-    expected = {
-        "profile": str(profile.path),
-        "profile_sha256": profile.digest,
-        "role": profile.role,
-        "repo": str(profile.repo),
-    }
-    if any(record.get(key) != value for key, value in expected.items()):
+    if not _managed_record_matches_profile(profile, record):
         return False
     if not isinstance(launch_id, str) or not launch_id:
         return False
