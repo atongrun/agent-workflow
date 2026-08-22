@@ -4857,6 +4857,15 @@ def role_reviewer(a: argparse.Namespace) -> int:
         str(input_context["delivery_id"]),
         str(input_context["payload_sha256"]),
     )
+    # The normalized ReviewReport is already bound into the durable outbox and
+    # remains available in the durable model workspace.  Do not leave the
+    # trusted checkout dirty after the delivery has completed: the same managed
+    # Reviewer workspace must be reusable for the next dynamically authored
+    # card in a Plan loop.
+    try:
+        review_report_path.unlink(missing_ok=True)
+    except OSError as exc:
+        log(f"warning: failed to remove delivered ReviewReport: {exc}")
     return 0
 
 

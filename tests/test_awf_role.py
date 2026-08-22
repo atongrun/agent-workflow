@@ -3995,6 +3995,7 @@ def test_reviewer_routes_exactly_one_valid_verdict(
     assert payload["review_report_path"] == ns.review_report
     assert payload["tool"] == "opencode"
     assert payload["model"] == ""
+    assert not (Path(os.environ["AWF_REPO_DIR"]) / ns.review_report).exists()
 
 
 def test_pi_reviewer_rework_routes_back_to_frozen_opencode_coder(monkeypatch, tmp_path):
@@ -4318,7 +4319,7 @@ def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     assert len(send_calls) == 1
     assert len(pr_checks) == 2
     assert send_calls[0][0][3]["review_report"]["blocked_reason"] == ""
-    assert trusted_report.is_file()
+    assert not trusted_report.exists()
 
     monkeypatch.setattr(
         awf_role,
