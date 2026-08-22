@@ -62,6 +62,79 @@ def test_init_interactively_customizes_current_machine_roles(monkeypatch, tmp_pa
     assert "Finding: off" in output
 
 
+def test_plan_start_is_narrow_one_card_capability(monkeypatch, tmp_path, capsys):
+    observed: dict[str, object] = {}
+
+    def start_plan(**kwargs):
+        observed.update(kwargs)
+        return {"run_id": "plan-123", "status": "start_sent"}
+
+    monkeypatch.setitem(sys.modules, "awf_plan", SimpleNamespace(start_plan=start_plan))
+
+    result = cli.main(
+        [
+            "plan",
+            "start",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            "docs/plan.md",
+            "--one-card",
+        ]
+    )
+
+    assert result == 0
+    assert observed["mode"] == "one-card"
+    assert observed["coder_tool"] == "opencode"
+    assert observed["reviewer_tool"] == "opencode"
+    assert "initiating Agent may exit" in capsys.readouterr().out
+
+
+def test_init_withholds_ready_when_listener_activation_fails(monkeypatch, tmp_path, capsys):
+    capabilities = {
+        "agent_bus": {
+            "capabilities": ("agent-bus.listen.on-argv.v1",),
+            "provenance_sha256": "sha256:" + "1" * 64,
+        },
+        "tools": {
+            "opencode": {"available": False},
+            "pi": {"available": True},
+            "codex": {"available": False},
+        },
+    }
+    contract = facade.MachineContract(
+        repo=tmp_path,
+        config_path=tmp_path / ".awf/machine.json",
+        machine="mac",
+        project="project",
+        finding_enabled=False,
+        profiles=(),
+    )
+    monkeypatch.setattr(cli.facade, "discover_machine_capabilities", lambda *_a, **_k: capabilities)
+    monkeypatch.setattr(cli.facade, "initialize_machine", lambda **_kwargs: (contract, ()))
+    monkeypatch.setattr(
+        cli.facade,
+        "activate_machine",
+        lambda _contract: (_ for _ in ()).throw(facade.FacadeError("lease unavailable")),
+    )
+
+    result = cli.main(
+        [
+            "init",
+            "--repo",
+            str(tmp_path),
+            "--roles",
+            "architect",
+            "--non-interactive",
+        ]
+    )
+
+    assert result == 1
+    output = capsys.readouterr()
+    assert "configuration preserved, not Ready" in output.err
+    assert "Ready. All selected" not in output.out
+
+
 def run_awf(*args: str, cwd: Path = PROJECT_ROOT) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env.pop("PYTHONUTF8", None)

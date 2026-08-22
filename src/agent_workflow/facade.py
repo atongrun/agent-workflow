@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -539,6 +540,9 @@ def initialize_machine(
         )
         values["config"] = str(selected_config)
         values["finding_enabled"] = finding_enabled
+        # Managed Phase 5 roles use the existing no-model Fast/Deep handlers.
+        # Init only provisions registration; it never runs Deep.
+        values["enable_preflight"] = lifecycle == "managed"
         values_by_role[role] = values
 
     profile_root.mkdir(parents=True, exist_ok=True)
@@ -909,8 +913,118 @@ def start(
     return 0
 
 
+def activate_machine(
+    contract: MachineContract,
+    *,
+    readiness_timeout_seconds: float = 30.0,
+) -> tuple[dict[str, object], ...]:
+    """Install/start every selected local managed role and prove exact readiness.
+
+    Valid configuration is preserved on failure. Only listeners observed as not
+    running before this call are eligible for bounded exact rollback.
+    """
+    if readiness_timeout_seconds <= 0:
+        raise FacadeError("machine readiness timeout must be positive")
+    if any(profile.lifecycle_mode != "managed" for profile in contract.profiles):
+        raise FacadeError("normal awf init requires managed lifecycle for every selected role")
+    if any(profile.values.get("enable_preflight") is not True for profile in contract.profiles):
+        raise FacadeError("managed role profile does not register existing Preflight handlers")
+
+    selected: list[tuple[node.NodeProfile, bool]] = []
+    newly_started: list[node.NodeProfile] = []
+    ready: list[dict[str, object]] = []
+    try:
+        for profile in contract.profiles:
+            facts = node.lifecycle_facts(profile)
+            was_running = facts.get("running") is True
+            active = profile
+            if (
+                facts.get("installed") is False
+                and facts.get("installation", {}).get("status") == "not_installed"
+            ):
+                if node.install(profile):
+                    raise FacadeError(f"listener install failed for role={profile.role}")
+                active = node.load_installed_profile(str(profile.authoring_path)) or profile
+            elif facts.get("installed") is not True:
+                status = facts.get("installation", {}).get("status", "unknown")
+                raise FacadeError(
+                    f"listener install evidence is {status} for role={profile.role}; "
+                    "run awf node status and repair that exact profile"
+                )
+            else:
+                active = node.load_installed_profile(str(profile.authoring_path)) or profile
+            selected.append((active, was_running))
+
+        for active, was_running in selected:
+            if not was_running:
+                if node.start(active):
+                    raise FacadeError(f"listener start failed for role={active.role}")
+                newly_started.append(active)
+
+            deadline = time.monotonic() + readiness_timeout_seconds
+            last_error: Exception | None = None
+            while time.monotonic() < deadline:
+                try:
+                    if node.doctor(active, ttl_seconds=3600):
+                        raise node.NodeError("node doctor returned non-zero")
+                    readiness = node._local_readiness(active)
+                    report = node.doctor_report(
+                        active,
+                        readiness,
+                        ttl_seconds=3600,
+                        observed_at=node._now(),
+                    )
+                    if (
+                        report.get("configured") is True
+                        and report.get("installed") is True
+                        and report.get("running") is True
+                        and report.get("connected") is True
+                        and report.get("listener", {}).get("lease_bound") is True
+                    ):
+                        ready.append(report)
+                        break
+                    last_error = node.NodeError("exact listener readiness is incomplete")
+                except node.TransientBusReadinessError as exc:
+                    last_error = exc
+                time.sleep(0.25)
+            else:
+                detail = str(last_error or "exact listener readiness is incomplete")
+                raise FacadeError(
+                    f"listener not Ready for role={active.role}: {detail}; "
+                    "run awf doctor --role for the exact remediation"
+                )
+    except Exception as exc:
+        rollback_failures: list[str] = []
+        for active in reversed(newly_started):
+            try:
+                node.stop(active)
+            except (node.NodeError, OSError):
+                rollback_failures.append(active.role)
+        suffix = (
+            "; exact rollback needs inspection for roles=" + ",".join(rollback_failures)
+            if rollback_failures
+            else ""
+        )
+        if isinstance(exc, FacadeError):
+            raise FacadeError(str(exc) + suffix) from exc
+        raise FacadeError(
+            "machine listener activation failed; configuration was preserved" + suffix
+        ) from exc
+    return tuple(ready)
+
+
 def status(repo: Path, *, role: str = "", explain: bool = False) -> int:
     contract = _load_profile_contract(repo)
+    if isinstance(contract, MachineContract) and contract.profiles:
+        from agent_workflow.plan_loop import find_plan_run, plan_status_lines
+
+        plan_run = find_plan_run(
+            contract.profiles[0].state_root,
+            repo=contract.repo,
+        )
+        if plan_run is not None:
+            for line in plan_status_lines(plan_run.load()):
+                print(line)
     results = [
         node.status(profile, contract.run_id, explain=explain)
         for profile in _selected(contract, role)

@@ -4901,6 +4901,48 @@ def role_architect(a: argparse.Namespace) -> int:
         task_id = a.branch.rsplit("/", 1)[-1]
         run_id = getattr(a, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
         state_root = evidence.state_dir if evidence is not None else direct_entry_state_root()
+        if provenance is not None and evidence is not None:
+            try:
+                from awf_plan import PlanOperationError, handle_card_terminal
+
+                from agent_workflow.plan_loop import PlanLoopError
+
+                plan_result = handle_card_terminal(
+                    args=a,
+                    evidence=evidence,
+                    input_context=input_context,
+                    review_report=review_report,
+                    provenance=provenance,
+                    terminal_repo=Path(terminal_repo),
+                    implementation_sha256="sha256:" + artifact_sha256(report_path, a.report),
+                    review_sha256=canonical_payload_sha256(review_report),
+                )
+            except (PlanOperationError, PlanLoopError) as exc:
+                record(evidence, "plan_terminal_failed", reason=str(exc))
+                die(f"Plan terminal decision failed: {exc}")
+            if plan_result is not None:
+                try:
+                    RunLedger(state_root, run_id).mark_terminal(
+                        terminal_state=str(plan_result["terminal_state"]),
+                        terminal=dict(plan_result["terminal"]),
+                    )
+                except ControlPlaneDenied as exc:
+                    record(evidence, "terminal_ledger_failed", reason=str(exc))
+                    die(f"terminal decision could not be persisted: {exc}")
+                record(
+                    evidence,
+                    "plan_terminal_verified",
+                    terminal_state=plan_result["terminal_state"],
+                    branch=a.branch,
+                    commit=a.commit,
+                    pull_request=provenance["pull_request"],
+                )
+                complete_inbox(
+                    evidence,
+                    str(input_context["delivery_id"]),
+                    str(input_context["payload_sha256"]),
+                )
+                return 0
         pull_request = {
             "number": int(provenance["pull_request"]) if provenance is not None else 0,
             "base_sha": str(provenance["base_sha"]) if provenance is not None else "",

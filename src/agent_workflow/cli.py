@@ -410,6 +410,30 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan_start(args: argparse.Namespace) -> int:
+    scripts = operations_dir()
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        import awf_plan
+
+        result = awf_plan.start_plan(
+            repo=Path(args.repo),
+            plan=Path(args.plan),
+            mode="one-card",
+            coder_tool=args.coder_tool,
+            coder_model=args.coder_model,
+            reviewer_tool=args.reviewer_tool,
+            reviewer_model=args.reviewer_model,
+        )
+    except (RuntimeError, OSError) as exc:
+        print(f"ERROR: Plan start failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"plan_run={result['run_id']} status={result['status']}")
+    print("durable Architect start accepted; the initiating Agent may exit")
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     try:
         if getattr(args, "manifest", ""):
@@ -669,6 +693,10 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
         _print_detected_capabilities(capabilities)
         bindings = _configured_bindings(args, capabilities)
+        if bindings and args.lifecycle != "managed":
+            raise facade.FacadeError(
+                "normal awf init requires managed listeners; use awf enroll for compatibility"
+            )
         machine = args.machine or platform.node() or "local"
         project = args.project or repo.name
         contract, warnings = facade.initialize_machine(
@@ -689,6 +717,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     except (facade.FacadeError, node.NodeError, OSError) as exc:
         print(f"ERROR: init failed: {exc}", file=sys.stderr)
         return 1
+    try:
+        ready = facade.activate_machine(contract)
+    except (facade.FacadeError, node.NodeError, OSError) as exc:
+        print(
+            f"ERROR: init incomplete (configuration preserved, not Ready): {exc}",
+            file=sys.stderr,
+        )
+        return 1
     print("Configured roles on this machine:")
     for profile in contract.profiles:
         print(
@@ -700,7 +736,15 @@ def cmd_init(args: argparse.Namespace) -> int:
     for warning in warnings:
         print(f"Note: {warning}")
     print(f"Finding: {'on' if contract.finding_enabled else 'off'}")
-    print("Ready. Run awf doctor to verify server and lifecycle readiness.")
+    if ready:
+        print("Listeners:")
+        for report in ready:
+            profile = report["profile"]
+            print(
+                f"✓ {str(profile['role']).title():9} running / connected / "
+                "preflight-handlers-registered"
+            )
+    print("Ready. All selected local RoleBindings can receive events.")
     return 0
 
 
@@ -1198,6 +1242,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Bind one exact role profile as coder=PATH or reviewer=PATH",
     )
     plan_check_parser.set_defaults(func=cmd_plan_check)
+    plan_start_parser = plan_commands.add_parser(
+        "start", help="Start one exact committed Plan through the configured Architect"
+    )
+    plan_start_parser.add_argument("--repo", default=".")
+    plan_start_parser.add_argument("--plan", required=True)
+    plan_start_parser.add_argument("--one-card", action="store_true", required=True)
+    plan_start_parser.add_argument("--coder-tool", choices=("opencode",), default="opencode")
+    plan_start_parser.add_argument("--coder-model", default="")
+    plan_start_parser.add_argument(
+        "--reviewer-tool", choices=("opencode", "pi", "codex"), default="opencode"
+    )
+    plan_start_parser.add_argument("--reviewer-model", default="")
+    plan_start_parser.set_defaults(func=cmd_plan_start)
 
     dispatch_parser = subparsers.add_parser(
         "dispatch", help="Dispatch a TaskCard from its manifest"

@@ -469,6 +469,7 @@ def test_machine_init_reuses_one_opencode_for_distinct_coder_reviewer_workspaces
     assert len({profile.config_path for profile in contract.profiles}) == 1
     assert {profile.values["model"] for profile in contract.profiles} == {"deepseek"}
     assert all(profile.values["finding_enabled"] is False for profile in contract.profiles)
+    assert all(profile.values["enable_preflight"] is True for profile in contract.profiles)
     assert all(profile.repo.is_dir() for profile in contract.profiles)
     assert warnings == (
         "Coder and Reviewer use the same agent tool and model; review independence may be weaker.",
@@ -512,12 +513,116 @@ def test_machine_init_supports_pi_architect_only(monkeypatch, tmp_path: Path) ->
     assert profile.values["tool"] == "pi"
     assert profile.values["model"] == ""
     assert profile.values["on_type"] == "decision:awf-ready-v3"
+    assert profile.values["enable_preflight"] is True
     assert node.load_profile(str(profile.path)).digest == profile.digest
     machine = json.loads(contract.config_path.read_text(encoding="utf-8"))
     assert machine["roles"]["architect"]["model_selection"] == {
         "mode": "tool-default",
         "ref": "",
     }
+
+
+def _activation_profile(tmp_path: Path, role: str) -> node.NodeProfile:
+    return node.NodeProfile(
+        tmp_path / f"{role}.json",
+        {
+            "format": node.PROFILE_FORMAT,
+            "name": f"machine-{role}",
+            "role": role,
+            "repo": str((tmp_path / role).resolve()),
+            "tool": "pi" if role == "architect" else "opencode",
+            "model": "",
+            "on_type": "decision:awf-ready-v3" if role == "architect" else f"task:awf-{role}-v3",
+            "state_root": str((tmp_path / "state").resolve()),
+            "lifecycle": {"mode": "managed", "manager": "auto", "scope": "user"},
+            "enable_preflight": True,
+        },
+    )
+
+
+def test_activate_machine_starts_each_exact_role_and_waits_for_ready(monkeypatch, tmp_path):
+    profiles = (_activation_profile(tmp_path, "coder"), _activation_profile(tmp_path, "reviewer"))
+    contract = facade.MachineContract(
+        repo=tmp_path,
+        config_path=tmp_path / ".awf/machine.json",
+        machine="windows",
+        project="sample",
+        finding_enabled=False,
+        profiles=profiles,
+    )
+    started: list[str] = []
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {"installed": True, "running": False, "installation": {}},
+    )
+    monkeypatch.setattr(node, "load_installed_profile", lambda _value: None)
+    monkeypatch.setattr(node, "start", lambda profile: started.append(profile.role) or 0)
+    monkeypatch.setattr(node, "doctor", lambda _profile, **_kwargs: 0)
+    monkeypatch.setattr(node, "_local_readiness", lambda _profile: object())
+    monkeypatch.setattr(
+        node,
+        "doctor_report",
+        lambda profile, *_args, **_kwargs: {
+            "profile": {"role": profile.role},
+            "configured": True,
+            "installed": True,
+            "running": True,
+            "connected": True,
+            "listener": {"lease_bound": True},
+        },
+    )
+
+    ready = facade.activate_machine(contract, readiness_timeout_seconds=1)
+
+    assert started == ["coder", "reviewer"]
+    assert [item["profile"]["role"] for item in ready] == ["coder", "reviewer"]
+
+
+def test_activate_machine_rolls_back_only_newly_started_exact_listeners(monkeypatch, tmp_path):
+    profiles = (_activation_profile(tmp_path, "coder"), _activation_profile(tmp_path, "reviewer"))
+    contract = facade.MachineContract(
+        repo=tmp_path,
+        config_path=tmp_path / ".awf/machine.json",
+        machine="windows",
+        project="sample",
+        finding_enabled=False,
+        profiles=profiles,
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {"installed": True, "running": False, "installation": {}},
+    )
+    monkeypatch.setattr(node, "load_installed_profile", lambda _value: None)
+
+    def start(profile):
+        if profile.role == "reviewer":
+            raise node.NodeError("reviewer listener failed")
+        return 0
+
+    monkeypatch.setattr(node, "start", start)
+    monkeypatch.setattr(node, "doctor", lambda _profile, **_kwargs: 0)
+    monkeypatch.setattr(node, "_local_readiness", lambda _profile: object())
+    monkeypatch.setattr(
+        node,
+        "doctor_report",
+        lambda profile, *_args, **_kwargs: {
+            "profile": {"role": profile.role},
+            "configured": True,
+            "installed": True,
+            "running": True,
+            "connected": True,
+            "listener": {"lease_bound": True},
+        },
+    )
+    monkeypatch.setattr(node, "stop", lambda profile: stopped.append(profile.role) or 0)
+
+    with pytest.raises(facade.FacadeError, match="configuration was preserved"):
+        facade.activate_machine(contract, readiness_timeout_seconds=1)
+
+    assert stopped == ["coder"]
 
 
 def test_three_role_machine_has_static_supported_bindings_and_distinct_workspaces(

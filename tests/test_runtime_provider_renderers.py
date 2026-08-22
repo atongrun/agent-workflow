@@ -241,6 +241,29 @@ def test_pi_architect_is_a_real_read_only_renderer(tmp_path: Path) -> None:
     assert "--model" not in default_rendered.argv
 
 
+def test_pi_architect_terminal_decision_is_fresh_read_only_closed_mode(tmp_path: Path) -> None:
+    context_path = tmp_path / ".awf" / "terminal-context.md"
+    report = tmp_path / ".awf" / "decision.md"
+    spec = invocation_spec(
+        tmp_path,
+        role="architect",
+        provider="pi",
+        model="",
+        executable="pi-test",
+        input_path=context_path,
+        input_text="trusted terminal facts\n",
+        report_path=report,
+        provider_args=("terminal-decision",),
+    )
+
+    rendered = render_provider_invocation(spec)
+
+    assert "--no-session" in rendered.argv
+    assert "--no-approve" in rendered.argv
+    assert any("exactly one closed verdict" in token for token in rendered.argv)
+    assert all("TaskCard Markdown" not in token for token in rendered.argv)
+
+
 def test_invocation_and_rendered_identity_drift_with_every_process_input(tmp_path: Path) -> None:
     context = tmp_path / ".awf" / "pi-review-context.md"
     report = tmp_path / ".awf" / "review.md"

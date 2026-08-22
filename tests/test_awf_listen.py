@@ -20,6 +20,7 @@ def profile(tmp_path: Path, *, finding_enabled: bool) -> node.NodeProfile:
             "head_repo": "contributor/project",
             "state_root": str((tmp_path / "state").resolve()),
             "finding_enabled": finding_enabled,
+            "enable_preflight": True,
         },
     )
 
@@ -30,3 +31,39 @@ def test_profile_finding_opt_in_is_an_explicit_listener_argument(tmp_path: Path)
 
     assert "--enable-finding" in enabled
     assert "--enable-finding" not in disabled
+
+
+def test_profile_binds_plan_start_and_existing_preflight_registration(tmp_path: Path) -> None:
+    selected = profile(tmp_path, finding_enabled=False)
+    argv = node._listener_argv(selected)
+
+    assert argv[argv.index("--profile-path") + 1] == str(selected.authoring_path)
+    assert argv[argv.index("--profile-sha256") + 1] == selected.digest
+    assert "--enable-preflight" in argv
+
+
+def test_plan_start_handler_uses_structured_payload_and_exact_profile(tmp_path: Path) -> None:
+    import awf_listen
+
+    from agent_workflow.resources import operations_dir
+
+    argv = awf_listen.build_plan_start_handler_argv(
+        "python",
+        str(operations_dir() / "awf_plan.py"),
+        repo=tmp_path / "repo",
+        profile_path=str(tmp_path / "architect.json"),
+        profile_sha256="sha256:" + "a" * 64,
+        tool="pi",
+        model="",
+        config_path=tmp_path / "dispatch.env",
+        authority_manifest=tmp_path / "authority.json",
+        state_root=tmp_path / "state",
+        upstream_remote="upstream",
+        head_remote="fork",
+        head_repo="contributor/project",
+        gh_bin="gh",
+    )
+
+    assert "{payload.plan}" in argv
+    assert "{payload.architect}" in argv
+    assert argv[argv.index("--profile-sha256") + 1] == "sha256:" + "a" * 64
