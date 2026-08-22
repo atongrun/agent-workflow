@@ -648,6 +648,17 @@ modified. Windows logout/login was not authorized. No model/business event occur
 remains open for Linux and Windows login evidence; Phase 5 must not start. Consider a small formal
 Agent Bus client release before Phase 5, but do not publish it in RTS-046.
 
+A later owner window selected one Linux user and one Windows logout. Linux exact clients were built
+inside the disposable root and linger was enabled, but the execution safety layer refused remote
+credential export. No systemd lifecycle state was created; root and linger were restored exactly.
+Windows fresh `-04` performed real logout/login but exposed transient logon readiness plus PID-reuse
+stale convergence. Status denied the reused PID and normal stop made no signal. RTS-048 repaired only
+bounded pre-listener Bus readiness retry and strict creation-aware exact stale cleanup. Independent
+L3 re-review passed; ordinary CI `32551160937` and Binary Feasibility `32551160941` passed. Reviewed
+code exactly removed failed `-04` manager state without signal. Phase 4B remains open: Linux needs an
+approved credential path, and fresh Windows `-05` needs another logout authorization. Phase 5 must
+not start.
+
 Deliverables:
 
 - one enforceable Runtime package/module boundary with no `src` to bare packaged-script import cycle;
@@ -920,12 +931,12 @@ convergence evidence. RTS-043's independent adjudication found the combined Phas
 semantically complete; final focused re-review passed after documentation-only closeout findings
 were repaired. Phase 4A is closed. RTS-044/045 then closed local Phase 4B lifecycle conformance after
 repairing strict process-root and manager-target identity joins; no new lifecycle abstraction or
-state representation was added. RTS-047 then closed the venv native re-entry defect exposed by the
-first real LaunchAgent scope. RTS-046 then resolved old-client skew with isolated exact-master Bus
-clients and fresh `-03` passed real macOS plus non-disruptive Windows lifecycle evidence. No audited
-Linux user already has both linger and AWF/Bus configuration, and Windows logout/login lacks an owner
-window. Phase 4B remains open and Phase 5 is not eligible. The next action is those external
-prerequisites followed by a fresh RTS-046 identity, not an AWF Bus installer or boundary fallback.
+state representation was added. RTS-047 closed native venv re-entry; RTS-048 closed bounded login
+readiness and PID-reuse stale convergence. RTS-046 resolved client skew and `-03` passed macOS plus
+non-disruptive Windows lifecycle, but Linux credential export remains safety-blocked and failed
+Windows `-04` requires a fresh owner-authorized `-05` logout to prove the repair. Phase 4B remains
+open and Phase 5 is not eligible. The next action is those external authorizations followed by a
+fresh RTS-046 identity, not an AWF Bus installer or boundary fallback.
 No production/retained Bus operation, Store adoption or dual write,
 default switch, production state migration, native-launcher acceptance, release, retained-event
 operation or destructive cleanup is authorized.

@@ -253,3 +253,11 @@ occurred. Task/record/lease/log/install evidence remains preserved.
 This is a new L3 lifecycle defect: post-login transient readiness plus PID reuse leaves no safe
 automatic reconcile or exact-stop cleanup convergence. Freeze a bounded repair before any new
 acceptance identity.
+
+RTS-048 implemented bounded pre-listener readiness retry and strict creation-aware stale cleanup,
+passed independent L3 re-review, 884 local tests, ordinary CI `32551160937` and Binary Feasibility
+`32551160941`. Reviewed code then cleaned failed `-04` through normal stop/uninstall: process/lease/
+definition/install/task are absent; desired/log evidence remains; no PID signal occurred.
+
+Fresh `-05` was not created because the current owner continuation explicitly says not to perform
+another logout. Windows login acceptance therefore remains owner-blocked despite the repair PASS.

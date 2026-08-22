@@ -292,6 +292,25 @@ by another fresh RTS-046 identity. Before Phase 5, separately consider a formal 
 release (likely v0.3.1) so the structured contract is versioned rather than commit-probed; no release
 is authorized here.
 
+The owner then authorized one exact Linux user and one Windows logout. Linux linger was temporarily
+enabled and exact Bus/Workflow environments were built inside the declared disposable root without
+OS package changes. The safety approval boundary still refused exporting credential values to the
+remote root, so no config/profile/systemd state was created. The root was inventoried/removed,
+linger restored to `no`, enabled-unit count remained eight and unit/registry/state stayed absent.
+
+Windows fresh `-04` completed pre-logout exact identity and native WTS logout. After owner login,
+console session advanced from 1 to 2, but the logon reconcile hit transient Bus readiness and
+periodic triggers did not recover. The old PID was reused with a different creation FILETIME;
+status stayed stale and normal stop wrote desired stopped then denied without signal. RTS-048 added
+bounded pre-listener Bus readiness retry plus strict creation-aware stale cleanup, passed independent
+L3 re-review, 884 local tests, ordinary CI `32551160937` and Binary Feasibility `32551160941`.
+Reviewed code exactly cleaned `-04`; task/process/lease/definition/install state is absent and logs
+remain. `-04` is failure evidence forever.
+
+Phase 4B is still open. Linux requires a preconfigured credential path that the execution safety
+layer permits, and Windows requires a new owner-authorized logout for fresh `-05` because the current
+continuation explicitly prohibited another logout. Phase 5 remains prohibited.
+
 ## Current Handoff State: 2026-08-17
 
 The final fresh-machine no-model usability gate is green. The original benchmark's disposable

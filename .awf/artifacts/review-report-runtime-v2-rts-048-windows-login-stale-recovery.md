@@ -36,6 +36,8 @@ remains unchanged elsewhere.
 - Production nonblank/noncomment additions: 65/70.
 - Focused test raw additions: 220/220.
 - Reviewer environment lacked pytest; test counts remain author evidence pending exact-head CI.
+- Exact-head ordinary CI `32551160937`: PASS.
+- Exact-head Binary Feasibility `32551160941`: PASS.
 
 ## Continuation
 
@@ -52,6 +54,8 @@ its stale evidence/task. RTS-046 then requires fresh `-05`; Phase 5 remains proh
   "closed_high": 1,
   "focused_tests": "83 passed, 1 skipped",
   "full_tests": "884 passed, 5 skipped",
-  "next_gate": "exact-head CI then fresh RTS-046 -05"
+  "ci_run": "32551160937",
+  "binary_run": "32551160941",
+  "next_gate": "owner-authorized fresh RTS-046 -05 logout/login"
 }
 -->

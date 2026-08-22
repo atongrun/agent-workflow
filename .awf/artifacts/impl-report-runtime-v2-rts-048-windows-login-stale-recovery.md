@@ -60,6 +60,9 @@ regressions remain green.
 
 - Focused lifecycle suite: **83 passed, 1 skipped**.
 - Full repository suite: **884 passed, 5 skipped**.
+- Exact-head ordinary CI `32551160937`: PASS, including Windows recovery/configuration and all
+  installed-wheel jobs.
+- Exact-head Binary Feasibility `32551160941`: PASS across all native/Rust cells and aggregates.
 - Compileall, Ruff, Ruff format and `git diff --check`: PASS.
 - Production added nonblank/noncomment lines: 65; within 70-line budget.
 - Focused test added nonblank/noncomment lines: 192; raw additions 220, within budget.
@@ -69,5 +72,10 @@ regressions remain green.
 
 Only `node.py`, `node_service.py`, `test_node_service.py` and frozen evidence files changed. The
 preserved Windows `-04` identity remains failed with desired stopped and stale records/task intact.
-Independent L3 Review is `PASS`; exact-head CI remains before reviewed code may clean `-04`.
-Acceptance must then use fresh `-05`. Phase 5 remains prohibited.
+Independent L3 Review and exact-head CI are `PASS`. Reviewed code was installed into the original
+`-04` venv only for cleanup. The recorded PID was absent before cleanup; normal stop/uninstall
+removed process record, lease, definition, install record and Scheduled Task. Desired/log evidence
+remains. No manual signal or record edit occurred.
+
+The current owner window explicitly prohibits another logout, so fresh `-05` was not created.
+Phase 5 remains prohibited.

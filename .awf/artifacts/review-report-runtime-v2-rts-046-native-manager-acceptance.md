@@ -4,9 +4,9 @@
 
 `PASS_FOR_BLOCKED_ADJUDICATION`
 
-Zero remaining findings after one focused evidence-safety repair. Evidence supports macOS and
-non-disruptive Windows PASS, Linux `EXTERNAL_BLOCKED`, and Windows logout/login
-`BLOCKED_BY_OWNER_AUTHORIZATION`. It does not support Phase 4B PASS.
+Zero remaining findings after focused evidence and repair reviews. Evidence supports macOS and
+non-disruptive Windows PASS, Linux `EXTERNAL_BLOCKED`, and fresh Windows repair validation
+`OWNER_AUTHORIZATION_REQUIRED`. It does not support Phase 4B PASS.
 
 ## Adjudication
 
@@ -46,16 +46,28 @@ Fresh `rts046-live-20260822-03` then proved:
 
 Linux remains pre-install blocked, and Windows logout/login was not attempted.
 
+Owner-authorized `-04` performed a real Windows logout/login and exposed transient login readiness
+plus PID-reuse stale convergence. Status rejected the reused PID; normal stop wrote desired stopped
+then denied without signal. RTS-048 repaired only bounded pre-listener readiness and strict
+creation-aware stale cleanup. Independent re-review, exact-head CI and Binary Feasibility passed.
+Reviewed code then removed only failed `-04` manager evidence with no PID signal; `-04` remains
+failure evidence forever.
+
+The selected Linux user was restored exactly after the execution safety layer refused the remote
+credential export even with owner authorization: disposable root/unit/registry/state absent, linger
+restored `no`, enabled-unit count unchanged at eight.
+
 Initial focused review found real usernames in executable paths. They were replaced by `$HOME`,
 `%LOCALAPPDATA%` and `%TEMP%` expressions while retaining exact source/hash/capability/install-type/
 version provenance. Focused re-review closed the finding.
 
 ## Legal continuation
 
-External/operator prerequisites must be aligned without expanding Agent Workflow ownership:
+Remaining external/operator prerequisites must be aligned without expanding Agent Workflow
+ownership:
 
-- an already-lingering Linux user host with existing AWF/Bus configuration; and
-- an explicitly scheduled Windows logout/login window.
+- a platform-approved credential path into the exact disposable Linux root; and
+- a new explicitly scheduled Windows logout/login window for fresh `-05`.
 
 RTS-046 may then continue only with another fresh identity. Phase 5 is not authorized.
 
@@ -67,10 +79,12 @@ RTS-046 may then continue only with another fresh identity. Phase 5 is not autho
   "medium": 0,
   "low": 0,
   "task_status": "PARTIAL_PASS_LINUX_EXTERNAL_BLOCKED",
-  "owner_status": "BLOCKED_BY_OWNER_AUTHORIZATION",
+  "owner_status": "FRESH_WINDOWS_LOGOUT_AUTHORIZATION_REQUIRED",
   "phase_4b": "OPEN",
   "phase_5": "NOT_STARTED",
   "closed_high": 1,
-  "focused_rereview": "PASS"
+  "focused_rereview": "PASS",
+  "rts048_ci_run": "32551160937",
+  "rts048_binary_run": "32551160941"
 }
 -->

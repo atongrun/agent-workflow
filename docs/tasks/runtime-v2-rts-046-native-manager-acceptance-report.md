@@ -4,8 +4,8 @@
 
 `EXTERNAL_BLOCKED` on Linux qualification.
 
-Windows logout/login is separately `BLOCKED_BY_OWNER_AUTHORIZATION`. Phase 4B remains open and
-Phase 5 did not start.
+Windows fresh repair validation is separately `OWNER_AUTHORIZATION_REQUIRED`. Phase 4B remains open
+and Phase 5 did not start.
 
 Two preserved macOS scopes remain immutable failures. A third fresh scope resolves only the
 owner-authorized client-skew prerequisite and passes real macOS plus non-disruptive Windows manager
@@ -19,6 +19,8 @@ acceptance. Linux remains pre-install blocked.
 | RTS-047 repair | local/CI five-target evidence | PASS | preserves invoked venv interpreter path; does not itself prove manager acceptance |
 | `rts046-live-20260822-02` | macOS arm64, new venv/profile/state/log/label | failed at Agent Bus listener capability | confirms executable repair; never PASS |
 | `rts046-live-20260822-03` | exact compatible isolated Bus clients; new macOS and Windows identities | macOS PASS; Windows non-disruptive PASS | only successful manager evidence |
+| `rts046-live-20260822-04` | Windows real logout/login | failed post-login recovery; exactly cleaned after repair | never PASS |
+| RTS-048 repair | local/CI five-target evidence | PASS | bounded login readiness and creation-aware stale cleanup |
 | Linux entry audit | multiple existing Linux user hosts | blocked before install | no existing linger plus no existing AWF/Bus config on suitable hosts |
 | Windows login gate | existing Windows interactive-console user | owner-blocked after safe lifecycle PASS | logout/login owner window absent |
 
@@ -255,3 +257,11 @@ and logs remain preserved; no restart, manual record cleanup or uninstall was at
 
 `-04` therefore fails the logout/login acceptance. A narrow L3 repair is required before a fresh
 identity may continue.
+
+RTS-048 supplied that repair and passed independent review plus exact-head CI. Reviewed code was
+installed into the original `-04` venv solely for cleanup. Normal stop/uninstall removed the process
+record, lease, task definition, install record and Scheduled Task; desired/log evidence remains and
+no PID signal occurred.
+
+The current owner continuation prohibits another logout, so fresh `-05` was not created. Windows
+logout/login acceptance remains `OWNER_AUTHORIZATION_REQUIRED` for a new controlled window.

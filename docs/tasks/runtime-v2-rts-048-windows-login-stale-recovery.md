@@ -85,21 +85,21 @@ After Review/CI PASS, closeout may additionally update:
 
 ## Acceptance criteria
 
-- [ ] Task ID equals branch leaf and every changed path remains in frozen scope.
-- [ ] Only explicit transient Bus health failure is retried, with a fixed bounded attempt/delay budget.
-- [ ] Desired `stopped` between attempts prevents all further reconcile/start effects.
-- [ ] Non-transient readiness, identity and configuration failures are attempted once and preserved.
-- [ ] Exact Windows creation mismatch plus complete record/lease join clears only stale evidence and
+- [x] Task ID equals branch leaf and every changed path remains in frozen scope.
+- [x] Only explicit transient Bus health failure is retried, with a fixed bounded attempt/delay budget.
+- [x] Desired `stopped` between attempts prevents all further reconcile/start effects.
+- [x] Non-transient readiness, identity and configuration failures are attempted once and preserved.
+- [x] Exact Windows creation mismatch plus complete record/lease join clears only stale evidence and
       never signals/taskkills the reused PID.
-- [ ] Missing/incomplete/drifted identity or a distinct live lease PID remains preserved with zero
+- [x] Missing/incomplete/drifted identity or a distinct live lease PID remains preserved with zero
       native calls.
-- [ ] Reconcile can acquire a new foreground identity only after exact stale cleanup; stop/uninstall
+- [x] Reconcile can acquire a new foreground identity only after exact stale cleanup; stop/uninstall
       can converge through the exact manager target without signaling the reused PID.
-- [ ] Existing matching-creation Task Scheduler taskkill and all POSIX lifecycle behavior remain green.
-- [ ] Focused additions are at most 70 production nonblank/noncomment lines and 220 test lines; no
+- [x] Existing matching-creation Task Scheduler taskkill and all POSIX lifecycle behavior remain green.
+- [x] Focused additions are at most 70 production nonblank/noncomment lines and 220 test lines; no
       dependency, representation or abstraction is added.
-- [ ] Focused/full tests, Ruff/format and exact-head cross-platform CI pass.
-- [ ] One independent L3 Gate Review returns `PASS`; semantic findings receive focused re-review.
+- [x] Focused/full tests, Ruff/format and exact-head cross-platform CI pass.
+- [x] One independent L3 Gate Review returns `PASS`; semantic findings receive focused re-review.
 - [ ] Preserved `-04` is cleaned only through reviewed code; acceptance resumes under fresh `-05`.
 
 ## Verification
