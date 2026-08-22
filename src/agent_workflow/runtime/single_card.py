@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -15,6 +16,7 @@ from typing import Mapping
 from agent_workflow.node import NodeProfile
 
 from .contracts import FreshRunSpec, ModelSelection, RoleBinding, _canonical_bytes
+from .transport import CommandEnvelope, ResultEnvelope
 
 READINESS_REQUEST_TYPE = "control:awf-runtime-v2-readiness-v1"
 READINESS_RESULT_TYPE = "control:awf-runtime-v2-readiness-result-v1"
@@ -67,6 +69,35 @@ class ReadinessFact:
             if not re.fullmatch(r"[0-9a-f]{64}", value):
                 raise SingleCardError(f"readiness {name} digest is invalid")
 
+    @classmethod
+    def from_mapping(cls, value: object) -> ReadinessFact:
+        if not isinstance(value, Mapping):
+            raise SingleCardError("readiness result must be an object")
+        required = {
+            "nonce",
+            "expires_at",
+            "binding",
+            "source_commit",
+            "tool_executable",
+            "tool_version_sha256",
+            "bus_executable",
+            "bus_provenance_sha256",
+            "bus_capabilities",
+        }
+        if set(value) != required or not isinstance(value["bus_capabilities"], list):
+            raise SingleCardError("readiness result fields are invalid")
+        return cls(
+            nonce=str(value["nonce"]),
+            expires_at=value["expires_at"],  # type: ignore[arg-type]
+            binding=RoleBinding.from_mapping(value["binding"], "readiness binding"),
+            source_commit=str(value["source_commit"]),
+            tool_executable=str(value["tool_executable"]),
+            tool_version_sha256=str(value["tool_version_sha256"]),
+            bus_executable=str(value["bus_executable"]),
+            bus_provenance_sha256=str(value["bus_provenance_sha256"]),
+            bus_capabilities=tuple(str(item) for item in value["bus_capabilities"]),
+        )
+
 
 def role_binding_from_profile(profile: NodeProfile) -> RoleBinding:
     model = str(profile.values.get("model", ""))
@@ -79,6 +110,117 @@ def role_binding_from_profile(profile: NodeProfile) -> RoleBinding:
         profile_sha256=profile.digest.removeprefix("sha256:"),
         workspace=str(profile.repo),
     )
+
+
+class AgentBusClient:
+    """Small synchronous source-side adapter over the independently configured client."""
+
+    def __init__(
+        self,
+        *,
+        executable: str,
+        environment: Mapping[str, str],
+        state_root: str | Path,
+        timeout_seconds: int = 60,
+    ) -> None:
+        self.executable = executable
+        self.environment = dict(environment)
+        self.state_root = Path(state_root).resolve()
+        self.timeout_seconds = timeout_seconds
+
+    def _send(self, *, to_role: str, event_type: str, payload: dict[str, object]) -> None:
+        completed = subprocess.run(
+            [
+                self.executable,
+                "send",
+                "--from",
+                "architect",
+                "--to",
+                to_role,
+                "--type",
+                event_type,
+                "--payload",
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+            ],
+            env=self.environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if completed.returncode:
+            raise SingleCardError(f"Agent Bus send to {to_role} failed before confirmation")
+
+    def probe(
+        self,
+        *,
+        role: str,
+        agent_tool: str,
+        model_selection: ModelSelection,
+        source_commit: str,
+    ) -> ReadinessFact:
+        nonce = secrets.token_hex(16)
+        expires_at = int(time.time()) + self.timeout_seconds
+        self._send(
+            to_role=role,
+            event_type=READINESS_REQUEST_TYPE,
+            payload={
+                "nonce": nonce,
+                "expires_at": expires_at,
+                "source_commit": source_commit,
+                "selection": {
+                    "role": role,
+                    "agent_tool": agent_tool,
+                    "model_selection": model_selection.to_mapping(),
+                },
+            },
+        )
+        path = self.state_root / "runtime-v2" / "readiness" / nonce / f"{role}.json"
+        deadline = time.monotonic() + self.timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                fact = ReadinessFact.from_mapping(json.loads(path.read_text(encoding="utf-8")))
+            except FileNotFoundError:
+                time.sleep(0.05)
+                continue
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise SingleCardError("remote readiness result is invalid") from exc
+            if (
+                fact.nonce != nonce
+                or fact.expires_at != expires_at
+                or fact.expires_at < int(time.time())
+                or fact.binding.role != role
+                or fact.binding.agent_tool != agent_tool
+                or fact.binding.model_selection != model_selection
+                or fact.source_commit != source_commit
+            ):
+                raise SingleCardError("remote readiness result binding drifted")
+            return fact
+        raise SingleCardError(
+            f"remote {role} is not ready; start its configured AWF profile and retry"
+        )
+
+    def invoke(self, envelope: CommandEnvelope) -> ResultEnvelope:
+        self._send(
+            to_role=envelope.target_role,
+            event_type=COMMAND_TYPE,
+            payload={"envelope": envelope.encode().decode("utf-8")},
+        )
+        deadline = time.monotonic() + self.timeout_seconds
+        inbox = self.state_root / "runtime-v2" / "inbox" / envelope.run_id
+        while time.monotonic() < deadline:
+            if inbox.is_dir():
+                for path in sorted(inbox.glob("*.json")):
+                    try:
+                        result = ResultEnvelope.decode(path.read_bytes())
+                    except (OSError, ValueError):
+                        continue
+                    if result.causation_delivery_id == envelope.delivery_id:
+                        return result
+            time.sleep(0.05)
+        raise SingleCardError(
+            "worker result was not observed; preserve the same command identity and inspect status"
+        )
 
 
 def _git(repo: Path, *args: str, input_bytes: bytes | None = None) -> bytes:

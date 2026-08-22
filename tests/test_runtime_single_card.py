@@ -5,12 +5,14 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from agent_workflow.runtime import (
     AtomicRunStore,
     AuthorizationCommand,
+    CommandEnvelope,
     ContractError,
     DecisionOutcome,
     FreshRunSpec,
@@ -32,7 +34,9 @@ from agent_workflow.runtime import (
 )
 from agent_workflow.runtime.renderers import ARCHITECT_TERMINAL
 from agent_workflow.runtime.single_card import (
+    COMMAND_TYPE,
     REQUIRED_BUS_CAPABILITY,
+    AgentBusClient,
     ReadinessFact,
     active_run_path,
     compile_fresh_run_spec,
@@ -385,3 +389,92 @@ def test_readiness_requires_structured_argv_capability(tmp_path: Path) -> None:
             bus_provenance_sha256=digest("bus"),
             bus_capabilities=(),
         )
+
+
+def test_agent_bus_adapter_uses_versioned_tags_and_exact_result_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = fresh_spec(tmp_path)
+    observed_types: list[str] = []
+
+    def fake_run(argv, **_kwargs):
+        event_type = argv[argv.index("--type") + 1]
+        observed_types.append(event_type)
+        payload = json.loads(argv[argv.index("--payload") + 1])
+        if "readiness" in event_type and "result" not in event_type:
+            nonce = payload["nonce"]
+            value = {
+                "nonce": nonce,
+                "expires_at": payload["expires_at"],
+                "binding": spec.coder.to_mapping(),
+                "source_commit": spec.frozen_base,
+                "tool_executable": "/usr/bin/true",
+                "tool_version_sha256": digest("tool"),
+                "bus_executable": "/usr/bin/true",
+                "bus_provenance_sha256": digest("bus"),
+                "bus_capabilities": [REQUIRED_BUS_CAPABILITY],
+            }
+            path = tmp_path / "state" / "runtime-v2" / "readiness" / nonce / "coder.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(value), encoding="utf-8")
+        elif event_type == COMMAND_TYPE:
+            command = CommandEnvelope.decode(payload["envelope"].encode("utf-8"))
+            result = ResultEnvelope.create(
+                run_id=command.run_id,
+                task_id=command.task_id,
+                run_spec_sha256=command.run_spec_sha256,
+                source_role="coder",
+                target_role="architect",
+                route="result:awf-runtime-v2-result-v1",
+                source_invocation_id=command.target_invocation_id,
+                source_authorization_sha256=digest("worker"),
+                target_invocation_id="source-result",
+                causation_delivery_id=command.delivery_id,
+                payload={"kind": "coder"},
+            )
+            path = (
+                tmp_path
+                / "state"
+                / "runtime-v2"
+                / "inbox"
+                / command.run_id
+                / f"{result.delivery_id.removeprefix('awfv2:')}.json"
+            )
+            path.parent.mkdir(parents=True)
+            path.write_bytes(result.encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentBusClient(
+        executable="/usr/bin/true",
+        environment={},
+        state_root=tmp_path / "state",
+        timeout_seconds=1,
+    )
+    fact = client.probe(
+        role="coder",
+        agent_tool="opencode",
+        model_selection=spec.coder.model_selection,
+        source_commit=spec.frozen_base,
+    )
+    command = CommandEnvelope.create(
+        run_id=spec.run_id,
+        task_id=spec.task_id,
+        run_spec_sha256=spec.sha256,
+        source_role="architect",
+        target_role="coder",
+        route=spec.implement_route,
+        source_invocation_id="source",
+        source_authorization_sha256=digest("source"),
+        target_invocation_id="coder-one",
+        payload={"kind": "test"},
+    )
+
+    result = client.invoke(command)
+
+    assert fact.binding == spec.coder
+    assert result.causation_delivery_id == command.delivery_id
+    assert observed_types == [
+        "control:awf-runtime-v2-readiness-v1",
+        "task:awf-runtime-v2-command-v1",
+    ]

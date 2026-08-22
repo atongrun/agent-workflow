@@ -86,12 +86,17 @@ def _atomic_bytes(path: Path, raw: bytes) -> None:
 def readiness_request(args: argparse.Namespace) -> None:
     profile = _profile(args.profile, args.profile_sha256)
     payload = _payload(args.payload_json)
-    required = {"nonce", "expires_at", "source_commit", "binding"}
+    required = {"nonce", "expires_at", "source_commit", "selection"}
     if set(payload) != required:
         raise HandlerError("readiness request fields are invalid")
     binding = role_binding_from_profile(profile)
-    if payload["binding"] != binding.to_mapping():
-        raise HandlerError("readiness requested binding does not match this listener")
+    expected_selection = {
+        "role": binding.role,
+        "agent_tool": binding.agent_tool,
+        "model_selection": binding.model_selection.to_mapping(),
+    }
+    if payload["selection"] != expected_selection:
+        raise HandlerError("readiness requested role/tool/model does not match this listener")
     source_commit = str(payload["source_commit"])
     observed = subprocess.run(
         [
