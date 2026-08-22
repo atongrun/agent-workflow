@@ -57,6 +57,22 @@ The onboarding matrix must reflect renderers that can actually construct an invo
 Legacy lower-level profiles and commands remain available. `architect + none` remains valid for the
 existing deterministic terminal consumer but is not advertised as an agent-tool binding.
 
+### Agent Tool model selection
+
+- Agent Workflow assumes each selected Agent Tool is already installed, authenticated, and owns its
+  provider/model configuration. Init must not log in, write credentials/endpoints, add providers,
+  provision models, or mutate the tool's default/global configuration.
+- Each role binding persists `model_selection` as either `tool-default` with no reference or
+  `explicit` with one opaque tool-native reference. The existing profile/runtime `model` string
+  remains the execution seam: empty for tool-default so renderers omit a model flag, or the exact
+  opaque reference so the renderer passes the tool-native model argument.
+- Manual entry plus tool-default is always supported. A stable local credential-safe model listing
+  MAY improve the UI, but Phase 5-01 must not parse private tool configuration, query remote provider
+  APIs, add a provider/model registry, or require discovery for success.
+- Explicit references receive only bounded local syntax validation unless the tool exposes a stable
+  non-model-invoking validation command. A later tool rejection fails normally; explicit never
+  silently falls back to tool-default.
+
 ### Pi Architect
 
 - Extend the existing closed renderer dispatch narrowly for `role=architect, provider=pi`.
@@ -119,6 +135,9 @@ existing deterministic terminal consumer but is not advertised as an agent-tool 
       `--on-argv`, and installed provider executables without invoking a model or sending an event.
 - [ ] Deterministic defaults prefer Pi Architect and OpenCode Coder/Reviewer where available; the
       interactive flow can accept or override role/tool/model choices.
+- [ ] Tool-default is persisted explicitly in the machine role binding while the profile model is
+      empty and the renderer omits `--model`; an explicit opaque reference is persisted and rendered
+      unchanged without tool configuration mutation, remote discovery or silent fallback.
 - [ ] Windows-like Coder+Reviewer OpenCode/same-model init succeeds, emits one non-blocking
       independence warning, reuses one executable, and creates distinct identities/profiles/repos.
 - [ ] Mac-like Architect-only Pi init succeeds without Coder/Reviewer and the profile passes local
