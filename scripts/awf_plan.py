@@ -640,7 +640,7 @@ def _persist_and_dispatch_taskcard(
         "frozen_base": frozen_base,
         "status": "dispatching",
     }
-    store.update(status="card_dispatching", current_card=card)
+    store.update(status="card_dispatching", current_card=card, stop_reason="")
 
     import awf_dispatch
 
@@ -713,7 +713,12 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     if existing.get("status") == "card_active":
         return existing
     invocation = existing.get("architect_invocation")
-    if isinstance(invocation, dict):
+    if isinstance(invocation, dict) and not (
+        invocation.get("kind") == "taskcard"
+        and invocation.get("status") == "result_persisted"
+        and isinstance(existing.get("current_card"), dict)
+        and existing.get("status") in {"card_dispatching", "dispatch_ambiguous", "dispatch_blocked"}
+    ):
         raise PlanOperationError("Architect invocation already started; Pi replay is forbidden")
     plan_bytes = _checkout_plan_main(repo, plan)
     _run_authoring_fast(args, store=store, repo=repo)

@@ -230,6 +230,99 @@ def test_invalid_pi_taskcard_result_is_persisted_and_never_replayed(monkeypatch,
     assert not (repo / ".awf" / f"architect-context-{run['run_id']}.md").exists()
 
 
+def test_handle_start_resumes_persisted_result_after_ambiguous_dispatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    binding, plan, payload = facts(tmp_path)
+    repo = tmp_path / "repo"
+    (repo / "docs" / "tasks").mkdir(parents=True)
+    args = handler_args(tmp_path, payload)
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=repo)
+    card_path = repo / "docs" / "tasks" / "CARD-001.md"
+    card_path.write_text(
+        """# TaskCard
+
+## Task ID
+
+CARD-001
+
+<!-- awf-reviewer-selection
+{"coder":{"model":"","tool":"opencode"},"reviewer":{"model":"","tool":"opencode"}}
+-->
+""",
+        encoding="utf-8",
+    )
+    store.update(
+        status="dispatch_ambiguous",
+        stop_reason="business dispatch failed or became ambiguous; no automatic retry",
+        architect_invocation={
+            "kind": "taskcard",
+            "status": "result_persisted",
+            "authorization_sha256": "f" * 64,
+            "result_sha256": "e" * 64,
+        },
+        current_card={
+            "task_id": "CARD-001",
+            "path": "docs/tasks/CARD-001.md",
+            "branch": "codex/CARD-001",
+            "frozen_base": plan.main_sha,
+            "status": "dispatching",
+        },
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(awf_plan, "_checkout_plan_main", lambda *_a, **_k: b"# Plan\n")
+    monkeypatch.setattr(
+        awf_plan,
+        "_run_authoring_fast",
+        lambda *_a, **_k: calls.append("authoring-fast") or {"status": "PASS"},
+    )
+
+    def provider_spawn(*_a, **_k):
+        calls.append("provider-replay")
+        raise AssertionError("provider must not be re-invoked for a persisted result")
+
+    monkeypatch.setattr(awf_plan, "spawn_rendered", provider_spawn)
+    monkeypatch.setattr(awf_plan, "_git", lambda *_a, **_k: "5" * 40)
+
+    def dispatch(_args, *, before_send):
+        calls.append("dispatch-reprepared")
+
+    monkeypatch.setattr(awf_dispatch, "dispatch", dispatch)
+
+    result = awf_plan.handle_start(args)
+
+    assert calls == ["authoring-fast", "dispatch-reprepared"]
+    assert result["status"] == "card_active"
+    assert result["current_card"]["branch"] == "codex/CARD-001"
+    assert result["stop_reason"] == ""
+
+
+def test_handle_start_refuses_replay_when_invocation_is_not_durably_persisted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    binding, plan, payload = facts(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    args = handler_args(tmp_path, payload)
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=repo)
+    store.update(
+        status="architect_taskcard_running",
+        architect_invocation={
+            "kind": "taskcard",
+            "status": "launch_intent",
+            "authorization_sha256": "f" * 64,
+        },
+    )
+
+    monkeypatch.setattr(awf_plan, "_checkout_plan_main", lambda *_a, **_k: b"# Plan\n")
+
+    with pytest.raises(awf_plan.PlanOperationError, match="Pi replay is forbidden"):
+        awf_plan.handle_start(args)
+
+
 def test_handle_start_orders_fast_before_pi_and_deep_before_business_send(
     monkeypatch, tmp_path: Path
 ) -> None:
