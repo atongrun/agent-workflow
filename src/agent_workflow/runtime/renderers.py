@@ -91,7 +91,14 @@ def _require(spec: InvocationSpec, provider: str, roles: set[str]) -> None:
 class OpenCodeRenderer:
     def render(self, spec: InvocationSpec) -> RenderedInvocation:
         _require(spec, "opencode", {"architect", "coder", "reviewer"})
-        allowed = {(ATTACH_INPUT,)} if spec.role == "coder" else {(), (ATTACH_INPUT,)}
+        if spec.role == "coder":
+            allowed = {(ATTACH_INPUT,)}
+        elif spec.role == "architect":
+            # Architect modes select the instruction contract only; the argv
+            # shape stays the shared bound prompt form.
+            allowed = {(), (ATTACH_INPUT,), ("milestone-next",), ("terminal-decision",)}
+        else:
+            allowed = {(), (ATTACH_INPUT,)}
         if spec.provider_args not in allowed:
             raise ContractError("OpenCode provider options are invalid")
         argv = ["run", "--dir", spec.workspace]
