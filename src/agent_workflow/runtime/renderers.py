@@ -40,8 +40,9 @@ def _architect_instruction(mode: tuple[str, ...]) -> str:
         return (
             "Return exactly one complete self-contained TaskCard as the final output. "
             "Do not edit, persist, dispatch, merge, or authorize anything. The trusted parser "
-            "requires literal HTML-comment blocks named awf-reviewer-selection and awf-postflight; "
-            "do not replace either block with a Markdown heading, prose, bare JSON, or a code fence. "
+            "requires literal HTML-comment blocks named awf-reviewer-selection and "
+            "awf-postflight; do not replace either block with a Markdown heading, prose, "
+            "bare JSON, or a code fence. "
             "Use strict JSON with double-quoted keys and values inside those exact comment blocks."
         )
     if mode == ("terminal-decision",):
