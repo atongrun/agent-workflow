@@ -378,7 +378,14 @@ def _preflight_args(
     repo: Path,
     intent: str,
     model_tool: str = "",
+    binding: ArchitectBinding | None = None,
 ) -> argparse.Namespace:
+    resolved_model_tool = model_tool or getattr(args, "model_tool", "")
+    if not resolved_model_tool and binding is not None:
+        # The managed listener handler receives the tool binary through its
+        # environment (AWF_<TOOL>_BIN); resolve the same frozen selection the
+        # provider invocation itself uses for the version-only probe.
+        resolved_model_tool = _architect_executable(binding)
     return argparse.Namespace(
         repo=repo,
         config=Path(args.config).resolve(),
@@ -389,7 +396,7 @@ def _preflight_args(
         upstream_remote=args.upstream_remote,
         head_remote=args.head_remote,
         gh_bin=args.gh_bin,
-        model_tool=model_tool or getattr(args, "model_tool", ""),
+        model_tool=resolved_model_tool,
         model_tool_policy="required",
         run_id="",
         profile="loop",
@@ -431,11 +438,14 @@ def _run_authoring_fast(
     *,
     store: PlanRunStore,
     repo: Path,
+    binding: ArchitectBinding | None = None,
 ) -> dict[str, object]:
     import awf_preflight
 
     with _preflight_environment(Path(args.config).resolve()):
-        report = awf_preflight.run_fast(_preflight_args(args, repo=repo, intent="taskcard")).report
+        report = awf_preflight.run_fast(
+            _preflight_args(args, repo=repo, intent="taskcard", binding=binding)
+        ).report
     current = store.load().get("preflight")
     preflight = dict(current) if isinstance(current, dict) else {}
     preflight["authoring"] = report
@@ -450,12 +460,13 @@ def _run_dispatch_preflight(
     *,
     store: PlanRunStore,
     repo: Path,
+    binding: ArchitectBinding | None = None,
 ) -> dict[str, object]:
     import awf_preflight
 
     if store.load().get("stop_requested") is True:
         raise PlanOperationError("PlanRun stop was requested before business dispatch")
-    preflight_args = _preflight_args(args, repo=repo, intent="remote-dispatch")
+    preflight_args = _preflight_args(args, repo=repo, intent="remote-dispatch", binding=binding)
     with _preflight_environment(Path(args.config).resolve()):
         fast = awf_preflight.run_fast(preflight_args).report
         report = fast
@@ -613,6 +624,7 @@ def _persist_and_dispatch_taskcard(
     task_id: str,
     branch: str,
     frozen_base: str,
+    binding: ArchitectBinding | None = None,
 ) -> dict[str, object]:
     destination = repo / "docs" / "tasks" / f"{task_id}.md"
     if raw:
@@ -677,6 +689,7 @@ def _persist_and_dispatch_taskcard(
                 args,
                 store=store,
                 repo=current_repo,
+                binding=binding,
             ),
         )
     except PlanOperationError as exc:
@@ -731,7 +744,7 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     # workspace by its own attempt; re-checking out the Plan's main would
     # discard that card from the working tree before dispatch can observe it.
     plan_bytes = b"" if resuming_persisted_result else _checkout_plan_main(repo, plan)
-    _run_authoring_fast(args, store=store, repo=repo)
+    _run_authoring_fast(args, store=store, repo=repo, binding=binding)
     coder = dict(value["coder"])
     reviewer = dict(value["reviewer"])
     raw, task_id, branch = _invoke_taskcard_architect(
@@ -755,6 +768,7 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
         task_id=task_id,
         branch=branch,
         frozen_base=plan.main_sha,
+        binding=binding,
     )
 
 
@@ -1039,6 +1053,7 @@ def _continue_milestone(
         task_id=task_id,
         branch=branch,
         frozen_base=fresh_main,
+        binding=binding,
     )
 
 
