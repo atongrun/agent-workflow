@@ -1105,17 +1105,25 @@ def _invoke_terminal_decision(
     context: str,
     task_id: str,
 ) -> dict[str, object]:
+    output = store.directory / f"architect-decision-{task_id}.stdout"
     invocation = run.get("architect_invocation")
     if isinstance(invocation, dict) and invocation.get("kind") == "terminal-decision":
         if invocation.get("status") == "result_persisted":
             decision = invocation.get("decision")
             if isinstance(decision, dict):
                 return dict(decision)
-        raise PlanOperationError("terminal Architect invocation is ambiguous; Pi will not replay")
+        elif invocation.get("status") == "launch_intent" and not output.is_file():
+            # A launch intent without any persisted output proves the provider
+            # subprocess never completed; the event-driven handler re-entry
+            # before spawn is not a provider replay.
+            pass
+        else:
+            raise PlanOperationError(
+                "terminal Architect invocation is ambiguous; Pi will not replay"
+            )
     authorization = hashlib.sha256(
         (str(run["start_payload_sha256"]) + "\0decision\0" + task_id).encode("utf-8")
     ).hexdigest()
-    output = store.directory / f"architect-decision-{task_id}.stdout"
     expected_commit = str(_git(workspace, "rev-parse", "HEAD^{commit}"))
     architect_workspace = _architect_workspace(workspace, expected_commit, store)
     input_path = architect_workspace / ".awf" / f"architect-decision-context-{task_id}.md"
