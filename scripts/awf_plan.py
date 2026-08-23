@@ -34,7 +34,7 @@ from awf_role import (
 )
 from awf_taskcard import reviewer_selection_contract
 
-from agent_workflow import facade
+from agent_workflow import facade, node
 from agent_workflow.plan_loop import (
     PLAN_START_TYPE,
     ArchitectBinding,
@@ -257,22 +257,33 @@ def start_plan(
 
 
 def _validate_local_architect(args: argparse.Namespace, binding: ArchitectBinding) -> None:
+    expected_profile = Path(binding.profile).resolve()
+    accepted_profiles = {expected_profile}
+    try:
+        installed = node.load_installed_profile(str(expected_profile))
+    except node.NodeError as exc:
+        raise PlanOperationError("Plan start Architect RoleBinding is unavailable") from exc
+    if installed is not None and installed.digest != binding.profile_sha256:
+        raise PlanOperationError("Plan start Architect installed profile identity drifted")
+    if installed is not None:
+        accepted_profiles.add(installed.path.resolve())
+    observed_profile = Path(args.profile).resolve()
     observed = {
-        "profile": args.profile,
         "profile_sha256": args.profile_sha256,
         "workspace": str(Path(args.repo).resolve()),
         "tool": args.tool,
         "model": args.model,
     }
     expected = {
-        "profile": binding.profile,
         "profile_sha256": binding.profile_sha256,
         "workspace": str(Path(binding.workspace).resolve()),
         "tool": binding.tool,
         "model": binding.model,
     }
-    if observed != expected:
-        raise PlanOperationError("Plan start Architect RoleBinding drifted before Pi invocation")
+    if observed_profile not in accepted_profiles or observed != expected:
+        raise PlanOperationError(
+            "Plan start Architect RoleBinding drifted before provider invocation"
+        )
 
 
 def _checkout_fresh_main(

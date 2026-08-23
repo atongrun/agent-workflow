@@ -83,6 +83,51 @@ def handler_args(tmp_path: Path, payload: dict[str, object]) -> argparse.Namespa
     )
 
 
+def test_local_architect_accepts_exact_registered_managed_snapshot(
+    monkeypatch, tmp_path: Path
+) -> None:
+    binding, _plan, payload = facts(tmp_path)
+    args = handler_args(tmp_path, payload)
+    snapshot = tmp_path / "installed" / "architect.json"
+    snapshot.parent.mkdir()
+    snapshot.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        awf_plan.node,
+        "load_installed_profile",
+        lambda value: (
+            SimpleNamespace(path=snapshot, digest=binding.profile_sha256)
+            if Path(value).resolve() == Path(binding.profile).resolve()
+            else None
+        ),
+    )
+    args.profile = str(snapshot)
+
+    awf_plan._validate_local_architect(args, binding)
+
+    args.profile = str(tmp_path / "other-installed.json")
+    with pytest.raises(awf_plan.PlanOperationError, match="RoleBinding drifted"):
+        awf_plan._validate_local_architect(args, binding)
+
+
+def test_local_architect_rejects_registered_snapshot_digest_drift(
+    monkeypatch, tmp_path: Path
+) -> None:
+    binding, _plan, payload = facts(tmp_path)
+    args = handler_args(tmp_path, payload)
+    snapshot = tmp_path / "installed" / "architect.json"
+    snapshot.parent.mkdir()
+    snapshot.write_text("{}", encoding="utf-8")
+    args.profile = str(snapshot)
+    monkeypatch.setattr(
+        awf_plan.node,
+        "load_installed_profile",
+        lambda _value: SimpleNamespace(path=snapshot, digest="sha256:" + "b" * 64),
+    )
+
+    with pytest.raises(awf_plan.PlanOperationError, match="installed profile identity drifted"):
+        awf_plan._validate_local_architect(args, binding)
+
+
 def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     monkeypatch, tmp_path: Path
 ) -> None:
