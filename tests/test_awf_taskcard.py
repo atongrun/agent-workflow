@@ -25,6 +25,16 @@ def test_taskcard_binds_distinct_coder_and_reviewer_selection():
     assert (contract.reviewer.tool, contract.reviewer.model) == ("pi", "reviewer/model")
 
 
+def test_taskcard_accepts_pi_coder_selection():
+    contract = reviewer_selection_contract(
+        selection_block(coder_tool="pi"),
+        fallback_tool="opencode",
+        fallback_model="legacy/model",
+    )
+
+    assert (contract.coder.tool, contract.coder.model) == ("pi", "coder/model")
+
+
 def test_legacy_taskcard_keeps_same_tool_and_model_for_both_roles():
     contract = reviewer_selection_contract(
         "# Legacy card\n",
@@ -40,7 +50,7 @@ def test_legacy_taskcard_keeps_same_tool_and_model_for_both_roles():
     "text",
     [
         "<!-- awf-reviewer-selection\n{}\n-->",
-        selection_block(coder_tool="pi"),
+        selection_block(coder_tool="unsupported"),
         selection_block() + "\n" + selection_block(),
     ],
 )

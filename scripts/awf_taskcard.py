@@ -10,7 +10,7 @@ _REVIEWER_SELECTION_RE = re.compile(
     r"<!--\s*awf-reviewer-selection\s*\n(?P<body>.*?)\n\s*-->",
     re.DOTALL,
 )
-_CODER_TOOLS = frozenset({"codex", "opencode"})
+_CODER_TOOLS = frozenset({"codex", "opencode", "pi"})
 _REVIEWER_TOOLS = frozenset({"codex", "opencode", "pi"})
 
 
