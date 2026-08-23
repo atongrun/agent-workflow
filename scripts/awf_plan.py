@@ -398,15 +398,20 @@ def _preflight_args(
 
 @contextmanager
 def _preflight_environment(config_path: Path):
-    """Bind Fast/Deep to one deterministic non-provider network environment."""
+    """Bind Fast/Deep to one deterministic non-provider network environment.
+
+    Provider-injected proxy variables are stripped and only the Agent Bus host
+    is forced direct.  Git/GitHub HTTPS keeps the machine's own configured
+    network path (for example a git-config ``http.proxy``): forcing those
+    hosts into ``NO_PROXY`` would bypass it and require direct GitHub reachability.
+    """
     names = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy")
     previous = {name: os.environ.get(name) for name in names}
     try:
         for name in names:
             os.environ.pop(name, None)
         config = load_config(config_path)
-        for url in (config["AGENT_BUS_URL"], "https://github.com", "https://api.github.com"):
-            add_url_host_to_no_proxy(os.environ, url)
+        add_url_host_to_no_proxy(os.environ, config["AGENT_BUS_URL"])
         yield
     finally:
         for name, value in previous.items():

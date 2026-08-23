@@ -188,8 +188,6 @@ def test_internal_preflight_environment_is_deterministic_and_restored(monkeypatc
         assert "HTTP_PROXY" not in awf_plan.os.environ
         assert set(awf_plan.os.environ["NO_PROXY"].split(",")) == {
             "100.108.67.47",
-            "github.com",
-            "api.github.com",
         }
         assert awf_plan.os.environ["no_proxy"] == awf_plan.os.environ["NO_PROXY"]
 
