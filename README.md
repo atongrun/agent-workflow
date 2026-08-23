@@ -1,60 +1,42 @@
 # Agent Workflow
 
-Agent Workflow turns an approved, committed Plan into a safe serial coding loop:
+Agent Workflow lets an AI Architect safely execute an approved repository Plan through a serial
+Coder → Reviewer → merge loop. It generates one TaskCard at a time and continues until the
+milestone is complete or blocked.
 
 ```text
-Human approves Plan
-  → Pi Architect creates one TaskCard
-  → Coder implements it
-  → Reviewer checks the exact commit
-  → Pi Architect approves completion
-  → CI passes and AWF merges the PR
-  → AWF reads the new main
-  → Pi creates the next TaskCard, returns BLOCKED,
-    or completes the milestone
+Human + Agent agree on a Plan
+            ↓
+Human approves and commits it
+            ↓
+Human authorizes the Agent to use AWF
+            ↓
+Architect → Coder → Reviewer → Architect decision → CI → Merge
+            ↓
+AWF reads the new main
+            ↓
+next TaskCard / MILESTONE_COMPLETE / BLOCKED
 ```
 
-The Human owns the Plan and authorization. Agent Workflow owns the loop, trusted Git/PR operations,
-validation, and durable facts. Agent Bus is transport only.
+**The Human owns the Plan and authorization. AWF owns the execution loop.**
+
+Humans do not normally write TaskCards or manually coordinate Coder, Reviewer, PRs, merges, and the
+next card. Agent Bus carries events between machines; it is transport, not workflow authority.
 
 Current release: [`v0.4.0-rc.1`](https://github.com/atongrun/agent-workflow/releases/tag/v0.4.0-rc.1)
 
-## What v0.4.0-rc.1 supports
+## The normal workflow
 
-- One-card execution with `--one-card`.
-- Strictly serial multi-card execution with `--milestone`.
-- A fresh Pi Architect decision after every merge.
-- Windows OpenCode Coder.
-- OpenCode, Pi, or Codex Reviewer.
-- Existing Fast/Deep Preflight before model authoring and remote dispatch.
-- Trusted TaskCard validation, isolated model workspaces, commit, push, PR, CI, and merge.
-- Reviewer `PASS`, deterministic `REQUEST_CHANGES`, bounded rework, and `BLOCKED`.
-- Durable PlanFact, PlanRun, CompletedCardFact, status, outbox/inbox, and fail-closed replay guards.
+### 1. Install
 
-It is not a generic multi-agent framework, scheduler, concurrent task queue, or remote supervisor.
-
-## Requirements
+Prerequisites:
 
 - Python 3.11+
-- Git
-- [GitHub CLI](https://cli.github.com/) authenticated with `gh auth login`
+- Git and an authenticated [GitHub CLI](https://cli.github.com/)
 - [Agent Bus v0.3.1](https://github.com/atongrun/agent-bus/releases/tag/v0.3.1)
-- The Agent Tools used on this machine, already installed and authenticated
+- the Agent Tools used on this machine, already installed and authenticated
 
-Supported role bindings:
-
-| Role | Agent Tool |
-|---|---|
-| Architect | Pi |
-| Coder | OpenCode |
-| Reviewer | OpenCode, Pi, or Codex |
-
-One machine may host any subset of roles. Each RoleBinding still gets its own profile, token,
-workspace, listener, and lifecycle identity.
-
-## Install
-
-Install the release wheel directly from GitHub:
+Install Agent Workflow from the GitHub release:
 
 ```bash
 python -m pip install \
@@ -69,12 +51,8 @@ Expected output:
 awf 0.4.0rc1
 ```
 
-Agent Workflow does not install or configure Agent Bus, GitHub authentication, or model-provider
-credentials.
-
-## Configure Agent Bus access
-
-Create the owner-only configuration file at `~/.config/awf/dispatch.env`:
+AWF currently expects an owner-only `~/.config/awf/dispatch.env` containing the Agent Bus URL and
+role tokens:
 
 ```dotenv
 AGENT_BUS_URL=http://your-agent-bus-host:8800
@@ -83,125 +61,175 @@ AWF_CODER_TOKEN=coder-token
 AWF_REVIEWER_TOKEN=reviewer-token
 ```
 
-Optional executable overrides are `AWF_BUS_BIN`, `AWF_OPENCODE_BIN`, `AWF_CODEX_BIN`, `AWF_PI_BIN`,
-and `AWF_GH_BIN`.
+Use `chmod 600 ~/.config/awf/dispatch.env` on macOS/Linux. Windows requires an owner-only ACL.
 
-On macOS/Linux, make the file owner-only:
+### 2. Initialize each participating machine
 
-```bash
-chmod 600 ~/.config/awf/dispatch.env
-```
-
-Windows uses an owner-only ACL instead of POSIX file mode.
-
-## 1. Initialize each machine
-
-Run this once in the downstream repository on every machine that hosts a role:
+Run this in the downstream repository:
 
 ```bash
-awf init --repo .
+awf init
 ```
 
-Choose the local roles and their Agent Tools/models. Init then:
+Choose the roles hosted on that machine and their Agent Tools/models. Init checks the prerequisites,
+creates separate role workspaces, installs and starts the managed listeners, waits for Agent Bus
+connectivity, and prints `Ready` only when the selected roles can receive work.
 
-1. validates Git, GitHub CLI, Agent Bus, and selected tools;
-2. creates a separate profile and checkout for each local RoleBinding;
-3. installs or reconciles its managed listener;
-4. registers the existing Preflight handlers;
-5. prints `Ready` only after the selected listeners are running and connected.
+A machine may host any subset of the supported roles:
 
-Init manages only the current machine. Run it separately on the Architect/Reviewer machine and the
-Coder machine when using a cross-machine setup.
+| Role | Current Agent Tool support |
+|---|---|
+| Architect | Pi |
+| Coder | OpenCode |
+| Reviewer | OpenCode, Pi, or Codex |
 
-## 2. Commit a Plan
+Run `awf init` separately on each machine in a cross-machine setup.
 
-The Plan is Human-owned repository truth. Commit it under a tracked path such as:
+### 3. Discuss and commit a Plan
+
+The Human and an Agent discuss the goal and write a Plan in the downstream repository, for example:
 
 ```text
 docs/plans/my-milestone.md
 ```
 
-The normal path does not require the Human to write TaskCards. Pi creates one TaskCard at a time
-from the exact committed Plan and current upstream `main`.
+The Human reviews, approves, and commits that Plan. It must match the current upstream `main`.
 
-## 3. Start the loop
+The Human does **not** write the TaskCards. Pi Architect creates them dynamically from the approved
+Plan and the latest main, one card at a time.
 
-After explicit Human authorization, the initiating Agent calls one of these commands.
+### 4. Authorize the Agent to run it
 
-Run exactly one card:
+The normal Human interaction is a request like:
 
-```bash
-awf plan start \
-  --repo . \
-  --plan docs/plans/my-plan.md \
-  --one-card
-```
+> This Plan is approved and committed. Use Agent Workflow to execute it. Continue until the
+> milestone is complete or BLOCKED.
 
-Run a serial milestone loop:
+After that explicit authorization, the initiating Agent invokes the current CLI contract:
 
 ```bash
 awf plan start \
-  --repo . \
   --plan docs/plans/my-milestone.md \
   --milestone
 ```
 
-Use `--coder-tool`, `--coder-model`, `--reviewer-tool`, and `--reviewer-model` when the PlanRun must
-bind explicit execution selections. The Architect selection comes from its configured RoleBinding.
+`--milestone` is the normal product path. After each merge, AWF reads the new upstream main and asks
+a fresh Pi Architect for the next TaskCard, `MILESTONE_COMPLETE`, or `BLOCKED`.
 
-The start command returns after the durable Architect event is accepted. The initiating chat or
-shell does not need to stay alive.
+The start command returns after the durable Architect start is accepted. The initiating chat or
+shell does not need to remain open.
 
-## 4. Observe or stop
+For a deliberately bounded single-card run, the current CLI also supports `--one-card` instead of
+`--milestone`.
 
-Status is passive and never runs Preflight, invokes a model, ACKs, requeues, resumes, or merges:
-
-```bash
-awf status --repo . --explain
-```
-
-It shows local roles, listeners, workspaces, queues, PlanRun, current/last card, recorded Fast/Deep
-facts, PR/merge/completion, and the first blocker.
-
-Stop records no-new-work, requires safe queue authority, and then stops only the selected local
-listeners:
+### 5. Observe
 
 ```bash
-awf stop --repo .
+awf status
 ```
 
-## Failure behavior
+Status is read-only. It shows the participating roles, current card, last completion, queues,
+Preflight result, PR/merge progress, and the first blocker. It does not run diagnostics or advance
+the workflow.
 
-Agent Workflow fails closed. It does not guess after an ambiguous model or merge side effect, and it
-does not silently weaken Plan, TaskCard, role, artifact, Git, or PR identity checks.
+When the machine should stop accepting work:
 
-The release candidate intentionally does not provide:
+```bash
+awf stop
+```
+
+Stop first checks that stopping the selected local roles is safe, then stops their managed
+listeners.
+
+## How the loop works
+
+AWF runs only one active TaskCard at a time:
+
+1. Pi Architect reads the committed Plan and exact current main.
+2. Pi creates one complete TaskCard.
+3. OpenCode Coder implements it in an isolated workspace.
+4. Reviewer checks the exact pushed commit and returns `PASS`, `REQUEST_CHANGES`, or `BLOCKED`.
+5. Pi Architect makes the completion decision.
+6. AWF verifies CI and performs the trusted merge.
+7. AWF reads the new main before asking Pi what comes next.
+
+There is no pre-generated TaskCard queue and no concurrent milestone scheduler.
+
+## How safety works
+
+AWF stops instead of guessing when it cannot prove the outcome of a model invocation, identity
+check, Git/PR operation, or merge.
+
+Key guarantees:
+
+- the committed Plan identity is frozen for the run;
+- TaskCards are generated one at a time from current repository truth;
+- Reviewer and CI are bound to exact commits;
+- model workspaces do not own trusted GitHub credentials or merge authority;
+- merge effects are recorded and verified instead of blindly replayed;
+- workflow state and completed-card evidence are durable;
+- ambiguous or invalid outcomes fail closed.
+
+Agent Bus transports the events and ACKs. AWF remains the authority for workflow state,
+authorization, review decisions, and completion.
+
+## Troubleshooting
+
+Start with the passive view:
+
+```bash
+awf status --explain
+```
+
+Run active diagnostics or inspect listener logs only when needed:
+
+```bash
+awf doctor --explain
+awf logs
+```
+
+Do not manually ACK, requeue, or replay a failed business delivery unless a separately authorized
+recovery procedure explicitly requires it.
+
+## Current limitations
+
+This release candidate does not yet provide:
 
 - automatic recovery after an Architect or Coder process crash;
 - provider-session restoration or partial workspace takeover;
 - automatic correction or same-card retry for invalid Architect output;
-- Human stop/resume of an active milestone;
-- concurrent milestones, a TaskCard queue, or Plan hot updates;
+- stop-and-resume for an active milestone;
+- concurrent milestones or Plan hot updates;
 - Runtime v2 Store default migration.
 
-Use `awf status`, `awf doctor --explain`, and `awf logs` for diagnosis. Do not manually ACK, requeue,
-or replay a failed business delivery unless a separately authorized recovery procedure says to do
-so.
+## Advanced and support commands
 
-## Support and compatibility commands
-
-The normal product journey is:
+The normal workflow is intentionally small:
 
 ```text
 awf init
-awf plan start
+Agent invokes awf plan start
 awf status
 awf stop
 ```
 
-`doctor`, `logs`, top-level `start`, raw `drain`, `node ...`, `setup`, `run`, `resume`, upgrade,
-uninstall, validation, and inspection remain available for support, administration, compatibility,
-or repository development. See `awf --help` and the current [handoff](HANDOFF.md).
+Compatibility, administration, and development commands remain available. Use:
+
+```bash
+awf --help
+```
+
+The current Plan-start CLI defaults Coder and Reviewer to OpenCode with their tool defaults. When a
+run uses another configured Reviewer or an explicit model, the initiating Agent must pass the
+matching optional overrides shown by `awf plan start --help`.
+
+For deeper implementation and evidence details, see:
+
+- [Constitution](constitution.md)
+- [Current handoff](HANDOFF.md)
+- [Runtime v2 semantic contract](docs/runtime-v2-semantic-contract.md)
+- [Runtime v2 development plan](docs/plans/runtime-v2-development-plan.md)
+- [Phase 5-03 loop closeout](docs/tasks/phase5-03-architect-led-plan-loop-report.md)
 
 ## Development
 
@@ -211,15 +239,6 @@ ruff check .
 ruff format --check .
 python -m pytest -q
 ```
-
-Useful project references:
-
-- [Constitution](constitution.md) — normative authority and role boundaries
-- [Runtime v2 semantic contract](docs/runtime-v2-semantic-contract.md)
-- [Runtime v2 development plan](docs/plans/runtime-v2-development-plan.md)
-- [Phase 5-02 closeout](docs/tasks/phase5-02-architect-one-card-closure-report.md)
-- [Phase 5-03 closeout](docs/tasks/phase5-03-architect-led-plan-loop-report.md)
-- [v0.4.0-rc.1 release notes](docs/releases/v0.4.0-rc.1.md)
 
 ## License
 
