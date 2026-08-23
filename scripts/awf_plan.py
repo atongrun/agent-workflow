@@ -183,6 +183,11 @@ def _assemble_opencode_task_output(
 def _spawn_architect(binding: ArchitectBinding, spec, output: Path) -> int:
     """Codex owns exact last-message capture; stdout tools use the shared bound capture."""
     provider_output = Path(spec.report_path)
+    if not provider_output.is_absolute():
+        # A relative report_path is contract-bound inside the provider workspace;
+        # resolving it against the handler cwd would leak captured provider
+        # stdout into the trusted repository checkout.
+        provider_output = Path(spec.workspace) / provider_output
     if binding.tool == "codex":
         rc = spawn_rendered(render_provider_invocation(spec))
         if rc == 0 and (
@@ -713,14 +718,19 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     if existing.get("status") == "card_active":
         return existing
     invocation = existing.get("architect_invocation")
-    if isinstance(invocation, dict) and not (
-        invocation.get("kind") == "taskcard"
+    resuming_persisted_result = (
+        isinstance(invocation, dict)
+        and invocation.get("kind") == "taskcard"
         and invocation.get("status") == "result_persisted"
         and isinstance(existing.get("current_card"), dict)
         and existing.get("status") in {"card_dispatching", "dispatch_ambiguous", "dispatch_blocked"}
-    ):
+    )
+    if isinstance(invocation, dict) and not resuming_persisted_result:
         raise PlanOperationError("Architect invocation already started; Pi replay is forbidden")
-    plan_bytes = _checkout_plan_main(repo, plan)
+    # A resumed dispatch re-uses the durably persisted TaskCard left in the
+    # workspace by its own attempt; re-checking out the Plan's main would
+    # discard that card from the working tree before dispatch can observe it.
+    plan_bytes = b"" if resuming_persisted_result else _checkout_plan_main(repo, plan)
     _run_authoring_fast(args, store=store, repo=repo)
     coder = dict(value["coder"])
     reviewer = dict(value["reviewer"])

@@ -272,7 +272,11 @@ CARD-001
     )
     calls: list[str] = []
 
-    monkeypatch.setattr(awf_plan, "_checkout_plan_main", lambda *_a, **_k: b"# Plan\n")
+    def plan_checkout(*_a, **_k):
+        calls.append("plan-checkout")
+        raise AssertionError("resumed dispatch must not re-checkout the Plan main")
+
+    monkeypatch.setattr(awf_plan, "_checkout_plan_main", plan_checkout)
     monkeypatch.setattr(
         awf_plan,
         "_run_authoring_fast",
@@ -321,6 +325,44 @@ def test_handle_start_refuses_replay_when_invocation_is_not_durably_persisted(
 
     with pytest.raises(awf_plan.PlanOperationError, match="Pi replay is forbidden"):
         awf_plan.handle_start(args)
+
+
+def test_spawn_architect_binds_relative_report_capture_to_the_provider_workspace(
+    monkeypatch, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "architect-workspace"
+    (workspace / ".awf").mkdir(parents=True)
+    card = workspace / "architect-context.md"
+    card.write_text("# context\n", encoding="utf-8")
+    spec = awf_plan._provider_spec(
+        ("inv", "run", "plan", "f" * 64),
+        role="architect",
+        provider="pi",
+        model="",
+        executable="pi",
+        workspace=str(workspace),
+        input_path=str(card),
+        input_text="# context\n",
+        report_path=".awf/architect-taskcard.stdout",
+    )
+    captured: dict[str, str] = {}
+
+    def fake_spawn(_rendered, *, stdout_path="", stdout_max_bytes=0, **_k):
+        captured["stdout_path"] = stdout_path
+        Path(stdout_path).write_text("provider stdout\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(awf_plan, "spawn_rendered", fake_spawn)
+    monkeypatch.setattr(awf_plan, "render_provider_invocation", lambda _spec: object())
+
+    output = tmp_path / "captured.stdout"
+    rc = awf_plan._spawn_architect(SimpleNamespace(tool="pi"), spec, output)
+
+    assert rc == 0
+    expected = workspace / ".awf" / "architect-taskcard.stdout"
+    assert captured["stdout_path"] == str(expected)
+    assert output.read_text(encoding="utf-8") == "provider stdout\n"
+    assert not (Path.cwd() / ".awf" / "architect-taskcard.stdout").exists()
 
 
 def test_handle_start_orders_fast_before_pi_and_deep_before_business_send(
