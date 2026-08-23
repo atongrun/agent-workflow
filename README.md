@@ -75,15 +75,18 @@ Choose the roles hosted on that machine and their Agent Tools/models. Init check
 creates separate role workspaces, installs and starts the managed listeners, waits for Agent Bus
 connectivity, and prints `Ready` only when the selected roles can receive work.
 
-A machine may host any subset of the supported roles:
+Roles describe responsibilities, not permanent Agent Tool bindings. A machine may host any subset
+of them. `v0.4.0-rc.1` currently ships these adapters:
 
-| Role | Current Agent Tool support |
+| Role | Implemented adapters in this RC |
 |---|---|
 | Architect | Pi |
 | Coder | OpenCode |
 | Reviewer | OpenCode, Pi, or Codex |
 
-Run `awf init` separately on each machine in a cross-machine setup.
+This table is current implementation coverage, not a product constraint. Additional Architect and
+Coder adapters can be added without changing the role model. Run `awf init` separately on each
+machine in a cross-machine setup.
 
 ### 3. Discuss and commit a Plan
 
@@ -95,8 +98,8 @@ docs/plans/my-milestone.md
 
 The Human reviews, approves, and commits that Plan. It must match the current upstream `main`.
 
-The Human does **not** write the TaskCards. Pi Architect creates them dynamically from the approved
-Plan and the latest main, one card at a time.
+The Human does **not** write the TaskCards. The configured Architect creates them dynamically from
+the approved Plan and the latest main, one card at a time.
 
 ### 4. Authorize the Agent to run it
 
@@ -114,7 +117,7 @@ awf plan start \
 ```
 
 `--milestone` is the normal product path. After each merge, AWF reads the new upstream main and asks
-a fresh Pi Architect for the next TaskCard, `MILESTONE_COMPLETE`, or `BLOCKED`.
+a fresh Architect for the next TaskCard, `MILESTONE_COMPLETE`, or `BLOCKED`.
 
 The start command returns after the durable Architect start is accepted. The initiating chat or
 shell does not need to remain open.
@@ -145,13 +148,13 @@ listeners.
 
 AWF runs only one active TaskCard at a time:
 
-1. Pi Architect reads the committed Plan and exact current main.
-2. Pi creates one complete TaskCard.
-3. OpenCode Coder implements it in an isolated workspace.
+1. The Architect reads the committed Plan and exact current main.
+2. The Architect creates one complete TaskCard.
+3. The Coder implements it in an isolated workspace.
 4. Reviewer checks the exact pushed commit and returns `PASS`, `REQUEST_CHANGES`, or `BLOCKED`.
-5. Pi Architect makes the completion decision.
+5. The Architect makes the completion decision.
 6. AWF verifies CI and performs the trusted merge.
-7. AWF reads the new main before asking Pi what comes next.
+7. AWF reads the new main before asking the Architect what comes next.
 
 There is no pre-generated TaskCard queue and no concurrent milestone scheduler.
 
