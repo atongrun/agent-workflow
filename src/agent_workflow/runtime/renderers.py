@@ -58,6 +58,29 @@ def _architect_instruction(mode: tuple[str, ...]) -> str:
     raise ContractError("Architect mode is unsupported")
 
 
+def _opencode_architect_instruction(mode: tuple[str, ...]) -> str:
+    semantic = (
+        "Return stdout as exactly one JSON object with exactly these keys: task_id, objective, "
+        "scope, change_paths, constraints, acceptance_criteria, verification_commands. "
+        "task_id and objective are strings. scope, change_paths, constraints, and "
+        "acceptance_criteria are non-empty arrays of strings. verification_commands is a "
+        "non-empty array of non-empty argv string arrays. Return no Markdown fence, explanation, "
+        "AWF metadata, branch, SHA, role selection, artifact path, or protocol comment."
+    )
+    if mode == ():
+        return semantic
+    if mode == ("milestone-next",):
+        return (
+            "If Plan work remains, return the next task using this contract: "
+            + semantic
+            + " If the Plan is complete, return only MILESTONE_COMPLETE. If blocked, return "
+            "BLOCKED on the first line and one non-empty reason on following lines."
+        )
+    if mode == ("terminal-decision",):
+        return _architect_instruction(mode)
+    raise ContractError("OpenCode architect mode is unsupported")
+
+
 def _require(spec: InvocationSpec, provider: str, roles: set[str]) -> None:
     if spec.provider != provider or spec.role not in roles:
         raise ContractError(f"{provider} renderer does not own this provider/role selection")
@@ -78,7 +101,7 @@ class OpenCodeRenderer:
             argv += ["-m", spec.model]
         prompt = spec.input_text
         if spec.role == "architect":
-            prompt += "\n\n" + _architect_instruction(spec.provider_args)
+            prompt += "\n\n" + _opencode_architect_instruction(spec.provider_args)
         argv += ["--", prompt]
         return RenderedInvocation(
             spec.executable,

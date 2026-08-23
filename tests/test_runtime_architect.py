@@ -5,8 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_workflow.runtime.architect import persist_architect_taskcard
-from agent_workflow.runtime.artifact import ArtifactError
+from agent_workflow.plan_loop import validate_taskcard_binding
+from agent_workflow.runtime.architect import (
+    assemble_opencode_taskcard,
+    parse_opencode_task_semantic,
+    persist_architect_taskcard,
+)
+from agent_workflow.runtime.artifact import ArtifactError, parse_postflight_contract
 
 
 def taskcard(task_id: str = "P5-TEST-001") -> bytes:
@@ -24,6 +29,73 @@ def taskcard(task_id: str = "P5-TEST-001") -> bytes:
         "## Goal\n\nBounded work.\n\n"
         "<!-- awf-postflight\n" + json.dumps(postflight, indent=2) + "\n-->\n"
     ).encode("utf-8")
+
+
+def semantic_output(**updates: object) -> bytes:
+    value: dict[str, object] = {
+        "task_id": "OPEN-001",
+        "objective": "Document the accepted adapter sequence.",
+        "scope": ["Create one acceptance document.", "Link it from the README."],
+        "change_paths": ["README.md", "docs/acceptance/open-001.md"],
+        "constraints": ["Do not add application code."],
+        "acceptance_criteria": ["The role sequence is stated exactly."],
+        "verification_commands": [["git", "diff", "--check"]],
+    }
+    value.update(updates)
+    return json.dumps(value, separators=(",", ":")).encode("utf-8")
+
+
+def test_opencode_semantic_output_assembles_existing_strict_taskcard(tmp_path: Path) -> None:
+    coder = {"tool": "opencode", "model": ""}
+    reviewer = {"tool": "pi", "model": ""}
+    semantic = parse_opencode_task_semantic(semantic_output())
+
+    raw = assemble_opencode_taskcard(
+        semantic,
+        frozen_base="a" * 40,
+        repository="owner/project",
+        base_ref="main",
+        coder=coder,
+        reviewer=reviewer,
+    )
+
+    assert validate_taskcard_binding(
+        raw,
+        frozen_base="a" * 40,
+        coder=coder,
+        reviewer=reviewer,
+    ) == ("OPEN-001", "agent/OPEN-001")
+    text = raw.decode("utf-8")
+    assert "- **Frozen base**: `" + "a" * 40 + "`" in text
+    assert '{"coder":{"model":"","tool":"opencode"},"reviewer":{"model":"","tool":"pi"}}' in text
+    assert ".awf/artifacts/impl-report-OPEN-001.md" in text
+    assert ".awf/artifacts/review-report-OPEN-001.md" in text
+
+    repo = tmp_path / "repo"
+    destination = repo / "docs/tasks/OPEN-001.md"
+    destination.parent.mkdir(parents=True)
+    persist_architect_taskcard(repo=str(repo), destination=str(destination), stdout=raw)
+    contract = parse_postflight_contract(destination, "python-test")
+    assert contract.allowed_paths == (
+        "README.md",
+        "docs/acceptance/open-001.md",
+        ".awf/artifacts/impl-report-OPEN-001.md",
+        ".awf/artifacts/review-report-OPEN-001.md",
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"not-json",
+        semantic_output(extra="not allowed"),
+        semantic_output(task_id="../escape"),
+        semantic_output(change_paths=["README.md", ".awf/artifacts/forged.md"]),
+    ],
+)
+def test_opencode_semantic_output_fails_closed(raw: bytes) -> None:
+    with pytest.raises(ArtifactError):
+        parse_opencode_task_semantic(raw)
 
 
 def test_trusted_architect_boundary_validates_then_creates_exact_taskcard(tmp_path: Path) -> None:

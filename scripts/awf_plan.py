@@ -54,7 +54,11 @@ from agent_workflow.plan_loop import (
     validate_taskcard_binding,
 )
 from agent_workflow.resources import authority_manifest_path
-from agent_workflow.runtime.architect import persist_architect_taskcard
+from agent_workflow.runtime.architect import (
+    assemble_opencode_taskcard,
+    parse_opencode_task_semantic,
+    persist_architect_taskcard,
+)
 from agent_workflow.runtime.artifact import ArtifactError
 from agent_workflow.runtime.renderers import render_provider_invocation
 
@@ -131,6 +135,48 @@ def _architect_workspace(repo: Path, expected_commit: str, store: PlanRunStore) 
             state_dir=store.directory,
             workspace_prefix="architect-workspace-",
         )
+    )
+
+
+def _opencode_task_context(
+    plan_bytes: bytes,
+    *,
+    completed_task_ids: tuple[str, ...] = (),
+) -> str:
+    try:
+        plan_text = plan_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PlanOperationError("committed Plan is not UTF-8") from exc
+    completed = (
+        "No TaskCard has completed yet."
+        if not completed_task_ids
+        else "Completed Task IDs: " + ", ".join(completed_task_ids) + "."
+    )
+    return (
+        "# OpenCode Architect Semantic Context\n\n"
+        "Choose only the semantic content of one next TaskCard from the committed Plan. "
+        "Do not execute the task and do not produce any AWF protocol metadata.\n\n"
+        f"{completed}\n\n"
+        "## Exact committed Plan\n\n" + plan_text
+    )
+
+
+def _assemble_opencode_task_output(
+    raw: bytes,
+    *,
+    plan: PlanFact,
+    frozen_base: str,
+    coder: dict[str, object],
+    reviewer: dict[str, object],
+) -> bytes:
+    semantic = parse_opencode_task_semantic(raw)
+    return assemble_opencode_taskcard(
+        semantic,
+        frozen_base=frozen_base,
+        repository=plan.repository,
+        base_ref=plan.base_ref,
+        coder=coder,
+        reviewer=reviewer,
     )
 
 
@@ -436,17 +482,26 @@ def _invoke_taskcard_architect(
                 return b"", str(card["task_id"]), str(card["branch"])
         raise PlanOperationError("Architect invocation is ambiguous; Pi will not be replayed")
 
-    context = architect_context(
-        plan=plan,
-        plan_bytes=plan_bytes,
-        architect=binding,
-        coder=coder,
-        reviewer=reviewer,
+    context = (
+        _opencode_task_context(plan_bytes)
+        if binding.tool == "opencode"
+        else architect_context(
+            plan=plan,
+            plan_bytes=plan_bytes,
+            architect=binding,
+            coder=coder,
+            reviewer=reviewer,
+        )
     )
     architect_workspace = _architect_workspace(repo, plan.main_sha, store)
     context_path = architect_workspace / ".awf" / f"architect-context-{run['run_id']}.md"
     context_path.parent.mkdir(parents=True, exist_ok=True)
     output = store.directory / "architect-taskcard.stdout"
+    captured_output = (
+        store.directory / "architect-taskcard.semantic.json"
+        if binding.tool == "opencode"
+        else output
+    )
     provider_output = architect_workspace / ".awf" / "architect-taskcard.stdout"
     authorization = hashlib.sha256(
         (str(run["start_payload_sha256"]) + "\0taskcard").encode("utf-8")
@@ -468,7 +523,7 @@ def _invoke_taskcard_architect(
         report_path=provider_output.relative_to(architect_workspace).as_posix(),
     )
     try:
-        rc = _spawn_architect(binding, spec, output)
+        rc = _spawn_architect(binding, spec, captured_output)
     except BaseException:
         store.update(
             status="architect_ambiguous",
@@ -490,26 +545,41 @@ def _invoke_taskcard_architect(
             stop_reason="Pi Architect exited non-zero; provider replay is forbidden",
         )
         raise PlanOperationError("Pi Architect TaskCard invocation failed")
-    raw = output.read_bytes()
+    provider_raw = captured_output.read_bytes()
     try:
+        raw = (
+            _assemble_opencode_task_output(
+                provider_raw,
+                plan=plan,
+                frozen_base=plan.main_sha,
+                coder=coder,
+                reviewer=reviewer,
+            )
+            if binding.tool == "opencode"
+            else provider_raw
+        )
+        if binding.tool == "opencode":
+            output.write_bytes(raw)
         task_id, branch = validate_taskcard_binding(
             raw,
             frozen_base=plan.main_sha,
             coder=coder,
             reviewer=reviewer,
         )
-    except PlanLoopError:
+    except (PlanLoopError, ArtifactError) as exc:
         store.update(
             status="architect_output_invalid_no_replay",
             architect_invocation={
                 "kind": "taskcard",
                 "status": "result_invalid",
                 "authorization_sha256": authorization,
-                "result_sha256": hashlib.sha256(raw).hexdigest(),
+                "result_sha256": hashlib.sha256(provider_raw).hexdigest(),
             },
-            stop_reason="Pi Architect TaskCard output is invalid; provider replay is forbidden",
+            stop_reason="Architect TaskCard output is invalid; provider replay is forbidden",
         )
-        raise
+        if isinstance(exc, PlanLoopError):
+            raise
+        raise PlanLoopError("OpenCode Architect semantic output is invalid") from exc
     store.update(
         architect_invocation={
             "kind": "taskcard",
@@ -712,6 +782,7 @@ def _invoke_next_architect(
     fresh_main: str,
     coder: dict[str, object],
     reviewer: dict[str, object],
+    plan: PlanFact,
 ) -> tuple[str, bytes, str, str]:
     if run.get("current_card") is not None:
         raise PlanOperationError("next Architect invocation requires no active card")
@@ -729,6 +800,11 @@ def _invoke_next_architect(
         ).encode("utf-8")
     ).hexdigest()
     output = store.directory / f"architect-next-{last_task_id}.stdout"
+    captured_output = (
+        store.directory / f"architect-next-{last_task_id}.provider-output"
+        if binding.tool == "opencode"
+        else output
+    )
     invocation = run.get("architect_invocation")
     if isinstance(invocation, dict) and invocation.get("kind") == "milestone-next":
         if (
@@ -738,6 +814,7 @@ def _invoke_next_architect(
         ):
             raise PlanOperationError("next Architect invocation is ambiguous; Pi will not replay")
         raw = output.read_bytes()
+        provider_raw = raw
     else:
         architect_workspace = _architect_workspace(workspace, fresh_main, store)
         context_path = architect_workspace / ".awf" / f"architect-next-context-{last_task_id}.md"
@@ -768,7 +845,7 @@ def _invoke_next_architect(
             provider_args=("milestone-next",),
         )
         try:
-            rc = _spawn_architect(binding, spec, output)
+            rc = _spawn_architect(binding, spec, captured_output)
         except BaseException:
             store.update(
                 status="architect_ambiguous",
@@ -792,7 +869,34 @@ def _invoke_next_architect(
                 stop_reason="Pi next decision exited non-zero; provider replay is forbidden",
             )
             raise PlanOperationError("Pi Architect next decision invocation failed")
-        raw = output.read_bytes()
+        provider_raw = captured_output.read_bytes()
+        raw = provider_raw
+        try:
+            if binding.tool == "opencode":
+                first = provider_raw.decode("utf-8").strip().partition("\n")[0]
+                if first not in {"MILESTONE_COMPLETE", "BLOCKED"}:
+                    raw = _assemble_opencode_task_output(
+                        provider_raw,
+                        plan=plan,
+                        frozen_base=fresh_main,
+                        coder=coder,
+                        reviewer=reviewer,
+                    )
+                output.write_bytes(raw)
+        except (UnicodeDecodeError, ArtifactError) as exc:
+            store.update(
+                status="architect_output_invalid_no_replay",
+                architect_invocation={
+                    "kind": "milestone-next",
+                    "status": "result_invalid",
+                    "authorization_sha256": authorization,
+                    "result_sha256": hashlib.sha256(provider_raw).hexdigest(),
+                    "fresh_main": fresh_main,
+                    "last_completion_sha256": last_completion.get("sha256", ""),
+                },
+                stop_reason="Architect next output is invalid; provider replay is forbidden",
+            )
+            raise PlanLoopError("OpenCode Architect next semantic output is invalid") from exc
     try:
         outcome, body = parse_next_output(raw)
         task_id = ""
@@ -806,20 +910,22 @@ def _invoke_next_architect(
                 reviewer=reviewer,
             )
             raw = normalized
-    except PlanLoopError:
+    except (UnicodeDecodeError, PlanLoopError, ArtifactError) as exc:
         store.update(
             status="architect_output_invalid_no_replay",
             architect_invocation={
                 "kind": "milestone-next",
                 "status": "result_invalid",
                 "authorization_sha256": authorization,
-                "result_sha256": hashlib.sha256(raw).hexdigest(),
+                "result_sha256": hashlib.sha256(provider_raw).hexdigest(),
                 "fresh_main": fresh_main,
                 "last_completion_sha256": last_completion.get("sha256", ""),
             },
-            stop_reason="Pi Architect next output is invalid; provider replay is forbidden",
+            stop_reason="Architect next output is invalid; provider replay is forbidden",
         )
-        raise
+        if isinstance(exc, PlanLoopError):
+            raise
+        raise PlanLoopError("OpenCode Architect next semantic output is invalid") from exc
     store.update(
         architect_invocation={
             "kind": "milestone-next",
@@ -872,19 +978,24 @@ def _continue_milestone(
         run=store.load(),
         binding=binding,
         workspace=source_repo,
-        context=next_architect_context(
-            plan=plan,
-            plan_bytes=plan_bytes,
-            fresh_main=fresh_main,
-            last_completion=last_completion,
-            coder=coder,
-            reviewer=reviewer,
-            completed_task_ids=completed_ids,
+        context=(
+            _opencode_task_context(plan_bytes, completed_task_ids=completed_ids)
+            if binding.tool == "opencode"
+            else next_architect_context(
+                plan=plan,
+                plan_bytes=plan_bytes,
+                fresh_main=fresh_main,
+                last_completion=last_completion,
+                coder=coder,
+                reviewer=reviewer,
+                completed_task_ids=completed_ids,
+            )
         ),
         last_completion=last_completion,
         fresh_main=fresh_main,
         coder=coder,
         reviewer=reviewer,
+        plan=plan,
     )
     if outcome == "MILESTONE_COMPLETE":
         return store.update(status="milestone_completed", current_card=None, stop_reason="")

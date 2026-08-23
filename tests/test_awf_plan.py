@@ -571,7 +571,7 @@ def test_milestone_next_card_reuses_single_card_dispatch_with_fresh_base(
 
 
 def test_next_architect_ambiguous_invocation_is_never_replayed(monkeypatch, tmp_path: Path) -> None:
-    binding, _plan, store, source, completion = _completed_milestone_store(tmp_path)
+    binding, plan, store, source, completion = _completed_milestone_store(tmp_path)
     monkeypatch.setattr(
         awf_plan,
         "spawn_rendered",
@@ -588,6 +588,7 @@ def test_next_architect_ambiguous_invocation_is_never_replayed(monkeypatch, tmp_
         "fresh_main": "9" * 40,
         "coder": {"tool": "opencode", "model": ""},
         "reviewer": {"tool": "opencode", "model": ""},
+        "plan": plan,
     }
 
     with pytest.raises(RuntimeError, match="provider lost"):
