@@ -166,6 +166,8 @@ def test_invalid_pi_taskcard_result_is_persisted_and_never_replayed(monkeypatch,
         return 0
 
     monkeypatch.setattr(awf_plan, "spawn_rendered", invalid_result)
+    monkeypatch.setattr(awf_plan, "_architect_workspace", lambda source, _commit, _store: source)
+    monkeypatch.setattr(awf_plan, "assert_model_workspace_state", lambda *_args: None)
 
     with pytest.raises(awf_plan.PlanLoopError):
         awf_plan._invoke_taskcard_architect(
@@ -530,6 +532,8 @@ def test_next_architect_ambiguous_invocation_is_never_replayed(monkeypatch, tmp_
         "spawn_rendered",
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("provider lost")),
     )
+    monkeypatch.setattr(awf_plan, "_architect_workspace", lambda source, _commit, _store: source)
+    monkeypatch.setattr(awf_plan, "assert_model_workspace_state", lambda *_args: None)
     kwargs = {
         "store": store,
         "binding": binding,

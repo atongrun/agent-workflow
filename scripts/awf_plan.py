@@ -136,16 +136,26 @@ def _architect_workspace(repo: Path, expected_commit: str, store: PlanRunStore) 
 
 def _spawn_architect(binding: ArchitectBinding, spec, output: Path) -> int:
     """Codex owns exact last-message capture; stdout tools use the shared bound capture."""
+    provider_output = Path(spec.report_path)
     if binding.tool == "codex":
         rc = spawn_rendered(render_provider_invocation(spec))
-        if rc == 0 and (not output.is_file() or output.stat().st_size > 64 * 1024):
+        if rc == 0 and (
+            not provider_output.is_file() or provider_output.stat().st_size > 64 * 1024
+        ):
             raise PlanOperationError(
                 "Codex Architect final output is unavailable or exceeds 64 KiB"
             )
-        return rc
-    return spawn_rendered(
-        render_provider_invocation(spec), stdout_path=str(output), stdout_max_bytes=64 * 1024
-    )
+    else:
+        rc = spawn_rendered(
+            render_provider_invocation(spec),
+            stdout_path=str(provider_output),
+            stdout_max_bytes=64 * 1024,
+        )
+    if rc == 0:
+        if not provider_output.is_file() or provider_output.stat().st_size > 64 * 1024:
+            raise PlanOperationError("Architect final output is unavailable or exceeds 64 KiB")
+        output.write_bytes(provider_output.read_bytes())
+    return rc
 
 
 def _send_plan_start(profile, payload: dict[str, object]) -> None:
@@ -305,6 +315,7 @@ def _preflight_args(
     *,
     repo: Path,
     intent: str,
+    model_tool: str = "",
 ) -> argparse.Namespace:
     return argparse.Namespace(
         repo=repo,
@@ -316,7 +327,7 @@ def _preflight_args(
         upstream_remote=args.upstream_remote,
         head_remote=args.head_remote,
         gh_bin=args.gh_bin,
-        model_tool=getattr(args, "model_tool", "") or os.environ.get("AWF_PI_BIN", "pi"),
+        model_tool=model_tool or getattr(args, "model_tool", ""),
         model_tool_policy="required",
         run_id="",
         profile="loop",
@@ -425,6 +436,7 @@ def _invoke_taskcard_architect(
     context_path = architect_workspace / ".awf" / f"architect-context-{run['run_id']}.md"
     context_path.parent.mkdir(parents=True, exist_ok=True)
     output = store.directory / "architect-taskcard.stdout"
+    provider_output = architect_workspace / ".awf" / "architect-taskcard.stdout"
     authorization = hashlib.sha256(
         (str(run["start_payload_sha256"]) + "\0taskcard").encode("utf-8")
     ).hexdigest()
@@ -442,7 +454,7 @@ def _invoke_taskcard_architect(
         workspace=architect_workspace,
         input_path=context_path,
         input_text=context,
-        report_path=str(output),
+        report_path=provider_output.relative_to(architect_workspace).as_posix(),
     )
     try:
         rc = _spawn_architect(binding, spec, output)
@@ -454,6 +466,7 @@ def _invoke_taskcard_architect(
         raise
     finally:
         context_path.unlink(missing_ok=True)
+        provider_output.unlink(missing_ok=True)
         assert_model_workspace_state(str(architect_workspace), plan.main_sha)
     if rc != 0:
         store.update(
@@ -644,7 +657,9 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     )
 
 
-def _listener_plan_args(*, state_root: Path, plan: PlanFact) -> argparse.Namespace:
+def _listener_plan_args(
+    *, state_root: Path, plan: PlanFact, binding: ArchitectBinding
+) -> argparse.Namespace:
     values = {
         "config": os.environ.get("AWF_DISPATCH_ENV", ""),
         "authority_manifest": os.environ.get("AWF_AUTHORITY_MANIFEST", ""),
@@ -660,7 +675,7 @@ def _listener_plan_args(*, state_root: Path, plan: PlanFact) -> argparse.Namespa
         head_remote=os.environ.get("AWF_HEAD_REMOTE", "fork"),
         head_repo=values["head_repo"],
         gh_bin=os.environ.get("AWF_GH_BIN", "gh"),
-        model_tool=os.environ.get("AWF_PI_BIN", "pi"),
+        model_tool=_architect_executable(binding),
     )
 
 
@@ -716,6 +731,7 @@ def _invoke_next_architect(
         architect_workspace = _architect_workspace(workspace, fresh_main, store)
         context_path = architect_workspace / ".awf" / f"architect-next-context-{last_task_id}.md"
         context_path.parent.mkdir(parents=True, exist_ok=True)
+        provider_output = architect_workspace / ".awf" / f"architect-next-{last_task_id}.stdout"
         store.update(
             status="architect_next_running",
             architect_invocation={
@@ -737,7 +753,7 @@ def _invoke_next_architect(
             workspace=architect_workspace,
             input_path=context_path,
             input_text=context,
-            report_path=str(output),
+            report_path=provider_output.relative_to(architect_workspace).as_posix(),
             provider_args=("milestone-next",),
         )
         try:
@@ -750,6 +766,7 @@ def _invoke_next_architect(
             raise
         finally:
             context_path.unlink(missing_ok=True)
+            provider_output.unlink(missing_ok=True)
             assert_model_workspace_state(str(architect_workspace), fresh_main)
         if rc != 0:
             store.update(
@@ -823,7 +840,7 @@ def _continue_milestone(
     binding = ArchitectBinding.from_mapping(run["architect"])
     _validate_listener_architect(binding, source_repo)
     plan_bytes, fresh_main = _checkout_fresh_main(source_repo, plan)
-    operation_args = _listener_plan_args(state_root=state_root, plan=plan)
+    operation_args = _listener_plan_args(state_root=state_root, plan=plan, binding=binding)
     _run_authoring_fast(operation_args, store=store, repo=source_repo)
     completions = store.completions()
     last_completion = run.get("last_completion")
@@ -946,6 +963,7 @@ def _invoke_terminal_decision(
     architect_workspace = _architect_workspace(workspace, expected_commit, store)
     input_path = architect_workspace / ".awf" / f"architect-decision-context-{task_id}.md"
     input_path.parent.mkdir(parents=True, exist_ok=True)
+    provider_output = architect_workspace / ".awf" / f"architect-decision-{task_id}.stdout"
     store.update(
         status="architect_decision_running",
         architect_invocation={
@@ -965,7 +983,7 @@ def _invoke_terminal_decision(
         workspace=architect_workspace,
         input_path=input_path,
         input_text=context,
-        report_path=str(output),
+        report_path=provider_output.relative_to(architect_workspace).as_posix(),
         provider_args=("terminal-decision",),
     )
     try:
@@ -978,6 +996,7 @@ def _invoke_terminal_decision(
         raise
     finally:
         input_path.unlink(missing_ok=True)
+        provider_output.unlink(missing_ok=True)
         assert_model_workspace_state(str(architect_workspace), expected_commit)
     if rc != 0:
         store.update(
