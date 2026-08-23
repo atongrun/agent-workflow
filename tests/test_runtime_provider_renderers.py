@@ -241,6 +241,28 @@ def test_pi_architect_is_a_real_read_only_renderer(tmp_path: Path) -> None:
     assert "--model" not in default_rendered.argv
 
 
+def test_opencode_architect_preserves_closed_taskcard_contract_instruction(tmp_path: Path) -> None:
+    context = tmp_path / ".awf" / "architect-context.md"
+    report = tmp_path / ".awf" / "architect-output.md"
+    spec = invocation_spec(
+        tmp_path,
+        role="architect",
+        provider="opencode",
+        model="",
+        executable="opencode-test",
+        input_path=context,
+        input_text="trusted context",
+        report_path=report,
+    )
+
+    rendered = render_provider_invocation(spec)
+
+    assert rendered.argv[:3] == ("run", "--dir", str(tmp_path))
+    assert rendered.argv[-2] == "--"
+    assert "literal HTML-comment blocks named awf-reviewer-selection" in rendered.argv[-1]
+    assert "bare JSON" in rendered.argv[-1]
+
+
 def test_pi_architect_terminal_decision_is_fresh_read_only_closed_mode(tmp_path: Path) -> None:
     context_path = tmp_path / ".awf" / "terminal-context.md"
     report = tmp_path / ".awf" / "decision.md"

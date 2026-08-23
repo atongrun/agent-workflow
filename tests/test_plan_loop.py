@@ -164,6 +164,8 @@ def test_architect_context_and_taskcard_binding_are_closed(tmp_path: Path) -> No
     assert fact.blob_sha256 in context
     assert "# Exact Plan" in context
     assert "review-report-<TASK_ID>.md" in context
+    assert "<!-- awf-reviewer-selection" in context
+    assert "Do not render that contract as a heading" in context
     assert "equal the Task ID character-for-character" in context
     assert "agent/<TASK_ID>" in context
     assert (task_id, branch) == ("CARD-001", "codex/CARD-001")
@@ -278,6 +280,7 @@ def test_completed_card_facts_are_immutable_and_feed_minimal_next_context(tmp_pa
     assert "stdout must contain only the single line" in context
     assert "Reason silently" in context
     assert "Do not pre-generate later cards" in context
+    assert "<!-- awf-reviewer-selection" in context
     changed = {**completion, "completed_at": "changed"}
     with pytest.raises(PlanLoopError, match="malformed"):
         store.persist_completion(changed)
