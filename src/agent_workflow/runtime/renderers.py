@@ -35,6 +35,25 @@ Omit the block when there is no safe concrete finding.
 ATTACH_INPUT = "attach-input"
 
 
+def _architect_instruction(mode: tuple[str, ...]) -> str:
+    if mode == ():
+        return (
+            "Return exactly one complete self-contained TaskCard as the final output. "
+            "Do not edit, persist, dispatch, merge, or authorize anything."
+        )
+    if mode == ("terminal-decision",):
+        return (
+            "Return only the complete closed Architect Decision with verdict approve, "
+            "request_changes, reject, or escalate. Do not edit, merge, or invent rework."
+        )
+    if mode == ("milestone-next",):
+        return (
+            "Return exactly one complete next TaskCard, exact single-line MILESTONE_COMPLETE, "
+            "or BLOCKED followed by a non-empty reason. Do not edit, dispatch, or merge."
+        )
+    raise ContractError("Architect mode is unsupported")
+
+
 def _require(spec: InvocationSpec, provider: str, roles: set[str]) -> None:
     if spec.provider != provider or spec.role not in roles:
         raise ContractError(f"{provider} renderer does not own this provider/role selection")
@@ -44,7 +63,7 @@ def _require(spec: InvocationSpec, provider: str, roles: set[str]) -> None:
 
 class OpenCodeRenderer:
     def render(self, spec: InvocationSpec) -> RenderedInvocation:
-        _require(spec, "opencode", {"coder", "reviewer"})
+        _require(spec, "opencode", {"architect", "coder", "reviewer"})
         allowed = {(ATTACH_INPUT,)} if spec.role == "coder" else {(), (ATTACH_INPUT,)}
         if spec.provider_args not in allowed:
             raise ContractError("OpenCode provider options are invalid")
@@ -53,7 +72,10 @@ class OpenCodeRenderer:
             argv += ["-f", spec.input_path]
         if spec.model:
             argv += ["-m", spec.model]
-        argv += ["--", spec.input_text]
+        prompt = spec.input_text
+        if spec.role == "architect":
+            prompt += "\n\n" + _architect_instruction(spec.provider_args)
+        argv += ["--", prompt]
         return RenderedInvocation(
             spec.executable,
             tuple(argv),
@@ -84,6 +106,50 @@ class CodexReviewerRenderer:
             tuple(argv),
             spec.workspace,
             stdin=spec.input_text.encode("utf-8"),
+            environment=spec.environment,
+        )
+
+
+class CodexCoderRenderer:
+    def render(self, spec: InvocationSpec) -> RenderedInvocation:
+        _require(spec, "codex", {"coder"})
+        if spec.provider_args:
+            raise ContractError("Codex coder does not accept provider options")
+        argv = ["exec", "-C", spec.workspace, "--sandbox", "workspace-write"]
+        if spec.model:
+            argv += ["--model", spec.model]
+        argv += ["-"]
+        return RenderedInvocation(
+            spec.executable,
+            tuple(argv),
+            spec.workspace,
+            stdin=spec.input_text.encode("utf-8"),
+            environment=spec.environment,
+        )
+
+
+class CodexArchitectRenderer:
+    def render(self, spec: InvocationSpec) -> RenderedInvocation:
+        _require(spec, "codex", {"architect"})
+        instruction = _architect_instruction(spec.provider_args)
+        argv = [
+            "exec",
+            "-C",
+            spec.workspace,
+            "--sandbox",
+            "read-only",
+            "--ephemeral",
+            "--output-last-message",
+            spec.report_path,
+        ]
+        if spec.model:
+            argv += ["--model", spec.model]
+        argv += ["-"]
+        return RenderedInvocation(
+            spec.executable,
+            tuple(argv),
+            spec.workspace,
+            stdin=(spec.input_text + "\n\n" + instruction).encode("utf-8"),
             environment=spec.environment,
         )
 
@@ -190,13 +256,45 @@ class PiArchitectRenderer:
         )
 
 
+class PiCoderRenderer:
+    def render(self, spec: InvocationSpec) -> RenderedInvocation:
+        _require(spec, "pi", {"coder"})
+        if spec.provider_args:
+            raise ContractError("Pi coder provider options are invalid")
+        argv = [
+            "--print",
+            "--mode",
+            "text",
+            "--no-session",
+            "--no-approve",
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-context-files",
+            "--tools",
+            "read,grep,find,ls,bash,edit,write",
+        ]
+        if spec.model:
+            argv += ["--model", spec.model]
+        argv += [f"@{spec.input_path}", spec.input_text]
+        return RenderedInvocation(
+            spec.executable, tuple(argv), spec.workspace, environment=spec.environment
+        )
+
+
 def render_provider_invocation(spec: InvocationSpec) -> RenderedInvocation:
     if spec.provider == "pi" and spec.role == "architect":
         return PiArchitectRenderer().render(spec)
     if spec.provider == "opencode":
         return OpenCodeRenderer().render(spec)
+    if spec.provider == "codex" and spec.role == "architect":
+        return CodexArchitectRenderer().render(spec)
+    if spec.provider == "codex" and spec.role == "coder":
+        return CodexCoderRenderer().render(spec)
     if spec.provider == "codex" and spec.role == "reviewer":
         return CodexReviewerRenderer().render(spec)
     if spec.provider == "pi" and spec.role == "reviewer":
         return PiReviewerRenderer().render(spec)
+    if spec.provider == "pi" and spec.role == "coder":
+        return PiCoderRenderer().render(spec)
     raise ContractError("no installed renderer owns this provider/role selection")

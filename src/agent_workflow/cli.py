@@ -1178,9 +1178,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated architect,coder,reviewer subset; use none for zero roles",
     )
     init_parser.add_argument("--non-interactive", action="store_true")
-    init_parser.add_argument("--architect-runtime", choices=("pi",), default="")
+    init_parser.add_argument("--architect-runtime", choices=("codex", "opencode", "pi"), default="")
     init_parser.add_argument("--architect-model", default="")
-    init_parser.add_argument("--coder-runtime", default="", metavar="opencode")
+    init_parser.add_argument("--coder-runtime", choices=("codex", "opencode", "pi"), default="")
     init_parser.add_argument("--coder-model", default="")
     init_parser.add_argument("--reviewer-runtime", choices=("codex", "opencode", "pi"), default="")
     init_parser.add_argument("--reviewer-model", default="")
@@ -1209,7 +1209,9 @@ def main(argv: list[str] | None = None) -> int:
     enroll_parser.add_argument("--card", required=True)
     enroll_parser.add_argument("--machine", default="")
     enroll_parser.add_argument("--project", default="")
-    enroll_parser.add_argument("--coder-runtime", choices=("codex", "opencode"), default="opencode")
+    enroll_parser.add_argument(
+        "--coder-runtime", choices=("codex", "opencode", "pi"), default="opencode"
+    )
     enroll_parser.add_argument("--coder-model", default="")
     enroll_parser.add_argument(
         "--reviewer-runtime", choices=("codex", "opencode", "pi"), default="pi"
@@ -1250,7 +1252,9 @@ def main(argv: list[str] | None = None) -> int:
     plan_mode = plan_start_parser.add_mutually_exclusive_group(required=True)
     plan_mode.add_argument("--one-card", action="store_true")
     plan_mode.add_argument("--milestone", action="store_true")
-    plan_start_parser.add_argument("--coder-tool", choices=("opencode",), default="opencode")
+    plan_start_parser.add_argument(
+        "--coder-tool", choices=("opencode", "pi", "codex"), default="opencode"
+    )
     plan_start_parser.add_argument("--coder-model", default="")
     plan_start_parser.add_argument(
         "--reviewer-tool", choices=("opencode", "pi", "codex"), default="opencode"

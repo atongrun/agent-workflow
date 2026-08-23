@@ -34,8 +34,8 @@ MACHINE_CONFIG_FORMAT = "awf.machine-config.v1"
 MACHINE_CONFIG_NAME = ".awf/machine.json"
 ROLE_ORDER = ("architect", "coder", "reviewer")
 ROLE_PROVIDER_CAPABILITIES: dict[str, tuple[str, ...]] = {
-    "architect": ("pi",),
-    "coder": ("opencode",),
+    "architect": ("pi", "opencode", "codex"),
+    "coder": ("opencode", "codex", "pi"),
     "reviewer": ("opencode", "pi", "codex"),
 }
 
@@ -185,8 +185,10 @@ def recommended_bindings(capabilities: Mapping[str, object]) -> dict[str, tuple[
         return isinstance(facts, Mapping) and facts.get("available") is True
 
     result: dict[str, tuple[str, str]] = {}
-    if available("pi"):
-        result["architect"] = ("pi", "")
+    for tool in ("pi", "opencode", "codex"):
+        if available(tool):
+            result["architect"] = (tool, "")
+            break
     if available("opencode"):
         result["coder"] = ("opencode", "")
         result["reviewer"] = ("opencode", "")

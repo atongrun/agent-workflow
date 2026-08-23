@@ -893,7 +893,7 @@ def test_machine_init_rejects_unsupported_binding_before_mutation(
             repo=repo,
             machine="mac",
             project="sample",
-            bindings={"architect": ("opencode", "model")},
+            bindings={"architect": ("none", "model")},
             capabilities=_capabilities(tmp_path, "opencode"),
             lifecycle="managed",
             upstream_repo="",

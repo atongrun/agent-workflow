@@ -345,12 +345,22 @@ def test_closed_dispatch_rejects_unsupported_selection_or_options(tmp_path: Path
         "input_text": "bounded input",
         "report_path": report,
     }
-    with pytest.raises(ContractError, match="no installed renderer"):
+    with pytest.raises(ContractError, match="Codex coder does not accept"):
         render_provider_invocation(
-            invocation_spec(tmp_path, role="coder", provider="codex", **common)
+            invocation_spec(
+                tmp_path, role="coder", provider="codex", provider_args=("unexpected",), **common
+            )
         )
-    with pytest.raises(ContractError, match="provider is unsupported for role"):
-        invocation_spec(tmp_path, role="architect", provider="opencode", **common)
+    with pytest.raises(ContractError, match="OpenCode provider options are invalid"):
+        render_provider_invocation(
+            invocation_spec(
+                tmp_path,
+                role="architect",
+                provider="opencode",
+                provider_args=("unexpected",),
+                **common,
+            )
+        )
     with pytest.raises(ContractError, match="options are invalid"):
         render_provider_invocation(
             invocation_spec(

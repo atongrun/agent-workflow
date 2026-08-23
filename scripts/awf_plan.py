@@ -25,7 +25,13 @@ from awf_dispatch import DispatchError
 from awf_executor import ExecutionFailure
 from awf_executor import run as run_command
 from awf_network import add_url_host_to_no_proxy
-from awf_role import _gh_json, _provider_spec, spawn_rendered
+from awf_role import (
+    _gh_json,
+    _provider_spec,
+    assert_model_workspace_state,
+    prepare_model_workspace,
+    spawn_rendered,
+)
 from awf_taskcard import reviewer_selection_contract
 
 from agent_workflow import facade
@@ -80,6 +86,66 @@ def _profile_for_machine(machine: facade.MachineContract, role: str):
     if profile is None:
         raise PlanOperationError(f"machine configuration has no {role} profile")
     return profile
+
+
+def _architect_executable(binding: ArchitectBinding) -> str:
+    """Resolve only the frozen Architect tool selection; never silently fall back."""
+    return os.environ.get(f"AWF_{binding.tool.upper()}_BIN", binding.tool)
+
+
+def _architect_spec(
+    binding: ArchitectBinding,
+    *,
+    invocation: tuple[str, str, str, str],
+    workspace: Path,
+    input_path: Path,
+    input_text: str,
+    report_path: str,
+    provider_args: tuple[str, ...] = (),
+):
+    return _provider_spec(
+        invocation,
+        role="architect",
+        provider=binding.tool,
+        model=binding.model,
+        executable=_architect_executable(binding),
+        workspace=str(workspace),
+        input_path=str(input_path),
+        input_text=input_text,
+        report_path=report_path,
+        provider_args=provider_args,
+    )
+
+
+def _architect_workspace(repo: Path, expected_commit: str, store: PlanRunStore) -> Path:
+    """A planning provider never receives the trusted repository checkout.
+
+    This is the enforceable OpenCode read-only boundary: it has no documented
+    read-only CLI mode, so it runs in a fresh no-remote Runtime workspace whose
+    Git state must remain exact after its ephemeral context is removed.
+    """
+    return Path(
+        prepare_model_workspace(
+            str(repo),
+            expected_commit,
+            state_dir=store.directory,
+            workspace_prefix="architect-workspace-",
+        )
+    )
+
+
+def _spawn_architect(binding: ArchitectBinding, spec, output: Path) -> int:
+    """Codex owns exact last-message capture; stdout tools use the shared bound capture."""
+    if binding.tool == "codex":
+        rc = spawn_rendered(render_provider_invocation(spec))
+        if rc == 0 and (not output.is_file() or output.stat().st_size > 64 * 1024):
+            raise PlanOperationError(
+                "Codex Architect final output is unavailable or exceeds 64 KiB"
+            )
+        return rc
+    return spawn_rendered(
+        render_provider_invocation(spec), stdout_path=str(output), stdout_max_bytes=64 * 1024
+    )
 
 
 def _send_plan_start(profile, payload: dict[str, object]) -> None:
@@ -355,7 +421,8 @@ def _invoke_taskcard_architect(
         coder=coder,
         reviewer=reviewer,
     )
-    context_path = repo / ".awf" / f"architect-context-{run['run_id']}.md"
+    architect_workspace = _architect_workspace(repo, plan.main_sha, store)
+    context_path = architect_workspace / ".awf" / f"architect-context-{run['run_id']}.md"
     context_path.parent.mkdir(parents=True, exist_ok=True)
     output = store.directory / "architect-taskcard.stdout"
     authorization = hashlib.sha256(
@@ -369,23 +436,16 @@ def _invoke_taskcard_architect(
             "authorization_sha256": authorization,
         },
     )
-    spec = _provider_spec(
-        (f"{run['run_id']}-taskcard", str(run["run_id"]), "plan", authorization),
-        role="architect",
-        provider="pi",
-        model=binding.model,
-        executable=os.environ.get("AWF_PI_BIN", "pi"),
-        workspace=str(repo),
-        input_path=str(context_path),
+    spec = _architect_spec(
+        binding,
+        invocation=(f"{run['run_id']}-taskcard", str(run["run_id"]), "plan", authorization),
+        workspace=architect_workspace,
+        input_path=context_path,
         input_text=context,
-        report_path="docs/tasks/architect-generated.md",
+        report_path=str(output),
     )
     try:
-        rc = spawn_rendered(
-            render_provider_invocation(spec),
-            stdout_path=str(output),
-            stdout_max_bytes=64 * 1024,
-        )
+        rc = _spawn_architect(binding, spec, output)
     except BaseException:
         store.update(
             status="architect_ambiguous",
@@ -394,6 +454,7 @@ def _invoke_taskcard_architect(
         raise
     finally:
         context_path.unlink(missing_ok=True)
+        assert_model_workspace_state(str(architect_workspace), plan.main_sha)
     if rc != 0:
         store.update(
             status="architect_failed_no_replay",
@@ -652,7 +713,8 @@ def _invoke_next_architect(
             raise PlanOperationError("next Architect invocation is ambiguous; Pi will not replay")
         raw = output.read_bytes()
     else:
-        context_path = workspace / ".awf" / f"architect-next-context-{last_task_id}.md"
+        architect_workspace = _architect_workspace(workspace, fresh_main, store)
+        context_path = architect_workspace / ".awf" / f"architect-next-context-{last_task_id}.md"
         context_path.parent.mkdir(parents=True, exist_ok=True)
         store.update(
             status="architect_next_running",
@@ -664,29 +726,22 @@ def _invoke_next_architect(
                 "last_completion_sha256": last_completion.get("sha256", ""),
             },
         )
-        spec = _provider_spec(
-            (
+        spec = _architect_spec(
+            binding,
+            invocation=(
                 f"{run['run_id']}-next-{last_task_id}",
                 str(run["run_id"]),
                 last_task_id,
                 authorization,
             ),
-            role="architect",
-            provider="pi",
-            model=binding.model,
-            executable=os.environ.get("AWF_PI_BIN", "pi"),
-            workspace=str(workspace),
-            input_path=str(context_path),
+            workspace=architect_workspace,
+            input_path=context_path,
             input_text=context,
-            report_path=f".awf/architect-next/{last_task_id}.md",
+            report_path=str(output),
             provider_args=("milestone-next",),
         )
         try:
-            rc = spawn_rendered(
-                render_provider_invocation(spec),
-                stdout_path=str(output),
-                stdout_max_bytes=64 * 1024,
-            )
+            rc = _spawn_architect(binding, spec, output)
         except BaseException:
             store.update(
                 status="architect_ambiguous",
@@ -695,6 +750,7 @@ def _invoke_next_architect(
             raise
         finally:
             context_path.unlink(missing_ok=True)
+            assert_model_workspace_state(str(architect_workspace), fresh_main)
         if rc != 0:
             store.update(
                 status="architect_failed_no_replay",
@@ -886,7 +942,9 @@ def _invoke_terminal_decision(
         (str(run["start_payload_sha256"]) + "\0decision\0" + task_id).encode("utf-8")
     ).hexdigest()
     output = store.directory / f"architect-decision-{task_id}.stdout"
-    input_path = workspace / ".awf" / f"architect-decision-context-{task_id}.md"
+    expected_commit = str(_git(workspace, "rev-parse", "HEAD^{commit}"))
+    architect_workspace = _architect_workspace(workspace, expected_commit, store)
+    input_path = architect_workspace / ".awf" / f"architect-decision-context-{task_id}.md"
     input_path.parent.mkdir(parents=True, exist_ok=True)
     store.update(
         status="architect_decision_running",
@@ -896,24 +954,22 @@ def _invoke_terminal_decision(
             "authorization_sha256": authorization,
         },
     )
-    spec = _provider_spec(
-        (f"{run['run_id']}-decision-{task_id}", str(run["run_id"]), task_id, authorization),
-        role="architect",
-        provider="pi",
-        model=binding.model,
-        executable=os.environ.get("AWF_PI_BIN", "pi"),
-        workspace=str(workspace),
-        input_path=str(input_path),
+    spec = _architect_spec(
+        binding,
+        invocation=(
+            f"{run['run_id']}-decision-{task_id}",
+            str(run["run_id"]),
+            task_id,
+            authorization,
+        ),
+        workspace=architect_workspace,
+        input_path=input_path,
         input_text=context,
-        report_path=f".awf/architect-decisions/{task_id}.md",
+        report_path=str(output),
         provider_args=("terminal-decision",),
     )
     try:
-        rc = spawn_rendered(
-            render_provider_invocation(spec),
-            stdout_path=str(output),
-            stdout_max_bytes=64 * 1024,
-        )
+        rc = _spawn_architect(binding, spec, output)
     except BaseException:
         store.update(
             status="architect_ambiguous",
@@ -922,6 +978,7 @@ def _invoke_terminal_decision(
         raise
     finally:
         input_path.unlink(missing_ok=True)
+        assert_model_workspace_state(str(architect_workspace), expected_commit)
     if rc != 0:
         store.update(
             status="architect_failed_no_replay",
