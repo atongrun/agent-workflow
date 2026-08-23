@@ -7,8 +7,10 @@ acceptance in **high-value models** while **lower-cost models** handle frequent,
 testing, first-line review, and deterministic rework. The product optimizes a downstream project's
 continuing dependence on scarce high-value-model capacity—not total model calls or total tokens.
 
-The normative method lives in [`constitution.md`](constitution.md). The current implementation is a
-thin, stateless `awf` CLI that validates Role, Workflow, and Artifact contracts.
+The normative method lives in [`constitution.md`](constitution.md). The current implementation
+combines those validation contracts with a bounded operations product path that invokes configured
+Agent Tools from an exact committed Plan while keeping Git, review, merge and transport authority in
+trusted code.
 
 Binary distribution remains unsupported: the completed CI-only feasibility study returned
 `NO_GO_PRODUCTION_BINARY`, not an installer or release format. All three candidates failed the
@@ -89,13 +91,16 @@ long-lived explanation and private context stay in AI Memory.
   completion.
 - **AI Memory** preserves long-term and private context. It is a potential upstream knowledge
   source for planning, not a mandatory dependency of every Executor.
-- A future external runtime may combine Agent Workflow, Agent Bus, and AI Memory. Agent Workflow
-  currently defines no Agent Host integration or Plugin SDK.
+- The installed operations surface composes Agent Workflow and Agent Bus for the bounded Plan happy
+  path. It still defines no generic Agent Host, Plugin SDK, scheduler, TaskCard queue or remote
+  supervisor.
 
 ## Current Implementation and Dogfood Surface
 
-The repository ships markdown/YAML contracts plus the validation-only `awf` CLI. It never runs a
-model or advances a Workflow Run.
+The repository ships markdown/YAML contracts plus `awf`. Validation and inspection commands remain
+read-only. The Agent-facing committed-Plan start is different: it invokes the configured Pi
+Architect fresh, then owns a strictly serial one-card or milestone loop through existing trusted
+operations.
 
 `scripts/` is a separate **operations surface** produced by real dogfood. It has demonstrated exact
 checkout synchronization, trusted model-process boundaries, postflight verification, allowed-path
@@ -124,9 +129,11 @@ reviewer → architect `PASS` route with trusted postflight, commit/push, remote
 and ACK evidence. Windows Python 3.12 default-locale portability is also closed with a trusted full
 suite. These capabilities remain outside the stable core.
 
-The first non-infrastructure downstream dogfood later completed three serial TaskCards. The
-remaining measurement gap is a prospectively instrumented high-value-model-led baseline; automatic
-continuation into a next TaskCard also remains outside the accepted operator contract. See
+The first non-infrastructure downstream dogfood later completed three serial TaskCards. Phase 5 then
+closed an Agent-facing committed-Plan path and a real two-card Architect-led milestone: Pi created
+each card only after exact current facts, Card 2 bound freshly observed main containing Card 1, and
+AWF completed both PR/CI/merge facts before exact `MILESTONE_COMPLETE`. The remaining measurement gap
+is a prospectively instrumented high-value-model-led baseline. See
 the [reviewer-routing implementation report](docs/tasks/reviewer-verdict-routing-implementation-report.md),
 the [live semantic-loop report](docs/tasks/live-semantic-loop-acceptance-2026-07-26-v5-implementation-report.md),
 the [three-card acceptance report](docs/tasks/dousansi-three-card-dogfood-acceptance-20260809.md),
@@ -247,26 +254,30 @@ the durable result, current fingerprint, and zero queues without sending or alte
 checklist entry and now renders the Fast report. Role listeners opt into the disposable control
 route with `--enable-preflight`.
 
-## Thin Operations Menu
+## Normal Product Journey
 
-Phase 5-01 makes onboarding current-machine and capability-first. Agent Workflow assumes Agent Bus,
-GitHub CLI and each selected Agent Tool are already installed/authenticated/configured; init never
-writes credentials, provider endpoints or model catalogs:
+Agent Workflow assumes Agent Bus, GitHub CLI and each selected Agent Tool are already
+installed/authenticated/configured. Normal human UX is setup, passive observation and safe stop;
+the committed-Plan start is an Agent-facing capability:
 
 ```bash
 awf init
-awf doctor --explain
 awf status --explain
-awf start
 awf stop
-awf logs
+
+# Called by an initiating Agent after explicit Human authorization:
+awf plan start --plan docs/plans/<plan>.md --one-card
+awf plan start --plan docs/plans/<plan>.md --milestone
 ```
 
 Init checks Git/authenticated GitHub CLI, resolves the configured Agent Bus executable, proves
 `agent-bus.listen.on-argv.v1`, and version-probes the installed OpenCode/Pi/Codex tools without
-starting a model or sending an event. It recommends only implemented bindings: Pi Architect,
-OpenCode Coder, and OpenCode/Pi/Codex Reviewer. Enter accepts defaults; Customize permits any
-current-machine role subset and per-role tool/model selection.
+starting a model or running Deep. After the complete role plan validates, init installs/reconciles
+and starts one local managed listener per selected RoleBinding, registers the existing Preflight
+handlers, and prints Ready only after exact process/profile/lease plus Agent Bus connected evidence.
+It recommends only implemented bindings: Pi Architect, OpenCode Coder, and OpenCode/Pi/Codex
+Reviewer. Enter accepts defaults; Customize permits any current-machine role subset and per-role
+tool/model selection.
 
 Each role gets a deterministic credential-free profile and a separate exact local checkout. One
 OpenCode installation may serve Coder and Reviewer; using the same explicit model is legal and
@@ -283,15 +294,25 @@ Finding is off unless `awf init --finding-enabled` explicitly creates maintainer
 no Finding prompt/capture or Feedback block in normal status; existing `awf feedback ...` remains
 available independently.
 
-`awf enroll` retains the earlier TaskCard-bound coder/reviewer profile + RunManifest/compiler flow;
-`awf init --card ...` is its compatibility path. `start` performs managed install only for explicit
-`not_installed` fact; stale or unknown installation evidence fails closed. `doctor`, `run check`,
-and `status` are payload-blind/read-only. `drain` observes pending counts for every selected role
-before any exact stop and never ACKs, requeues, recovers, or dispatches.
+`awf plan start` compiles the exact tracked Plan/main/blob and configured Pi Architect binding,
+records a minimal PlanRun, runs existing Fast/Deep internally, and returns after durable Agent Bus
+start. A Human does not author the TaskCard. AWF asks Pi for one card, reuses the established
+Coder/Reviewer/Git/PR/merge path, observes fresh upstream main after every merge, and only then asks
+Pi for the next card or exact milestone completion.
 
-Use `--role architect|coder|reviewer` on facade lifecycle/status/log commands to operate one binding.
-Phase 5-01 does not implement fresh `awf run <TaskCard>`; that remains the separately frozen
-Phase 5-02 boundary.
+`awf status` is passive: it displays local roles, listener/workspace/queue observations, PlanRun,
+current/last card, recorded Fast/Deep, PR/merge/completion and the first blocker. It never runs
+doctor, Preflight, logs or resume. `awf stop` records no-new-work, observes every selected queue,
+refuses unsafe pending authority, then exact-stops only the selected local listeners.
+
+`awf enroll` retains the earlier TaskCard-bound coder/reviewer profile + RunManifest/compiler flow;
+`awf init --card ...` is its compatibility path. Top-level `start`, raw `drain`, `node ...`,
+`doctor`, `logs`, `resume`, upgrade and uninstall remain support/admin/recovery commands. They are
+not the normal product journey and are not deleted in this release candidate.
+
+Use `--role architect|coder|reviewer` on support lifecycle/status/log commands to operate one
+binding. Public `awf run <TaskCard>` remains a compatibility/support surface, not the normal Human
+journey.
 
 The advanced surface remains available unchanged for compatibility and debugging:
 
@@ -480,7 +501,8 @@ awf validate examples
 awf inspect workflows/feature-delivery.yaml
 ```
 
-These commands validate and inspect contracts; they do not start or orchestrate a Workflow Run.
+These development commands validate and inspect contracts; only the explicitly authorized
+Agent-facing Plan start enters the managed product loop.
 
 ## Repository Structure
 

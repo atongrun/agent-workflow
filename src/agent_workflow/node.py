@@ -761,12 +761,20 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
     tool_version_sha256 = ""
     if profile.values["tool"] != "none":
         key, default = TOOL_CONFIG[str(profile.values["tool"])]
-        tool = awf_config.native_executable(config.get(key, default))
+        configured_tool = str(profile.values.get("tool_executable") or config.get(key, default))
+        tool = awf_config.native_executable(configured_tool)
         if not (shutil.which(tool) or Path(tool).is_file()):
             raise NodeError("local readiness failed; selected model executable is unavailable")
         try:
+            tool_environment = dict(os.environ)
+            if profile.values.get("tool_executable"):
+                tool_parent = str(Path(tool).expanduser().absolute().parent)
+                tool_environment["PATH"] = os.pathsep.join(
+                    item for item in (tool_parent, tool_environment.get("PATH", "")) if item
+                )
             tool_probe = awf_listen.run_command(
                 [tool, "--version"],
+                env=tool_environment,
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -1116,6 +1124,10 @@ def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
         profile.role,
         "--repo",
         str(profile.repo),
+        "--profile-path",
+        str(profile.authoring_path),
+        "--profile-sha256",
+        profile.digest,
         "--tool",
         str(values["tool"]),
         "--base",
@@ -1129,6 +1141,8 @@ def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
         "--gh-bin",
         str(values.get("gh_bin", "gh")),
     ]
+    if values.get("tool_executable"):
+        argv.extend(["--tool-executable", str(values["tool_executable"])])
     for key, flag in (
         ("model", "--model"),
         ("on_type", "--on-type"),

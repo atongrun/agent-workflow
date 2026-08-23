@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlsplit
 
 from awf_artifact_contract import ArtifactContractError, compile_stage_artifact_contract
@@ -210,7 +211,11 @@ def parser() -> argparse.ArgumentParser:
     return value
 
 
-def dispatch(args: argparse.Namespace) -> None:
+def dispatch(
+    args: argparse.Namespace,
+    *,
+    before_send: Callable[[Path, dict[str, object]], None] | None = None,
+) -> None:
     repo = args.repo.resolve()
     card_path = Path(args.card)
     if not card_path.is_absolute():
@@ -438,6 +443,11 @@ def dispatch(args: argparse.Namespace) -> None:
         print(f"           payload={encoded_payload}")
         print("[dispatch] (dry-run) nothing sent.")
         return
+
+    if before_send is not None:
+        # The Plan product path injects the existing Fast/Deep gate here: after
+        # the exact TaskCard ref is publishable, before the business event.
+        before_send(repo, payload)
 
     bus_url = os.environ.get("AGENT_BUS_URL", "")
     token = os.environ.get("AWF_ARCH_TOKEN", "")
