@@ -6,39 +6,43 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
-## Current Handoff State: 2026-08-24 RC.2 Review and Scope Freeze
+## Current Handoff State: 2026-08-24 RC.2 Product Contract Re-freeze
 
-The code-level review baseline is `main` at
-`1851dd84c7ef6a74b2fb25939eb6aac505c19f90`. The published release baseline is
-`v0.4.0-rc.1` at `1937fa36fe46e92713edf6330fc2b83f8439a99c`; its wheel asset is present.
-Agent Bus `v0.3.1` is published and still matches the README compatibility claim. The exact next
-implementation baseline is the `main` merge containing this handoff and the frozen plan; refresh
-live refs before creating an implementation branch.
+The review input baseline is `main` at
+`58b3d0ca160533de9a9360cbf9b63636259fef03`. The published release baseline remains
+`v0.4.0-rc.1` at `1937fa36fe46e92713edf6330fc2b83f8439a99c`; Agent Bus `v0.3.1` remains the
+declared transport dependency. The exact implementation baseline is the `main` merge containing
+this handoff and the re-frozen plan; fetch live refs before creating a TaskCard branch.
 
 The sole RC.2 authority is the
-[v0.4.0-rc.2 Productization Plan](docs/plans/v0.4.0-rc.2-productization-plan.md). It freezes the
-serial execution model and limits RC.2 to product/help/first-run truth, unified read-only status and
-errors, `allowed_actions`/next-safe-action projection, TaskCard decomposition/conformance, and one
-clean-installed two-card plus Coder/Reviewer kill acceptance on Windows/macOS. Only blockers exposed
-by that E2E may be repaired afterward.
+[v0.4.0-rc.2 Productization Plan](docs/plans/v0.4.0-rc.2-productization-plan.md). The first external
+user is one technical owner across multiple machines. Human authorization is an approved committed
+Markdown Plan plus an instruction to the initiating Agent; the Agent calls a thin AWF MCP facade.
+`awf plan start` remains an installed contract/debugging/compatibility entry.
 
-Operations formal-package migration, `awf_role.py` decomposition, an Agent-native/MCP facade,
-benchmark infrastructure, provider-native session resume, new provider acceptance, TaskCard vNext,
-parallel/DAG execution, dashboard/TUI, plugin framework and Runtime v2 default migration are not in
-RC.2. Operations packaging, the two-tool MCP facade and light evaluation are ordered immediate
-post-RC.2; the rest is backlog or rejected as recorded in the plan.
+RC.2 now includes the formal operations package boundary, a tracked credential-free project
+topology, local init/doctor/deinit, Windows zero-popup lifecycle and automatic acceptance closeout,
+the complete Pi/OpenCode/Codex x Architect/Coder/Reviewer matrix, one shared status/action contract,
+MCP entry, universal Architect semantic assembly, conditional Human-authorized replacement and
+WAITING_FOR_HUMAN_APPROVAL. It accepts two real topologies: all-OpenCode Quick Start and the
+recommended Pi Architect -> OpenCode Coder -> Codex Reviewer path.
 
-Current main does not use closed semantic JSON for Architect output. That implementation exists only
-on preserved remote branch `r4-final-candidate`, whose formal R4 acceptance is incomplete. Do not
-merge, release, delete or claim that provider support without a separately authorized fresh
-acceptance.
+Current main still has only the RC.1 product matrix. `r4-final-candidate` remains unaccepted
+implementation/evidence input: R1-R3 stay failed and no R4 completion exists. Do not merge it
+wholesale or update support claims before fresh-main implementation, conformance, real invocation,
+independent review, CI and main merge.
 
-Repository closeout removed clean historical worktrees and merged phase branches. Preserve the dirty
-`/private/tmp/awf-phase5-02-worktree`, its local branch, and both stashes until their ownership is
-resolved. They are not RC.2 implementation bases.
+Formal acceptance profiles are disposable and must automatically stop/uninstall after evidence
+freeze on PASS or failure. Normal user profiles persist until explicit deinit. Windows acceptance
+must prove multiple one-minute triggers with zero visible CMD/console windows and zero run-owned
+Scheduled Tasks after closeout.
 
-STOP: do not start RC.2 implementation in this closeout. The next session starts at Phase 1 of the
-frozen plan after confirming the closeout merge on live `main`.
+Preserve the dirty `/private/tmp/awf-phase5-02-worktree`, its local branch and both stashes until
+their ownership is resolved. They are not RC.2 implementation bases.
+
+STOP: this re-freeze authorizes planning only. The next implementation session starts at Phase 1 of
+the sole plan after confirming the containing merge on live `main`; do not start from
+`r4-final-candidate`.
 
 ## Current Handoff State: 2026-08-23 Phase 5 Product Closure
 
