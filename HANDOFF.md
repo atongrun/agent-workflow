@@ -1,10 +1,44 @@
 # Repository Handoff
 
-> Current through the 2026-08-23 Phase 5-02/5-03 product closure and `0.4.0rc1` release preparation.
+> Current through the 2026-08-24 whole-repository review and `v0.4.0-rc.2` scope freeze.
 > The minimum
 > dispatch floor is the merge containing this handoff; repository files and live Git refs are
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
+
+## Current Handoff State: 2026-08-24 RC.2 Review and Scope Freeze
+
+The code-level review baseline is `main` at
+`1851dd84c7ef6a74b2fb25939eb6aac505c19f90`. The published release baseline is
+`v0.4.0-rc.1` at `1937fa36fe46e92713edf6330fc2b83f8439a99c`; its wheel asset is present.
+Agent Bus `v0.3.1` is published and still matches the README compatibility claim. The exact next
+implementation baseline is the `main` merge containing this handoff and the frozen plan; refresh
+live refs before creating an implementation branch.
+
+The sole RC.2 authority is the
+[v0.4.0-rc.2 Productization Plan](docs/plans/v0.4.0-rc.2-productization-plan.md). It freezes the
+serial execution model and limits RC.2 to product/help/first-run truth, unified read-only status and
+errors, `allowed_actions`/next-safe-action projection, TaskCard decomposition/conformance, and one
+clean-installed two-card plus Coder/Reviewer kill acceptance on Windows/macOS. Only blockers exposed
+by that E2E may be repaired afterward.
+
+Operations formal-package migration, `awf_role.py` decomposition, an Agent-native/MCP facade,
+benchmark infrastructure, provider-native session resume, new provider acceptance, TaskCard vNext,
+parallel/DAG execution, dashboard/TUI, plugin framework and Runtime v2 default migration are not in
+RC.2. Operations packaging, the two-tool MCP facade and light evaluation are ordered immediate
+post-RC.2; the rest is backlog or rejected as recorded in the plan.
+
+Current main does not use closed semantic JSON for Architect output. That implementation exists only
+on preserved remote branch `r4-final-candidate`, whose formal R4 acceptance is incomplete. Do not
+merge, release, delete or claim that provider support without a separately authorized fresh
+acceptance.
+
+Repository closeout removed clean historical worktrees and merged phase branches. Preserve the dirty
+`/private/tmp/awf-phase5-02-worktree`, its local branch, and both stashes until their ownership is
+resolved. They are not RC.2 implementation bases.
+
+STOP: do not start RC.2 implementation in this closeout. The next session starts at Phase 1 of the
+frozen plan after confirming the closeout merge on live `main`.
 
 ## Current Handoff State: 2026-08-23 Phase 5 Product Closure
 
