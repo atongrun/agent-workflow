@@ -1,5 +1,25 @@
 # Roadmap
 
+## 2026-08-24 v0.4.0-rc.2 Productization Scope
+
+The sole RC.2 implementation authority is the
+[v0.4.0-rc.2 Productization Plan](docs/plans/v0.4.0-rc.2-productization-plan.md). The execution model
+is frozen. RC.2 is limited to:
+
+- [ ] reconcile product/help/architecture and first-run/configured-selection truth;
+- [ ] provide one read-only status/error projection with blocker, next safe action and conservative
+  allowed actions;
+- [ ] tighten PR-level TaskCard decomposition policy and prove validator conformance without a new
+  TaskCard protocol;
+- [ ] pass one clean-installed real two-card milestone plus Coder/Reviewer kill and Windows/macOS
+  listener UX acceptance;
+- [ ] repair only Golden Path blockers retained by that E2E.
+
+Operations formal packaging, `awf_role.py` decomposition, MCP, provider session resume, benchmark
+infrastructure, new providers, TaskCard vNext, parallel/DAG execution, dashboard/TUI, plugin systems
+and Runtime v2 default migration are outside RC.2. See the plan for immediate post-RC.2 ordering,
+backlog and explicit rejects.
+
 ## Product Gates
 
 1. **Use first, abstract second.** A requirement enters the stable core only after real use proves
