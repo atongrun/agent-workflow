@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import subprocess
 import sys
@@ -17,15 +16,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-MODULE_PATH = SCRIPTS_DIR / "awf_role.py"
-SPEC = importlib.util.spec_from_file_location("awf_role_rts011", MODULE_PATH)
-assert SPEC and SPEC.loader
-awf_role = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(awf_role)
-
+from agent_workflow.operations import awf_role
 
 SCRIPTED_PROVIDER = Path(__file__).parent / "fixtures" / "runtime_v2_scripted_provider.py"
 TASK_ID = "runtime-v2-rts-011-deterministic-rework-acceptance"

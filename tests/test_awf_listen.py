@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from agent_workflow import node
-
-SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+from agent_workflow.operations import awf_listen
 
 
 def profile(tmp_path: Path, *, finding_enabled: bool) -> node.NodeProfile:
@@ -50,8 +46,6 @@ def test_profile_binds_plan_start_and_existing_preflight_registration(tmp_path: 
 
 
 def test_plan_start_handler_uses_structured_payload_and_exact_profile(tmp_path: Path) -> None:
-    import awf_listen
-
     from agent_workflow.resources import operations_dir
 
     argv = awf_listen.build_plan_start_handler_argv(
@@ -77,8 +71,6 @@ def test_plan_start_handler_uses_structured_payload_and_exact_profile(tmp_path: 
 
 
 def test_listener_bypasses_only_the_private_bus_host() -> None:
-    import awf_listen
-
     environment = {"NO_PROXY": "localhost", "no_proxy": "localhost"}
 
     awf_listen.configure_network_bypass(environment, "http://100.81.0.1:8800")

@@ -26,25 +26,29 @@ import re
 import sys
 from pathlib import Path
 
-from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
-from awf_control_plane import (
+from agent_workflow.operations.awf_config import (
+    ConfigError,
+    default_config_path,
+    load_into_environment,
+    native_executable,
+)
+from agent_workflow.operations.awf_control_plane import (
     ControlPlaneDenied,
     authorize_operation,
     default_state_root,
     load_authority_manifest,
 )
-from awf_control_plane import (
+from agent_workflow.operations.awf_control_plane import (
     _lock as control_plane_lock,
 )
 
 try:
-    from awf_executor import ExecutionFailure
-    from awf_executor import run as run_command
+    from agent_workflow.operations.awf_executor import ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
 except ModuleNotFoundError:  # package import in tests
-    from .awf_executor import ExecutionFailure
-    from .awf_executor import run as run_command
-from awf_network import add_url_host_to_no_proxy
-
+    from agent_workflow.operations.awf_executor import ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
+from agent_workflow.operations.awf_network import add_url_host_to_no_proxy
 from agent_workflow.state_root import state_root_binding
 
 PREFLIGHT_REQUEST_TYPE = "control:awf-preflight-v1"

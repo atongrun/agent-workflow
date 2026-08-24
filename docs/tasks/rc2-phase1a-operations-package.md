@@ -38,7 +38,7 @@ runtime `sys.path` mutation or a change to Workflow, Agent Bus, or native lifecy
 - **Repository**: `agent-workflow`
 - **Base branch**: `main`
 - **Task branch**: `codex/rc2-phase1a-operations-package`
-- **Dispatched task commit**: populated by the frozen planning commit before implementation.
+- **Dispatched task commit**: `6f7d79bf1c5718771c8adb6277bcd563a6f77eb1`
 - **Remote baseline**: `origin/main` at `366609d5b09b0721271c39ca72e40d8712f35ad3`
 - **Entry points**: `pyproject.toml`, `src/agent_workflow/resources.py`, `cli.py`, `node.py`,
   `status.py`, `scripts/`, and installed-wheel tests.

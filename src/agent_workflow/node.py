@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import shutil
@@ -441,13 +442,10 @@ def _validate_profile_semantics(profile: NodeProfile) -> None:
 
 
 def _operations_modules():
-    directory = operations_dir()
-    if str(directory) not in sys.path:
-        sys.path.insert(0, str(directory))
-    import awf_config
-    import awf_listen
-
-    return awf_config, awf_listen
+    return (
+        importlib.import_module("agent_workflow.operations.awf_config"),
+        importlib.import_module("agent_workflow.operations.awf_listen"),
+    )
 
 
 def _process_record(profile: NodeProfile) -> dict[str, object] | None:
@@ -738,8 +736,7 @@ def _local_readiness(profile: NodeProfile) -> LocalReadiness:
             "AGENT_BUS_AGENT": profile.role,
         }
     )
-    import awf_network
-
+    awf_network = importlib.import_module("agent_workflow.operations.awf_network")
     awf_network.add_url_host_to_no_proxy(environment, config["AGENT_BUS_URL"])
     try:
         bus_probe = awf_listen.run_command(
@@ -1113,7 +1110,8 @@ def _listener_argv(profile: NodeProfile, launch_id: str = "") -> list[str]:
     values = profile.values
     argv = [
         sys.executable,
-        str(operations_dir() / "awf_listen.py"),
+        "-m",
+        "agent_workflow.operations.awf_listen",
         "--config",
         str(profile.config_path),
         "--authority-manifest",

@@ -8,14 +8,6 @@ import shutil
 import sys
 from pathlib import Path
 
-script_directory = Path(__file__).resolve().parent
-scripts_root = script_directory.parent
-if (scripts_root / "awf_executor.py").is_file():
-    sys.path.insert(0, str(scripts_root))
-
-from awf_executor import DEVNULL, ExecutionFailure  # noqa: E402
-from awf_executor import run as run_command  # noqa: E402
-
 ALLOWED = {
     "describe",
     "diff",
@@ -74,8 +66,8 @@ def main() -> int:
         print("awf model Git guard: real Git executable not found", file=sys.stderr)
         return 127
     try:
-        return run_command([git_bin, *sys.argv[1:]], stdin=DEVNULL).returncode
-    except ExecutionFailure:
+        return os.spawnv(os.P_WAIT, git_bin, [git_bin, *sys.argv[1:]])
+    except OSError:
         print("awf model Git guard: real Git execution failed", file=sys.stderr)
         return 127
 

@@ -26,17 +26,17 @@ import stat
 import sys
 from pathlib import Path
 
-from awf_config import ConfigError, load_config, native_executable
-from awf_control_plane import default_state_root
+from agent_workflow.operations.awf_config import ConfigError, load_config, native_executable
+from agent_workflow.operations.awf_control_plane import default_state_root
 
 try:
-    from awf_executor import ExecutionFailure
-    from awf_executor import run as run_command
+    from agent_workflow.operations.awf_executor import ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
 except ModuleNotFoundError:  # package import in tests
-    from .awf_executor import ExecutionFailure
-    from .awf_executor import run as run_command
-from awf_network import add_url_host_to_no_proxy
-from awf_preflight import run_fast
+    from agent_workflow.operations.awf_executor import ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
+from agent_workflow.operations.awf_network import add_url_host_to_no_proxy
+from agent_workflow.operations.awf_preflight import run_fast
 
 ROLE_TO_TOKEN_VAR = {
     "architect": "AWF_ARCH_TOKEN",

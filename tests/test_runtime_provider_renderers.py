@@ -6,16 +6,22 @@ from pathlib import Path
 
 import pytest
 
+from agent_workflow.operations.agent_adapters.codex import (
+    render_reviewer_invocation as legacy_codex_review,
+)
+from agent_workflow.operations.agent_adapters.opencode import (
+    render_executor_argv as legacy_opencode_coder,
+)
+from agent_workflow.operations.agent_adapters.opencode import (
+    render_reviewer_argv as legacy_opencode_review,
+)
+from agent_workflow.operations.agent_adapters.pi import render_reviewer_argv as legacy_pi_review
 from agent_workflow.runtime import (
     ATTACH_INPUT,
     ContractError,
     InvocationSpec,
     render_provider_invocation,
 )
-from scripts.agent_adapters.codex import render_reviewer_invocation as legacy_codex_review
-from scripts.agent_adapters.opencode import render_executor_argv as legacy_opencode_coder
-from scripts.agent_adapters.opencode import render_reviewer_argv as legacy_opencode_review
-from scripts.agent_adapters.pi import render_reviewer_argv as legacy_pi_review
 
 ROOT = Path(__file__).parents[1]
 RENDERERS = ROOT / "src" / "agent_workflow" / "runtime" / "renderers.py"

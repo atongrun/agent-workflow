@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import awf_executor
+from agent_workflow.operations import awf_executor
 
 
 @pytest.mark.parametrize(

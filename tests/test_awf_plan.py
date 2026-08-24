@@ -2,21 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
-import awf_dispatch  # noqa: E402
-import awf_plan  # noqa: E402
-import awf_preflight  # noqa: E402
-
+from agent_workflow.operations import (
+    awf_dispatch,  # noqa: E402
+    awf_plan,  # noqa: E402
+    awf_preflight,  # noqa: E402
+)
 from agent_workflow.plan_loop import (  # noqa: E402
     ArchitectBinding,
     PlanFact,

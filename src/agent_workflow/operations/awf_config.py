@@ -19,13 +19,17 @@ from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
 try:
-    from awf_executor import ExecutionFailure
-    from awf_executor import native_executable as normalize_executable_path
-    from awf_executor import run as run_command
+    from agent_workflow.operations.awf_executor import ExecutionFailure
+    from agent_workflow.operations.awf_executor import (
+        native_executable as normalize_executable_path,
+    )
+    from agent_workflow.operations.awf_executor import run as run_command
 except ModuleNotFoundError:  # package import in tests
-    from .awf_executor import ExecutionFailure
-    from .awf_executor import native_executable as normalize_executable_path
-    from .awf_executor import run as run_command
+    from agent_workflow.operations.awf_executor import ExecutionFailure
+    from agent_workflow.operations.awf_executor import (
+        native_executable as normalize_executable_path,
+    )
+    from agent_workflow.operations.awf_executor import run as run_command
 
 MAX_CONFIG_BYTES = 64 * 1024
 TOKEN_KEYS = frozenset({"AWF_ARCH_TOKEN", "AWF_CODER_TOKEN", "AWF_REVIEWER_TOKEN"})
