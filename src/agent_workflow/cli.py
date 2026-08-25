@@ -598,11 +598,70 @@ def _selected_roles(value: str | None) -> tuple[str, ...] | None:
     return roles
 
 
+def _load_committed_project_topology(repo: Path) -> project_topology.ProjectTopology:
+    topology = project_topology.load(repo)
+    checks = (
+        ["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+        [
+            "git",
+            "-C",
+            str(repo),
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            project_topology.PROJECT_PATH,
+        ],
+        [
+            "git",
+            "-C",
+            str(repo),
+            "diff",
+            "--quiet",
+            "HEAD",
+            "--",
+            project_topology.PROJECT_PATH,
+        ],
+    )
+    try:
+        results = [
+            subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+                check=False,
+            )
+            for argv in checks
+        ]
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise facade.FacadeError("could not verify committed project topology") from exc
+    if (
+        any(result.returncode for result in results)
+        or Path(results[0].stdout.strip()).resolve() != repo
+    ):
+        raise facade.FacadeError(
+            "project topology must be tracked, committed, and unchanged before awf init"
+        )
+    return topology
+
+
 def _configured_bindings(
     args: argparse.Namespace,
     capabilities: dict[str, object],
+    topology: project_topology.ProjectTopology,
 ) -> dict[str, tuple[str, str]]:
-    recommended = facade.recommended_bindings(capabilities)
+    tools = capabilities.get("tools")
+    if not isinstance(tools, dict):
+        raise facade.FacadeError("detected agent-tool facts are unavailable")
+    recommended = {
+        role: (tool, "")
+        for role, tool in topology.roles.items()
+        if tool in facade.ROLE_PROVIDER_CAPABILITIES[role]
+        and isinstance(tools.get(tool), dict)
+        and tools[tool].get("available") is True
+    }
     roles = _selected_roles(args.roles)
     interactive = roles is None and not args.non_interactive and sys.stdin.isatty()
     if roles is None:
@@ -618,8 +677,6 @@ def _configured_bindings(
             raise facade.FacadeError("init selection must be Enter or C")
         if choice == "c":
             selected: list[str] = []
-            tools = capabilities["tools"]
-            assert isinstance(tools, dict)
             overrides: dict[str, tuple[str, str]] = {}
             for role in facade.ROLE_ORDER:
                 enabled = (
@@ -641,11 +698,14 @@ def _configured_bindings(
                 )
                 if not use_role:
                     continue
-                available = [
-                    tool
-                    for tool in facade.ROLE_PROVIDER_CAPABILITIES[role]
-                    if isinstance(tools.get(tool), dict) and tools[tool]["available"]
-                ]
+                declared_tool = topology.roles[role]
+                available = (
+                    [declared_tool]
+                    if declared_tool in facade.ROLE_PROVIDER_CAPABILITIES[role]
+                    and isinstance(tools.get(declared_tool), dict)
+                    and tools[declared_tool]["available"]
+                    else []
+                )
                 if not available:
                     raise facade.FacadeError(f"no installed agent tool supports {role}")
                 default_tool = recommended.get(role, (available[0], ""))[0]
@@ -669,6 +729,12 @@ def _configured_bindings(
     bindings: dict[str, tuple[str, str]] = {}
     for role in roles:
         tool, model = explicit[role]
+        declared_tool = topology.roles[role]
+        if tool and tool != declared_tool:
+            raise facade.FacadeError(
+                f"{role} agent tool conflicts with committed project topology; "
+                "update and commit .awf/project.yaml before init"
+            )
         if not tool:
             try:
                 tool, default_model = recommended[role]
@@ -693,12 +759,13 @@ def cmd_init(args: argparse.Namespace) -> int:
         return _cmd_legacy_init(args)
     try:
         repo = Path(args.repo).resolve()
+        topology = _load_committed_project_topology(repo)
         capabilities = facade.discover_machine_capabilities(
             repo,
             config_path=Path(args.config).expanduser() if args.config else None,
         )
         _print_detected_capabilities(capabilities)
-        bindings = _configured_bindings(args, capabilities)
+        bindings = _configured_bindings(args, capabilities, topology)
         if bindings and args.lifecycle != "managed":
             raise facade.FacadeError(
                 "normal awf init requires managed listeners; use awf enroll for compatibility"
@@ -720,7 +787,12 @@ def cmd_init(args: argparse.Namespace) -> int:
             finding_enabled=args.finding_enabled,
             replace=args.replace,
         )
-    except (facade.FacadeError, node.NodeError, OSError) as exc:
+    except (
+        facade.FacadeError,
+        node.NodeError,
+        project_topology.ProjectTopologyError,
+        OSError,
+    ) as exc:
         print(f"ERROR: init failed: {exc}", file=sys.stderr)
         return 1
     try:
