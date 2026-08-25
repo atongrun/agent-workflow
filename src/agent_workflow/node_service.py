@@ -89,13 +89,26 @@ def _python_executable() -> Path:
     return Path(os.path.abspath(sys.executable))
 
 
+def _task_python_executable(*, windows: bool | None = None) -> Path:
+    """Return the exact interpreter allowed to create a scheduled Windows process."""
+    python = _python_executable()
+    if windows is None:
+        windows = os.name == "nt"
+    if not windows:
+        return python
+    no_console = python.with_name("pythonw.exe")
+    if not no_console.is_file():
+        raise NodeServiceError("Task Scheduler requires the installed venv pythonw.exe")
+    return no_console
+
+
 def _reconcile_argv(profile) -> list[str]:
     return [str(_python_executable()), *_reconcile_arguments(profile)]
 
 
 def _task_reconcile_argv(profile) -> list[str]:
     return [
-        str(_python_executable()),
+        str(_task_python_executable()),
         "-m",
         "agent_workflow.node_service",
         "task-reconcile",
@@ -108,6 +121,10 @@ def _manager_action_argv(profile, manager: str) -> list[str]:
     return (
         _task_reconcile_argv(profile) if manager == "task-scheduler" else _reconcile_argv(profile)
     )
+
+
+def _manager_python_executable(manager: str) -> Path:
+    return _task_python_executable() if manager == "task-scheduler" else _python_executable()
 
 
 def _service_dir(profile) -> Path:
@@ -283,7 +300,7 @@ def _write_install_record(
     from agent_workflow import __version__
 
     body = definition.read_bytes()
-    python = _python_executable()
+    python = _manager_python_executable(manager)
     record = {
         "format": "awf.node-managed-install.v1",
         "manager": manager,
@@ -337,7 +354,7 @@ def _require_installed(profile, manager: str) -> dict[str, object]:
 
     record = _install_record(profile)
     manager_id, definition = _manager_target(profile, manager)
-    python = _python_executable()
+    python = _manager_python_executable(manager)
     expected = {
         "manager": manager,
         "manager_id": manager_id,

@@ -1322,6 +1322,14 @@ def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
         raise NodeError("node lifecycle lock is unavailable") from exc
 
 
+def _listener_creationflags(*, windows: bool | None = None) -> int:
+    if windows is None:
+        windows = os.name == "nt"
+    if not windows:
+        return 0
+    return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+
+
 def _start_locked(profile: NodeProfile) -> int:
     existing = _process_record(profile)
     if existing and _pid_alive(existing.get("pid")):
@@ -1333,9 +1341,7 @@ def _start_locked(profile: NodeProfile) -> int:
     if existing:
         profile.process_path.unlink(missing_ok=True)
     profile.log_path.parent.mkdir(parents=True, exist_ok=True)
-    flags = 0
-    if os.name == "nt":
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP
+    flags = _listener_creationflags()
     launch_id = uuid.uuid4().hex
     with profile.log_path.open("ab", buffering=0) as log:
         process = subprocess.Popen(

@@ -644,6 +644,42 @@ def test_task_scheduler_install_uses_native_indefinite_periodic_definition(
     assert "winsw" not in rendered.lower()
 
 
+def test_task_scheduler_requires_exact_pythonw_on_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    python = tmp_path / "venv" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.write_text("python", encoding="utf-8")
+    monkeypatch.setattr(node_service, "_python_executable", lambda: python)
+
+    with pytest.raises(node_service.NodeServiceError, match="pythonw.exe"):
+        node_service._task_python_executable(windows=True)
+
+    python.with_name("pythonw.exe").write_text("pythonw", encoding="utf-8")
+    assert node_service._task_python_executable(windows=True) == python.with_name("pythonw.exe")
+
+
+def test_task_scheduler_install_record_rejects_replaced_pythonw(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    pythonw = tmp_path / "venv" / "Scripts" / "pythonw.exe"
+    pythonw.parent.mkdir(parents=True)
+    pythonw.write_text("first", encoding="utf-8")
+    monkeypatch.setattr(node_service, "_task_python_executable", lambda: pythonw)
+    manager = node_service.TaskSchedulerAdapter(
+        profile,
+        run_command=lambda argv, **kwargs: "",
+        current_user=node_service._current_windows_user(),
+    )
+    manager.install()
+    node_service._require_installed(profile, "task-scheduler")
+
+    pythonw.write_text("replaced", encoding="utf-8")
+    with pytest.raises(node_service.NodeServiceError, match="Python digest"):
+        node_service._require_installed(profile, "task-scheduler")
+
+
 def test_task_scheduler_stop_ends_task_and_exact_bound_taskkills_process_tree(
     tmp_path: Path,
 ):

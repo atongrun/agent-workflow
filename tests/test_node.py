@@ -566,6 +566,14 @@ def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatc
     assert observed["stdin"] is node.subprocess.DEVNULL
 
 
+def test_listener_creationflags_hide_windows_console(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(node.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
+    monkeypatch.setattr(node.subprocess, "CREATE_NO_WINDOW", 0x8000000, raising=False)
+
+    assert node._listener_creationflags(windows=True) == 0x8000200
+    assert node._listener_creationflags(windows=False) == 0
+
+
 def test_listener_start_waits_for_a_slow_windows_lease(monkeypatch, tmp_path: Path):
     profile = node.load_profile(str(write_profile(tmp_path)))
     elapsed = 0.0
