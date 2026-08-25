@@ -320,6 +320,187 @@ def test_seven_command_synthetic_journey_uses_generated_contracts(monkeypatch, t
     assert observed.count("stop:reviewer") == 1
 
 
+def test_deinit_removes_only_exact_clean_machine_binding(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config_home = tmp_path / "config"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    machine_path = facade.default_machine_config_path(repo)
+    machine_path.parent.mkdir(parents=True)
+    machine_path.write_text("{}", encoding="utf-8")
+    profiles = []
+    for role in ("coder", "reviewer"):
+        source = config_home / "profiles" / f"sample-mac-{role}.json"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("{}", encoding="utf-8")
+        workspace = config_home / "workspaces" / f"sample-mac-{role}"
+        workspace.mkdir(parents=True)
+        profiles.append(
+            node.NodeProfile(
+                path=source,
+                values={
+                    "format": node.PROFILE_FORMAT,
+                    "name": source.stem,
+                    "role": role,
+                    "repo": str(workspace),
+                    "tool": "opencode",
+                    "state_root": str(tmp_path / "state"),
+                    "lifecycle": {"mode": "managed", "manager": "auto", "scope": "user"},
+                },
+            )
+        )
+    contract = facade.MachineContract(
+        repo=repo.resolve(),
+        config_path=machine_path,
+        machine="mac",
+        project="sample",
+        finding_enabled=False,
+        profiles=tuple(profiles),
+    )
+    monkeypatch.setattr(facade, "load_machine", lambda _repo: contract)
+    monkeypatch.setattr(facade, "_git_output", lambda *_args: "")
+    facts = {"running": False, "installation": {"status": "current"}}
+    monkeypatch.setattr(node, "lifecycle_facts", lambda _profile: facts)
+    removed: list[str] = []
+
+    def uninstall(profile):
+        removed.append(profile.role)
+        facts["installation"] = {"status": "not_installed"}
+        return 0
+
+    monkeypatch.setattr(node, "uninstall", uninstall)
+
+    assert facade.deinit(repo) == 0
+    assert removed == ["coder", "reviewer"]
+    assert not machine_path.exists()
+    assert all(not profile.authoring_path.exists() for profile in profiles)
+    assert all(not profile.repo.exists() for profile in profiles)
+
+
+def test_deinit_refuses_before_uninstall_when_any_workspace_is_dirty(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config_home = tmp_path / "config"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    source = config_home / "profiles" / "sample-mac-coder.json"
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    workspace = config_home / "workspaces" / "sample-mac-coder"
+    workspace.mkdir(parents=True)
+    profile = node.NodeProfile(
+        path=source,
+        values={
+            "format": node.PROFILE_FORMAT,
+            "name": source.stem,
+            "role": "coder",
+            "repo": str(workspace),
+            "tool": "opencode",
+            "state_root": str(tmp_path / "state"),
+            "lifecycle": {"mode": "managed", "manager": "auto", "scope": "user"},
+        },
+    )
+    machine_path = facade.default_machine_config_path(repo)
+    machine_path.parent.mkdir(parents=True)
+    machine_path.write_text("{}", encoding="utf-8")
+    contract = facade.MachineContract(
+        repo.resolve(), machine_path, "mac", "sample", False, (profile,)
+    )
+    monkeypatch.setattr(facade, "load_machine", lambda _repo: contract)
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {"running": False, "installation": {"status": "not_installed"}},
+    )
+    monkeypatch.setattr(facade, "_git_output", lambda *_args: "M file")
+    monkeypatch.setattr(node, "uninstall", lambda _profile: pytest.fail("must not uninstall"))
+
+    with pytest.raises(facade.FacadeError, match="workspace is missing or dirty"):
+        facade.deinit(repo)
+    assert machine_path.exists()
+
+
+def test_deinit_refuses_noncanonical_profile_alias_before_mutation(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config_home = tmp_path / "config"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    source = config_home / "profiles" / "sample-mac-coder.json"
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    workspace = config_home / "workspaces" / "sample-mac-coder"
+    workspace.mkdir(parents=True)
+    alias = tmp_path / "legacy-profile.json"
+    profile = node.NodeProfile(
+        path=source,
+        values={
+            "format": node.PROFILE_FORMAT,
+            "name": source.stem,
+            "role": "coder",
+            "repo": str(workspace),
+            "tool": "opencode",
+            "state_root": str(tmp_path / "state"),
+            "lifecycle": {"mode": "managed", "manager": "auto", "scope": "user"},
+        },
+        source_aliases=(alias,),
+    )
+    machine_path = facade.default_machine_config_path(repo)
+    machine_path.parent.mkdir(parents=True)
+    machine_path.write_text("{}", encoding="utf-8")
+    contract = facade.MachineContract(
+        repo.resolve(), machine_path, "mac", "sample", False, (profile,)
+    )
+    monkeypatch.setattr(facade, "load_machine", lambda _repo: contract)
+    monkeypatch.setattr(node, "uninstall", lambda _profile: pytest.fail("must not uninstall"))
+
+    with pytest.raises(facade.FacadeError, match="noncanonical profile aliases"):
+        facade.deinit(repo)
+    assert machine_path.exists()
+
+
+def test_deinit_preserves_binding_and_files_when_exact_uninstall_fails(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config_home = tmp_path / "config"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    source = config_home / "profiles" / "sample-mac-coder.json"
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    workspace = config_home / "workspaces" / "sample-mac-coder"
+    workspace.mkdir(parents=True)
+    profile = node.NodeProfile(
+        path=source,
+        values={
+            "format": node.PROFILE_FORMAT,
+            "name": source.stem,
+            "role": "coder",
+            "repo": str(workspace),
+            "tool": "opencode",
+            "state_root": str(tmp_path / "state"),
+            "lifecycle": {"mode": "managed", "manager": "auto", "scope": "user"},
+        },
+    )
+    machine_path = facade.default_machine_config_path(repo)
+    machine_path.parent.mkdir(parents=True)
+    machine_path.write_text("{}", encoding="utf-8")
+    contract = facade.MachineContract(
+        repo.resolve(), machine_path, "mac", "sample", False, (profile,)
+    )
+    monkeypatch.setattr(facade, "load_machine", lambda _repo: contract)
+    monkeypatch.setattr(facade, "_git_output", lambda *_args: "")
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {"running": False, "installation": {"status": "current"}},
+    )
+    monkeypatch.setattr(node, "uninstall", lambda _profile: 1)
+
+    with pytest.raises(facade.FacadeError, match="uninstall failed for coder"):
+        facade.deinit(repo)
+    assert machine_path.exists()
+    assert source.exists()
+    assert workspace.exists()
+
+
 def test_start_and_drain_gate_every_profile_before_mutation(monkeypatch, tmp_path: Path):
     state_root = tmp_path / "state"
     repo = tmp_path / "repo"

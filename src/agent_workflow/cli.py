@@ -861,6 +861,13 @@ def cmd_facade_stop(args: argparse.Namespace) -> int:
         return _facade_error("stop", exc)
 
 
+def cmd_facade_deinit(args: argparse.Namespace) -> int:
+    try:
+        return facade.deinit(Path(args.repo))
+    except (facade.FacadeError, ManifestError, node.NodeError, OSError) as exc:
+        return _facade_error("deinit", exc)
+
+
 def cmd_facade_drain(args: argparse.Namespace) -> int:
     try:
         return facade.drain(Path(args.repo), role=args.role)
@@ -1453,6 +1460,12 @@ def main(argv: list[str] | None = None) -> int:
         lifecycle_parser.add_argument("--repo", default=".")
         lifecycle_parser.add_argument("--role", choices=facade.ROLE_ORDER, default="")
         lifecycle_parser.set_defaults(func=handler)
+
+    deinit_parser = subparsers.add_parser(
+        "deinit", help="Remove exact current-machine AWF bindings after safe local checks"
+    )
+    deinit_parser.add_argument("--repo", default=".")
+    deinit_parser.set_defaults(func=cmd_facade_deinit)
 
     logs_parser = subparsers.add_parser("logs", help="Read exact local role listener logs")
     logs_parser.add_argument("--repo", default=".")

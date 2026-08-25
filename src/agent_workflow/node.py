@@ -1271,6 +1271,8 @@ def upgrade(profile: NodeProfile, *, replacement: NodeProfile | None = None) -> 
 def uninstall(profile: NodeProfile) -> int:
     write_desired_state(profile, "stopped")
     result = _managed_action(profile, "uninstall")
+    if result:
+        return result
     registry_paths = {
         _source_registry_path(source)
         for source in {profile.authoring_path, *profile.source_aliases}
@@ -1278,7 +1280,13 @@ def uninstall(profile: NodeProfile) -> int:
     registry_paths.add(_name_registry_path(profile.name))
     for path in registry_paths:
         path.unlink(missing_ok=True)
-    return result
+    snapshot = _snapshot_path(profile)
+    snapshot.unlink(missing_ok=True)
+    try:
+        snapshot.parent.rmdir()
+    except OSError:
+        pass
+    return 0
 
 
 def start(profile: NodeProfile, *, allow_session_bound: bool = False) -> int:
