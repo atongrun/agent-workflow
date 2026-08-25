@@ -566,6 +566,26 @@ def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatc
     assert observed["stdin"] is node.subprocess.DEVNULL
 
 
+def test_foreground_passes_only_listener_arguments(monkeypatch, tmp_path: Path):
+    profile = node.load_profile(str(write_profile(tmp_path)))
+    observed: list[str] = []
+
+    class Listen:
+        @staticmethod
+        def main(argv):
+            observed.extend(argv)
+            return 0
+
+    monkeypatch.setattr(node, "_local_readiness", lambda _profile: None)
+    monkeypatch.setattr(node, "_operations_modules", lambda: (None, Listen))
+    monkeypatch.setattr(node, "_foreground_record", lambda *_args: None)
+    monkeypatch.setattr(node, "_clear_foreground_record", lambda *_args: None)
+
+    assert node.foreground(profile) == 0
+    assert observed[0] == "--config"
+    assert "agent_workflow.operations.awf_listen" not in observed
+
+
 def test_listener_creationflags_hide_windows_console(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(node.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
     monkeypatch.setattr(node.subprocess, "CREATE_NO_WINDOW", 0x8000000, raising=False)
