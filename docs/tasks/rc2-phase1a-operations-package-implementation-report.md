@@ -54,8 +54,13 @@ cover the changed imports, direct handler execution, asset paths, and installed-
 | Wall time | 14 minutes, from the frozen-card commit through the first complete focused/package/wheel gate in this session. |
 | Token/cost evidence | No provider/token or cost meter is available to this local implementation session; none is claimed. |
 
-## Remaining gates
+## Closeout
 
-This implementation is ready for independent review, exact-head CI, and merge only.  Phase 1B
-topology, machine binding, lifecycle closeout, and Windows no-console acceptance remain separately
-authorized work.
+PR [#126](https://github.com/atongrun/agent-workflow/pull/126) merged the exact reviewed head
+`c309f7ecd49b7a1e103d760b883b81421299fd83` into `main` as
+`abc5ad2db8f7efcf0531d4fd844cf8bd1558f3cb`. All 18 exact-head CI checks completed SUCCESS,
+including Windows recovery/configuration and fresh installed-wheel checks on macOS, Ubuntu, and
+Windows. The feature branch was deleted after merge.
+
+Phase 1B topology, machine binding, lifecycle closeout, and Windows no-console acceptance remain
+separately authorized work.

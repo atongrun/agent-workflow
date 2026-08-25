@@ -6,6 +6,21 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
+## Current Handoff State: 2026-08-25 RC.2 Phase 1A Operations Package Closeout
+
+Phase 1A is merged on `main` as `abc5ad2db8f7efcf0531d4fd844cf8bd1558f3cb` through PR #126.
+The reviewed implementation head was `c309f7ecd49b7a1e103d760b883b81421299fd83`, based on
+`366609d5b09b0721271c39ca72e40d8712f35ad3`. All 18 exact-head CI checks completed SUCCESS;
+the independent L2 package-boundary review returned PASS with no findings. The report records the
+credential-free canary measurements, fresh installed-wheel proof, and retained no-`sys.path`
+production import boundary at
+[`Phase 1A closeout`](docs/tasks/rc2-phase1a-operations-package-implementation-report.md).
+
+This completed only the formal operations package slice. Project topology, platform-local machine
+binding, lifecycle closeout and the Windows no-console requirement remain unimplemented Phase 1
+work. Start the next separately frozen TaskCard from freshly fetched `main`; do not reopen or alter
+the merged Phase 1A boundary without evidence of a concrete regression.
+
 ## Current Handoff State: 2026-08-24 RC.2 Product Contract Re-freeze
 
 The review input baseline is `main` at
