@@ -687,7 +687,9 @@ def _invoke_next_architect(
             or invocation.get("status") != "result_persisted"
             or not output.is_file()
         ):
-            raise PlanOperationError("next Architect invocation is ambiguous; Pi will not replay")
+            raise PlanOperationError(
+                "next Architect invocation is ambiguous; provider will not replay"
+            )
         raw = output.read_bytes()
     else:
         context_path = workspace / ".awf" / f"architect-next-context-{last_task_id}.md"
@@ -710,9 +712,9 @@ def _invoke_next_architect(
                 authorization,
             ),
             role="architect",
-            provider="pi",
+            provider=binding.tool,
             model=binding.model,
-            executable=os.environ.get("AWF_PI_BIN", "pi"),
+            executable=_architect_executable(binding),
             workspace=str(workspace),
             input_path=str(context_path),
             input_text=context,
@@ -728,7 +730,9 @@ def _invoke_next_architect(
         except BaseException:
             store.update(
                 status="architect_ambiguous",
-                stop_reason="Pi next decision outcome is ambiguous; provider replay is forbidden",
+                stop_reason=(
+                    "Architect next decision outcome is ambiguous; provider replay is forbidden"
+                ),
             )
             raise
         finally:
@@ -743,16 +747,24 @@ def _invoke_next_architect(
                     "fresh_main": fresh_main,
                     "last_completion_sha256": last_completion.get("sha256", ""),
                 },
-                stop_reason="Pi next decision exited non-zero; provider replay is forbidden",
+                stop_reason="Architect next decision exited non-zero; provider replay is forbidden",
             )
-            raise PlanOperationError("Pi Architect next decision invocation failed")
+            raise PlanOperationError("Architect next decision invocation failed")
         raw = output.read_bytes()
     try:
         outcome, body = parse_next_output(raw)
         task_id = ""
         branch = ""
         if outcome == "NEXT_TASK_CARD":
-            normalized = body.encode("utf-8")
+            plan = PlanFact.from_mapping(run["plan"])
+            normalized = assemble_architect_taskcard(
+                parse_architect_task_semantic(raw),
+                frozen_base=fresh_main,
+                repository=plan.repository,
+                base_ref=plan.base_ref,
+                coder=coder,
+                reviewer=reviewer,
+            )
             task_id, branch = validate_taskcard_binding(
                 normalized,
                 frozen_base=fresh_main,
@@ -760,7 +772,7 @@ def _invoke_next_architect(
                 reviewer=reviewer,
             )
             raw = normalized
-    except PlanLoopError:
+    except (PlanLoopError, ArtifactError) as exc:
         store.update(
             status="architect_output_invalid_no_replay",
             architect_invocation={
@@ -771,9 +783,9 @@ def _invoke_next_architect(
                 "fresh_main": fresh_main,
                 "last_completion_sha256": last_completion.get("sha256", ""),
             },
-            stop_reason="Pi Architect next output is invalid; provider replay is forbidden",
+            stop_reason="Architect next output is invalid; provider replay is forbidden",
         )
-        raise
+        raise PlanLoopError("Architect next output is invalid") from exc
     store.update(
         architect_invocation={
             "kind": "milestone-next",
@@ -919,7 +931,9 @@ def _invoke_terminal_decision(
             decision = invocation.get("decision")
             if isinstance(decision, dict):
                 return dict(decision)
-        raise PlanOperationError("terminal Architect invocation is ambiguous; Pi will not replay")
+        raise PlanOperationError(
+            "terminal Architect invocation is ambiguous; provider will not replay"
+        )
     authorization = hashlib.sha256(
         (str(run["start_payload_sha256"]) + "\0decision\0" + task_id).encode("utf-8")
     ).hexdigest()
@@ -937,9 +951,9 @@ def _invoke_terminal_decision(
     spec = _provider_spec(
         (f"{run['run_id']}-decision-{task_id}", str(run["run_id"]), task_id, authorization),
         role="architect",
-        provider="pi",
+        provider=binding.tool,
         model=binding.model,
-        executable=os.environ.get("AWF_PI_BIN", "pi"),
+        executable=_architect_executable(binding),
         workspace=str(workspace),
         input_path=str(input_path),
         input_text=context,
@@ -955,7 +969,9 @@ def _invoke_terminal_decision(
     except BaseException:
         store.update(
             status="architect_ambiguous",
-            stop_reason="Pi terminal Decision outcome is ambiguous; provider replay is forbidden",
+            stop_reason=(
+                "Architect terminal Decision outcome is ambiguous; provider replay is forbidden"
+            ),
         )
         raise
     finally:
@@ -968,9 +984,9 @@ def _invoke_terminal_decision(
                 "status": "failed_no_replay",
                 "authorization_sha256": authorization,
             },
-            stop_reason="Pi terminal Decision exited non-zero; provider replay is forbidden",
+            stop_reason="Architect terminal Decision exited non-zero; provider replay is forbidden",
         )
-        raise PlanOperationError("Pi Architect terminal Decision invocation failed")
+        raise PlanOperationError("Architect terminal Decision invocation failed")
     decision = parse_decision(output.read_bytes())
     store.update(
         architect_invocation={

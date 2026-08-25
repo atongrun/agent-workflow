@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -541,6 +542,49 @@ def test_next_architect_ambiguous_invocation_is_never_replayed(monkeypatch, tmp_
         awf_plan._invoke_next_architect(run=store.load(), **kwargs)
     with pytest.raises(awf_plan.PlanOperationError, match="will not replay"):
         awf_plan._invoke_next_architect(run=store.load(), **kwargs)
+
+
+@pytest.mark.parametrize("tool", ["pi", "opencode", "codex"])
+def test_next_architect_assembles_semantic_taskcard_for_every_provider(
+    monkeypatch, tmp_path: Path, tool: str
+) -> None:
+    binding, _plan, store, source, completion = _completed_milestone_store(tmp_path)
+    binding = replace(binding, tool=tool)
+    semantic = json.dumps(
+        {
+            "task_id": "CARD-002",
+            "objective": "Bounded next card",
+            "scope": ["Implement one bounded change."],
+            "change_paths": ["src/example.py"],
+            "constraints": ["Preserve authority."],
+            "acceptance_criteria": ["Focused test passes."],
+            "verification_commands": [["python", "-m", "pytest", "-q"]],
+        }
+    ).encode("utf-8")
+    observed: dict[str, object] = {}
+
+    def rendered_call(rendered, **kwargs):
+        observed["provider"] = rendered.executable
+        Path(kwargs["stdout_path"]).write_bytes(semantic)
+        return 0
+
+    monkeypatch.setattr(awf_plan, "spawn_rendered", rendered_call)
+    outcome, raw, task_id, branch = awf_plan._invoke_next_architect(
+        store=store,
+        run=store.load(),
+        binding=binding,
+        workspace=source,
+        context="context",
+        last_completion=completion,
+        fresh_main="9" * 40,
+        coder={"tool": "opencode", "model": ""},
+        reviewer={"tool": "codex", "model": ""},
+    )
+
+    assert outcome == "NEXT_TASK_CARD"
+    assert (task_id, branch) == ("CARD-002", "agent/CARD-002")
+    assert b"<!-- awf-reviewer-selection" in raw
+    assert observed["provider"] == tool
 
 
 def test_terminal_completion_enters_milestone_only_after_fact_is_persisted(

@@ -291,7 +291,8 @@ def test_pi_architect_milestone_next_is_fresh_read_only_closed_mode(tmp_path: Pa
     assert "--no-approve" in rendered.argv
     assert any("MILESTONE_COMPLETE" in token for token in rendered.argv)
     assert any("reason silently" in token for token in rendered.argv)
-    assert any("stdout must be only the single line" in token for token in rendered.argv)
+    assert any("task_id, objective, scope, change_paths" in token for token in rendered.argv)
+    assert not any("raw Markdown" in token for token in rendered.argv)
     assert any("pre-generate later cards" in token for token in rendered.argv)
     assert all("terminal decision" not in token.lower() for token in rendered.argv)
 
@@ -431,8 +432,9 @@ def test_all_provider_role_cells_have_closed_renderer(
 
 
 @pytest.mark.parametrize("provider", ["pi", "opencode", "codex"])
+@pytest.mark.parametrize("provider_args", [(), ("milestone-next",)])
 def test_all_architect_renderers_request_closed_semantic_json(
-    tmp_path: Path, provider: str
+    tmp_path: Path, provider: str, provider_args: tuple[str, ...]
 ) -> None:
     report = tmp_path / ".awf" / "architect.json"
     rendered = render_provider_invocation(
@@ -445,6 +447,7 @@ def test_all_architect_renderers_request_closed_semantic_json(
             input_path=tmp_path / "context.md",
             input_text="trusted context",
             report_path=report,
+            provider_args=provider_args,
         )
     )
     prompt = rendered.stdin.decode("utf-8") if rendered.stdin else rendered.argv[-1]
