@@ -37,6 +37,15 @@ def _commit_topology(repo: Path, name: str) -> None:
     )
 
 
+def test_deinit_routes_only_the_exact_repo_to_facade(monkeypatch, tmp_path, capsys):
+    observed: list[Path] = []
+    monkeypatch.setattr(cli.facade, "deinit", lambda repo: observed.append(repo) or 0)
+
+    assert cli.main(["deinit", "--repo", str(tmp_path)]) == 0
+    assert observed == [tmp_path]
+    assert not capsys.readouterr().err
+
+
 def test_init_interactively_customizes_current_machine_roles(monkeypatch, tmp_path, capsys):
     _commit_topology(tmp_path, "role-specialized")
     capabilities = {

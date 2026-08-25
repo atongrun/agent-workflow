@@ -387,6 +387,14 @@ def installation_snapshot(profile) -> dict[str, object]:
     manager = resolve_manager(str(profile.lifecycle.get("manager", "auto")))
     record_path = _service_dir(profile) / "install.json"
     if not record_path.is_file():
+        _manager_id, definition = _manager_target(profile, manager)
+        if definition.exists() or definition.is_symlink():
+            return {
+                "source": "native_manager_install_record+definition",
+                "manager": manager,
+                "installed": None,
+                "status": "stale",
+            }
         return {
             "source": "native_manager_install_record+definition",
             "manager": manager,

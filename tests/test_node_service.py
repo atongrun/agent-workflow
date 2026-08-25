@@ -820,6 +820,21 @@ def test_task_scheduler_uninstall_allows_clean_reinstall(tmp_path: Path):
     assert (profile.node_dir / "managed" / "install.json").is_file()
 
 
+def test_installation_snapshot_marks_orphan_native_definition_stale(monkeypatch, tmp_path: Path):
+    profile = load_managed_profile(tmp_path)
+    definition = tmp_path / "orphan.service"
+    definition.write_text("orphan", encoding="utf-8")
+    monkeypatch.setattr(node_service, "resolve_manager", lambda _value: "systemd")
+    monkeypatch.setattr(
+        node_service, "_manager_target", lambda _profile, _manager: ("orphan", definition)
+    )
+
+    snapshot = node_service.installation_snapshot(profile)
+
+    assert snapshot["installed"] is None
+    assert snapshot["status"] == "stale"
+
+
 def test_task_scheduler_upgrade_replaces_a_drifted_action_record(tmp_path: Path):
     profile = load_managed_profile(tmp_path, manager="task-scheduler")
     calls: list[list[str]] = []

@@ -1149,6 +1149,56 @@ def stop(repo: Path, *, role: str = "") -> int:
     return 0
 
 
+def deinit(repo: Path) -> int:
+    """Remove one exact platform-local machine binding without touching Workflow evidence."""
+    repo = Path(repo).resolve()
+    contract = load_machine(repo)
+    if contract.config_path != default_machine_config_path(repo):
+        raise FacadeError("deinit refuses legacy repository-local machine configuration")
+    expected_profiles: list[tuple[node.NodeProfile, Path, Path, str]] = []
+    for profile in contract.profiles:
+        profile_filename = (
+            profile_name(project=contract.project, machine=contract.machine, role=profile.role)
+            + ".json"
+        )
+        expected_profile = node.default_config_home() / "profiles" / profile_filename
+        expected_workspace = _role_workspace(
+            project=contract.project, machine=contract.machine, role=profile.role
+        ).resolve()
+        if (
+            profile.authoring_path != expected_profile.resolve()
+            or profile.repo != expected_workspace
+        ):
+            raise FacadeError(f"deinit refused: {profile.role} binding is not AWF-generated")
+        if profile.source_aliases and set(profile.source_aliases) != {expected_profile.resolve()}:
+            raise FacadeError(f"deinit refused: {profile.role} has noncanonical profile aliases")
+        facts = node.lifecycle_facts(profile)
+        if facts.get("running") is not False:
+            raise FacadeError(f"deinit refused: {profile.role} listener is active or unknown")
+        installation_status = str(facts.get("installation", {}).get("status", ""))
+        if installation_status not in {"current", "not_installed"}:
+            raise FacadeError(f"deinit refused: {profile.role} installation identity is unknown")
+        if not expected_workspace.is_dir() or _git_output(
+            expected_workspace, "status", "--porcelain"
+        ):
+            raise FacadeError(f"deinit refused: {profile.role} workspace is missing or dirty")
+        expected_profiles.append(
+            (profile, expected_profile, expected_workspace, installation_status)
+        )
+    for profile, _source, _workspace, installation_status in expected_profiles:
+        if installation_status == "not_installed":
+            continue
+        if node.uninstall(profile):
+            raise FacadeError(f"deinit incomplete: uninstall failed for {profile.role}")
+        if node.lifecycle_facts(profile).get("installation", {}).get("status") != "not_installed":
+            raise FacadeError(f"deinit incomplete: installation remains for {profile.role}")
+    for _profile, source, workspace, _installation_status in expected_profiles:
+        source.unlink(missing_ok=True)
+        shutil.rmtree(workspace)
+    contract.config_path.unlink(missing_ok=True)
+    return 0
+
+
 def drain(repo: Path, *, role: str = "") -> int:
     contract = _load_profile_contract(repo)
     profiles = _selected(contract, role)
