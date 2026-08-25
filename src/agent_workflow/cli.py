@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from agent_workflow import __version__, facade, node
+from agent_workflow import __version__, facade, node, project_topology
 from agent_workflow.errors import ParseError
 from agent_workflow.manifest import (
     ManifestError,
@@ -54,6 +54,22 @@ def _find_project_root() -> Path:
 
 def cmd_version(args: argparse.Namespace) -> int:
     print(f"awf {__version__}")
+    return 0
+
+
+def cmd_project(args: argparse.Namespace) -> int:
+    try:
+        repo = Path(args.repo).resolve()
+        if args.project_action == "init":
+            topology = project_topology.for_profile(args.topology, base_ref=args.base_ref)
+            path = project_topology.write(repo, topology, replace=args.replace)
+            print(f"Project topology: {path}")
+        else:
+            topology = project_topology.load(repo)
+            print(json.dumps(topology.document(), ensure_ascii=False, indent=2, sort_keys=True))
+    except project_topology.ProjectTopologyError as exc:
+        print(f"ERROR: project topology failed: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -1108,6 +1124,22 @@ def main(argv: list[str] | None = None) -> int:
     # version
     version_parser = subparsers.add_parser("version", help="Print version")
     version_parser.set_defaults(func=cmd_version)
+
+    project_parser = subparsers.add_parser(
+        "project", help="Create or validate tracked credential-free project topology"
+    )
+    project_commands = project_parser.add_subparsers(dest="project_action", required=True)
+    project_init = project_commands.add_parser("init", help="Create .awf/project.yaml")
+    project_init.add_argument("--repo", default=".")
+    project_init.add_argument(
+        "--topology", choices=tuple(project_topology.PROFILES), default="role-specialized"
+    )
+    project_init.add_argument("--base-ref", default="main")
+    project_init.add_argument("--replace", action="store_true")
+    project_init.set_defaults(func=cmd_project)
+    project_check = project_commands.add_parser("check", help="Validate .awf/project.yaml")
+    project_check.add_argument("--repo", default=".")
+    project_check.set_defaults(func=cmd_project)
 
     # validate
     validate_parser = subparsers.add_parser("validate", help="Validate resource files")
