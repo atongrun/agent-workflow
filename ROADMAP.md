@@ -6,8 +6,9 @@ The sole RC.2 implementation authority is the
 [v0.4.0-rc.2 Productization Plan](docs/plans/v0.4.0-rc.2-productization-plan.md). The execution model
 is frozen. RC.2 is limited to:
 
-- [ ] formalize the installed operations package, add tracked project topology and platform-local
-  machine bindings;
+- [x] formalize the installed operations package (Phase 1A, PR #126 merged as `abc5ad2`; exact-head
+  CI and independent review passed);
+- [ ] add tracked project topology and platform-local machine bindings;
 - [ ] make init/doctor/deinit exact, add automatic disposable-profile closeout and prove Windows
   Task Scheduler reconciliation produces zero visible console windows;
 - [ ] implement and conformance-test the complete Pi/OpenCode/Codex x
