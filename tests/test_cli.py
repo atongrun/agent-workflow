@@ -10,13 +10,35 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent_workflow import __version__, cli, facade
+from agent_workflow import __version__, cli, facade, project_topology
 from agent_workflow.manifest import derive_manifest, write_manifest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _commit_topology(repo: Path, name: str) -> None:
+    project_topology.write(repo, project_topology.for_profile(name))
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-f", project_topology.PROJECT_PATH], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "project topology",
+        ],
+        check=True,
+    )
+
+
 def test_init_interactively_customizes_current_machine_roles(monkeypatch, tmp_path, capsys):
+    _commit_topology(tmp_path, "role-specialized")
     capabilities = {
         "agent_bus": {
             "capabilities": ("agent-bus.listen.on-argv.v1",),
@@ -25,7 +47,7 @@ def test_init_interactively_customizes_current_machine_roles(monkeypatch, tmp_pa
         "tools": {
             "opencode": {"available": True},
             "pi": {"available": True},
-            "codex": {"available": False},
+            "codex": {"available": True},
         },
     }
     observed: dict[str, object] = {}
@@ -55,7 +77,7 @@ def test_init_interactively_customizes_current_machine_roles(monkeypatch, tmp_pa
     assert result == 0
     assert observed["bindings"] == {
         "architect": ("pi", "architect-model"),
-        "reviewer": ("opencode", "review-model"),
+        "reviewer": ("codex", "review-model"),
     }
     output = capsys.readouterr().out
     assert "agent-bus.listen.on-argv.v1" in output
@@ -121,6 +143,7 @@ def test_plan_start_accepts_closed_milestone_mode(monkeypatch, tmp_path):
 
 
 def test_init_withholds_ready_when_listener_activation_fails(monkeypatch, tmp_path, capsys):
+    _commit_topology(tmp_path, "role-specialized")
     capabilities = {
         "agent_bus": {
             "capabilities": ("agent-bus.listen.on-argv.v1",),
@@ -163,6 +186,94 @@ def test_init_withholds_ready_when_listener_activation_fails(monkeypatch, tmp_pa
     output = capsys.readouterr()
     assert "configuration preserved, not Ready" in output.err
     assert "Ready. All selected" not in output.out
+
+
+def test_init_requires_project_topology_before_discovery(monkeypatch, tmp_path, capsys):
+    discovered = []
+    monkeypatch.setattr(
+        cli.facade,
+        "discover_machine_capabilities",
+        lambda *_args, **_kwargs: discovered.append(True),
+    )
+    assert cli.main(["init", "--repo", str(tmp_path), "--non-interactive"]) == 1
+    assert discovered == []
+    assert "project topology" in capsys.readouterr().err
+
+
+def test_init_uses_role_specialized_defaults(monkeypatch, tmp_path):
+    _commit_topology(tmp_path, "role-specialized")
+    capabilities = {
+        "agent_bus": {"capabilities": (), "provenance_sha256": "sha256:" + "1" * 64},
+        "tools": {
+            tool: {"available": True, "executable": f"/tools/{tool}"}
+            for tool in ("pi", "opencode", "codex")
+        },
+    }
+    observed = {}
+    monkeypatch.setattr(cli.facade, "discover_machine_capabilities", lambda *_a, **_k: capabilities)
+    monkeypatch.setattr(
+        cli.facade,
+        "initialize_machine",
+        lambda **kwargs: (observed.update(kwargs) or _empty_machine_contract(tmp_path), ()),
+    )
+    monkeypatch.setattr(cli.facade, "activate_machine", lambda _contract: ())
+    assert cli.main(["init", "--repo", str(tmp_path), "--non-interactive"]) == 0
+    assert observed["bindings"] == {
+        "architect": ("pi", ""),
+        "coder": ("opencode", ""),
+        "reviewer": ("codex", ""),
+    }
+
+
+def test_uniform_opencode_architect_fails_without_provider_cell(monkeypatch, tmp_path, capsys):
+    _commit_topology(tmp_path, "uniform-opencode")
+    capabilities = {
+        "agent_bus": {"capabilities": (), "provenance_sha256": "sha256:" + "1" * 64},
+        "tools": {
+            "opencode": {"available": True},
+            "pi": {"available": False},
+            "codex": {"available": False},
+        },
+    }
+    mutated = []
+    monkeypatch.setattr(cli.facade, "discover_machine_capabilities", lambda *_a, **_k: capabilities)
+    monkeypatch.setattr(
+        cli.facade,
+        "initialize_machine",
+        lambda **_kwargs: mutated.append(True),
+    )
+    result = cli.main(
+        ["init", "--repo", str(tmp_path), "--roles", "architect", "--non-interactive"]
+    )
+    assert result == 1
+    assert mutated == []
+    assert "no detected supported agent tool" in capsys.readouterr().err
+
+
+def test_init_rejects_uncommitted_topology_before_discovery(monkeypatch, tmp_path, capsys):
+    _commit_topology(tmp_path, "role-specialized")
+    path = tmp_path / project_topology.PROJECT_PATH
+    path.write_text(path.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
+    discovered = []
+    monkeypatch.setattr(
+        cli.facade,
+        "discover_machine_capabilities",
+        lambda *_args, **_kwargs: discovered.append(True),
+    )
+    assert cli.main(["init", "--repo", str(tmp_path), "--non-interactive"]) == 1
+    assert discovered == []
+    assert "tracked, committed, and unchanged" in capsys.readouterr().err
+
+
+def _empty_machine_contract(repo: Path) -> facade.MachineContract:
+    return facade.MachineContract(
+        repo=repo,
+        config_path=repo / "machine.json",
+        machine="local",
+        project="project",
+        finding_enabled=False,
+        profiles=(),
+    )
 
 
 def run_awf(*args: str, cwd: Path = PROJECT_ROOT) -> subprocess.CompletedProcess:
