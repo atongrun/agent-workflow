@@ -22,15 +22,15 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 try:
-    from awf_config import ConfigError, default_config_path, load_config
-    from awf_control_plane import ControlPlaneDenied, _atomic_write, _lock
-    from awf_executor import DEVNULL, ExecutionFailure
-    from awf_executor import run as run_command
+    from agent_workflow.operations.awf_config import ConfigError, default_config_path, load_config
+    from agent_workflow.operations.awf_control_plane import ControlPlaneDenied, _atomic_write, _lock
+    from agent_workflow.operations.awf_executor import DEVNULL, ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
 except ModuleNotFoundError:  # package import in tests
-    from .awf_config import ConfigError, default_config_path, load_config
-    from .awf_control_plane import ControlPlaneDenied, _atomic_write, _lock
-    from .awf_executor import DEVNULL, ExecutionFailure
-    from .awf_executor import run as run_command
+    from agent_workflow.operations.awf_config import ConfigError, default_config_path, load_config
+    from agent_workflow.operations.awf_control_plane import ControlPlaneDenied, _atomic_write, _lock
+    from agent_workflow.operations.awf_executor import DEVNULL, ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
 
 from agent_workflow.state_root import state_root_binding
 

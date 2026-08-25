@@ -4,12 +4,23 @@ import itertools
 
 import pytest
 
-from scripts.agent_adapters.codex import _FINDING_INSTRUCTIONS as CODEX_FINDING_INSTRUCTIONS
-from scripts.agent_adapters.codex import render_reviewer_invocation
-from scripts.agent_adapters.opencode import _FINDING_INSTRUCTIONS as OPENCODE_FINDING_INSTRUCTIONS
-from scripts.agent_adapters.opencode import render_executor_argv, render_reviewer_argv
-from scripts.agent_adapters.pi import _FINDING_INSTRUCTIONS as PI_FINDING_INSTRUCTIONS
-from scripts.agent_adapters.pi import render_reviewer_argv as render_pi_reviewer_argv
+from agent_workflow.operations.agent_adapters.codex import (
+    _FINDING_INSTRUCTIONS as CODEX_FINDING_INSTRUCTIONS,
+)
+from agent_workflow.operations.agent_adapters.codex import render_reviewer_invocation
+from agent_workflow.operations.agent_adapters.opencode import (
+    _FINDING_INSTRUCTIONS as OPENCODE_FINDING_INSTRUCTIONS,
+)
+from agent_workflow.operations.agent_adapters.opencode import (
+    render_executor_argv,
+    render_reviewer_argv,
+)
+from agent_workflow.operations.agent_adapters.pi import (
+    _FINDING_INSTRUCTIONS as PI_FINDING_INSTRUCTIONS,
+)
+from agent_workflow.operations.agent_adapters.pi import (
+    render_reviewer_argv as render_pi_reviewer_argv,
+)
 
 
 @pytest.mark.parametrize(

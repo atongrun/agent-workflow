@@ -74,7 +74,6 @@ class TestSchemaFilesExist:
         ]
         assert force_include == {
             "schemas": "agent_workflow/schemas",
-            "scripts": "agent_workflow/operations",
             "templates": "agent_workflow/templates",
         }
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.awf_taskcard import TaskCardContractError, reviewer_selection_contract
+from agent_workflow.operations.awf_taskcard import (
+    TaskCardContractError,
+    reviewer_selection_contract,
+)
 
 
 def selection_block(coder_tool="opencode", coder_model="coder/model") -> str:

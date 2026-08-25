@@ -25,17 +25,22 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
-from awf_config import ConfigError, default_config_path, load_config, native_executable
-from awf_control_plane import (
+from agent_workflow.operations.awf_config import (
+    ConfigError,
+    default_config_path,
+    load_config,
+    native_executable,
+)
+from agent_workflow.operations.awf_control_plane import (
     ControlPlaneDenied,
     RunLedger,
     authorize_operation,
     default_state_root,
     load_authority_manifest,
 )
-from awf_executor import ExecutionFailure, detect_runtime
-from awf_executor import run as run_command
-from awf_network import add_url_host_to_no_proxy
+from agent_workflow.operations.awf_executor import ExecutionFailure, detect_runtime
+from agent_workflow.operations.awf_executor import run as run_command
+from agent_workflow.operations.awf_network import add_url_host_to_no_proxy
 
 REPORT_FORMAT = "awf.preflight-report.v1"
 REQUEST_TYPE = "control:awf-preflight-v1"

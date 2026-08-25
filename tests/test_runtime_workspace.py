@@ -29,7 +29,7 @@ from agent_workflow.runtime import (
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_MODULE = ROOT / "src" / "agent_workflow" / "runtime" / "workspace.py"
-ROLE_HANDLER = ROOT / "scripts" / "awf_role.py"
+ROLE_HANDLER = ROOT / "src" / "agent_workflow" / "operations" / "awf_role.py"
 
 
 def run_git(repo: Path | None, *args: str, environment: dict[str, str] | None = None) -> str:

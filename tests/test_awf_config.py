@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import awf_config
+from agent_workflow.operations import awf_config
 
 
 def write_config(path: Path, text: str) -> Path:
@@ -182,18 +182,26 @@ def test_production_entrypoints_use_native_python_without_sourcing_configuration
     sources = {
         path: (root / path).read_text(encoding="utf-8").casefold()
         for path in (
-            "scripts/awf-dispatch.sh",
-            "scripts/awf_dispatch.py",
-            "scripts/service/awf-listen-service.sh",
-            "scripts/service/awf-listen-service.cmd",
-            "scripts/awf_service.py",
+            "src/agent_workflow/operations/awf-dispatch.sh",
+            "src/agent_workflow/operations/awf_dispatch.py",
+            "src/agent_workflow/operations/service/awf-listen-service.sh",
+            "src/agent_workflow/operations/service/awf-listen-service.cmd",
+            "src/agent_workflow/operations/awf_service.py",
         )
     }
-    assert '. "$dispatch_env"' not in sources["scripts/service/awf-listen-service.sh"]
+    assert (
+        '. "$dispatch_env"'
+        not in sources["src/agent_workflow/operations/service/awf-listen-service.sh"]
+    )
     assert "source dispatch.env" not in "\n".join(sources.values())
-    assert "awf_gitbash" not in sources["scripts/service/awf-listen-service.cmd"]
-    assert "awf_dispatch.py" in sources["scripts/awf-dispatch.sh"]
-    assert "load_into_environment" in sources["scripts/awf_dispatch.py"]
-    assert "shell=true" not in sources["scripts/awf_dispatch.py"]
-    assert "load_profile" in sources["scripts/awf_service.py"]
-    assert "awf_profile" in sources["scripts/awf_service.py"]
+    assert (
+        "awf_gitbash" not in sources["src/agent_workflow/operations/service/awf-listen-service.cmd"]
+    )
+    assert (
+        "agent_workflow.operations.awf_dispatch"
+        in sources["src/agent_workflow/operations/awf-dispatch.sh"]
+    )
+    assert "load_into_environment" in sources["src/agent_workflow/operations/awf_dispatch.py"]
+    assert "shell=true" not in sources["src/agent_workflow/operations/awf_dispatch.py"]
+    assert "load_profile" in sources["src/agent_workflow/operations/awf_service.py"]
+    assert "awf_profile" in sources["src/agent_workflow/operations/awf_service.py"]

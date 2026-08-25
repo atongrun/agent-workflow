@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent_workflow.operations.awf_delivery import canonical_payload_sha256, make_delivery_id
 from agent_workflow.runtime import (
     CommandEnvelope,
     DecisionOutcome,
@@ -14,7 +15,6 @@ from agent_workflow.runtime import (
     TransportError,
     WorkflowStage,
 )
-from scripts.awf_delivery import canonical_payload_sha256, make_delivery_id
 
 SHA0 = "0" * 64
 SHA1 = "1" * 64

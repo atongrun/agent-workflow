@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_workflow.resources import operations_dir
 from agent_workflow.state_root import state_root_binding
 
 if TYPE_CHECKING:
@@ -36,15 +35,10 @@ def _now() -> str:
 
 
 def _operations():
-    directory = operations_dir()
-    if str(directory) not in sys.path:
-        sys.path.insert(0, str(directory))
-    import awf_config
-    import awf_control_plane
-    import awf_executor
-    import awf_preflight
-
-    return awf_config, awf_control_plane, awf_executor, awf_preflight
+    return tuple(
+        importlib.import_module(f"agent_workflow.operations.{name}")
+        for name in ("awf_config", "awf_control_plane", "awf_executor", "awf_preflight")
+    )
 
 
 def _command(argv: list[str], *, cwd: Path | None = None) -> tuple[int, str]:
@@ -368,11 +362,7 @@ def _pr_and_ci(profile: NodeProfile, ledger: dict[str, object]) -> tuple[dict, d
 
 
 def _feedback(profile: NodeProfile) -> dict[str, object]:
-    directory = operations_dir()
-    if str(directory) not in sys.path:
-        sys.path.insert(0, str(directory))
-    import awf_feedback
-
+    awf_feedback = importlib.import_module("agent_workflow.operations.awf_feedback")
     try:
         counts = awf_feedback.feedback_status(profile.state_root)
     except (OSError, ValueError, awf_feedback.FeedbackStateError):

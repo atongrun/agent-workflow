@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import platform
 import subprocess
@@ -24,7 +25,7 @@ from agent_workflow.manifest import (
     write_compiled_report,
     write_manifest,
 )
-from agent_workflow.resources import authority_manifest_path, operations_dir
+from agent_workflow.resources import authority_manifest_path
 from agent_workflow.state_root import resolve_state_root, state_root_binding
 from agent_workflow.validation import (
     load_role_map_from_files,
@@ -231,12 +232,7 @@ def _manifest_value(values: dict, key: str, default: str = "") -> str:
 
 
 def _ops_module():
-    scripts = operations_dir()
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    import awf_control_plane
-
-    return awf_control_plane
+    return importlib.import_module("agent_workflow.operations.awf_control_plane")
 
 
 def _authority_manifest_for_repo(repo: Path) -> Path:
@@ -308,11 +304,9 @@ def _compile_owner_contract(
 ) -> dict:
     ops = _ops_module()
     try:
-        scripts = operations_dir()
-        if str(scripts) not in sys.path:
-            sys.path.insert(0, str(scripts))
-        import awf_artifact_contract
-
+        awf_artifact_contract = importlib.import_module(
+            "agent_workflow.operations.awf_artifact_contract"
+        )
         card = resolve_manifest_card(values, repo)
         authority_path = (
             Path(authority_manifest).expanduser().resolve()
@@ -411,12 +405,8 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
 
 
 def cmd_plan_start(args: argparse.Namespace) -> int:
-    scripts = operations_dir()
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
     try:
-        import awf_plan
-
+        awf_plan = importlib.import_module("agent_workflow.operations.awf_plan")
         result = awf_plan.start_plan(
             repo=Path(args.repo),
             plan=Path(args.plan),
@@ -1021,12 +1011,8 @@ def cmd_status_router(args: argparse.Namespace) -> int:
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
-    scripts = operations_dir()
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
     try:
-        import awf_dispatch
-
+        awf_dispatch = importlib.import_module("agent_workflow.operations.awf_dispatch")
         awf_dispatch.load_optional_config()
         awf_dispatch.dispatch(args)
     except RuntimeError as exc:
@@ -1040,21 +1026,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     if not args.preflight_args or args.preflight_args[0] != "resume-deep":
         print("ERROR: awf preflight supports only resume-deep", file=sys.stderr)
         return 2
-    scripts = operations_dir()
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    import awf_preflight
-
+    awf_preflight = importlib.import_module("agent_workflow.operations.awf_preflight")
     return awf_preflight.main(args.preflight_args)
 
 
 def cmd_feedback(args: argparse.Namespace) -> int:
     """Run the packaged, business-independent feedback operations CLI."""
-    scripts = operations_dir()
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    import awf_feedback
-
+    awf_feedback = importlib.import_module("agent_workflow.operations.awf_feedback")
     forwarded = [args.feedback_command]
     if args.state_root is not None:
         forwarded += ["--state-root", str(args.state_root)]

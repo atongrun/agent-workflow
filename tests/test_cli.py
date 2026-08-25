@@ -69,7 +69,9 @@ def test_plan_start_is_narrow_one_card_capability(monkeypatch, tmp_path, capsys)
         observed.update(kwargs)
         return {"run_id": "plan-123", "status": "start_sent"}
 
-    monkeypatch.setitem(sys.modules, "awf_plan", SimpleNamespace(start_plan=start_plan))
+    monkeypatch.setitem(
+        sys.modules, "agent_workflow.operations.awf_plan", SimpleNamespace(start_plan=start_plan)
+    )
 
     result = cli.main(
         [
@@ -97,7 +99,9 @@ def test_plan_start_accepts_closed_milestone_mode(monkeypatch, tmp_path):
         observed.update(kwargs)
         return {"run_id": "plan-456", "status": "start_sent"}
 
-    monkeypatch.setitem(sys.modules, "awf_plan", SimpleNamespace(start_plan=start_plan))
+    monkeypatch.setitem(
+        sys.modules, "agent_workflow.operations.awf_plan", SimpleNamespace(start_plan=start_plan)
+    )
 
     assert (
         cli.main(
@@ -232,7 +236,7 @@ class TestCLIVersion:
 def test_preflight_forwards_to_packaged_operation(monkeypatch):
     received = []
     operation = SimpleNamespace(main=lambda argv: received.append(argv) or 7)
-    monkeypatch.setitem(sys.modules, "awf_preflight", operation)
+    monkeypatch.setitem(sys.modules, "agent_workflow.operations.awf_preflight", operation)
 
     result = cli.main(["preflight", "resume-deep", "--probe-id", "probe-1"])
 
@@ -242,7 +246,7 @@ def test_preflight_forwards_to_packaged_operation(monkeypatch):
 
 def test_preflight_does_not_expose_internal_handler_commands(monkeypatch, capsys):
     operation = SimpleNamespace(main=lambda _argv: 0)
-    monkeypatch.setitem(sys.modules, "awf_preflight", operation)
+    monkeypatch.setitem(sys.modules, "agent_workflow.operations.awf_preflight", operation)
 
     result = cli.main(["preflight", "handle-result"])
 
@@ -253,7 +257,7 @@ def test_preflight_does_not_expose_internal_handler_commands(monkeypatch, capsys
 def test_feedback_status_forwards_to_packaged_operation(monkeypatch, tmp_path):
     received = []
     operation = SimpleNamespace(main=lambda argv: received.append(argv) or 0)
-    monkeypatch.setitem(sys.modules, "awf_feedback", operation)
+    monkeypatch.setitem(sys.modules, "agent_workflow.operations.awf_feedback", operation)
 
     result = cli.main(["feedback", "status", "--state-root", str(tmp_path), "--json"])
 
@@ -264,7 +268,7 @@ def test_feedback_status_forwards_to_packaged_operation(monkeypatch, tmp_path):
 def test_feedback_flush_forwards_bounded_operator_options(monkeypatch, tmp_path):
     received = []
     operation = SimpleNamespace(main=lambda argv: received.append(argv) or 0)
-    monkeypatch.setitem(sys.modules, "awf_feedback", operation)
+    monkeypatch.setitem(sys.modules, "agent_workflow.operations.awf_feedback", operation)
     config = tmp_path / "dispatch.env"
 
     result = cli.main(
@@ -297,7 +301,7 @@ def test_feedback_flush_forwards_bounded_operator_options(monkeypatch, tmp_path)
 def test_feedback_ingest_forwards_payload_as_one_argument(monkeypatch, tmp_path):
     received = []
     operation = SimpleNamespace(main=lambda argv: received.append(argv) or 0)
-    monkeypatch.setitem(sys.modules, "awf_feedback", operation)
+    monkeypatch.setitem(sys.modules, "agent_workflow.operations.awf_feedback", operation)
     payload = '{"format":"awf.finding-occurrence.v1"}'
 
     result = cli.main(

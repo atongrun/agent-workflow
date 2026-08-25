@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
-import awf_artifact_contract  # noqa: E402
-import awf_dispatch  # noqa: E402
-import awf_listen  # noqa: E402
-import awf_role  # noqa: E402
+from agent_workflow.operations import (
+    awf_artifact_contract,  # noqa: E402
+    awf_dispatch,  # noqa: E402
+    awf_listen,  # noqa: E402
+    awf_role,  # noqa: E402
+)
 
 
 def write_card(path: Path, allowed_paths: list[str]) -> None:

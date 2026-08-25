@@ -9,11 +9,7 @@
 #   AWF_PYTHON  (optional)  python interpreter (default: python3)
 set -eu
 
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPTS_DIR="$(cd "$SELF_DIR/.." && pwd)"   # scripts/ (parent of scripts/service/)
-
 PYTHON="${AWF_PYTHON:-python3}"
-SERVICE="$SCRIPTS_DIR/awf_service.py"
 
 echo "awf-listen-service: exec native Python service entry point"
-exec "$PYTHON" "$SERVICE"
+exec "$PYTHON" -m agent_workflow.operations.awf_service

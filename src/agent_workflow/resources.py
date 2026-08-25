@@ -20,7 +20,7 @@ def _resource_directory(packaged_name: str, source_name: str) -> Path:
 
 def operations_dir() -> Path:
     """Return the production operations directory without depending on cwd."""
-    return _resource_directory("operations", "scripts")
+    return _resource_directory("operations", "operations")
 
 
 def templates_dir() -> Path:

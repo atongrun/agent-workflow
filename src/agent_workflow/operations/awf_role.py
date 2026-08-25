@@ -39,7 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from awf_control_plane import (
+from agent_workflow import __version__ as AWF_VERSION
+from agent_workflow.operations.awf_control_plane import (
     DEFAULT_ROUTES,
     ControlPlaneDenied,
     RunLedger,
@@ -47,34 +48,33 @@ from awf_control_plane import (
     build_context_packet,
     load_authority_manifest,
 )
-from awf_delivery import canonical_payload_sha256, make_delivery_id
-from awf_executor import (
+from agent_workflow.operations.awf_delivery import canonical_payload_sha256, make_delivery_id
+from agent_workflow.operations.awf_executor import (
     DEVNULL,
     PIPE,
     CompletedProcess,
     ExecutionFailure,
 )
-from awf_executor import (
+from agent_workflow.operations.awf_executor import (
     run as run_command,
 )
-from awf_executor import (
+from agent_workflow.operations.awf_executor import (
     start as start_command,
 )
-from awf_feedback import (
+from agent_workflow.operations.awf_feedback import (
     MAX_COMBINED_REPORT_BYTES,
     FindingContractError,
     capture_report_finding,
 )
-from awf_feedback import (
+from agent_workflow.operations.awf_feedback import (
     default_state_root as feedback_state_root,
 )
-from awf_taskcard import (
+from agent_workflow.operations.awf_taskcard import (
     ReviewerSelectionContract,
     TaskCardContractError,
     reviewer_selection_contract,
 )
-
-from agent_workflow import __version__ as AWF_VERSION
+from agent_workflow.resources import templates_dir
 from agent_workflow.runtime import (
     ATTACH_INPUT,
     CODEX_FINDING_INSTRUCTIONS,
@@ -3362,7 +3362,7 @@ def tool_codex_review(
     """Run Codex review and persist its final response at the exact report path."""
     binp = env("AWF_CODEX_BIN", "codex")
     prompt = read_text(prompt_file)
-    template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
+    template_path = templates_dir() / "artifacts/review-report.md"
     review_report_template = read_text(str(template_path))
     card_text = read_text(card_file) if card_file and Path(card_file).is_file() else ""
     invocation_input = prompt
@@ -3448,7 +3448,7 @@ def tool_pi_review(
 ) -> int:
     """Run Pi as a read-only reviewer and persist stdout as the ReviewReport."""
     binp = env("AWF_PI_BIN", "pi")
-    template_path = Path(__file__).resolve().parent.parent / "templates/artifacts/review-report.md"
+    template_path = templates_dir() / "artifacts/review-report.md"
     card_text = read_text(card_file) if card_file and Path(card_file).is_file() else ""
     trusted_diff = bounded_postflight_git_out(
         repo,
@@ -4918,8 +4918,10 @@ def role_architect(a: argparse.Namespace) -> int:
         state_root = evidence.state_dir if evidence is not None else direct_entry_state_root()
         if provenance is not None and evidence is not None:
             try:
-                from awf_plan import PlanOperationError, handle_card_terminal
-
+                from agent_workflow.operations.awf_plan import (
+                    PlanOperationError,
+                    handle_card_terminal,
+                )
                 from agent_workflow.plan_loop import PlanLoopError
 
                 plan_result = handle_card_terminal(

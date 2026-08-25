@@ -6,19 +6,14 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+from agent_workflow.operations import awf_handoff_check, awf_listen, awf_preflight
 
-import awf_handoff_check  # noqa: E402
-import awf_listen  # noqa: E402
-import awf_preflight  # noqa: E402
+SCRIPTS_DIR = Path(__file__).parents[1] / "src" / "agent_workflow" / "operations"
 
 
 def test_preflight_has_no_role_to_agent_product_binding():

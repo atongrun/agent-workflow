@@ -558,7 +558,7 @@ def test_start_writes_bound_process_record_and_uses_packaged_listener(monkeypatc
     assert record["profile_sha256"] == profile.digest
     assert record["state_root"] == str(profile.state_root)
     assert record["state_root_sha256"] == state_root_binding(profile.state_root)
-    assert Path(observed["argv"][1]).name == "awf_listen.py"
+    assert observed["argv"][1:3] == ["-m", "agent_workflow.operations.awf_listen"]
     state_root_index = observed["argv"].index("--state-root")
     assert observed["argv"][state_root_index + 1] == str(profile.state_root)
     assert observed["argv"][-2:] == ["--node-launch-id", record["launch_id"]]

@@ -19,16 +19,23 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from awf_artifact_contract import compile_implementation_report_path, compile_review_report_path
-from awf_config import ConfigError, load_config, load_into_environment, native_executable
-from awf_dispatch import DispatchError
-from awf_executor import ExecutionFailure
-from awf_executor import run as run_command
-from awf_network import add_url_host_to_no_proxy
-from awf_role import _gh_json, _provider_spec, spawn_rendered
-from awf_taskcard import reviewer_selection_contract
-
 from agent_workflow import facade
+from agent_workflow.operations.awf_artifact_contract import (
+    compile_implementation_report_path,
+    compile_review_report_path,
+)
+from agent_workflow.operations.awf_config import (
+    ConfigError,
+    load_config,
+    load_into_environment,
+    native_executable,
+)
+from agent_workflow.operations.awf_dispatch import DispatchError
+from agent_workflow.operations.awf_executor import ExecutionFailure
+from agent_workflow.operations.awf_executor import run as run_command
+from agent_workflow.operations.awf_network import add_url_host_to_no_proxy
+from agent_workflow.operations.awf_role import _gh_json, _provider_spec, spawn_rendered
+from agent_workflow.operations.awf_taskcard import reviewer_selection_contract
 from agent_workflow.plan_loop import (
     PLAN_START_TYPE,
     ArchitectBinding,
@@ -288,7 +295,7 @@ def _run_authoring_fast(
     store: PlanRunStore,
     repo: Path,
 ) -> dict[str, object]:
-    import awf_preflight
+    from agent_workflow.operations import awf_preflight
 
     with _preflight_environment(Path(args.config).resolve()):
         report = awf_preflight.run_fast(_preflight_args(args, repo=repo, intent="taskcard")).report
@@ -307,7 +314,7 @@ def _run_dispatch_preflight(
     store: PlanRunStore,
     repo: Path,
 ) -> dict[str, object]:
-    import awf_preflight
+    from agent_workflow.operations import awf_preflight
 
     if store.load().get("stop_requested") is True:
         raise PlanOperationError("PlanRun stop was requested before business dispatch")
@@ -482,7 +489,7 @@ def _persist_and_dispatch_taskcard(
     }
     store.update(status="card_dispatching", current_card=card)
 
-    import awf_dispatch
+    from agent_workflow.operations import awf_dispatch
 
     dispatch_args = argparse.Namespace(
         repo=repo,

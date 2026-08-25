@@ -4,18 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
-
-import awf_control_plane
-import awf_listen
-import awf_role
-from awf_control_plane import (
+from agent_workflow.operations import awf_control_plane, awf_listen, awf_role
+from agent_workflow.operations.awf_control_plane import (
     ControlPlaneDenied,
     RunLedger,
     authorize_operation,
@@ -658,7 +653,13 @@ def test_authority_manifest_allows_only_reversible_operations():
 
 
 def test_checked_in_authority_manifest_is_bound_into_recovery_packet():
-    path = Path(__file__).parents[1] / "scripts" / "authority-manifest.example.json"
+    path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "agent_workflow"
+        / "operations"
+        / "authority-manifest.example.json"
+    )
     manifest = load_authority_manifest(path)
     assert manifest["allowed_operations"] == [
         "diagnose",

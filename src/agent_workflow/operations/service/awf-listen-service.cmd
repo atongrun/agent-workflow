@@ -9,6 +9,5 @@ if "%AWF_PYTHON%"=="" (
   set "AWF_PYTHON=python"
 )
 
-set "SELF_DIR=%~dp0"
-"%AWF_PYTHON%" "%SELF_DIR%..\awf_service.py"
+"%AWF_PYTHON%" -m agent_workflow.operations.awf_service
 exit /b %ERRORLEVEL%

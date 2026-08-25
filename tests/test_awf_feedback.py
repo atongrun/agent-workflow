@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts import awf_feedback
+from agent_workflow.operations import awf_feedback
 
 REPORTER_ONLY = pytest.mark.skipif(
     os.name == "nt",

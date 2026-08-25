@@ -31,7 +31,6 @@ packages = ["src/agent_workflow"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "schemas" = "agent_workflow/schemas"
-"scripts" = "agent_workflow/operations"
 "templates" = "agent_workflow/templates"
 
 [tool.pytest.ini_options]

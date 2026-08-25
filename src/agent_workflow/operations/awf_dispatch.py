@@ -12,9 +12,21 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
-from awf_artifact_contract import ArtifactContractError, compile_stage_artifact_contract
-from awf_config import ConfigError, default_config_path, load_into_environment, native_executable
-from awf_delivery import canonical_json, canonical_payload_sha256, make_delivery_id
+from agent_workflow.operations.awf_artifact_contract import (
+    ArtifactContractError,
+    compile_stage_artifact_contract,
+)
+from agent_workflow.operations.awf_config import (
+    ConfigError,
+    default_config_path,
+    load_into_environment,
+    native_executable,
+)
+from agent_workflow.operations.awf_delivery import (
+    canonical_json,
+    canonical_payload_sha256,
+    make_delivery_id,
+)
 
 try:
     from agent_workflow.manifest import (
@@ -32,13 +44,16 @@ except ModuleNotFoundError:
     )
 
 try:
-    from awf_executor import CompletedProcess, ExecutionFailure
-    from awf_executor import run as run_command
+    from agent_workflow.operations.awf_executor import CompletedProcess, ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
 except ModuleNotFoundError:  # package import in tests
-    from .awf_executor import CompletedProcess, ExecutionFailure
-    from .awf_executor import run as run_command
-from awf_network import add_url_host_to_no_proxy
-from awf_taskcard import TaskCardContractError, reviewer_selection_contract
+    from agent_workflow.operations.awf_executor import CompletedProcess, ExecutionFailure
+    from agent_workflow.operations.awf_executor import run as run_command
+from agent_workflow.operations.awf_network import add_url_host_to_no_proxy
+from agent_workflow.operations.awf_taskcard import (
+    TaskCardContractError,
+    reviewer_selection_contract,
+)
 
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9_.-]{1,100}$")
 _REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")

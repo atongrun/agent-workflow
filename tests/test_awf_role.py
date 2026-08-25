@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import stat
@@ -14,43 +13,25 @@ from pathlib import Path
 
 import pytest
 
+from agent_workflow.operations import (
+    awf_bootstrap,
+    awf_dispatch,
+    awf_executor,
+    awf_handoff_check,
+    awf_listen,
+    awf_role,
+)
+from agent_workflow.resources import operations_dir
 from agent_workflow.runtime import RenderedInputFile, RenderedInvocation
 from agent_workflow.state_root import state_root_binding
-from scripts import awf_executor
 
-SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
+SCRIPTS_DIR = operations_dir()
 MODULE_PATH = SCRIPTS_DIR / "awf_role.py"
-SPEC = importlib.util.spec_from_file_location("awf_role", MODULE_PATH)
-assert SPEC and SPEC.loader
-awf_role = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(awf_role)
-
 LISTEN_MODULE_PATH = SCRIPTS_DIR / "awf_listen.py"
-LISTEN_SPEC = importlib.util.spec_from_file_location("awf_listen", LISTEN_MODULE_PATH)
-assert LISTEN_SPEC and LISTEN_SPEC.loader
-awf_listen = importlib.util.module_from_spec(LISTEN_SPEC)
-LISTEN_SPEC.loader.exec_module(awf_listen)
-DISPATCH_PATH = Path(__file__).parents[1] / "scripts" / "awf-dispatch.sh"
-NATIVE_DISPATCH_PATH = Path(__file__).parents[1] / "scripts" / "awf_dispatch.py"
-DISPATCH_SPEC = importlib.util.spec_from_file_location("awf_dispatch", NATIVE_DISPATCH_PATH)
-assert DISPATCH_SPEC and DISPATCH_SPEC.loader
-awf_dispatch = importlib.util.module_from_spec(DISPATCH_SPEC)
-DISPATCH_SPEC.loader.exec_module(awf_dispatch)
-
+DISPATCH_PATH = SCRIPTS_DIR / "awf-dispatch.sh"
+NATIVE_DISPATCH_PATH = SCRIPTS_DIR / "awf_dispatch.py"
 HANDOFF_MODULE_PATH = SCRIPTS_DIR / "awf_handoff_check.py"
-HANDOFF_SPEC = importlib.util.spec_from_file_location("awf_handoff_check", HANDOFF_MODULE_PATH)
-assert HANDOFF_SPEC and HANDOFF_SPEC.loader
-awf_handoff_check = importlib.util.module_from_spec(HANDOFF_SPEC)
-HANDOFF_SPEC.loader.exec_module(awf_handoff_check)
-
 BOOTSTRAP_MODULE_PATH = SCRIPTS_DIR / "awf_bootstrap.py"
-BOOTSTRAP_SPEC = importlib.util.spec_from_file_location("awf_bootstrap", BOOTSTRAP_MODULE_PATH)
-assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
-awf_bootstrap = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
-BOOTSTRAP_SPEC.loader.exec_module(awf_bootstrap)
 
 
 _VALID_POSTFLIGHT_CARD = """# Card
@@ -281,7 +262,7 @@ def test_custom_state_root_propagates_to_run_and_feedback_records(monkeypatch, t
             payload=payload,
         )
         awf_role.complete_inbox(args.evidence, "delivery-root", "sha256:payload")
-        feedback = sys.modules["awf_feedback"]
+        feedback = sys.modules["agent_workflow.operations.awf_feedback"]
         occurrence = feedback.build_occurrence(
             {
                 "kind": "reliability",
@@ -2698,7 +2679,7 @@ def test_missing_feedback_state_strips_finding_without_business_failure(
         awf_role,
         "feedback_state_root",
         lambda: (_ for _ in ()).throw(
-            sys.modules["awf_feedback"].FeedbackStateError("unavailable")
+            sys.modules["agent_workflow.operations.awf_feedback"].FeedbackStateError("unavailable")
         ),
     )
     monkeypatch.setenv("AWF_FINDING_ENABLED", "1")

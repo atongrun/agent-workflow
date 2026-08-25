@@ -32,10 +32,7 @@ def verify_listener_pid_binding(
 import json
 import sys
 from pathlib import Path
-from agent_workflow.resources import operations_dir
-
-sys.path.insert(0, str(operations_dir()))
-import awf_listen
+from agent_workflow.operations import awf_listen
 
 state_root = Path(sys.argv[1])
 repo = Path(sys.argv[2])
@@ -277,13 +274,14 @@ if os.name != "nt":
         operations / "service" / "awf-listen-service.sh",
     ]
     assert all(os.access(path, os.X_OK) for path in executable_assets), executable_assets
-sys.path.insert(0, str(operations))
-import awf_control_plane
-import awf_dispatch
-import awf_feedback
-import awf_listen
-import awf_plan
-import awf_role
+from agent_workflow.operations import (
+    awf_control_plane,
+    awf_dispatch,
+    awf_feedback,
+    awf_listen,
+    awf_plan,
+    awf_role,
+)
 assert Path(awf_listen.__file__).resolve().is_relative_to(operations)
 assert Path(awf_role.__file__).resolve().is_relative_to(operations)
 assert awf_control_plane.DEFAULT_ROUTES

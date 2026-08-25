@@ -4,16 +4,16 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXECUTOR = ROOT / "scripts" / "awf_executor.py"
-ROLE_HANDLER = ROOT / "scripts" / "awf_role.py"
-ADAPTERS = ROOT / "scripts" / "agent_adapters"
+EXECUTOR = ROOT / "src" / "agent_workflow" / "operations" / "awf_executor.py"
+ROLE_HANDLER = ROOT / "src" / "agent_workflow" / "operations" / "awf_role.py"
+ADAPTERS = ROOT / "src" / "agent_workflow" / "operations" / "agent_adapters"
 RUNTIME_WORKSPACE = ROOT / "src" / "agent_workflow" / "runtime" / "workspace.py"
 RUNTIME_APPLICATION = ROOT / "src" / "agent_workflow" / "runtime" / "application.py"
 RUNTIME_ARTIFACT = ROOT / "src" / "agent_workflow" / "runtime" / "artifact.py"
 
 
 def production_python_files() -> list[Path]:
-    return sorted((ROOT / "scripts").rglob("*.py"))
+    return sorted((ROOT / "src" / "agent_workflow" / "operations").rglob("*.py"))
 
 
 def test_only_unified_executor_imports_subprocess():
@@ -144,14 +144,14 @@ def test_only_executor_starts_local_processes():
 
 def test_shell_launchers_remain_thin_python_compatibility_shims():
     launchers = {
-        "scripts/awf-dispatch.sh": 15,
-        "scripts/service/awf-listen-service.sh": 35,
-        "scripts/service/awf-listen-service.cmd": 20,
+        "src/agent_workflow/operations/awf-dispatch.sh": 15,
+        "src/agent_workflow/operations/service/awf-listen-service.sh": 35,
+        "src/agent_workflow/operations/service/awf-listen-service.cmd": 20,
     }
     for relative, maximum_lines in launchers.items():
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert len(source.splitlines()) <= maximum_lines
-        assert "awf_dispatch.py" in source or "awf_service.py" in source
+        assert "agent_workflow.operations.awf_" in source
 
 
 def test_agent_adapter_renderers_are_pure_operations_modules():

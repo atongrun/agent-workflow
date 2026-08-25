@@ -322,7 +322,7 @@ def test_snapshot_reports_rejected_pre_model_event_without_payload_or_mutation(
     )
     monkeypatch.setitem(
         sys.modules,
-        "awf_feedback",
+        "agent_workflow.operations.awf_feedback",
         SimpleNamespace(
             FeedbackStateError=ValueError,
             feedback_status=lambda value: {
@@ -364,7 +364,7 @@ def test_business_terminal_keeps_feedback_pending_independent(monkeypatch, tmp_p
 
     monkeypatch.setitem(
         sys.modules,
-        "awf_feedback",
+        "agent_workflow.operations.awf_feedback",
         SimpleNamespace(
             FeedbackStateError=ValueError,
             feedback_status=lambda value: {
