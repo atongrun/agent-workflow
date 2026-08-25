@@ -234,7 +234,7 @@ def test_init_uses_role_specialized_defaults(monkeypatch, tmp_path):
     }
 
 
-def test_uniform_opencode_architect_fails_without_provider_cell(monkeypatch, tmp_path, capsys):
+def test_uniform_opencode_architect_initializes_with_provider_cell(monkeypatch, tmp_path):
     _commit_topology(tmp_path, "uniform-opencode")
     capabilities = {
         "agent_bus": {"capabilities": (), "provenance_sha256": "sha256:" + "1" * 64},
@@ -244,19 +244,19 @@ def test_uniform_opencode_architect_fails_without_provider_cell(monkeypatch, tmp
             "codex": {"available": False},
         },
     }
-    mutated = []
+    observed = {}
     monkeypatch.setattr(cli.facade, "discover_machine_capabilities", lambda *_a, **_k: capabilities)
     monkeypatch.setattr(
         cli.facade,
         "initialize_machine",
-        lambda **_kwargs: mutated.append(True),
+        lambda **kwargs: (observed.update(kwargs) or _empty_machine_contract(tmp_path), ()),
     )
+    monkeypatch.setattr(cli.facade, "activate_machine", lambda _contract: ())
     result = cli.main(
         ["init", "--repo", str(tmp_path), "--roles", "architect", "--non-interactive"]
     )
-    assert result == 1
-    assert mutated == []
-    assert "no detected supported agent tool" in capsys.readouterr().err
+    assert result == 0
+    assert observed["bindings"] == {"architect": ("opencode", "")}
 
 
 def test_init_rejects_uncommitted_topology_before_discovery(monkeypatch, tmp_path, capsys):

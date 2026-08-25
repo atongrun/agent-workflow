@@ -3327,6 +3327,80 @@ def tool_opencode_exec(
     )
 
 
+def tool_codex_exec(
+    repo: str,
+    card_file: str,
+    prompt_file: str,
+    model: str,
+    implementation_report_path: str,
+    review_feedback: str = "",
+    evidence: RunEvidence | None = None,
+    binding: tuple[str, str, str, str] | None = None,
+) -> int:
+    """Run Codex only inside the existing isolated writable model workspace."""
+    instructions = read_text(prompt_file) + (
+        f"\n\nWrite the complete ImplementationReport to exactly: {implementation_report_path}\n"
+    )
+    if review_feedback:
+        instructions += (
+            "\n\n--- Structured reviewer feedback to correct ---\n\n"
+            + normalize_rework_feedback(review_feedback)
+        )
+    spec = _provider_spec(
+        binding,
+        role="coder",
+        provider="codex",
+        model=model,
+        executable=env("AWF_CODEX_BIN", "codex"),
+        workspace=repo,
+        input_path=card_file,
+        input_text=instructions,
+        report_path=implementation_report_path,
+    )
+    return spawn_rendered(
+        render_provider_invocation(spec),
+        evidence=evidence,
+        tracked_phase="codex" if evidence is not None else None,
+    )
+
+
+def tool_pi_exec(
+    repo: str,
+    card_file: str,
+    prompt_file: str,
+    model: str,
+    implementation_report_path: str,
+    review_feedback: str = "",
+    evidence: RunEvidence | None = None,
+    binding: tuple[str, str, str, str] | None = None,
+) -> int:
+    """Run Pi only inside the existing isolated writable model workspace."""
+    instructions = read_text(prompt_file) + (
+        f"\n\nWrite the complete ImplementationReport to exactly: {implementation_report_path}\n"
+    )
+    if review_feedback:
+        instructions += (
+            "\n\n--- Structured reviewer feedback to correct ---\n\n"
+            + normalize_rework_feedback(review_feedback)
+        )
+    spec = _provider_spec(
+        binding,
+        role="coder",
+        provider="pi",
+        model=model,
+        executable=env("AWF_PI_BIN", "pi"),
+        workspace=repo,
+        input_path=card_file,
+        input_text=instructions,
+        report_path=implementation_report_path,
+    )
+    return spawn_rendered(
+        render_provider_invocation(spec),
+        evidence=evidence,
+        tracked_phase="pi" if evidence is not None else None,
+    )
+
+
 def normalize_rework_feedback(raw: str) -> str:
     """Return bounded validated findings without forwarding report prose."""
     if len(raw.encode("utf-8")) > 16 * 1024:
@@ -4074,6 +4148,28 @@ def role_coder(a: argparse.Namespace) -> int:
         log(f"coder: branch={a.branch} tool={tool} model={model or '<default>'}")
         if tool == "opencode":
             rc = tool_opencode_exec(
+                model_repo,
+                model_card_file,
+                prompt_file,
+                model,
+                a.report,
+                getattr(a, "review_feedback", ""),
+                evidence,
+                binding=renderer_binding,
+            )
+        elif tool == "codex":
+            rc = tool_codex_exec(
+                model_repo,
+                model_card_file,
+                prompt_file,
+                model,
+                a.report,
+                getattr(a, "review_feedback", ""),
+                evidence,
+                binding=renderer_binding,
+            )
+        elif tool == "pi":
+            rc = tool_pi_exec(
                 model_repo,
                 model_card_file,
                 prompt_file,

@@ -85,22 +85,21 @@ def test_node_write_paths_cannot_dirty_the_role_repository(monkeypatch, tmp_path
     assert not (state_root / "nodes" / "reviewer-mac" / "process.json").exists()
 
 
-def test_profile_preserves_pi_coder_boundary(tmp_path: Path):
-    path = write_profile(tmp_path, role="coder", tool="pi")
+@pytest.mark.parametrize("tool", ["opencode", "codex", "pi"])
+def test_profile_accepts_all_coder_tools(tmp_path: Path, tool: str):
+    path = write_profile(tmp_path, role="coder", tool=tool)
+    assert node.load_profile(str(path)).values["tool"] == tool
 
-    with pytest.raises(node.NodeError, match="not a supported coder"):
-        node.load_profile(str(path))
 
-
-@pytest.mark.parametrize("tool", ["none", "pi"])
-def test_architect_profile_accepts_internal_terminal_or_pi(tmp_path: Path, tool: str):
+@pytest.mark.parametrize("tool", ["none", "pi", "opencode", "codex"])
+def test_architect_profile_accepts_internal_terminal_or_supported_tool(tmp_path: Path, tool: str):
     valid = write_profile(tmp_path, role="architect", tool=tool)
     loaded = node.load_profile(str(valid))
     assert loaded.role == "architect"
     assert loaded.values["tool"] == tool
 
-    invalid = write_profile(tmp_path, role="architect", tool="codex")
-    with pytest.raises(node.NodeError, match="tool must be Pi"):
+    invalid = write_profile(tmp_path, role="architect", tool="invalid")
+    with pytest.raises(node.NodeError, match="not one of"):
         node.load_profile(str(invalid))
 
 

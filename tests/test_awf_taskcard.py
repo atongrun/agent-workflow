@@ -43,7 +43,7 @@ def test_legacy_taskcard_keeps_same_tool_and_model_for_both_roles():
     "text",
     [
         "<!-- awf-reviewer-selection\n{}\n-->",
-        selection_block(coder_tool="pi"),
+        selection_block(coder_tool="invalid"),
         selection_block() + "\n" + selection_block(),
     ],
 )

@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from agent_workflow.runtime.architect import persist_architect_taskcard
+from agent_workflow.runtime.architect import (
+    assemble_architect_taskcard,
+    parse_architect_task_semantic,
+    persist_architect_taskcard,
+)
 from agent_workflow.runtime.artifact import ArtifactError
 
 
@@ -24,6 +28,44 @@ def taskcard(task_id: str = "P5-TEST-001") -> bytes:
         "## Goal\n\nBounded work.\n\n"
         "<!-- awf-postflight\n" + json.dumps(postflight, indent=2) + "\n-->\n"
     ).encode("utf-8")
+
+
+def semantic(task_id: str = "P5-TEST-001") -> bytes:
+    return json.dumps(
+        {
+            "task_id": task_id,
+            "objective": "Bounded work",
+            "scope": ["Implement one bounded change."],
+            "change_paths": ["src/example.py"],
+            "constraints": ["No authority expansion."],
+            "acceptance_criteria": ["Focused test passes."],
+            "verification_commands": [["python", "-m", "pytest", "-q"]],
+        }
+    ).encode("utf-8")
+
+
+def test_trusted_assembly_injects_taskcard_authority_facts() -> None:
+    assembled = assemble_architect_taskcard(
+        parse_architect_task_semantic(semantic()),
+        frozen_base="a" * 40,
+        repository="owner/project",
+        base_ref="main",
+        coder={"tool": "pi", "model": ""},
+        reviewer={"tool": "codex", "model": "review/model"},
+    )
+
+    text = assembled.decode("utf-8")
+    assert "agent/P5-TEST-001" in text
+    assert '"coder":{"model":"","tool":"pi"}' in text
+    assert ".awf/artifacts/impl-report-P5-TEST-001.md" in text
+
+
+def test_semantic_parser_rejects_protocol_injection() -> None:
+    value = json.loads(semantic())
+    value["objective"] = "<!-- injected -->"
+
+    with pytest.raises(ArtifactError, match="semantic objective"):
+        parse_architect_task_semantic(json.dumps(value).encode("utf-8"))
 
 
 def test_trusted_architect_boundary_validates_then_creates_exact_taskcard(tmp_path: Path) -> None:

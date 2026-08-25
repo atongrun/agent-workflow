@@ -351,12 +351,14 @@ def test_closed_dispatch_rejects_unsupported_selection_or_options(tmp_path: Path
         "input_text": "bounded input",
         "report_path": report,
     }
-    with pytest.raises(ContractError, match="no installed renderer"):
-        render_provider_invocation(
-            invocation_spec(tmp_path, role="coder", provider="codex", **common)
-        )
-    with pytest.raises(ContractError, match="provider is unsupported for role"):
+    coder = render_provider_invocation(
+        invocation_spec(tmp_path, role="coder", provider="codex", **common)
+    )
+    assert "workspace-write" in coder.argv
+    architect = render_provider_invocation(
         invocation_spec(tmp_path, role="architect", provider="opencode", **common)
+    )
+    assert "task_id" in architect.argv[-1]
     with pytest.raises(ContractError, match="options are invalid"):
         render_provider_invocation(
             invocation_spec(
@@ -383,6 +385,72 @@ def test_closed_dispatch_rejects_unsupported_selection_or_options(tmp_path: Path
                 environment=(),
             )
         )
+
+
+@pytest.mark.parametrize(
+    ("provider", "role", "provider_args", "expected"),
+    [
+        ("opencode", "architect", (), "task_id"),
+        ("opencode", "coder", (ATTACH_INPUT,), "run"),
+        ("opencode", "reviewer", (), "run"),
+        ("codex", "architect", (), "task_id"),
+        ("codex", "coder", (), "workspace-write"),
+        ("codex", "reviewer", (), "read-only"),
+        ("pi", "architect", (), "task_id"),
+        ("pi", "coder", (), "read,grep,find,ls,edit,write"),
+        ("pi", "reviewer", ("base-sha",), "read,grep,find,ls"),
+    ],
+)
+def test_all_provider_role_cells_have_closed_renderer(
+    tmp_path: Path,
+    provider: str,
+    role: str,
+    provider_args: tuple[str, ...],
+    expected: str,
+) -> None:
+    report = tmp_path / ".awf" / "report.md"
+    rendered = render_provider_invocation(
+        invocation_spec(
+            tmp_path,
+            role=role,
+            provider=provider,
+            model="provider/model",
+            executable=f"{provider}-test",
+            input_path=tmp_path / "task.md",
+            input_text="trusted input",
+            report_path=report,
+            provider_args=provider_args,
+        )
+    )
+
+    assert rendered.environment == ENVIRONMENT
+    rendered_text = " ".join(rendered.argv)
+    if rendered.stdin:
+        rendered_text += " " + rendered.stdin.decode("utf-8")
+    assert expected in rendered_text
+
+
+@pytest.mark.parametrize("provider", ["pi", "opencode", "codex"])
+def test_all_architect_renderers_request_closed_semantic_json(
+    tmp_path: Path, provider: str
+) -> None:
+    report = tmp_path / ".awf" / "architect.json"
+    rendered = render_provider_invocation(
+        invocation_spec(
+            tmp_path,
+            role="architect",
+            provider=provider,
+            model="",
+            executable=f"{provider}-test",
+            input_path=tmp_path / "context.md",
+            input_text="trusted context",
+            report_path=report,
+        )
+    )
+    prompt = rendered.stdin.decode("utf-8") if rendered.stdin else rendered.argv[-1]
+
+    assert "task_id, objective, scope, change_paths, constraints, acceptance_criteria" in prompt
+    assert "complete self-contained TaskCard" not in prompt
 
 
 def test_renderer_module_is_pure_and_has_no_dynamic_registry() -> None:

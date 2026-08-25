@@ -18,8 +18,8 @@ _GIT_SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 _ENV_NAME_RE = re.compile(r"[^=\x00-\x1f\x7f]+")
 _SENSITIVE_ENV_PARTS = ("TOKEN", "PASSWORD", "SECRET", "CREDENTIAL", "PRIVATE_KEY")
-_ARCHITECT_PROVIDERS = frozenset({"pi"})
-_CODER_PROVIDERS = frozenset({"codex", "opencode"})
+_ARCHITECT_PROVIDERS = frozenset({"codex", "opencode", "pi"})
+_CODER_PROVIDERS = frozenset({"codex", "opencode", "pi"})
 _REVIEWER_PROVIDERS = frozenset({"codex", "opencode", "pi"})
 _MAX_PROVIDER_INPUT_BYTES = 256 * 1024
 _MAX_ENV_VALUE_CHARS = 32_767

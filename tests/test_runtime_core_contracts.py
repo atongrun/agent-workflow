@@ -108,7 +108,6 @@ def test_run_spec_is_strict_immutable_and_canonical() -> None:
         (("repository",), "repo\nname"),
         (("frozen_base",), "A" * 40),
         (("state_root_sha256",), "f" * 63),
-        (("coder", "provider"), "pi"),
         (("implement_attempts",), True),
         (("review_attempts",), 0),
         (("rework_budget",), -1),
@@ -217,7 +216,7 @@ def test_invocation_spec_rejects_provider_role_drift_and_mutable_direct_values(
     tmp_path: Path,
 ) -> None:
     mapping = invocation_mapping(tmp_path)
-    mapping["provider"] = "pi"
+    mapping["provider"] = "unknown"
     with pytest.raises(ContractError, match="unsupported for role"):
         InvocationSpec.from_mapping(mapping)
 

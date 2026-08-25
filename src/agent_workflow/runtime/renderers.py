@@ -35,6 +35,53 @@ Omit the block when there is no safe concrete finding.
 ATTACH_INPUT = "attach-input"
 
 
+def _architect_instruction(mode: tuple[str, ...]) -> str:
+    if mode == ():
+        return (
+            "Return stdout as exactly one JSON object with exactly these keys: task_id, objective, "
+            "scope, change_paths, constraints, acceptance_criteria, verification_commands. "
+            "task_id and objective are strings. scope, change_paths, constraints, and "
+            "acceptance_criteria are non-empty arrays of strings. verification_commands is a "
+            "non-empty array of non-empty argv string arrays. "
+            "Return no Markdown fence, explanation, "
+            "AWF metadata, branch, SHA, role selection, artifact path, or protocol comment."
+        )
+    if mode == ("terminal-decision",):
+        return (
+            "Return only the complete closed Architect Decision with verdict approve, "
+            "request_changes, reject, or escalate. Do not edit, merge, or invent rework."
+        )
+    if mode == ("milestone-next",):
+        return (
+            "Return exactly one complete next TaskCard, exact single-line MILESTONE_COMPLETE, "
+            "or BLOCKED followed by a non-empty reason. Do not edit, dispatch, or merge."
+        )
+    raise ContractError("Architect mode is unsupported")
+
+
+def _opencode_architect_instruction(mode: tuple[str, ...]) -> str:
+    semantic = (
+        "Return stdout as exactly one JSON object with exactly these keys: task_id, objective, "
+        "scope, change_paths, constraints, acceptance_criteria, verification_commands. "
+        "task_id and objective are strings. scope, change_paths, constraints, and "
+        "acceptance_criteria are non-empty arrays of strings. verification_commands is a "
+        "non-empty array of non-empty argv string arrays. Return no Markdown fence, explanation, "
+        "AWF metadata, branch, SHA, role selection, artifact path, or protocol comment."
+    )
+    if mode == ():
+        return semantic
+    if mode == ("milestone-next",):
+        return (
+            "If Plan work remains, return the next task using this contract: "
+            + semantic
+            + " If the Plan is complete, return only MILESTONE_COMPLETE. If blocked, return "
+            "BLOCKED on the first line and one non-empty reason on following lines."
+        )
+    if mode == ("terminal-decision",):
+        return _architect_instruction(mode)
+    raise ContractError("OpenCode architect mode is unsupported")
+
+
 def _require(spec: InvocationSpec, provider: str, roles: set[str]) -> None:
     if spec.provider != provider or spec.role not in roles:
         raise ContractError(f"{provider} renderer does not own this provider/role selection")
@@ -44,8 +91,13 @@ def _require(spec: InvocationSpec, provider: str, roles: set[str]) -> None:
 
 class OpenCodeRenderer:
     def render(self, spec: InvocationSpec) -> RenderedInvocation:
-        _require(spec, "opencode", {"coder", "reviewer"})
-        allowed = {(ATTACH_INPUT,)} if spec.role == "coder" else {(), (ATTACH_INPUT,)}
+        _require(spec, "opencode", {"architect", "coder", "reviewer"})
+        if spec.role == "coder":
+            allowed = {(ATTACH_INPUT,)}
+        elif spec.role == "architect":
+            allowed = {(), (ATTACH_INPUT,), ("milestone-next",), ("terminal-decision",)}
+        else:
+            allowed = {(), (ATTACH_INPUT,)}
         if spec.provider_args not in allowed:
             raise ContractError("OpenCode provider options are invalid")
         argv = ["run", "--dir", spec.workspace]
@@ -53,7 +105,10 @@ class OpenCodeRenderer:
             argv += ["-f", spec.input_path]
         if spec.model:
             argv += ["-m", spec.model]
-        argv += ["--", spec.input_text]
+        prompt = spec.input_text
+        if spec.role == "architect":
+            prompt += "\n\n" + _opencode_architect_instruction(spec.provider_args)
+        argv += ["--", prompt]
         return RenderedInvocation(
             spec.executable,
             tuple(argv),
@@ -84,6 +139,49 @@ class CodexReviewerRenderer:
             tuple(argv),
             spec.workspace,
             stdin=spec.input_text.encode("utf-8"),
+            environment=spec.environment,
+        )
+
+
+class CodexCoderRenderer:
+    def render(self, spec: InvocationSpec) -> RenderedInvocation:
+        _require(spec, "codex", {"coder"})
+        if spec.provider_args:
+            raise ContractError("Codex coder does not accept provider options")
+        argv = ["exec", "-C", spec.workspace, "--sandbox", "workspace-write"]
+        if spec.model:
+            argv += ["--model", spec.model]
+        argv += ["-"]
+        return RenderedInvocation(
+            spec.executable,
+            tuple(argv),
+            spec.workspace,
+            stdin=spec.input_text.encode("utf-8"),
+            environment=spec.environment,
+        )
+
+
+class CodexArchitectRenderer:
+    def render(self, spec: InvocationSpec) -> RenderedInvocation:
+        _require(spec, "codex", {"architect"})
+        instruction = _architect_instruction(spec.provider_args)
+        argv = [
+            "exec",
+            "-C",
+            spec.workspace,
+            "--sandbox",
+            "read-only",
+            "--output-last-message",
+            spec.report_path,
+        ]
+        if spec.model:
+            argv += ["--model", spec.model]
+        argv += ["-"]
+        return RenderedInvocation(
+            spec.executable,
+            tuple(argv),
+            spec.workspace,
+            stdin=(spec.input_text + "\n\n" + instruction).encode("utf-8"),
             environment=spec.environment,
         )
 
@@ -139,11 +237,7 @@ class PiArchitectRenderer:
         if spec.provider_args == ():
             message = (
                 "Reason from the attached trusted project context as the Agent Workflow Architect. "
-                "Use only read-only repository inspection tools. Return one complete "
-                "self-contained TaskCard Markdown document as stdout. The trusted runner "
-                "validates and persists the output; do not claim you wrote or authorized a "
-                "TaskCard. "
-                f"Proposed TaskCard output path: {spec.report_path}"
+                "Use only read-only repository inspection tools. " + _architect_instruction(())
             )
         elif spec.provider_args == ("terminal-decision",):
             message = (
@@ -190,13 +284,45 @@ class PiArchitectRenderer:
         )
 
 
+class PiCoderRenderer:
+    def render(self, spec: InvocationSpec) -> RenderedInvocation:
+        _require(spec, "pi", {"coder"})
+        if spec.provider_args:
+            raise ContractError("Pi coder provider options are invalid")
+        argv = [
+            "--print",
+            "--mode",
+            "text",
+            "--no-session",
+            "--no-approve",
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-context-files",
+            "--tools",
+            "read,grep,find,ls,edit,write",
+        ]
+        if spec.model:
+            argv += ["--model", spec.model]
+        argv += [f"@{spec.input_path}", spec.input_text]
+        return RenderedInvocation(
+            spec.executable, tuple(argv), spec.workspace, environment=spec.environment
+        )
+
+
 def render_provider_invocation(spec: InvocationSpec) -> RenderedInvocation:
     if spec.provider == "pi" and spec.role == "architect":
         return PiArchitectRenderer().render(spec)
     if spec.provider == "opencode":
         return OpenCodeRenderer().render(spec)
+    if spec.provider == "codex" and spec.role == "architect":
+        return CodexArchitectRenderer().render(spec)
+    if spec.provider == "codex" and spec.role == "coder":
+        return CodexCoderRenderer().render(spec)
     if spec.provider == "codex" and spec.role == "reviewer":
         return CodexReviewerRenderer().render(spec)
     if spec.provider == "pi" and spec.role == "reviewer":
         return PiReviewerRenderer().render(spec)
+    if spec.provider == "pi" and spec.role == "coder":
+        return PiCoderRenderer().render(spec)
     raise ContractError("no installed renderer owns this provider/role selection")
