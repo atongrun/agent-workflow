@@ -55,13 +55,26 @@ from agent_workflow.plan_loop import (
     validate_taskcard_binding,
 )
 from agent_workflow.resources import authority_manifest_path
-from agent_workflow.runtime.architect import persist_architect_taskcard
+from agent_workflow.runtime.architect import (
+    assemble_architect_taskcard,
+    parse_architect_task_semantic,
+    persist_architect_taskcard,
+)
 from agent_workflow.runtime.artifact import ArtifactError
 from agent_workflow.runtime.renderers import render_provider_invocation
 
 
 class PlanOperationError(RuntimeError):
     """Credential-safe failure at the Plan operations boundary."""
+
+
+def _architect_executable(binding: ArchitectBinding) -> str:
+    environment = {
+        "pi": "AWF_PI_BIN",
+        "opencode": "AWF_OPENCODE_BIN",
+        "codex": "AWF_CODEX_BIN",
+    }
+    return os.environ.get(environment[binding.tool], binding.tool)
 
 
 def _git(repo: Path, *args: str, binary: bool = False) -> str | bytes:
@@ -173,7 +186,10 @@ def start_plan(
         head_remote=str(profile.values.get("head_remote", "fork")),
         head_repo=str(profile.values.get("head_repo", "")),
         gh_bin=str(profile.values.get("gh_bin", "gh")),
-        model_tool=str(profile.values.get("tool_executable", "")),
+        model_tool=str(
+            profile.values.get("tool_executable", "")
+            or {"pi": "pi", "opencode": "opencode", "codex": "codex"}[binding.tool]
+        ),
     )
     _checkout_plan_main(profile.repo, fact)
     _run_authoring_fast(preflight_args, store=store, repo=profile.repo)
@@ -203,7 +219,7 @@ def _validate_local_architect(args: argparse.Namespace, binding: ArchitectBindin
         "model": binding.model,
     }
     if observed != expected:
-        raise PlanOperationError("Plan start Architect RoleBinding drifted before Pi invocation")
+        raise PlanOperationError("Plan start Architect RoleBinding drifted before invocation")
 
 
 def _checkout_fresh_main(
@@ -353,7 +369,7 @@ def _invoke_taskcard_architect(
             card = run.get("current_card")
             if isinstance(card, dict):
                 return b"", str(card["task_id"]), str(card["branch"])
-        raise PlanOperationError("Architect invocation is ambiguous; Pi will not be replayed")
+        raise PlanOperationError("Architect invocation is ambiguous; provider will not be replayed")
 
     context = architect_context(
         plan=plan,
@@ -379,9 +395,9 @@ def _invoke_taskcard_architect(
     spec = _provider_spec(
         (f"{run['run_id']}-taskcard", str(run["run_id"]), "plan", authorization),
         role="architect",
-        provider="pi",
+        provider=binding.tool,
         model=binding.model,
-        executable=os.environ.get("AWF_PI_BIN", "pi"),
+        executable=_architect_executable(binding),
         workspace=str(repo),
         input_path=str(context_path),
         input_text=context,
@@ -396,7 +412,7 @@ def _invoke_taskcard_architect(
     except BaseException:
         store.update(
             status="architect_ambiguous",
-            stop_reason="Pi Architect outcome is ambiguous; provider replay is forbidden",
+            stop_reason="Architect outcome is ambiguous; provider replay is forbidden",
         )
         raise
     finally:
@@ -409,35 +425,43 @@ def _invoke_taskcard_architect(
                 "status": "failed_no_replay",
                 "authorization_sha256": authorization,
             },
-            stop_reason="Pi Architect exited non-zero; provider replay is forbidden",
+            stop_reason="Architect exited non-zero; provider replay is forbidden",
         )
-        raise PlanOperationError("Pi Architect TaskCard invocation failed")
-    raw = output.read_bytes()
+        raise PlanOperationError("Architect TaskCard invocation failed")
+    provider_raw = output.read_bytes()
     try:
+        raw = assemble_architect_taskcard(
+            parse_architect_task_semantic(provider_raw),
+            frozen_base=plan.main_sha,
+            repository=plan.repository,
+            base_ref=plan.base_ref,
+            coder=coder,
+            reviewer=reviewer,
+        )
         task_id, branch = validate_taskcard_binding(
             raw,
             frozen_base=plan.main_sha,
             coder=coder,
             reviewer=reviewer,
         )
-    except PlanLoopError:
+    except (PlanLoopError, ArtifactError) as exc:
         store.update(
             status="architect_output_invalid_no_replay",
             architect_invocation={
                 "kind": "taskcard",
                 "status": "result_invalid",
                 "authorization_sha256": authorization,
-                "result_sha256": hashlib.sha256(raw).hexdigest(),
+                "result_sha256": hashlib.sha256(provider_raw).hexdigest(),
             },
-            stop_reason="Pi Architect TaskCard output is invalid; provider replay is forbidden",
+            stop_reason="Architect TaskCard output is invalid; provider replay is forbidden",
         )
-        raise
+        raise PlanLoopError("Architect TaskCard output is invalid") from exc
     store.update(
         architect_invocation={
             "kind": "taskcard",
             "status": "result_persisted",
             "authorization_sha256": authorization,
-            "result_sha256": hashlib.sha256(raw).hexdigest(),
+            "result_sha256": hashlib.sha256(provider_raw).hexdigest(),
         }
     )
     return raw, task_id, branch
@@ -561,7 +585,9 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
         return existing
     invocation = existing.get("architect_invocation")
     if isinstance(invocation, dict):
-        raise PlanOperationError("Architect invocation already started; Pi replay is forbidden")
+        raise PlanOperationError(
+            "Architect invocation already started; provider replay is forbidden"
+        )
     plan_bytes = _checkout_plan_main(repo, plan)
     _run_authoring_fast(args, store=store, repo=repo)
     coder = dict(value["coder"])
@@ -606,7 +632,12 @@ def _listener_plan_args(*, state_root: Path, plan: PlanFact) -> argparse.Namespa
         head_remote=os.environ.get("AWF_HEAD_REMOTE", "fork"),
         head_repo=values["head_repo"],
         gh_bin=os.environ.get("AWF_GH_BIN", "gh"),
-        model_tool=os.environ.get("AWF_PI_BIN", "pi"),
+        model_tool=os.environ.get(
+            {"pi": "AWF_PI_BIN", "opencode": "AWF_OPENCODE_BIN", "codex": "AWF_CODEX_BIN"}.get(
+                os.environ.get("AWF_TOOL", "pi"), "AWF_PI_BIN"
+            ),
+            os.environ.get("AWF_TOOL", "pi"),
+        ),
     )
 
 

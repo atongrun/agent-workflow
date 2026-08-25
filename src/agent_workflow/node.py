@@ -427,10 +427,13 @@ def _validate_profile_semantics(profile: NodeProfile) -> None:
     for field, path in (("state_root", profile.state_root), ("log_file", profile.log_path)):
         if path == profile.repo or path.is_relative_to(profile.repo):
             raise NodeError(f"profile {field} must be outside the role repository")
-    if profile.role == "coder" and profile.values["tool"] == "pi":
-        raise NodeError("Pi is not a supported coder tool")
-    if profile.role == "architect" and profile.values["tool"] not in {"none", "pi"}:
-        raise NodeError("architect tool must be Pi or the internal no-model terminal consumer")
+    if profile.role == "architect" and profile.values["tool"] not in {
+        "none",
+        "pi",
+        "opencode",
+        "codex",
+    }:
+        raise NodeError("architect tool is unsupported")
     if profile.role != "architect" and profile.values["tool"] == "none":
         raise NodeError("coder and reviewer profiles require a model tool")
     if bool(profile.values.get("upstream_repo")) != bool(profile.values.get("head_repo")):

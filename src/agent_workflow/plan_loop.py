@@ -98,8 +98,8 @@ class ArchitectBinding:
     model_ref: str
 
     def __post_init__(self) -> None:
-        if not self.profile or not self.workspace or self.tool != "pi":
-            raise PlanLoopError("Architect binding must name one exact Pi profile/workspace")
+        if not self.profile or not self.workspace or self.tool not in {"pi", "opencode", "codex"}:
+            raise PlanLoopError("Architect binding must name one exact supported profile/workspace")
         if (
             not self.profile_sha256.startswith("sha256:")
             or _SHA256.fullmatch(self.profile_sha256.removeprefix("sha256:")) is None
@@ -319,7 +319,11 @@ def plan_start_payload(
 ) -> dict[str, object]:
     if mode not in {"one-card", "milestone"}:
         raise PlanLoopError("PlanRun mode is unsupported")
-    if coder_tool != "opencode" or reviewer_tool not in {"opencode", "pi", "codex"}:
+    if coder_tool not in {"opencode", "pi", "codex"} or reviewer_tool not in {
+        "opencode",
+        "pi",
+        "codex",
+    }:
         raise PlanLoopError("PlanRun execution selection is unsupported")
     base = {
         "run_id": plan_run_id(plan),
@@ -362,7 +366,9 @@ def validate_plan_start_payload(value: object) -> dict[str, object]:
         selection = value[role]
         if not isinstance(selection, Mapping) or set(selection) != {"tool", "model"}:
             raise PlanLoopError(f"Plan start {role} selection is malformed")
-    if value["coder"]["tool"] != "opencode" or value["reviewer"]["tool"] not in {
+    if value["coder"]["tool"] not in {"opencode", "pi", "codex"} or value["reviewer"][
+        "tool"
+    ] not in {
         "opencode",
         "pi",
         "codex",

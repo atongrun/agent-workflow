@@ -36,8 +36,8 @@ MACHINE_CONFIG_NAME = "machine.json"
 LEGACY_MACHINE_CONFIG_NAME = ".awf/machine.json"
 ROLE_ORDER = ("architect", "coder", "reviewer")
 ROLE_PROVIDER_CAPABILITIES: dict[str, tuple[str, ...]] = {
-    "architect": ("pi",),
-    "coder": ("opencode",),
+    "architect": ("pi", "opencode", "codex"),
+    "coder": ("opencode", "pi", "codex"),
     "reviewer": ("opencode", "pi", "codex"),
 }
 
