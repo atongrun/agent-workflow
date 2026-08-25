@@ -386,33 +386,34 @@ def installation_snapshot(profile) -> dict[str, object]:
     """Report credential-free native install-record and definition truth."""
     manager = resolve_manager(str(profile.lifecycle.get("manager", "auto")))
     record_path = _service_dir(profile) / "install.json"
+    manager_id, definition = _manager_target(profile, manager)
+    identity = {
+        "manager": manager,
+        "manager_id": manager_id,
+        "definition": str(definition),
+    }
     if not record_path.is_file():
-        _manager_id, definition = _manager_target(profile, manager)
         if definition.exists() or definition.is_symlink():
-            return {
+            return identity | {
                 "source": "native_manager_install_record+definition",
-                "manager": manager,
                 "installed": None,
                 "status": "stale",
             }
-        return {
+        return identity | {
             "source": "native_manager_install_record+definition",
-            "manager": manager,
             "installed": False,
             "status": "not_installed",
         }
     try:
         _require_installed(profile, manager)
     except NodeServiceError:
-        return {
+        return identity | {
             "source": "native_manager_install_record+definition",
-            "manager": manager,
             "installed": None,
             "status": "stale",
         }
-    return {
+    return identity | {
         "source": "native_manager_install_record+definition",
-        "manager": manager,
         "installed": True,
         "status": "current",
     }

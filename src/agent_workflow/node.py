@@ -54,6 +54,7 @@ class NodeProfile:
     values: dict[str, object]
     source_path: Path | None = None
     source_aliases: tuple[Path, ...] = ()
+    source_was_symlink: bool = False
 
     @property
     def name(self) -> str:
@@ -231,7 +232,18 @@ def resolve_profile_path(value: str) -> Path:
     return (default_config_home() / "profiles" / f"{value}.json").resolve()
 
 
+def _path_has_symlink(path: Path) -> bool:
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    return any(current.is_symlink() for current in (candidate, *candidate.parents))
+
+
 def load_profile(value: str) -> NodeProfile:
+    raw = Path(value).expanduser()
+    if not raw.is_absolute() and raw.parent == Path(".") and raw.suffix != ".json":
+        raw = default_config_home() / "profiles" / f"{value}.json"
+    source_was_symlink = _path_has_symlink(raw)
     path = resolve_profile_path(value)
     try:
         raw = path.read_bytes()
@@ -250,7 +262,7 @@ def load_profile(value: str) -> NodeProfile:
         location = ".".join(str(part) for part in errors[0].path) or "profile"
         raise NodeError(f"profile validation failed at {location}: {errors[0].message}")
     assert isinstance(data, dict)
-    profile = NodeProfile(path=path, values=data)
+    profile = NodeProfile(path=path, values=data, source_was_symlink=source_was_symlink)
     _validate_profile_semantics(profile)
     return profile
 
