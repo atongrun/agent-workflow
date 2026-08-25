@@ -549,6 +549,10 @@ def test_machine_init_supports_pi_architect_only(monkeypatch, tmp_path: Path) ->
         "mode": "tool-default",
         "ref": "",
     }
+    assert contract.config_path.is_relative_to(config_home / "projects")
+    assert contract.config_path.name == "machine.json"
+    assert str(repo) not in contract.config_path.relative_to(config_home).as_posix()
+    assert not facade.legacy_machine_config_path(repo).exists()
 
     stale_values = dict(profile.values)
     stale_values["model"] = "stale-model"
@@ -563,6 +567,124 @@ def test_machine_init_supports_pi_architect_only(monkeypatch, tmp_path: Path) ->
 
     assert reloaded.profiles[0].digest == profile.digest
     assert reloaded.profiles[0].values["model"] == ""
+
+
+def test_machine_binding_path_is_repository_keyed(monkeypatch, tmp_path: Path) -> None:
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+
+    first_path = facade.default_machine_config_path(first)
+    second_path = facade.default_machine_config_path(second)
+
+    assert first_path != second_path
+    assert len(first_path.parent.name) == 64
+    assert set(first_path.parent.name) <= set("0123456789abcdef")
+    assert str(first.resolve()) not in str(first_path)
+
+
+def test_load_machine_reads_legacy_only_and_rejects_dual_binding(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+    contract, _warnings = facade.initialize_machine(
+        repo=repo,
+        machine="mac",
+        project="sample",
+        bindings={"architect": ("pi", "")},
+        capabilities=_capabilities(tmp_path, "pi"),
+        lifecycle="managed",
+        upstream_repo="",
+        head_repo="",
+        upstream_remote="upstream",
+        head_remote="fork",
+        base_ref="main",
+        finding_enabled=False,
+        replace=False,
+    )
+    legacy = facade.legacy_machine_config_path(repo)
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    contract.config_path.replace(legacy)
+
+    loaded = facade.load_machine(repo)
+    assert loaded.config_path == legacy
+
+    current = facade.default_machine_config_path(repo)
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.write_bytes(legacy.read_bytes())
+    with pytest.raises(facade.FacadeError, match="both exist"):
+        facade.load_machine(repo)
+
+
+def test_machine_init_refuses_legacy_binding_before_mutation(monkeypatch, tmp_path: Path) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    monkeypatch.setattr(node, "default_state_root", lambda: tmp_path / "state")
+    legacy = facade.legacy_machine_config_path(repo)
+    legacy.parent.mkdir()
+    legacy.write_text("{}\n", encoding="utf-8")
+    common = dict(
+        repo=repo,
+        machine="mac",
+        project="sample",
+        bindings={"architect": ("pi", "")},
+        capabilities=_capabilities(tmp_path, "pi"),
+        lifecycle="managed",
+        upstream_repo="",
+        head_repo="",
+        upstream_remote="upstream",
+        head_remote="fork",
+        base_ref="main",
+        finding_enabled=False,
+    )
+
+    with pytest.raises(facade.FacadeError, match="already exists"):
+        facade.initialize_machine(**common, replace=False)
+    with pytest.raises(facade.FacadeError, match="does not migrate"):
+        facade.initialize_machine(**common, replace=True)
+
+    assert legacy.read_text(encoding="utf-8") == "{}\n"
+    assert not facade.default_machine_config_path(repo).exists()
+    assert not (config_home / "profiles").exists()
+    assert not (config_home / "workspaces").exists()
+
+
+def test_load_machine_rejects_symlinked_binding_parent(monkeypatch, tmp_path: Path) -> None:
+    repo = _machine_repo(tmp_path)
+    config_home = tmp_path / "config" / "awf"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    config_home.mkdir(parents=True)
+    (config_home / "projects").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    binding = facade.default_machine_config_path(repo)
+    binding.parent.mkdir(parents=True)
+    binding.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(facade.FacadeError, match="symbolic link"):
+        facade.load_machine(repo)
+
+
+def test_load_machine_rejects_symlinked_config_home(monkeypatch, tmp_path: Path) -> None:
+    repo = _machine_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    config_home = tmp_path / "awf-link"
+    config_home.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    binding = facade.default_machine_config_path(repo)
+    binding.parent.mkdir(parents=True)
+    binding.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(facade.FacadeError, match="symbolic link"):
+        facade.load_machine(repo)
 
 
 def _activation_profile(tmp_path: Path, role: str) -> node.NodeProfile:
