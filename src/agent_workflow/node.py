@@ -1431,7 +1431,7 @@ def foreground(profile: NodeProfile) -> int:
         previous_sigterm = signal.signal(signal.SIGTERM, stop_on_sigterm)
     result = 1
     try:
-        result = int(awf_listen.main(_listener_argv(profile, launch_id)[2:]))
+        result = int(awf_listen.main(_listener_argv(profile, launch_id)[3:]))
         return result
     finally:
         if previous_sigterm is not None:
