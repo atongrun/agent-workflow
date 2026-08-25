@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -31,7 +32,8 @@ class FacadeError(RuntimeError):
 
 
 MACHINE_CONFIG_FORMAT = "awf.machine-config.v1"
-MACHINE_CONFIG_NAME = ".awf/machine.json"
+MACHINE_CONFIG_NAME = "machine.json"
+LEGACY_MACHINE_CONFIG_NAME = ".awf/machine.json"
 ROLE_ORDER = ("architect", "coder", "reviewer")
 ROLE_PROVIDER_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "architect": ("pi",),
@@ -73,7 +75,45 @@ class MachineContract:
 
 
 def default_machine_config_path(repo: Path) -> Path:
-    return Path(repo).resolve() / MACHINE_CONFIG_NAME
+    identity = hashlib.sha256(str(Path(repo).resolve()).encode("utf-8")).hexdigest()
+    config_home = node.default_config_home().expanduser().absolute()
+    return config_home / "projects" / identity / MACHINE_CONFIG_NAME
+
+
+def legacy_machine_config_path(repo: Path) -> Path:
+    return Path(repo).resolve() / LEGACY_MACHINE_CONFIG_NAME
+
+
+def _machine_binding_path_has_symlink(path: Path, scoped_root: Path) -> bool:
+    cursor = path
+    while cursor != scoped_root.parent:
+        if cursor.is_symlink():
+            return True
+        if cursor == scoped_root:
+            return False
+        cursor = cursor.parent
+    return True
+
+
+def _machine_config_path_for_load(repo: Path) -> Path:
+    current = default_machine_config_path(repo)
+    legacy = legacy_machine_config_path(repo)
+    current_exists = current.exists() or current.is_symlink()
+    legacy_exists = legacy.exists() or legacy.is_symlink()
+    if current_exists and legacy_exists:
+        raise FacadeError(
+            "platform and legacy machine configurations both exist; preserve both and resolve "
+            "the binding conflict explicitly"
+        )
+    path = current if current_exists else legacy
+    scoped_root = (
+        node.default_config_home().expanduser().absolute()
+        if path == current
+        else Path(repo).resolve()
+    )
+    if _machine_binding_path_has_symlink(path, scoped_root):
+        raise FacadeError("machine configuration must not be a symbolic link")
+    return path
 
 
 def _run_checked(argv: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -506,16 +546,30 @@ def initialize_machine(
     state_root = node.default_state_root().resolve()
     profile_root = node.default_config_home() / "profiles"
     machine_path = default_machine_config_path(source)
+    legacy_machine_path = legacy_machine_config_path(source)
+    if _machine_binding_path_has_symlink(
+        machine_path, node.default_config_home().expanduser().absolute()
+    ):
+        raise FacadeError("machine configuration path must not contain a symbolic link")
     destinations = {
         role: profile_root / f"{profile_name(project=project, machine=machine, role=role)}.json"
         for role in bindings
     }
     if not replace:
-        existing = [path for path in (machine_path, *destinations.values()) if path.exists()]
+        existing = [
+            path
+            for path in (machine_path, legacy_machine_path, *destinations.values())
+            if path.exists() or path.is_symlink()
+        ]
         if existing:
             raise FacadeError(
                 f"machine configuration already exists: {existing[0]}; pass --replace"
             )
+    elif legacy_machine_path.exists() or legacy_machine_path.is_symlink():
+        raise FacadeError(
+            "--replace does not migrate a legacy repository-local machine config; preserve it "
+            "and migrate through a separately authorized boundary"
+        )
     elif machine_path.exists():
         load_machine(source)
     elif any(path.exists() for path in destinations.values()):
@@ -648,7 +702,7 @@ def initialize_machine(
 
 def load_machine(repo: Path) -> MachineContract:
     repo = Path(repo).resolve()
-    path = default_machine_config_path(repo)
+    path = _machine_config_path_for_load(repo)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -832,7 +886,13 @@ def load_project(repo: Path) -> ProjectContract:
 
 def _load_profile_contract(repo: Path) -> MachineContract | ProjectContract:
     resolved = Path(repo).resolve()
-    if default_machine_config_path(resolved).is_file():
+    if any(
+        path.exists() or path.is_symlink()
+        for path in (
+            default_machine_config_path(resolved),
+            legacy_machine_config_path(resolved),
+        )
+    ):
         return load_machine(resolved)
     return load_project(resolved)
 
