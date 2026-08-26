@@ -1115,13 +1115,64 @@ def status(repo: Path, *, role: str = "", explain: bool = False) -> int:
     return next((result for result in results if result), 0)
 
 
-def stop(repo: Path, *, role: str = "") -> int:
+def _exact_plan_run(contract: MachineContract, run_id: str):
+    from agent_workflow.plan_loop import PlanLoopError, PlanRunStore
+
+    if not contract.profiles:
+        raise FacadeError("exact PlanRun action requires a local role profile")
+    try:
+        store = PlanRunStore(contract.profiles[0].state_root, run_id)
+        run = store.load()
+    except PlanLoopError as exc:
+        raise FacadeError("exact PlanRun is unavailable or invalid") from exc
+    if Path(str(run.get("repo", ""))).resolve() != contract.repo:
+        raise FacadeError("exact PlanRun does not belong to this repository")
+    return store, run
+
+
+def _deny_active_other_plan_runs(contract: MachineContract, run_id: str) -> None:
+    from agent_workflow.plan_loop import PlanLoopError, PlanRunStore
+
+    if not contract.profiles:
+        raise FacadeError("exact PlanRun action requires a local role profile")
+    terminal = {
+        "completed",
+        "milestone_completed",
+        "blocked",
+        "rejected",
+        "stopped",
+        "architect_failed_no_replay",
+        "architect_output_invalid_no_replay",
+        "architect_ambiguous",
+        "start_ambiguous",
+        "dispatch_ambiguous",
+        "merge_ambiguous",
+    }
+    root = contract.profiles[0].state_root / "plan-runs"
+    for path in root.glob("*/run.json"):
+        if path.parent.name == run_id:
+            continue
+        try:
+            candidate = PlanRunStore(contract.profiles[0].state_root, path.parent.name).load()
+        except PlanLoopError as exc:
+            raise FacadeError("another PlanRun is unreadable; deinit is denied") from exc
+        if Path(str(candidate.get("repo", ""))).resolve() != contract.repo:
+            continue
+        if candidate.get("status") not in terminal:
+            raise FacadeError("another PlanRun remains active; deinit is denied")
+
+
+def stop(repo: Path, *, role: str = "", run_id: str = "") -> int:
     contract = _load_profile_contract(repo)
     profiles = _selected(contract, role)
     if isinstance(contract, MachineContract) and not role and contract.profiles:
         from agent_workflow.plan_loop import find_plan_run
 
-        plan_run = find_plan_run(contract.profiles[0].state_root, repo=contract.repo)
+        plan_run = None
+        if run_id:
+            plan_run, _run = _exact_plan_run(contract, run_id)
+        else:
+            plan_run = find_plan_run(contract.profiles[0].state_root, repo=contract.repo)
         if plan_run is not None:
             run = plan_run.update(
                 stop_requested=True,
@@ -1149,10 +1200,24 @@ def stop(repo: Path, *, role: str = "") -> int:
     return 0
 
 
-def deinit(repo: Path) -> int:
+def deinit(repo: Path, *, run_id: str = "") -> int:
     """Remove one exact platform-local machine binding without touching Workflow evidence."""
     repo = Path(repo).resolve()
     contract = load_machine(repo)
+    if run_id:
+        store, run = _exact_plan_run(contract, run_id)
+        if run.get("status") != "milestone_completed" or run.get("current_card") is not None:
+            raise FacadeError("deinit requires the exact completed PlanRun")
+        completion = run.get("last_completion")
+        if (
+            not isinstance(completion, dict)
+            or not isinstance(completion.get("sha256"), str)
+            or not any(item.get("sha256") == completion["sha256"] for item in store.completions())
+        ):
+            raise FacadeError(
+                "deinit requires an immutable CompletedCardFact for the exact PlanRun"
+            )
+        _deny_active_other_plan_runs(contract, run_id)
     if contract.config_path != default_machine_config_path(repo):
         raise FacadeError("deinit refuses legacy repository-local machine configuration")
     expected_profiles: list[tuple[node.NodeProfile, Path, Path, str]] = []

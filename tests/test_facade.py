@@ -1151,6 +1151,67 @@ def test_normal_stop_preserves_ambiguous_merge_intent(monkeypatch, tmp_path):
     assert store.load()["stop_requested"] is True
 
 
+def _planrun_payload(profile: node.NodeProfile, suffix: str) -> dict[str, object]:
+    binding = ArchitectBinding(
+        profile=str(profile.path),
+        profile_sha256="sha256:" + "a" * 64,
+        workspace=str(profile.repo),
+        tool="pi",
+        model_mode="tool-default",
+        model_ref="",
+    )
+    plan = PlanFact(
+        repository="owner/project",
+        upstream_remote="upstream",
+        base_ref="main",
+        path=f"docs/{suffix}.md",
+        commit="1" * 39 + ("1" if suffix == "first" else "2"),
+        blob_oid="2" * 39 + ("1" if suffix == "first" else "2"),
+        blob_sha256="3" * 63 + ("1" if suffix == "first" else "2"),
+        main_sha="4" * 40,
+    )
+    return plan_start_payload(
+        plan,
+        binding,
+        mode="one-card",
+        coder_tool="opencode",
+        coder_model="",
+        reviewer_tool="opencode",
+        reviewer_model="",
+    )
+
+
+def test_exact_run_stop_never_mutates_the_newer_planrun(monkeypatch, tmp_path):
+    profile = _activation_profile(tmp_path, "architect")
+    contract = facade.MachineContract(
+        repo=tmp_path,
+        config_path=tmp_path / ".awf/machine.json",
+        machine="mac",
+        project="sample",
+        finding_enabled=False,
+        profiles=(profile,),
+    )
+    first = _planrun_payload(profile, "first")
+    second = _planrun_payload(profile, "second")
+    first_store = PlanRunStore(profile.state_root, str(first["run_id"]))
+    second_store = PlanRunStore(profile.state_root, str(second["run_id"]))
+    first_store.create(first, repo=tmp_path)
+    second_store.create(second, repo=tmp_path)
+    second_store.update(status="card_active", current_card={"task_id": "newer"})
+    monkeypatch.setattr(facade, "_load_profile_contract", lambda _repo: contract)
+    monkeypatch.setattr(
+        facade.factual_status,
+        "_queue",
+        lambda _profile: {"status": "observed", "pending": 0},
+    )
+    monkeypatch.setattr(node, "stop", lambda _profile: 0)
+
+    assert facade.stop(tmp_path, run_id=str(first["run_id"])) == 0
+
+    assert first_store.load()["stop_requested"] is True
+    assert second_store.load()["stop_requested"] is False
+
+
 def test_three_role_machine_has_static_supported_bindings_and_distinct_workspaces(
     monkeypatch, tmp_path: Path
 ) -> None:

@@ -18,6 +18,7 @@ dev = [
 
 [project.scripts]
 awf = "agent_workflow.cli:main"
+awf-mcp = "agent_workflow.mcp:main"
 
 [build-system]
 requires = ["hatchling"]

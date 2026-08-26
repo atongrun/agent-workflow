@@ -109,7 +109,10 @@ The normal Human interaction is a request like:
 > This Plan is approved and committed. Use Agent Workflow to execute it. Continue until the
 > milestone is complete or BLOCKED.
 
-After that explicit authorization, the initiating Agent invokes the current CLI contract:
+After that explicit authorization, the initiating Agent on unreleased RC.2 main invokes the
+Agent-native MCP facade (`awf-mcp` or `awf mcp`) and calls `start_plan`. The MCP adapter is a thin
+stdio entry over the same installed authority; it does not own transport, ACK, replay, or merge
+state. `awf plan start` remains the installed debugging and compatibility contract:
 
 ```bash
 awf plan start \
@@ -122,6 +125,14 @@ a fresh Architect for the next TaskCard, `MILESTONE_COMPLETE`, or `BLOCKED`.
 
 The start command returns after the durable Architect start is accepted. The initiating chat or
 shell does not need to remain open.
+
+The same product projection is available to an initiating Agent as MCP `get_status` and to an
+operator as `awf plan status --run <plan-run-id>`. Both are read-only. The currently exposed
+approval/replacement MCP operations fail closed until their exact Plan authority is implemented;
+they do not provide a retry or replay path.
+
+MCP lifecycle operations require a separate explicit Human instruction for that exact PlanRun; a
+Plan-start authorization never doubles as permission to stop or deinitialize local bindings.
 
 For a deliberately bounded single-card run, the current CLI also supports `--one-card` instead of
 `--milestone`.
