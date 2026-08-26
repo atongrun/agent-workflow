@@ -76,17 +76,18 @@ creates separate role workspaces, installs and starts the managed listeners, wai
 connectivity, and prints `Ready` only when the selected roles can receive work.
 
 Roles describe responsibilities, not permanent Agent Tool bindings. A machine may host any subset
-of them. `v0.4.0-rc.1` currently ships these adapters:
+of them. The published `v0.4.0-rc.1` release ships the narrow matrix below; unreleased RC.2 main
+has completed deterministic conformance and fresh non-business CLI/model smoke for the full matrix:
 
-| Role | Implemented adapters in this RC |
-|---|---|
-| Architect | Pi |
-| Coder | OpenCode |
-| Reviewer | OpenCode, Pi, or Codex |
+| Role | Published RC.1 | Unreleased RC.2 main |
+|---|---|---|
+| Architect | Pi | Pi, OpenCode, Codex |
+| Coder | OpenCode | Pi, OpenCode, Codex |
+| Reviewer | OpenCode, Pi, Codex | Pi, OpenCode, Codex |
 
-This table is current implementation coverage, not a product constraint. Additional Architect and
-Coder adapters can be added without changing the role model. Run `awf init` separately on each
-machine in a cross-machine setup.
+The RC.2 matrix does not claim the two official real-machine topology acceptances or release
+publication; those remain separate gates. Run `awf init` separately on each machine in a
+cross-machine setup.
 
 ### 3. Discuss and commit a Plan
 
