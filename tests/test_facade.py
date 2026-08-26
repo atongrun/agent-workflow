@@ -359,7 +359,11 @@ def test_deinit_removes_only_exact_clean_machine_binding(monkeypatch, tmp_path: 
     )
     monkeypatch.setattr(facade, "load_machine", lambda _repo: contract)
     monkeypatch.setattr(facade, "_git_output", lambda *_args: "")
-    facts = {"running": False, "installation": {"status": "current"}}
+    facts = {
+        "running": False,
+        "running_observation": {"status": "stopped"},
+        "installation": {"status": "current"},
+    }
     monkeypatch.setattr(node, "lifecycle_facts", lambda _profile: facts)
     removed: list[str] = []
 
@@ -412,6 +416,64 @@ def test_deinit_workspace_removal_retries_exact_windows_readonly_file(monkeypatc
     assert removed == [readonly.resolve()]
 
 
+@pytest.mark.parametrize("workspace_exists", (True, False))
+def test_deinit_resumes_exact_partial_cleanup_after_source_profile_was_removed(
+    monkeypatch, tmp_path: Path, workspace_exists: bool
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config_home = tmp_path / "config"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    project = "sample"
+    machine = "mac"
+    role = "architect"
+    name = facade.profile_name(project=project, machine=machine, role=role)
+    source = config_home / "profiles" / f"{name}.json"
+    workspace = config_home / "workspaces" / name
+    if workspace_exists:
+        workspace.mkdir(parents=True)
+    state_root = tmp_path / "state"
+    machine_path = facade.default_machine_config_path(repo)
+    machine_path.parent.mkdir(parents=True)
+    machine_path.write_text(
+        json.dumps(
+            {
+                "format": facade.MACHINE_CONFIG_FORMAT,
+                "machine": machine,
+                "project": project,
+                "repo": str(repo.resolve()),
+                "state_root": str(state_root.resolve()),
+                "finding_enabled": False,
+                "roles": {
+                    role: {
+                        "profile": str(source.resolve()),
+                        "profile_sha256": "sha256:" + "a" * 64,
+                        "workspace": str(workspace.resolve()),
+                        "tool": "opencode",
+                        "model_selection": {"mode": "tool-default", "ref": ""},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "load_installed_profile", lambda _reference: None)
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running": False,
+            "running_observation": {"status": "stopped"},
+            "installation": {"status": "not_installed"},
+        },
+    )
+    monkeypatch.setattr(facade, "_git_output", lambda *_args: "")
+
+    assert facade.deinit(repo) == 0
+    assert not workspace.exists()
+    assert not machine_path.exists()
+
+
 def test_deinit_refuses_before_uninstall_when_any_workspace_is_dirty(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -444,7 +506,11 @@ def test_deinit_refuses_before_uninstall_when_any_workspace_is_dirty(monkeypatch
     monkeypatch.setattr(
         node,
         "lifecycle_facts",
-        lambda _profile: {"running": False, "installation": {"status": "not_installed"}},
+        lambda _profile: {
+            "running": False,
+            "running_observation": {"status": "stopped"},
+            "installation": {"status": "not_installed"},
+        },
     )
     monkeypatch.setattr(facade, "_git_output", lambda *_args: "M file")
     monkeypatch.setattr(node, "uninstall", lambda _profile: pytest.fail("must not uninstall"))
@@ -525,7 +591,11 @@ def test_deinit_preserves_binding_and_files_when_exact_uninstall_fails(monkeypat
     monkeypatch.setattr(
         node,
         "lifecycle_facts",
-        lambda _profile: {"running": False, "installation": {"status": "current"}},
+        lambda _profile: {
+            "running": False,
+            "running_observation": {"status": "stopped"},
+            "installation": {"status": "current"},
+        },
     )
     monkeypatch.setattr(node, "uninstall", lambda _profile: 1)
 

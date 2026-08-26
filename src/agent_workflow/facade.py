@@ -702,6 +702,10 @@ def initialize_machine(
 
 
 def load_machine(repo: Path) -> MachineContract:
+    return _load_machine(repo, allow_missing_profiles=False)
+
+
+def _load_machine(repo: Path, *, allow_missing_profiles: bool) -> MachineContract:
     repo = Path(repo).resolve()
     path = _machine_config_path_for_load(repo)
     try:
@@ -740,15 +744,7 @@ def load_machine(repo: Path) -> MachineContract:
         }:
             raise FacadeError(f"machine {role} binding is invalid")
         reference = str(binding["profile"])
-        authoring = node.load_profile(reference)
         installed = node.load_installed_profile(reference)
-        profile = (
-            installed
-            if installed is not None and installed.digest == binding["profile_sha256"]
-            else authoring
-        )
-        if profile.role != role:
-            raise FacadeError(f"machine {role} profile identity drifted")
         model_selection = binding["model_selection"]
         if (
             not isinstance(model_selection, dict)
@@ -762,8 +758,60 @@ def load_machine(repo: Path) -> MachineContract:
         expected_model, normalized_selection = _model_selection(model_selection["ref"])
         if normalized_selection != model_selection:
             raise FacadeError(f"machine {role} model selection drifted")
+        recovered = False
+        try:
+            authoring = node.load_profile(reference)
+        except node.NodeError:
+            expected_source = (
+                node.default_config_home()
+                / "profiles"
+                / (
+                    profile_name(
+                        project=str(value["project"]),
+                        machine=str(value["machine"]),
+                        role=role,
+                    )
+                    + ".json"
+                )
+            ).resolve()
+            expected_workspace = _role_workspace(
+                project=str(value["project"]), machine=str(value["machine"]), role=role
+            ).resolve()
+            if (
+                not allow_missing_profiles
+                or installed is not None
+                or Path(reference).resolve() != expected_source
+                or expected_source.exists()
+                or Path(str(binding["workspace"])).resolve() != expected_workspace
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", str(binding["profile_sha256"])) is None
+                or binding["tool"] not in ROLE_PROVIDER_CAPABILITIES[role]
+            ):
+                raise
+            profile = node.NodeProfile(
+                path=expected_source,
+                values={
+                    "format": node.PROFILE_FORMAT,
+                    "name": expected_source.stem,
+                    "role": role,
+                    "repo": str(expected_workspace),
+                    "tool": str(binding["tool"]),
+                    "model": expected_model,
+                    "state_root": str(Path(str(value["state_root"])).resolve()),
+                    "lifecycle": {"mode": "managed", "manager": "auto", "scope": "user"},
+                    "finding_enabled": value["finding_enabled"],
+                },
+            )
+            recovered = True
+        else:
+            profile = (
+                installed
+                if installed is not None and installed.digest == binding["profile_sha256"]
+                else authoring
+            )
+        if profile.role != role:
+            raise FacadeError(f"machine {role} profile identity drifted")
         if (
-            profile.digest != binding["profile_sha256"]
+            (not recovered and profile.digest != binding["profile_sha256"])
             or profile.repo != Path(str(binding["workspace"])).resolve()
             or profile.values["tool"] != binding["tool"]
             or profile.values.get("model", "") != expected_model
@@ -1225,7 +1273,10 @@ def _remove_generated_workspace(workspace: Path, *, windows: bool | None = None)
 def deinit(repo: Path, *, run_id: str = "") -> int:
     """Remove one exact platform-local machine binding without touching Workflow evidence."""
     repo = Path(repo).resolve()
-    contract = load_machine(repo)
+    try:
+        contract = load_machine(repo)
+    except node.NodeError:
+        contract = _load_machine(repo, allow_missing_profiles=True)
     if run_id:
         store, run = _exact_plan_run(contract, run_id)
         if run.get("status") != "milestone_completed" or run.get("current_card") is not None:
@@ -1242,7 +1293,7 @@ def deinit(repo: Path, *, run_id: str = "") -> int:
         _deny_active_other_plan_runs(contract, run_id)
     if contract.config_path != default_machine_config_path(repo):
         raise FacadeError("deinit refuses legacy repository-local machine configuration")
-    expected_profiles: list[tuple[node.NodeProfile, Path, Path, str]] = []
+    expected_profiles: list[tuple[node.NodeProfile, Path, Path, str, bool]] = []
     for profile in contract.profiles:
         profile_filename = (
             profile_name(project=contract.project, machine=contract.machine, role=profile.role)
@@ -1260,28 +1311,37 @@ def deinit(repo: Path, *, run_id: str = "") -> int:
         if profile.source_aliases and set(profile.source_aliases) != {expected_profile.resolve()}:
             raise FacadeError(f"deinit refused: {profile.role} has noncanonical profile aliases")
         facts = node.lifecycle_facts(profile)
-        if facts.get("running") is not False:
+        observation = facts.get("running_observation")
+        if (
+            facts.get("running") is not False
+            or not isinstance(observation, dict)
+            or observation.get("status") != "stopped"
+        ):
             raise FacadeError(f"deinit refused: {profile.role} listener is active or unknown")
         installation_status = str(facts.get("installation", {}).get("status", ""))
         if installation_status not in {"current", "not_installed"}:
             raise FacadeError(f"deinit refused: {profile.role} installation identity is unknown")
-        if not expected_workspace.is_dir() or _git_output(
-            expected_workspace, "status", "--porcelain"
+        workspace_exists = expected_workspace.is_dir()
+        if workspace_exists and _git_output(expected_workspace, "status", "--porcelain"):
+            raise FacadeError(f"deinit refused: {profile.role} workspace is missing or dirty")
+        if not workspace_exists and (
+            expected_profile.exists() or installation_status != "not_installed"
         ):
             raise FacadeError(f"deinit refused: {profile.role} workspace is missing or dirty")
         expected_profiles.append(
-            (profile, expected_profile, expected_workspace, installation_status)
+            (profile, expected_profile, expected_workspace, installation_status, workspace_exists)
         )
-    for profile, _source, _workspace, installation_status in expected_profiles:
+    for profile, _source, _workspace, installation_status, _workspace_exists in expected_profiles:
         if installation_status == "not_installed":
             continue
         if node.uninstall(profile):
             raise FacadeError(f"deinit incomplete: uninstall failed for {profile.role}")
         if node.lifecycle_facts(profile).get("installation", {}).get("status") != "not_installed":
             raise FacadeError(f"deinit incomplete: installation remains for {profile.role}")
-    for _profile, source, workspace, _installation_status in expected_profiles:
+    for _profile, source, workspace, _installation_status, workspace_exists in expected_profiles:
         source.unlink(missing_ok=True)
-        _remove_generated_workspace(workspace)
+        if workspace_exists:
+            _remove_generated_workspace(workspace)
     contract.config_path.unlink(missing_ok=True)
     return 0
 
