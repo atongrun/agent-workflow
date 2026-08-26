@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -149,6 +150,18 @@ def test_plan_start_accepts_closed_milestone_mode(monkeypatch, tmp_path):
         == 0
     )
     assert observed["mode"] == "milestone"
+
+
+def test_plan_status_routes_to_shared_application_projection(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        cli.application,
+        "status",
+        lambda repo, *, run_id: {"repo": str(repo), "run": run_id, "current_state": "card_active"},
+    )
+
+    assert cli.main(["plan", "status", "--repo", str(tmp_path), "--run", "plan-123"]) == 0
+
+    assert json.loads(capsys.readouterr().out)["current_state"] == "card_active"
 
 
 def test_init_withholds_ready_when_listener_activation_fails(monkeypatch, tmp_path, capsys):

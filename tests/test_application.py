@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from agent_workflow import application
+from agent_workflow.operations import awf_plan
+from agent_workflow.plan_loop import ArchitectBinding, PlanFact, PlanRunStore, plan_start_payload
+
+
+def _machine(state_root: Path) -> SimpleNamespace:
+    return SimpleNamespace(profiles=(SimpleNamespace(state_root=state_root),))
+
+
+def _payload(tmp_path: Path) -> dict[str, object]:
+    binding = ArchitectBinding(
+        profile=str(tmp_path / "architect.json"),
+        profile_sha256="sha256:" + "a" * 64,
+        workspace=str(tmp_path),
+        tool="opencode",
+        model_mode="tool-default",
+        model_ref="",
+    )
+    plan = PlanFact(
+        repository="owner/project",
+        upstream_remote="upstream",
+        base_ref="main",
+        path="docs/plan.md",
+        commit="1" * 40,
+        blob_oid="2" * 40,
+        blob_sha256="3" * 64,
+        main_sha="4" * 40,
+    )
+    return plan_start_payload(
+        plan,
+        binding,
+        mode="milestone",
+        coder_tool="opencode",
+        coder_model="",
+        reviewer_tool="codex",
+        reviewer_model="",
+    )
+
+
+def test_status_is_a_stable_credential_free_projection(monkeypatch, tmp_path: Path):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(
+        status="card_active",
+        current_card={
+            "task_id": "RC2-P3-001",
+            "branch": "codex/rc2-p3",
+            "status": "active",
+            "ignored": "not projected",
+        },
+    )
+    monkeypatch.setattr(application, "_machine", lambda _repo: _machine(state_root))
+
+    first = application.status(tmp_path, run_id=str(payload["run_id"]))
+    second = application.status(tmp_path, run_id=str(payload["run_id"]))
+
+    assert first == second
+    assert set(first) == {
+        "current_state",
+        "current_card",
+        "last_completion",
+        "roles",
+        "blocker",
+        "next_safe_action",
+        "allowed_actions",
+    }
+    assert first["current_card"] == {
+        "task_id": "RC2-P3-001",
+        "branch": "codex/rc2-p3",
+        "status": "active",
+    }
+    assert first["allowed_actions"] == ["get_status", "doctor", "stop"]
+    assert "profile" not in str(first)
+
+
+def test_unknown_status_never_advertises_continue_or_replacement(monkeypatch, tmp_path: Path):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(status="unrecognized_authority_state")
+    monkeypatch.setattr(application, "_machine", lambda _repo: _machine(state_root))
+
+    result = application.status(tmp_path, run_id=str(payload["run_id"]))
+
+    assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
+
+
+def test_conflicting_completed_facts_never_advertise_deinit(monkeypatch, tmp_path: Path):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(
+        status="milestone_completed",
+        current_card={"task_id": "still-active"},
+        stop_requested=True,
+    )
+    monkeypatch.setattr(application, "_machine", lambda _repo: _machine(state_root))
+
+    result = application.status(tmp_path, run_id=str(payload["run_id"]))
+
+    assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
+    assert result["blocker"]["code"] == "authority_conflict"
+
+
+def test_unpersisted_completed_fact_never_advertises_deinit(monkeypatch, tmp_path: Path):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(
+        status="milestone_completed",
+        last_completion={"sha256": "a" * 64},
+    )
+    monkeypatch.setattr(application, "_machine", lambda _repo: _machine(state_root))
+
+    result = application.status(tmp_path, run_id=str(payload["run_id"]))
+
+    assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
+
+
+def test_start_plan_requires_exact_human_intent_and_current_machine_roles(
+    monkeypatch, tmp_path: Path
+):
+    profiles = tuple(
+        SimpleNamespace(role=role, values={"tool": tool, "model": model})
+        for role, tool, model in (
+            ("architect", "opencode", ""),
+            ("coder", "opencode", "coder-model"),
+            ("reviewer", "codex", ""),
+        )
+    )
+    monkeypatch.setattr(application, "_machine", lambda _repo: SimpleNamespace(profiles=profiles))
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        awf_plan, "start_plan", lambda **kwargs: observed.update(kwargs) or {"ok": True}
+    )
+
+    with pytest.raises(application.ApplicationError, match="Human intent"):
+        application.start_plan(
+            tmp_path, plan="docs/plan.md", mode="milestone", human_intent="approved"
+        )
+
+    result = application.start_plan(
+        tmp_path,
+        plan="docs/plan.md",
+        mode="milestone",
+        human_intent=application.HUMAN_PLAN_INTENT,
+    )
+
+    assert result == {"ok": True}
+    assert observed["coder_tool"] == "opencode"
+    assert observed["coder_model"] == "coder-model"
+    assert observed["reviewer_tool"] == "codex"
+    assert observed["reviewer_model"] == ""
+
+
+def test_stop_requires_its_own_human_intent_and_forwards_exact_run(monkeypatch, tmp_path: Path):
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        application, "status", lambda *_args, **_kwargs: {"allowed_actions": ["stop"]}
+    )
+    monkeypatch.setattr(
+        application.facade,
+        "stop",
+        lambda repo, *, run_id: observed.update(repo=repo, run_id=run_id) or 0,
+    )
+
+    with pytest.raises(application.ApplicationError, match="intent for stop"):
+        application.stop(
+            tmp_path, run_id="plan-current", human_intent=application.HUMAN_PLAN_INTENT
+        )
+
+    assert (
+        application.stop(
+            tmp_path, run_id="plan-current", human_intent=application.HUMAN_STOP_INTENT
+        )
+        == 0
+    )
+    assert observed["run_id"] == "plan-current"
+
+
+def test_deinit_requires_its_own_human_intent_and_forwards_exact_run(monkeypatch, tmp_path: Path):
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        application, "status", lambda *_args, **_kwargs: {"allowed_actions": ["deinit"]}
+    )
+    monkeypatch.setattr(
+        application.facade,
+        "deinit",
+        lambda repo, *, run_id: observed.update(repo=repo, run_id=run_id) or 0,
+    )
+
+    with pytest.raises(application.ApplicationError, match="intent for deinit"):
+        application.deinit(
+            tmp_path, run_id="plan-completed", human_intent=application.HUMAN_PLAN_INTENT
+        )
+
+    assert (
+        application.deinit(
+            tmp_path,
+            run_id="plan-completed",
+            human_intent=application.HUMAN_DEINIT_INTENT,
+        )
+        == 0
+    )
+    assert observed["run_id"] == "plan-completed"
+
+
+@pytest.mark.parametrize("name", ["continue_after_approval", "authorize_replacement"])
+def test_unimplemented_exception_actions_are_explicitly_denied(
+    monkeypatch, tmp_path: Path, name: str
+):
+    monkeypatch.setattr(application, "status", lambda *_args, **_kwargs: {"allowed_actions": []})
+
+    with pytest.raises(application.ApplicationError, match="not yet authorized"):
+        getattr(application, name)(
+            tmp_path, run_id="plan-example", human_intent=application.HUMAN_PLAN_INTENT
+        )

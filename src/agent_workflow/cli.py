@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from agent_workflow import __version__, facade, node, project_topology
+from agent_workflow import __version__, application, facade, mcp, node, project_topology
 from agent_workflow.errors import ParseError
 from agent_workflow.manifest import (
     ManifestError,
@@ -438,6 +438,26 @@ def cmd_plan_start(args: argparse.Namespace) -> int:
     print(f"plan_run={result['run_id']} status={result['status']}")
     print("durable Architect start accepted; the initiating Agent may exit")
     return 0
+
+
+def cmd_plan_status(args: argparse.Namespace) -> int:
+    try:
+        print(
+            json.dumps(
+                application.status(Path(args.repo), run_id=args.run),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    except application.ApplicationError as exc:
+        print(f"ERROR: plan status failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_mcp(_args: argparse.Namespace) -> int:
+    return mcp.main()
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -1350,6 +1370,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     plan_start_parser.add_argument("--reviewer-model", default="")
     plan_start_parser.set_defaults(func=cmd_plan_start)
+    plan_status_parser = plan_commands.add_parser(
+        "status", help="Read the shared credential-free PlanRun status projection"
+    )
+    plan_status_parser.add_argument("--repo", default=".")
+    plan_status_parser.add_argument("--run", required=True)
+    plan_status_parser.set_defaults(func=cmd_plan_status)
 
     dispatch_parser = subparsers.add_parser(
         "dispatch", help="Dispatch a TaskCard from its manifest"
@@ -1476,6 +1502,9 @@ def main(argv: list[str] | None = None) -> int:
     logs_parser.add_argument("--role", choices=facade.ROLE_ORDER, default="")
     logs_parser.add_argument("--lines", type=int, default=100)
     logs_parser.set_defaults(func=cmd_facade_logs)
+
+    mcp_parser = subparsers.add_parser("mcp", help="Serve the Agent-native AWF MCP facade on stdio")
+    mcp_parser.set_defaults(func=cmd_mcp)
 
     node_parser = subparsers.add_parser("node", help="Operate one local role listener")
     node_commands = node_parser.add_subparsers(dest="node_command", required=True)
