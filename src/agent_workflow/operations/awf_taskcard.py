@@ -30,6 +30,11 @@ class ReviewerSelectionContract:
     reviewer: RoleSelection
 
 
+def reviewer_selection_present(text: str) -> bool:
+    """Return whether a TaskCard contains an explicit stage-selection block."""
+    return bool(_REVIEWER_SELECTION_RE.search(text))
+
+
 def _selection(value: object, role: str, supported_tools: frozenset[str]) -> RoleSelection:
     if not isinstance(value, dict) or set(value) != {"tool", "model"}:
         raise TaskCardContractError(f"{role} selection must contain only tool and model")

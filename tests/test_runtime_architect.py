@@ -110,7 +110,7 @@ def test_trusted_architect_boundary_accepts_markdown_code_span_task_id(tmp_path:
         ),
         (
             lambda raw: raw.replace(b".awf/artifacts/impl-report-P5-TEST-001.md", b"../impl.md"),
-            "escape the repository",
+            "parent traversal",
         ),
         (lambda raw: raw + b"\nsk-example12345678901234567890\n", "prohibited"),
     ],

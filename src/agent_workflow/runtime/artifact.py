@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -128,16 +129,14 @@ def compile_review_report_path(task_id: str) -> str:
     return f"{_ARTIFACT_ROOT}review-report-{task_id}.md"
 
 
-def _taskcard_payload(card_path: Path) -> dict[str, object]:
-    try:
-        text = Path(card_path).read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ArtifactError("TaskCard is unreadable") from exc
-    match = _POSTFLIGHT_RE.search(text)
-    if match is None:
+def _taskcard_payload_text(text: str) -> dict[str, object]:
+    matches = _POSTFLIGHT_RE.findall(text)
+    if not matches:
         raise ArtifactError("TaskCard has no awf-postflight contract")
+    if len(matches) != 1:
+        raise ArtifactError("TaskCard must contain exactly one awf-postflight contract")
     try:
-        value = json.loads(match.group(1), object_pairs_hook=_unique_json_object)
+        value = json.loads(matches[0], object_pairs_hook=_unique_json_object)
     except ValueError as exc:
         raise ArtifactError("TaskCard awf-postflight contract is invalid JSON") from exc
     if not isinstance(value, dict):
@@ -146,10 +145,7 @@ def _taskcard_payload(card_path: Path) -> dict[str, object]:
 
 
 def taskcard_allowed_paths(card_path: Path) -> tuple[str, ...]:
-    value = _taskcard_payload(card_path).get("allowed_paths")
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ArtifactError("TaskCard allowed_paths must be an array of strings")
-    return tuple(value)
+    return parse_postflight_contract(card_path, sys.executable).allowed_paths
 
 
 def _validate_taskcard_binding(card_path: Path, required_report_path: str) -> None:
@@ -240,8 +236,9 @@ def compile_run_artifact_contract(
     )
 
 
-def parse_postflight_contract(card_path: Path, python_executable: str) -> PostflightContract:
-    data = _taskcard_payload(card_path)
+def parse_postflight_text(text: str, python_executable: str) -> PostflightContract:
+    """Parse one TaskCard postflight contract from already trusted text input."""
+    data = _taskcard_payload_text(text)
     extra = set(data) - {"allowed_paths", "verification_commands"}
     if extra:
         raise ArtifactError(f"unexpected awf-postflight keys: {', '.join(sorted(extra))}")
@@ -274,6 +271,14 @@ def parse_postflight_contract(card_path: Path, python_executable: str) -> Postfl
             argv[0] = python_executable
         commands.append(tuple(argv))
     return PostflightContract(tuple(paths), tuple(commands))
+
+
+def parse_postflight_contract(card_path: Path, python_executable: str) -> PostflightContract:
+    try:
+        text = Path(card_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ArtifactError("TaskCard is unreadable") from exc
+    return parse_postflight_text(text, python_executable)
 
 
 def resolve_repo_file(repo: Path, relative_path: str, label: str) -> Path:

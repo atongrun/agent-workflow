@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path, PurePosixPath
 from typing import Mapping
 
@@ -14,6 +15,7 @@ from .artifact import (
     ArtifactFact,
     compile_implementation_report_path,
     compile_review_report_path,
+    parse_postflight_text,
     scan_secret_text,
 )
 
@@ -244,25 +246,8 @@ def _validated_taskcard(raw: bytes, destination: Path, repo: Path) -> tuple[str,
         or re.fullmatch(r"[A-Za-z0-9._/-]+", branch) is None
     ):
         raise ArtifactError("Architect TaskCard identity does not match its branch")
-    try:
-        postflight = json.loads(postflight_match.group(1), object_pairs_hook=_unique_object)
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise ArtifactError("Architect TaskCard postflight is invalid JSON") from exc
-    if not isinstance(postflight, dict):
-        raise ArtifactError("Architect TaskCard postflight must be an object")
-    allowed = postflight.get("allowed_paths")
-    if (
-        not isinstance(allowed, list)
-        or not allowed
-        or len(allowed) != len(set(allowed))
-        or not all(isinstance(item, str) and item for item in allowed)
-    ):
-        raise ArtifactError("Architect TaskCard allowed_paths are invalid")
-    if any(
-        item.startswith("/") or "\\" in item or ":" in item or ".." in item.split("/")
-        for item in allowed
-    ):
-        raise ArtifactError("Architect TaskCard allowed_paths escape the repository")
+    postflight = parse_postflight_text(text, sys.executable)
+    allowed = postflight.allowed_paths
     implementation = compile_implementation_report_path(task_id)
     review = compile_review_report_path(task_id)
     declared_impl = [item for item in allowed if Path(item).name.startswith("impl-report-")]
