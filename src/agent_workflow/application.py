@@ -12,6 +12,7 @@ HUMAN_PLAN_INTENT = "This Plan is approved and committed. Use AWF to complete it
 HUMAN_STOP_INTENT = "Stop this exact PlanRun and its local AWF listeners."
 HUMAN_DEINIT_INTENT = "Deinitialize this exact completed PlanRun and its local AWF bindings."
 HUMAN_APPROVAL_CONTINUE_INTENT = "Continue this exact approved PlanRun after Human approval."
+HUMAN_REPLACEMENT_INTENT = "Authorize one fresh replacement for this exact blocked delivery."
 
 
 class ApplicationError(RuntimeError):
@@ -165,6 +166,20 @@ def _actions(status: str, *, stop_requested: bool, authority_consistent: bool) -
     return ("get_status", "doctor", "stop")
 
 
+def _replacement_state(status: str) -> str:
+    """Project no-replay ambiguity without making it replacement-eligible."""
+    if status in {
+        "architect_ambiguous",
+        "architect_failed_no_replay",
+        "architect_output_invalid_no_replay",
+        "dispatch_ambiguous",
+        "merge_ambiguous",
+        "start_ambiguous",
+    }:
+        return "BLOCKED_AMBIGUOUS"
+    return ""
+
+
 def status(repo: Path, *, run_id: str) -> dict[str, object]:
     """Return the credential-free, read-only PlanRun product projection."""
     root = Path(repo).resolve()
@@ -175,7 +190,8 @@ def status(repo: Path, *, run_id: str) -> dict[str, object]:
         raise ApplicationError("PlanRun is unavailable or its exact identity is invalid") from exc
     if Path(str(run.get("repo", ""))).resolve() != root:
         raise ApplicationError("PlanRun does not belong to this repository")
-    current = str(run.get("status", "unknown"))
+    raw_current = str(run.get("status", "unknown"))
+    current = _replacement_state(raw_current) or raw_current
     reason = str(run.get("stop_reason", ""))
     consistent = _authority_consistent(store, run)
     actions = _actions(
@@ -295,9 +311,58 @@ def continue_after_approval(repo: Path, *, run_id: str, human_intent: str) -> di
         raise ApplicationError("approval continuation was denied by exact current facts") from exc
 
 
-def authorize_replacement(repo: Path, *, run_id: str, human_intent: str) -> None:
-    _require_human_intent(human_intent, expected=HUMAN_PLAN_INTENT, action="replacement")
-    status(repo, run_id=run_id)
-    raise ApplicationError(
-        "authorize_replacement is not yet authorized by the existing Plan authority"
-    )
+def authorize_replacement(
+    repo: Path,
+    *,
+    run_id: str,
+    human_intent: str,
+    old_event_id: object,
+    old_delivery_id: str,
+    old_role: str,
+) -> dict[str, str]:
+    _require_human_intent(human_intent, expected=HUMAN_REPLACEMENT_INTENT, action="replacement")
+    if (
+        not isinstance(old_event_id, int)
+        or old_event_id < 1
+        or old_role not in {"coder", "reviewer"}
+    ):
+        raise ApplicationError("replacement old delivery identity is invalid")
+    if not old_delivery_id:
+        raise ApplicationError("replacement old delivery identity is invalid")
+    store = _store(Path(repo), run_id)
+    raw = store.load()
+    if str(raw.get("status", "")) not in {
+        "card_active",
+        "architect_ambiguous",
+        "architect_failed_no_replay",
+        "architect_output_invalid_no_replay",
+    }:
+        raise ApplicationError("replacement requires an exact no-replay provider ambiguity")
+    from agent_workflow.operations import awf_role
+
+    try:
+        lineage = awf_role.replacement_evidence(
+            store.state_root,
+            old_event_id=old_event_id,
+            old_role=old_role,
+            old_delivery_id=old_delivery_id,
+        )
+    except SystemExit as exc:
+        raise ApplicationError(
+            "replacement was denied by exact durable old-delivery facts"
+        ) from exc
+    card = raw.get("current_card")
+    if (
+        not isinstance(card, Mapping)
+        or lineage.get("old_branch") != card.get("branch")
+        or lineage.get("old_base_sha") != card.get("frozen_base")
+        or lineage.get("old_role") != old_role
+        or lineage.get("old_event_id") != str(old_event_id)
+    ):
+        raise ApplicationError("replacement old delivery does not match the current PlanRun card")
+    current = dict(card)
+    existing = current.get("replacement_authorization")
+    if existing is not None and existing != lineage:
+        raise ApplicationError("a different old delivery is already authorized for replacement")
+    store.update(current_card={**current, "replacement_authorization": lineage})
+    return lineage

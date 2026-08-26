@@ -4379,6 +4379,41 @@ def test_v3_reviewer_ambiguous_model_started_checkpoint_fails_cleanly(
     assert not send_calls
 
 
+def test_replacement_eligibility_requires_exact_no_effect_model_ambiguity(tmp_path):
+    evidence = awf_role.RunEvidence(201, "coder", state_root=tmp_path / "state")
+    provenance = _pr_provenance()
+    input_context = {
+        "key": "replacement-input",
+        "delivery_id": "awf:" + "1" * 64,
+        "payload_sha256": "sha256:" + "2" * 64,
+        "source_event_id": 200,
+    }
+    path, checkpoint = awf_role.begin_recovery_checkpoint(
+        evidence,
+        input_context,
+        role="coder",
+        branch="feature/replacement",
+        source_commit=provenance["head_sha"],
+        provenance=provenance,
+    )
+    checkpoint = awf_role.advance_recovery_checkpoint(
+        evidence,
+        path,
+        checkpoint,
+        "model_started",
+        model_event_id=201,
+        model_workspace="workspace",
+        model_manifest_sha256="sha256:" + "3" * 64,
+    )
+
+    lineage = awf_role.replacement_eligibility(checkpoint, None)
+
+    assert lineage["old_delivery_id"] == input_context["delivery_id"]
+    with_effect = {**checkpoint, "facts": {**checkpoint["facts"], "head_sha": "4" * 40}}
+    with pytest.raises(SystemExit, match="1"):
+        awf_role.replacement_eligibility(with_effect, None)
+
+
 @pytest.mark.parametrize(
     "path",
     ["", "/tmp/review.md", "../review.md", "C:/review.md", ".awf\\review.md"],

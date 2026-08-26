@@ -998,6 +998,106 @@ def recovery_model_policy(checkpoint: dict[str, object]) -> str:
     return "skip"
 
 
+def replacement_eligibility(
+    checkpoint: dict[str, object], outbox: dict[str, object] | None
+) -> dict[str, str]:
+    """Return immutable old-delivery lineage only for the narrow no-effect ambiguity case."""
+    validate_recovery_checkpoint(checkpoint)
+    if outbox is not None:
+        validate_outbox_record(outbox)
+        die("replacement is denied while the old delivery has an outgoing effect")
+    if checkpoint.get("phase") != "model_started":
+        die("replacement requires an ambiguous model_started checkpoint")
+    facts = checkpoint["facts"]
+    if not isinstance(facts, dict) or not isinstance(facts.get("model_event_id"), int):
+        die("replacement checkpoint has no exact old provider process identity")
+    if any(
+        key in facts
+        for key in (
+            "postflight_status",
+            "imported_tree",
+            "commit_sha",
+            "head_sha",
+            "verified_provenance",
+        )
+    ):
+        die("replacement is denied after an old Git, PR, or merge effect")
+    provenance = checkpoint["provenance"]
+    if not isinstance(provenance, dict) or not isinstance(provenance.get("base_sha"), str):
+        die("replacement checkpoint provenance is invalid")
+    return {
+        "old_delivery_id": str(checkpoint["input_delivery_id"]),
+        "old_payload_sha256": str(checkpoint["input_payload_sha256"]),
+        "old_checkpoint_sha256": canonical_payload_sha256(checkpoint),
+        "old_role": str(checkpoint["role"]),
+        "old_event_id": str(facts["model_event_id"]),
+        "old_branch": str(checkpoint["branch"]),
+        "old_source_commit": str(checkpoint["source_commit"]),
+        "old_base_sha": str(provenance["base_sha"]),
+        "old_provenance_sha256": canonical_payload_sha256(checkpoint["provenance"]),
+    }
+
+
+def replacement_evidence(
+    state_root: Path, *, old_event_id: int, old_role: str, old_delivery_id: str
+) -> dict[str, str]:
+    """Read one explicitly named old delivery without scanning or mutating state."""
+    if old_role not in {"coder", "reviewer"} or old_event_id < 1:
+        die("replacement old delivery identity is invalid")
+    if not _DELIVERY_ID_RE.fullmatch(old_delivery_id):
+        die("replacement old delivery ID is invalid")
+    digest = hashlib.sha256(old_delivery_id.encode("utf-8")).hexdigest()
+    root = Path(state_root).resolve() / f"event-{old_event_id}"
+    checkpoint_path = root / "checkpoint" / old_role / f"{digest}.json"
+    checkpoint = _load_delivery_record(checkpoint_path, "replacement checkpoint")
+    if checkpoint is None:
+        die("replacement old checkpoint is missing")
+    if (
+        checkpoint.get("role") != old_role
+        or checkpoint.get("input_delivery_id") != old_delivery_id
+        or checkpoint.get("input_key") != old_delivery_id
+    ):
+        die("replacement old checkpoint identity drifted")
+    facts = checkpoint.get("facts")
+    if not isinstance(facts, dict) or facts.get("model_event_id") != old_event_id:
+        die("replacement old provider process identity drifted")
+    process = facts.get("model_process")
+    log_path = root / "handler.log"
+    if process not in {"opencode", "codex", "pi"} or not log_path.is_file():
+        die("replacement old provider termination evidence is missing")
+    try:
+        records = [
+            json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line
+        ]
+    except (OSError, json.JSONDecodeError):
+        die("replacement old provider termination evidence is unreadable")
+    exits = [
+        item
+        for item in records
+        if isinstance(item, dict)
+        and item.get("event_id") == old_event_id
+        and item.get("role") == old_role
+        and item.get("phase") == f"{process}_exit"
+        and isinstance(item.get(f"{process}_rc"), int)
+        and item.get(f"{process}_rc") != 0
+    ]
+    handler_exits = [
+        item
+        for item in records
+        if isinstance(item, dict)
+        and item.get("event_id") == old_event_id
+        and item.get("role") == old_role
+        and item.get("phase") == "handler_exit"
+        and isinstance(item.get("handler_rc"), int)
+        and item.get("handler_rc") != 0
+    ]
+    if not exits or not handler_exits:
+        die("replacement old provider process is not proven stopped")
+    outbox_path = root / "outbox" / old_role / f"{digest}.json"
+    outbox = _load_delivery_record(outbox_path, "replacement outbox")
+    return replacement_eligibility(checkpoint, outbox)
+
+
 def recover_legacy_publication_checkpoint(
     evidence: RunEvidence,
     input_context: dict[str, object],
