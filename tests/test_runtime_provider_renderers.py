@@ -361,7 +361,7 @@ def test_closed_dispatch_rejects_unsupported_selection_or_options(tmp_path: Path
     architect = render_provider_invocation(
         invocation_spec(tmp_path, role="architect", provider="opencode", **common)
     )
-    assert "--pure" in architect.argv
+    assert architect.argv[:3] == ("run", "--pure", "--dir")
     assert "task_id" in architect.argv[-1]
     with pytest.raises(ContractError, match="options are invalid"):
         render_provider_invocation(
