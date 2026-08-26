@@ -119,6 +119,51 @@ def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     assert store.load()["preflight"]["remote_dispatch"] == report
 
 
+def test_managed_architect_snapshot_matches_frozen_source_binding(
+    monkeypatch, tmp_path: Path
+) -> None:
+    binding, _plan, payload = facts(tmp_path)
+    args = handler_args(tmp_path, payload)
+    snapshot = tmp_path / "installed" / "architect.json"
+    snapshot.parent.mkdir()
+    snapshot.write_text("{}", encoding="utf-8")
+    args.profile = str(snapshot)
+    monkeypatch.setattr(
+        awf_plan.node,
+        "load_installed_profile",
+        lambda _source: SimpleNamespace(
+            path=snapshot,
+            authoring_path=Path(binding.profile),
+            digest=binding.profile_sha256,
+        ),
+    )
+
+    awf_plan._validate_local_architect(args, binding)
+
+
+def test_managed_architect_snapshot_rejects_unbound_path(monkeypatch, tmp_path: Path) -> None:
+    binding, _plan, payload = facts(tmp_path)
+    args = handler_args(tmp_path, payload)
+    snapshot = tmp_path / "installed" / "architect.json"
+    alternate = tmp_path / "installed" / "other.json"
+    snapshot.parent.mkdir()
+    snapshot.write_text("{}", encoding="utf-8")
+    alternate.write_text("{}", encoding="utf-8")
+    args.profile = str(alternate)
+    monkeypatch.setattr(
+        awf_plan.node,
+        "load_installed_profile",
+        lambda _source: SimpleNamespace(
+            path=snapshot,
+            authoring_path=Path(binding.profile),
+            digest=binding.profile_sha256,
+        ),
+    )
+
+    with pytest.raises(awf_plan.PlanOperationError, match="RoleBinding drifted"):
+        awf_plan._validate_local_architect(args, binding)
+
+
 def test_internal_preflight_environment_is_deterministic_and_restored(monkeypatch, tmp_path):
     config = tmp_path / "dispatch.env"
     config.write_text(
