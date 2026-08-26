@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent_workflow import application
-from agent_workflow.operations import awf_plan
+from agent_workflow.operations import awf_plan, awf_role
 from agent_workflow.plan_loop import ArchitectBinding, PlanFact, PlanRunStore, plan_start_payload
 
 
@@ -92,6 +92,22 @@ def test_unknown_status_never_advertises_continue_or_replacement(monkeypatch, tm
 
     result = application.status(tmp_path, run_id=str(payload["run_id"]))
 
+    assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
+
+
+def test_no_replay_provider_failure_projects_blocked_ambiguous_without_replacement(
+    monkeypatch, tmp_path: Path
+):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(status="architect_failed_no_replay", stop_reason="provider result is ambiguous")
+    monkeypatch.setattr(application, "_machine", lambda _repo: _machine(state_root))
+
+    result = application.status(tmp_path, run_id=str(payload["run_id"]))
+
+    assert result["current_state"] == "BLOCKED_AMBIGUOUS"
     assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
 
 
@@ -248,10 +264,59 @@ def test_continue_after_approval_requires_its_own_intent_and_exact_run(monkeypat
     assert observed["run_id"] == "plan-current"
 
 
-def test_unimplemented_replacement_is_explicitly_denied(monkeypatch, tmp_path: Path):
+def test_replacement_requires_its_own_human_intent(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(application, "status", lambda *_args, **_kwargs: {"allowed_actions": []})
 
-    with pytest.raises(application.ApplicationError, match="not yet authorized"):
+    with pytest.raises(application.ApplicationError, match="intent for replacement"):
         application.authorize_replacement(
-            tmp_path, run_id="plan-example", human_intent=application.HUMAN_PLAN_INTENT
+            tmp_path,
+            run_id="plan-example",
+            human_intent=application.HUMAN_PLAN_INTENT,
+            old_event_id=1,
+            old_delivery_id="awf:" + "1" * 64,
+            old_role="coder",
         )
+
+
+def test_replacement_authorization_is_one_shot_per_old_delivery(monkeypatch, tmp_path: Path):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(
+        status="card_active",
+        current_card={"branch": "feature/replacement", "frozen_base": "a" * 40},
+    )
+    lineage = {
+        "old_delivery_id": "awf:" + "1" * 64,
+        "old_payload_sha256": "sha256:" + "2" * 64,
+        "old_checkpoint_sha256": "sha256:" + "3" * 64,
+        "old_role": "coder",
+        "old_event_id": "1",
+        "old_branch": "feature/replacement",
+        "old_source_commit": "b" * 40,
+        "old_base_sha": "a" * 40,
+        "old_provenance_sha256": "sha256:" + "4" * 64,
+    }
+    monkeypatch.setattr(application, "_store", lambda *_args: store)
+    monkeypatch.setattr(awf_role, "replacement_evidence", lambda *_args, **_kwargs: lineage)
+
+    first = application.authorize_replacement(
+        tmp_path,
+        run_id=str(payload["run_id"]),
+        human_intent=application.HUMAN_REPLACEMENT_INTENT,
+        old_event_id=1,
+        old_delivery_id=lineage["old_delivery_id"],
+        old_role="coder",
+    )
+    second = application.authorize_replacement(
+        tmp_path,
+        run_id=str(payload["run_id"]),
+        human_intent=application.HUMAN_REPLACEMENT_INTENT,
+        old_event_id=1,
+        old_delivery_id=lineage["old_delivery_id"],
+        old_role="coder",
+    )
+
+    assert first == second == lineage
+    assert store.load()["current_card"]["replacement_authorization"] == lineage

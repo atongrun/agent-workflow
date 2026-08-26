@@ -68,12 +68,31 @@ def tool_definitions() -> tuple[dict[str, object], ...]:
                     "continue_after_approval",
                     "Continue only after exact branch-protection approval re-observation.",
                 ),
-                (
-                    "authorize_replacement",
-                    "Authorize one exact replacement only after no-replay conditions are proven.",
-                ),
             )
         ),
+        {
+            "name": "authorize_replacement",
+            "description": "Authorize one fresh replacement only after exact old-delivery proof.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    **shared_run,
+                    **intent,
+                    "old_event_id": {"type": "integer", "minimum": 1},
+                    "old_delivery_id": {"type": "string"},
+                    "old_role": {"enum": ["coder", "reviewer"]},
+                },
+                "required": [
+                    "repo",
+                    "run_id",
+                    "human_intent",
+                    "old_event_id",
+                    "old_delivery_id",
+                    "old_role",
+                ],
+                "additionalProperties": False,
+            },
+        },
     )
 
 
@@ -108,7 +127,17 @@ def call_tool(name: str, arguments: object) -> object:
         return application.status(repo, run_id=_string(args, "run_id"))
     if name == "doctor":
         return {"exit_code": application.doctor(repo, role=str(args.get("role", "")))}
-    if name in {"stop", "deinit", "continue_after_approval", "authorize_replacement"}:
+    if name == "authorize_replacement":
+        result = application.authorize_replacement(
+            repo,
+            run_id=_string(args, "run_id"),
+            human_intent=_string(args, "human_intent"),
+            old_event_id=args.get("old_event_id"),
+            old_delivery_id=_string(args, "old_delivery_id"),
+            old_role=_string(args, "old_role"),
+        )
+        return {"status": "accepted"} if result is None else result
+    if name in {"stop", "deinit", "continue_after_approval"}:
         operation: Callable[..., Any] = getattr(application, name)
         result = operation(
             repo,
