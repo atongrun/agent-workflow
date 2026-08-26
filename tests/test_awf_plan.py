@@ -423,6 +423,15 @@ def test_plan_terminal_approve_creates_completed_card_fact(monkeypatch, tmp_path
     )
     monkeypatch.setattr(
         awf_plan,
+        "_approval_observation",
+        lambda *_a, **_k: {
+            "status": "approved",
+            "review_decision": "APPROVED",
+            "mergeability": "CLEAN",
+        },
+    )
+    monkeypatch.setattr(
+        awf_plan,
         "_merge_and_observe",
         lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "merge"},
     )
@@ -444,6 +453,53 @@ def test_plan_terminal_approve_creates_completed_card_fact(monkeypatch, tmp_path
     assert run["current_card"] is None
     assert run["last_completion"]["merge"]["commit"] == "7" * 40
     assert store.completions() == (run["last_completion"],)
+
+
+def test_plan_terminal_waits_for_approval_without_merge(monkeypatch, tmp_path: Path) -> None:
+    store, args, provenance, evidence, input_context = terminal_fixture(tmp_path)
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setenv("AWF_REPO_DIR", str(source))
+    monkeypatch.setattr(
+        awf_plan,
+        "_invoke_terminal_decision",
+        lambda **_kwargs: {"verdict": "approve", "sha256": "8" * 64, "bytes": 10},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_wait_exact_ci",
+        lambda *_a, **_k: {"conclusion": "SUCCESS", "head_sha": "6" * 40, "checks": 1},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_approval_observation",
+        lambda *_a, **_k: {
+            "status": "waiting",
+            "review_decision": "REVIEW_REQUIRED",
+            "mergeability": "BLOCKED",
+        },
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_merge_and_observe",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("merge must wait for Human approval")
+        ),
+    )
+
+    result = awf_plan.handle_card_terminal(
+        args=args,
+        evidence=evidence,
+        input_context=input_context,
+        review_report={"verdict": "PASS"},
+        provenance=provenance,
+        terminal_repo=tmp_path / "terminal",
+        implementation_sha256="sha256:" + "1" * 64,
+        review_sha256="sha256:" + "2" * 64,
+    )
+
+    assert result == {"pending_state": "WAITING_FOR_HUMAN_APPROVAL"}
+    assert store.load()["status"] == "waiting_for_human_approval"
 
 
 def _completed_milestone_store(tmp_path: Path):
@@ -652,6 +708,15 @@ def test_terminal_completion_enters_milestone_only_after_fact_is_persisted(
         awf_plan,
         "_wait_exact_ci",
         lambda *_a, **_k: {"conclusion": "SUCCESS", "head_sha": "6" * 40, "checks": 1},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_approval_observation",
+        lambda *_a, **_k: {
+            "status": "approved",
+            "review_decision": "APPROVED",
+            "mergeability": "CLEAN",
+        },
     )
     monkeypatch.setattr(
         awf_plan,

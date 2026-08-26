@@ -821,6 +821,7 @@ def _continue_milestone(
     store: PlanRunStore,
     source_repo: Path,
     state_root: Path,
+    operation_args: argparse.Namespace | None = None,
 ) -> dict[str, object]:
     run = store.load()
     if run.get("mode") != "milestone":
@@ -831,9 +832,12 @@ def _continue_milestone(
         return store.update(status="stopped", stop_reason="PlanRun stop was requested")
     plan = PlanFact.from_mapping(run["plan"])
     binding = ArchitectBinding.from_mapping(run["architect"])
-    _validate_listener_architect(binding, source_repo)
+    if operation_args is None:
+        _validate_listener_architect(binding, source_repo)
+        operation_args = _listener_plan_args(state_root=state_root, plan=plan)
+    else:
+        _validate_local_architect(operation_args, binding)
     plan_bytes, fresh_main = _checkout_fresh_main(source_repo, plan)
-    operation_args = _listener_plan_args(state_root=state_root, plan=plan)
     _run_authoring_fast(operation_args, store=store, repo=source_repo)
     completions = store.completions()
     last_completion = run.get("last_completion")
@@ -1151,6 +1155,175 @@ def _merge_and_observe(
     return {"state": "MERGED", "commit": str(merge_oid), "method": "merge"}
 
 
+def _approval_observation(repo: Path, provenance: dict[str, object]) -> dict[str, object]:
+    value = _gh_json(
+        str(repo),
+        "pr",
+        "view",
+        str(provenance["pull_request"]),
+        "--repo",
+        str(provenance["upstream_repo"]),
+        "--json",
+        "number,state,baseRefOid,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus",
+    )
+    if not isinstance(value, dict) or (
+        value.get("number") != provenance["pull_request"]
+        or value.get("state") != "OPEN"
+        or value.get("baseRefOid") != provenance["base_sha"]
+        or value.get("headRefOid") != provenance["head_sha"]
+    ):
+        raise PlanOperationError("pull request identity drifted before approval continuation")
+    checks = value.get("statusCheckRollup")
+    if not isinstance(checks, list) or not checks:
+        raise PlanOperationError("pull request has no observable CI checks")
+    states = [_check_conclusion(item) for item in checks if isinstance(item, dict)]
+    if (
+        len(states) != len(checks)
+        or "failed" in states
+        or not all(state == "passed" for state in states)
+    ):
+        raise PlanOperationError("exact-head CI is no longer green")
+    review = str(value.get("reviewDecision") or "")
+    mergeability = str(value.get("mergeStateStatus") or "")
+    if review == "APPROVED" and mergeability == "CLEAN":
+        return {"status": "approved", "review_decision": review, "mergeability": mergeability}
+    if review == "REVIEW_REQUIRED" and mergeability == "BLOCKED":
+        return {"status": "waiting", "review_decision": review, "mergeability": mergeability}
+    raise PlanOperationError("approval or mergeability is not safely observable")
+
+
+def _profile_operation_args(profile: node.NodeProfile, plan: PlanFact) -> argparse.Namespace:
+    return argparse.Namespace(
+        profile=str(profile.path),
+        profile_sha256=profile.digest,
+        repo=str(profile.repo),
+        tool=str(profile.values["tool"]),
+        model=str(profile.values.get("model", "")),
+        config=str(profile.config_path),
+        state_root=str(profile.state_root),
+        authority_manifest=str(authority_manifest_path()),
+        upstream_remote=plan.upstream_remote,
+        head_remote=str(profile.values.get("head_remote", "fork")),
+        head_repo=str(profile.values.get("head_repo", "")),
+        gh_bin=str(profile.values.get("gh_bin", "gh")),
+        model_tool=str(profile.values.get("tool_executable", "") or profile.values["tool"]),
+    )
+
+
+def continue_after_approval(
+    *, repo: Path, state_root: Path, run_id: str, architect_profile: node.NodeProfile
+) -> dict[str, object]:
+    """Merge one waiting exact head only after a fresh approved observation."""
+    store = PlanRunStore(state_root, run_id)
+    run = store.load()
+    if Path(str(run.get("repo", ""))).resolve() != repo.resolve():
+        raise PlanOperationError("PlanRun does not belong to this repository")
+    card = run.get("current_card")
+    if run.get("status") != "waiting_for_human_approval" or not isinstance(card, dict):
+        raise PlanOperationError("PlanRun is not waiting for Human approval")
+    delivery = _waiting_terminal_delivery(card)
+    from agent_workflow.operations.awf_control_plane import RunLedger
+
+    ledger = RunLedger(state_root, delivery["run_id"])
+    existing_ledger, packet = ledger.recover()
+    if existing_ledger.get("terminal_state"):
+        raise PlanOperationError("waiting PlanRun original delivery is already terminal")
+    if packet.get("branch") != delivery["branch"]:
+        raise PlanOperationError("waiting PlanRun terminal delivery does not match its ledger")
+    plan = PlanFact.from_mapping(run["plan"])
+    required = ("pull_request", "base_sha", "head_sha", "ci", "decision")
+    if any(key not in card for key in required) or not isinstance(card.get("ci"), dict):
+        raise PlanOperationError("waiting PlanRun has incomplete exact approval facts")
+    provenance = {
+        "upstream_repo": plan.repository,
+        "base_ref": plan.base_ref,
+        "pull_request": card["pull_request"],
+        "base_sha": card["base_sha"],
+        "head_sha": card["head_sha"],
+    }
+    if not isinstance(provenance["pull_request"], int) or not all(
+        isinstance(provenance[key], str)
+        for key in ("upstream_repo", "base_ref", "base_sha", "head_sha")
+    ):
+        raise PlanOperationError("waiting PlanRun approval identity is invalid")
+    approval = _approval_observation(repo, provenance)
+    if approval.get("status") != "approved":
+        raise PlanOperationError("exact PR head still requires Human approval")
+    merge = _merge_and_observe(store=store, repo=repo, provenance=provenance, card=card)
+    completed_card = {**card, "status": "completed", "merge": merge}
+    completed = completed_card_fact(
+        run=run,
+        card=completed_card,
+        decision=card["decision"],
+        ci=card["ci"],
+        merge=merge,
+    )
+    store.persist_completion(completed)
+    terminal = {
+        "verdict": "PASS",
+        "architect_decision": card["decision"],
+        "reason": "review_passed_architect_approved_and_merged",
+        "event_id": delivery["event_id"],
+        "delivery_id": delivery["delivery_id"],
+        "payload_sha256": delivery["payload_sha256"],
+        "source_event_id": delivery["source_event_id"],
+        "branch": delivery["branch"],
+        "commit": delivery["commit"],
+        "artifacts": {
+            "implementation": {
+                "path": delivery["implementation_path"],
+                "sha256": delivery["implementation_sha256"],
+            },
+            "review": {"path": delivery["review_path"], "sha256": delivery["review_sha256"]},
+        },
+        "pull_request": {
+            "number": provenance["pull_request"],
+            "base_sha": provenance["base_sha"],
+            "head_sha": provenance["head_sha"],
+        },
+        "ci": {"status": "completed", "conclusion": "success"},
+        "merge": {"status": "merged", "commit": merge["commit"]},
+        "completed_card_fact_sha256": completed["sha256"],
+    }
+    ledger.mark_terminal(terminal_state="completed", terminal=terminal)
+    if run.get("mode") == "one-card":
+        return store.update(
+            status="completed", current_card=None, last_completion=completed, stop_reason=""
+        )
+    store.update(
+        status="card_completed", current_card=None, last_completion=completed, stop_reason=""
+    )
+    return _continue_milestone(
+        store=store,
+        source_repo=repo,
+        state_root=state_root,
+        operation_args=_profile_operation_args(architect_profile, plan),
+    )
+
+
+def _waiting_terminal_delivery(card: dict[str, object]) -> dict[str, object]:
+    delivery = card.get("terminal_delivery")
+    required = (
+        "run_id",
+        "delivery_id",
+        "payload_sha256",
+        "branch",
+        "commit",
+        "implementation_path",
+        "review_path",
+        "implementation_sha256",
+        "review_sha256",
+    )
+    if (
+        not isinstance(delivery, dict)
+        or not all(isinstance(delivery.get(key), str) and delivery[key] for key in required)
+        or not isinstance(delivery.get("event_id"), int)
+        or not isinstance(delivery.get("source_event_id"), int)
+    ):
+        raise PlanOperationError("waiting PlanRun terminal delivery identity is invalid")
+    return delivery
+
+
 def handle_card_terminal(
     *,
     args: argparse.Namespace,
@@ -1317,6 +1490,35 @@ def handle_card_terminal(
     source_repo = Path(os.environ["AWF_REPO_DIR"]).resolve()
     ci = _wait_exact_ci(source_repo, provenance)
     store.update(status="ci_green", current_card={**card, "ci": ci})
+    approval = _approval_observation(source_repo, provenance)
+    if approval["status"] == "waiting":
+        task_id = args.branch.rsplit("/", 1)[-1]
+        waiting_card = {
+            **card,
+            "ci": ci,
+            "approval": approval,
+            "terminal_delivery": {
+                "run_id": str(
+                    getattr(args, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
+                ),
+                "event_id": evidence.event_id,
+                "delivery_id": input_context["delivery_id"],
+                "payload_sha256": input_context["payload_sha256"],
+                "source_event_id": input_context["source_event_id"],
+                "branch": args.branch,
+                "commit": args.commit,
+                "implementation_path": args.report,
+                "review_path": args.review_report,
+                "implementation_sha256": implementation_sha256,
+                "review_sha256": review_sha256,
+            },
+        }
+        store.update(
+            status="waiting_for_human_approval",
+            current_card=waiting_card,
+            stop_reason="exact PR head requires Human approval before trusted merge",
+        )
+        return {"pending_state": "WAITING_FOR_HUMAN_APPROVAL"}
     merge = _merge_and_observe(
         store=store,
         repo=source_repo,

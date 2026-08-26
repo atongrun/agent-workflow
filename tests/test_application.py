@@ -217,13 +217,41 @@ def test_deinit_requires_its_own_human_intent_and_forwards_exact_run(monkeypatch
     assert observed["run_id"] == "plan-completed"
 
 
-@pytest.mark.parametrize("name", ["continue_after_approval", "authorize_replacement"])
-def test_unimplemented_exception_actions_are_explicitly_denied(
-    monkeypatch, tmp_path: Path, name: str
-):
+def test_continue_after_approval_requires_its_own_intent_and_exact_run(monkeypatch, tmp_path: Path):
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        application,
+        "status",
+        lambda *_args, **_kwargs: {"allowed_actions": ["continue_after_approval"]},
+    )
+    architect = SimpleNamespace(role="architect")
+    monkeypatch.setattr(
+        application, "_machine", lambda *_args: SimpleNamespace(profiles=(architect,))
+    )
+    monkeypatch.setattr(application, "_store", lambda *_args: SimpleNamespace(state_root=tmp_path))
+    monkeypatch.setattr(
+        awf_plan,
+        "continue_after_approval",
+        lambda **kwargs: observed.update(kwargs) or {"status": "completed"},
+    )
+
+    with pytest.raises(application.ApplicationError, match="intent for approval continuation"):
+        application.continue_after_approval(
+            tmp_path, run_id="plan-current", human_intent=application.HUMAN_PLAN_INTENT
+        )
+
+    assert application.continue_after_approval(
+        tmp_path,
+        run_id="plan-current",
+        human_intent=application.HUMAN_APPROVAL_CONTINUE_INTENT,
+    ) == {"status": "completed"}
+    assert observed["run_id"] == "plan-current"
+
+
+def test_unimplemented_replacement_is_explicitly_denied(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(application, "status", lambda *_args, **_kwargs: {"allowed_actions": []})
 
     with pytest.raises(application.ApplicationError, match="not yet authorized"):
-        getattr(application, name)(
+        application.authorize_replacement(
             tmp_path, run_id="plan-example", human_intent=application.HUMAN_PLAN_INTENT
         )
