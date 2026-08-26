@@ -377,6 +377,41 @@ def test_deinit_removes_only_exact_clean_machine_binding(monkeypatch, tmp_path: 
     assert all(not profile.repo.exists() for profile in profiles)
 
 
+def test_deinit_workspace_removal_retries_exact_windows_readonly_file(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    readonly = workspace / ".git" / "objects" / "78" / "object"
+    readonly.parent.mkdir(parents=True)
+    readonly.write_text("object", encoding="utf-8")
+    chmod: list[Path] = []
+    removed: list[Path] = []
+
+    def fake_chmod(path, _mode):
+        chmod.append(Path(path))
+
+    def fake_rmtree(root, *, onerror):
+        attempts = 0
+
+        def unlink(path):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError("read-only")
+            removed.append(Path(path))
+
+        try:
+            unlink(readonly)
+        except PermissionError as exc:
+            onerror(unlink, str(readonly), (PermissionError, exc, None))
+
+    monkeypatch.setattr(facade.os, "chmod", fake_chmod)
+    monkeypatch.setattr(facade.shutil, "rmtree", fake_rmtree)
+
+    facade._remove_generated_workspace(workspace, windows=True)
+
+    assert chmod == [readonly.resolve()]
+    assert removed == [readonly.resolve()]
+
+
 def test_deinit_refuses_before_uninstall_when_any_workspace_is_dirty(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()

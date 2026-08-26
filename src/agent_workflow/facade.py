@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -1200,6 +1201,27 @@ def stop(repo: Path, *, role: str = "", run_id: str = "") -> int:
     return 0
 
 
+def _remove_generated_workspace(workspace: Path, *, windows: bool | None = None) -> None:
+    """Remove one validated AWF workspace, retrying Windows read-only files only."""
+    root = workspace.resolve()
+    use_windows_retry = os.name == "nt" if windows is None else windows
+    if not use_windows_retry:
+        shutil.rmtree(root)
+        return
+
+    def retry_readonly(function, path: str, error_info) -> None:
+        error = error_info[1]
+        candidate = Path(path).resolve()
+        if not isinstance(error, PermissionError) or (
+            candidate != root and root not in candidate.parents
+        ):
+            raise error
+        os.chmod(candidate, stat.S_IWRITE | stat.S_IREAD)
+        function(candidate)
+
+    shutil.rmtree(root, onerror=retry_readonly)
+
+
 def deinit(repo: Path, *, run_id: str = "") -> int:
     """Remove one exact platform-local machine binding without touching Workflow evidence."""
     repo = Path(repo).resolve()
@@ -1259,7 +1281,7 @@ def deinit(repo: Path, *, run_id: str = "") -> int:
             raise FacadeError(f"deinit incomplete: installation remains for {profile.role}")
     for _profile, source, workspace, _installation_status in expected_profiles:
         source.unlink(missing_ok=True)
-        shutil.rmtree(workspace)
+        _remove_generated_workspace(workspace)
     contract.config_path.unlink(missing_ok=True)
     return 0
 
