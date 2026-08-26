@@ -1086,3 +1086,100 @@ def test_native_manager_and_gbk_log_boundaries_are_utf8_safe(
     utf8_console.flush()
 
     assert utf8_output.getvalue().decode("utf-8").splitlines() == ["状态🙂\ufffd"]
+
+
+def test_task_scheduler_clears_exact_dead_lease_without_process_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": 4321,
+                "launch_id": "a" * 32,
+                "role": profile.role,
+                "repo": str(profile.repo),
+                "state_root": str(profile.state_root),
+                "state_root_sha256": node.state_root_binding(profile.state_root),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda _pid: False)
+
+    assert node_service._clear_exact_dead_stale_state(
+        profile,
+        require_creation_identity=True,
+    )
+    assert not lease_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("pid", "launch_id", "alive"),
+    [
+        (0, "a" * 32, False),
+        (4321, "invalid", False),
+        (4321, "a" * 32, True),
+    ],
+)
+def test_task_scheduler_preserves_lease_only_state_without_exact_dead_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pid: int,
+    launch_id: str,
+    alive: bool,
+) -> None:
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True)
+    lease_path.write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "launch_id": launch_id,
+                "role": profile.role,
+                "repo": str(profile.repo),
+                "state_root": str(profile.state_root),
+                "state_root_sha256": node.state_root_binding(profile.state_root),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node, "_pid_alive", lambda _pid: alive)
+
+    assert not node_service._clear_exact_dead_stale_state(
+        profile,
+        require_creation_identity=True,
+    )
+    assert lease_path.exists()
+
+
+@pytest.mark.parametrize("field", ("role", "repo", "state_root"))
+def test_task_scheduler_preserves_lease_only_profile_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field: str,
+) -> None:
+    profile = load_managed_profile(tmp_path, manager="task-scheduler")
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    lease_path.parent.mkdir(parents=True)
+    lease = {
+        "pid": 4321,
+        "launch_id": "a" * 32,
+        "role": profile.role,
+        "repo": str(profile.repo),
+        "state_root": str(profile.state_root),
+        "state_root_sha256": node.state_root_binding(profile.state_root),
+    }
+    lease[field] = "drifted"
+    lease_path.write_text(json.dumps(lease), encoding="utf-8")
+    monkeypatch.setattr(node, "_pid_alive", lambda _pid: False)
+
+    assert not node_service._clear_exact_dead_stale_state(
+        profile,
+        require_creation_identity=True,
+    )
+    assert lease_path.exists()

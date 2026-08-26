@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ _TEXT_ENCODING = "utf-8"
 _TEXT_ERRORS = "replace"
 _TASK_RECONCILE_ATTEMPTS = 4
 _TASK_RECONCILE_DELAY_SECONDS = 15
+_LAUNCH_ID_RE = re.compile(r"[0-9a-f]{32}")
 
 
 def resolve_manager(manager: str, *, platform: str = sys.platform, os_name: str = os.name) -> str:
@@ -981,6 +983,28 @@ def _clear_exact_dead_stale_state(
     lease = node._listener_lease(profile)
     if not record and not lease:
         return True
+    lease_path = profile.state_root / "listeners" / f"{profile.role}.json"
+    if record is None and lease is not None:
+        lease_pid = lease.get("pid")
+        launch_id = lease.get("launch_id", "")
+        if (
+            not isinstance(lease_pid, int)
+            or lease_pid < 1
+            or not isinstance(launch_id, str)
+            or _LAUNCH_ID_RE.fullmatch(launch_id) is None
+            or not node._lease_matches(profile, lease, lease_pid, launch_id)
+            or (
+                require_creation_identity
+                and (
+                    lease.get("state_root") != str(profile.state_root)
+                    or lease.get("state_root_sha256") != node.state_root_binding(profile.state_root)
+                )
+            )
+            or node._pid_alive(lease_pid)
+        ):
+            return False
+        lease_path.unlink(missing_ok=True)
+        return True
     if not record or not lease:
         return False
     launch_id = record.get("launch_id", "")
@@ -1014,7 +1038,7 @@ def _clear_exact_dead_stale_state(
     if lease_pid != record_pid and node._pid_alive(lease_pid):
         return False
     profile.process_path.unlink(missing_ok=True)
-    (profile.state_root / "listeners" / f"{profile.role}.json").unlink(missing_ok=True)
+    lease_path.unlink(missing_ok=True)
     return True
 
 

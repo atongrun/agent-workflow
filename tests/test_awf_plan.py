@@ -164,6 +164,78 @@ def test_managed_architect_snapshot_rejects_unbound_path(monkeypatch, tmp_path: 
         awf_plan._validate_local_architect(args, binding)
 
 
+def test_authorized_replacement_dispatches_one_fresh_causally_bound_delivery(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _binding, plan, payload = facts(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=repo)
+    lineage = {
+        "old_delivery_id": "awf:" + "1" * 64,
+        "old_payload_sha256": "sha256:" + "2" * 64,
+        "old_checkpoint_sha256": "sha256:" + "3" * 64,
+        "old_role": "coder",
+        "old_event_id": "7",
+        "old_branch": "feature/replacement",
+        "old_source_commit": "b" * 40,
+        "old_base_sha": "a" * 40,
+        "old_provenance_sha256": "sha256:" + "4" * 64,
+    }
+    store.update(
+        status="card_active",
+        current_card={
+            "task_id": "replacement",
+            "path": "docs/tasks/replacement.md",
+            "branch": "feature/replacement",
+            "frozen_base": "a" * 40,
+            "status": "active",
+            "replacement_authorization": lineage,
+        },
+    )
+    operation_args = SimpleNamespace(head_repo="contributor/project", head_remote="fork")
+    monkeypatch.setattr(awf_plan, "_profile_operation_args", lambda *_args: operation_args)
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        awf_plan,
+        "_validate_local_architect",
+        lambda _args, binding: observed.update(binding=binding),
+    )
+    monkeypatch.setattr(awf_plan, "_run_dispatch_preflight", lambda *_args, **_kwargs: None)
+    from agent_workflow.operations import awf_dispatch
+
+    seen: dict[str, object] = {}
+
+    def dispatch(args, *, before_send):
+        seen["source_event_id"] = args.source_event_id
+        result = {
+            "awf_delivery_id": "awf:" + "5" * 64,
+            "awf_payload_sha256": "sha256:" + "2" * 64,
+            "awf_source_event_id": 7,
+            "branch": "feature/replacement",
+            "commit": "b" * 40,
+            "base_sha": "a" * 40,
+        }
+        before_send(repo, result)
+        return result
+
+    monkeypatch.setattr(awf_dispatch, "dispatch", dispatch)
+
+    result = awf_plan.dispatch_authorized_replacement(
+        repo=repo,
+        state_root=state_root,
+        run_id=str(payload["run_id"]),
+        architect_profile=SimpleNamespace(),
+    )
+
+    assert seen["source_event_id"] == 7
+    assert observed["binding"].profile == str(tmp_path / "architect.json")
+    assert result["replacement_delivery"]["delivery_id"] != lineage["old_delivery_id"]
+    assert store.load()["current_card"]["replacement_delivery"] == result["replacement_delivery"]
+
+
 def test_internal_preflight_environment_is_deterministic_and_restored(monkeypatch, tmp_path):
     config = tmp_path / "dispatch.env"
     config.write_text(
