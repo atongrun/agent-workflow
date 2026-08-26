@@ -53,8 +53,14 @@ def _architect_instruction(mode: tuple[str, ...]) -> str:
         )
     if mode == ("milestone-next",):
         return (
-            "Return exactly one complete next TaskCard, exact single-line MILESTONE_COMPLETE, "
-            "or BLOCKED followed by a non-empty reason. Do not edit, dispatch, or merge."
+            "If Plan work remains, return the next task as exactly one JSON object with exactly "
+            "these keys: task_id, objective, scope, change_paths, constraints, "
+            "acceptance_criteria, verification_commands. task_id and objective are strings. "
+            "scope, change_paths, constraints, and acceptance_criteria are non-empty arrays of "
+            "strings. verification_commands is a non-empty array of non-empty argv string arrays. "
+            "If the Plan is complete, return only MILESTONE_COMPLETE. If blocked, return BLOCKED "
+            "on the first line and one non-empty reason on following lines. Do not edit, dispatch, "
+            "merge, pre-generate later cards, or emit Markdown TaskCard authority facts."
         )
     raise ContractError("Architect mode is unsupported")
 
@@ -251,11 +257,8 @@ class PiArchitectRenderer:
             message = (
                 "Decide the next step for this exact Plan milestone from the attached durable "
                 "facts and freshly observed repository main. Use only read-only repository "
-                "inspection tools and reason silently. Return exactly one closed outcome: one "
-                "complete next TaskCard as raw Markdown, exact MILESTONE_COMPLETE, or BLOCKED "
-                "followed by a non-empty reason. For completion, stdout must be only the single "
-                "line MILESTONE_COMPLETE with no analysis, summary, or verification before or "
-                "after it. Do not edit files, pre-generate later cards, dispatch, or merge."
+                "inspection tools and reason silently. "
+                + _architect_instruction(spec.provider_args)
             )
         else:
             raise ContractError("Pi architect mode is unsupported")
