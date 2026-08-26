@@ -5033,6 +5033,23 @@ def role_architect(a: argparse.Namespace) -> int:
             except (PlanOperationError, PlanLoopError) as exc:
                 record(evidence, "plan_terminal_failed", reason=str(exc))
                 die(f"Plan terminal decision failed: {exc}")
+            if (
+                plan_result is not None
+                and plan_result.get("pending_state") == "WAITING_FOR_HUMAN_APPROVAL"
+            ):
+                record(
+                    evidence,
+                    "plan_terminal_waiting_for_human_approval",
+                    branch=a.branch,
+                    commit=a.commit,
+                    pull_request=provenance["pull_request"],
+                )
+                complete_inbox(
+                    evidence,
+                    str(input_context["delivery_id"]),
+                    str(input_context["payload_sha256"]),
+                )
+                return 0
             if plan_result is not None:
                 try:
                     RunLedger(state_root, run_id).mark_terminal(

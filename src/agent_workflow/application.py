@@ -11,6 +11,7 @@ from agent_workflow.plan_loop import PlanLoopError, PlanRunStore
 HUMAN_PLAN_INTENT = "This Plan is approved and committed. Use AWF to complete it."
 HUMAN_STOP_INTENT = "Stop this exact PlanRun and its local AWF listeners."
 HUMAN_DEINIT_INTENT = "Deinitialize this exact completed PlanRun and its local AWF bindings."
+HUMAN_APPROVAL_CONTINUE_INTENT = "Continue this exact approved PlanRun after Human approval."
 
 
 class ApplicationError(RuntimeError):
@@ -101,6 +102,34 @@ def _authority_consistent(store: PlanRunStore, run: Mapping[str, object]) -> boo
         )
     if status == "card_active":
         return isinstance(card, Mapping) and not stopped
+    if status == "waiting_for_human_approval":
+        delivery = card.get("terminal_delivery") if isinstance(card, Mapping) else None
+        approval = card.get("approval") if isinstance(card, Mapping) else None
+        delivery_strings = (
+            "run_id",
+            "delivery_id",
+            "payload_sha256",
+            "branch",
+            "commit",
+            "implementation_path",
+            "review_path",
+            "implementation_sha256",
+            "review_sha256",
+        )
+        return (
+            isinstance(card, Mapping)
+            and isinstance(delivery, Mapping)
+            and all(
+                isinstance(delivery.get(key), str) and delivery[key] for key in delivery_strings
+            )
+            and isinstance(delivery.get("event_id"), int)
+            and isinstance(delivery.get("source_event_id"), int)
+            and isinstance(approval, Mapping)
+            and approval.get("status") == "waiting"
+            and approval.get("review_decision") == "REVIEW_REQUIRED"
+            and approval.get("mergeability") == "BLOCKED"
+            and not stopped
+        )
     if status in {"completed", "stopped", "blocked", "rejected"}:
         return card is None or isinstance(card, Mapping)
     return card is None or isinstance(card, Mapping)
@@ -113,6 +142,8 @@ def _actions(status: str, *, stop_requested: bool, authority_consistent: bool) -
         return ("get_status", "doctor", "stop")
     if status == "milestone_completed":
         return ("get_status", "doctor", "deinit")
+    if status == "waiting_for_human_approval":
+        return ("get_status", "doctor", "continue_after_approval", "stop")
     if status in {
         "start_sent",
         "card_active",
@@ -236,12 +267,32 @@ def deinit(repo: Path, *, run_id: str, human_intent: str) -> int:
         raise ApplicationError("exact local deinit was denied") from exc
 
 
-def continue_after_approval(repo: Path, *, run_id: str, human_intent: str) -> None:
-    _require_human_intent(human_intent, expected=HUMAN_PLAN_INTENT, action="approval continuation")
-    status(repo, run_id=run_id)
-    raise ApplicationError(
-        "continue_after_approval is not yet authorized by the existing Plan authority"
+def continue_after_approval(repo: Path, *, run_id: str, human_intent: str) -> dict[str, object]:
+    _require_human_intent(
+        human_intent, expected=HUMAN_APPROVAL_CONTINUE_INTENT, action="approval continuation"
     )
+    view = status(repo, run_id=run_id)
+    if "continue_after_approval" not in view["allowed_actions"]:
+        raise ApplicationError("approval continuation is not a current allowed action")
+    from agent_workflow.operations import awf_plan
+    from agent_workflow.operations.awf_control_plane import ControlPlaneDenied
+
+    try:
+        store = _store(Path(repo), run_id)
+        profiles = {profile.role: profile for profile in _machine(Path(repo)).profiles}
+        architect = profiles.get("architect")
+        if architect is None:
+            raise ApplicationError(
+                "approval continuation requires the exact local Architect profile"
+            )
+        return awf_plan.continue_after_approval(
+            repo=Path(repo).resolve(),
+            state_root=store.state_root,
+            run_id=run_id,
+            architect_profile=architect,
+        )
+    except (awf_plan.PlanOperationError, PlanLoopError, ControlPlaneDenied) as exc:
+        raise ApplicationError("approval continuation was denied by exact current facts") from exc
 
 
 def authorize_replacement(repo: Path, *, run_id: str, human_intent: str) -> None:
