@@ -467,11 +467,20 @@ def test_deinit_resumes_exact_partial_cleanup_after_source_profile_was_removed(
             "installation": {"status": "not_installed"},
         },
     )
-    monkeypatch.setattr(facade, "_git_output", lambda *_args: "")
+    monkeypatch.setattr(facade, "_git_output", lambda *_args: "D .awf/project.yaml")
 
     assert facade.deinit(repo) == 0
     assert not workspace.exists()
     assert not machine_path.exists()
+
+
+def test_partial_deinit_status_accepts_only_deletions():
+    assert not facade._is_partial_deinit_status("M source.py")
+    assert not facade._is_partial_deinit_status("?? new.py")
+    assert facade._is_partial_deinit_status("D .awf/project.yaml")
+    assert facade._is_partial_deinit_status(" D first.py\n D second.py")
+    assert not facade._is_partial_deinit_status(" D first.py\n M second.py")
+    assert not facade._is_partial_deinit_status(" D first.py\n?? new.py")
 
 
 def test_deinit_refuses_before_uninstall_when_any_workspace_is_dirty(monkeypatch, tmp_path: Path):

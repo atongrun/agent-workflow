@@ -69,6 +69,7 @@ class MachineContract:
     project: str
     finding_enabled: bool
     profiles: tuple[node.NodeProfile, ...]
+    recovered_roles: frozenset[str] = frozenset()
 
     @property
     def run_id(self) -> str:
@@ -730,6 +731,7 @@ def _load_machine(repo: Path, *, allow_missing_profiles: bool) -> MachineContrac
     if set(value["roles"]) - set(ROLE_ORDER):
         raise FacadeError("machine configuration contains an unsupported role")
     profiles: list[node.NodeProfile] = []
+    recovered_roles: set[str] = set()
     workspaces: set[Path] = set()
     for role in ROLE_ORDER:
         if role not in value["roles"]:
@@ -802,6 +804,7 @@ def _load_machine(repo: Path, *, allow_missing_profiles: bool) -> MachineContrac
                 },
             )
             recovered = True
+            recovered_roles.add(role)
         else:
             profile = (
                 installed
@@ -832,6 +835,7 @@ def _load_machine(repo: Path, *, allow_missing_profiles: bool) -> MachineContrac
         project=str(value["project"]),
         finding_enabled=value["finding_enabled"],
         profiles=tuple(profiles),
+        recovered_roles=frozenset(recovered_roles),
     )
 
 
@@ -1270,6 +1274,11 @@ def _remove_generated_workspace(workspace: Path, *, windows: bool | None = None)
     shutil.rmtree(root, onerror=retry_readonly)
 
 
+def _is_partial_deinit_status(status: str) -> bool:
+    lines = [line.strip() for line in status.splitlines()]
+    return bool(lines) and all(re.fullmatch(r"D\s+.+", line) is not None for line in lines)
+
+
 def deinit(repo: Path, *, run_id: str = "") -> int:
     """Remove one exact platform-local machine binding without touching Workflow evidence."""
     repo = Path(repo).resolve()
@@ -1322,8 +1331,13 @@ def deinit(repo: Path, *, run_id: str = "") -> int:
         if installation_status not in {"current", "not_installed"}:
             raise FacadeError(f"deinit refused: {profile.role} installation identity is unknown")
         workspace_exists = expected_workspace.is_dir()
-        if workspace_exists and _git_output(expected_workspace, "status", "--porcelain"):
-            raise FacadeError(f"deinit refused: {profile.role} workspace is missing or dirty")
+        if workspace_exists:
+            workspace_status = _git_output(expected_workspace, "status", "--porcelain")
+            if workspace_status and (
+                profile.role not in contract.recovered_roles
+                or not _is_partial_deinit_status(workspace_status)
+            ):
+                raise FacadeError(f"deinit refused: {profile.role} workspace is missing or dirty")
         if not workspace_exists and (
             expected_profile.exists() or installation_status != "not_installed"
         ):
