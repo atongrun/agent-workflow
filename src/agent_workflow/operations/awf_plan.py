@@ -19,7 +19,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from agent_workflow import facade
+from agent_workflow import facade, node
 from agent_workflow.operations.awf_artifact_contract import (
     compile_implementation_report_path,
     compile_review_report_path,
@@ -218,6 +218,22 @@ def _validate_local_architect(args: argparse.Namespace, binding: ArchitectBindin
         "tool": binding.tool,
         "model": binding.model,
     }
+    if observed == expected:
+        return
+    try:
+        installed = node.load_installed_profile(binding.profile)
+    except node.NodeError as exc:
+        raise PlanOperationError(
+            "Plan start Architect RoleBinding drifted before invocation"
+        ) from exc
+    if (
+        installed is None
+        or Path(args.profile).resolve() != installed.path.resolve()
+        or Path(binding.profile).resolve() != installed.authoring_path.resolve()
+        or installed.digest != binding.profile_sha256
+    ):
+        raise PlanOperationError("Plan start Architect RoleBinding drifted before invocation")
+    observed["profile"] = binding.profile
     if observed != expected:
         raise PlanOperationError("Plan start Architect RoleBinding drifted before invocation")
 
