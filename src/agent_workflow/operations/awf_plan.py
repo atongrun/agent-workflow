@@ -1210,6 +1210,133 @@ def _profile_operation_args(profile: node.NodeProfile, plan: PlanFact) -> argpar
     )
 
 
+def dispatch_authorized_replacement(
+    *, repo: Path, state_root: Path, run_id: str, architect_profile: node.NodeProfile
+) -> dict[str, object]:
+    """Send one new coder delivery only from a persisted exact replacement lineage."""
+    store = PlanRunStore(state_root, run_id)
+    run = store.load()
+    if Path(str(run.get("repo", ""))).resolve() != repo.resolve():
+        raise PlanOperationError("PlanRun does not belong to this repository")
+    card = run.get("current_card")
+    if run.get("status") != "card_active" or not isinstance(card, dict):
+        raise PlanOperationError("replacement requires one active exact PlanRun card")
+    lineage = card.get("replacement_authorization")
+    fields = (
+        "old_delivery_id",
+        "old_payload_sha256",
+        "old_checkpoint_sha256",
+        "old_role",
+        "old_event_id",
+        "old_branch",
+        "old_source_commit",
+        "old_base_sha",
+        "old_provenance_sha256",
+    )
+    if not isinstance(lineage, dict) or not all(
+        isinstance(lineage.get(field), str) and lineage[field] for field in fields
+    ):
+        raise PlanOperationError("replacement authorization lineage is incomplete")
+    if card.get("replacement_delivery") is not None:
+        raise PlanOperationError("replacement delivery was already dispatched")
+    try:
+        old_event_id = int(lineage["old_event_id"])
+    except (TypeError, ValueError) as exc:
+        raise PlanOperationError("replacement old event identity is invalid") from exc
+    if (
+        old_event_id < 1
+        or lineage["old_role"] != "coder"
+        or lineage["old_branch"] != card.get("branch")
+        or lineage["old_base_sha"] != card.get("frozen_base")
+    ):
+        raise PlanOperationError("replacement lineage does not match the active frozen card")
+    task_id = card.get("task_id")
+    path = card.get("path")
+    branch = card.get("branch")
+    if not all(isinstance(value, str) and value for value in (task_id, path, branch)):
+        raise PlanOperationError("replacement active card identity is invalid")
+    plan = PlanFact.from_mapping(run["plan"])
+    coder = run.get("coder")
+    reviewer = run.get("reviewer")
+    if not isinstance(coder, dict) or not isinstance(reviewer, dict):
+        raise PlanOperationError("replacement PlanRun role binding is invalid")
+    operation_args = _profile_operation_args(architect_profile, plan)
+    _validate_local_architect(operation_args, ArchitectBinding.from_mapping(run["architect"]))
+    from agent_workflow.operations import awf_dispatch
+
+    dispatch_args = argparse.Namespace(
+        repo=repo,
+        card=path,
+        branch=branch,
+        manifest=None,
+        to="coder",
+        tool=str(coder.get("tool", "")),
+        model=str(coder.get("model", "")),
+        reviewer_tool=str(reviewer.get("tool", "")),
+        reviewer_model=str(reviewer.get("model", "")),
+        report=compile_implementation_report_path(task_id),
+        review_report=compile_review_report_path(task_id),
+        upstream_repo=plan.repository,
+        upstream_remote=plan.upstream_remote,
+        head_repo=operation_args.head_repo,
+        head_remote=operation_args.head_remote,
+        base_ref=plan.base_ref,
+        event_type="task:awf-impl-v3",
+        source_event_id=old_event_id,
+        no_push=False,
+        dry_run=False,
+    )
+    dispatching = {**card, "status": "replacement_dispatching"}
+    store.update(
+        status="replacement_dispatching",
+        current_card=dispatching,
+        stop_reason="",
+    )
+
+    def before_send(current_repo: Path, payload: dict[str, object]) -> None:
+        if (
+            payload.get("awf_delivery_id") == lineage["old_delivery_id"]
+            or payload.get("awf_payload_sha256") != lineage["old_payload_sha256"]
+            or payload.get("awf_source_event_id") != old_event_id
+            or payload.get("branch") != branch
+            or payload.get("commit") != lineage["old_source_commit"]
+            or payload.get("base_sha") != lineage["old_base_sha"]
+        ):
+            raise PlanOperationError("replacement payload drifted from its frozen lineage")
+        _run_dispatch_preflight(operation_args, store=store, repo=current_repo)
+
+    try:
+        payload = awf_dispatch.dispatch(dispatch_args, before_send=before_send)
+    except (DispatchError, PlanOperationError):
+        store.update(
+            status="replacement_dispatch_ambiguous",
+            current_card={**dispatching, "status": "replacement_dispatch_ambiguous"},
+            stop_reason="replacement dispatch failed or became ambiguous; no automatic retry",
+        )
+        raise
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("awf_delivery_id"), str)
+        or payload["awf_delivery_id"] == lineage["old_delivery_id"]
+        or payload.get("awf_source_event_id") != old_event_id
+        or not isinstance(payload.get("awf_payload_sha256"), str)
+    ):
+        store.update(
+            status="replacement_dispatch_ambiguous",
+            current_card={**dispatching, "status": "replacement_dispatch_ambiguous"},
+            stop_reason="replacement dispatch identity is not safely observable",
+        )
+        raise PlanOperationError("replacement dispatch identity is not safely observable")
+    delivery = {
+        "delivery_id": payload["awf_delivery_id"],
+        "payload_sha256": payload["awf_payload_sha256"],
+        "source_event_id": old_event_id,
+    }
+    active = {**card, "status": "active", "replacement_delivery": delivery}
+    store.update(status="card_active", current_card=active, stop_reason="")
+    return {"replacement_authorization": lineage, "replacement_delivery": delivery}
+
+
 def continue_after_approval(
     *, repo: Path, state_root: Path, run_id: str, architect_profile: node.NodeProfile
 ) -> dict[str, object]:

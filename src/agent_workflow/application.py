@@ -319,7 +319,7 @@ def authorize_replacement(
     old_event_id: object,
     old_delivery_id: str,
     old_role: str,
-) -> dict[str, str]:
+) -> dict[str, object]:
     _require_human_intent(human_intent, expected=HUMAN_REPLACEMENT_INTENT, action="replacement")
     if (
         not isinstance(old_event_id, int)
@@ -364,5 +364,26 @@ def authorize_replacement(
     existing = current.get("replacement_authorization")
     if existing is not None and existing != lineage:
         raise ApplicationError("a different old delivery is already authorized for replacement")
+    delivery = current.get("replacement_delivery")
+    if existing == lineage and isinstance(delivery, Mapping):
+        return {"replacement_authorization": lineage, "replacement_delivery": dict(delivery)}
+    if existing == lineage:
+        raise ApplicationError("replacement authorization has an unresolved dispatch outcome")
     store.update(current_card={**current, "replacement_authorization": lineage})
-    return lineage
+    from agent_workflow.operations import awf_plan
+
+    try:
+        profiles = {profile.role: profile for profile in _machine(Path(repo)).profiles}
+        architect = profiles.get("architect")
+        if architect is None:
+            raise ApplicationError(
+                "replacement dispatch requires the exact local Architect profile"
+            )
+        return awf_plan.dispatch_authorized_replacement(
+            repo=Path(repo).resolve(),
+            state_root=store.state_root,
+            run_id=run_id,
+            architect_profile=architect,
+        )
+    except (awf_plan.PlanOperationError, PlanLoopError, facade.FacadeError) as exc:
+        raise ApplicationError("replacement dispatch was denied by exact current facts") from exc

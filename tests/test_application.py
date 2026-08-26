@@ -298,8 +298,27 @@ def test_replacement_authorization_is_one_shot_per_old_delivery(monkeypatch, tmp
         "old_base_sha": "a" * 40,
         "old_provenance_sha256": "sha256:" + "4" * 64,
     }
+    dispatches: list[dict[str, object]] = []
     monkeypatch.setattr(application, "_store", lambda *_args: store)
     monkeypatch.setattr(awf_role, "replacement_evidence", lambda *_args, **_kwargs: lineage)
+    delivery = {
+        "delivery_id": "awf:" + "5" * 64,
+        "payload_sha256": "sha256:" + "6" * 64,
+        "source_event_id": 1,
+    }
+
+    def dispatch(**kwargs):
+        dispatches.append(kwargs)
+        current = store.load()["current_card"]
+        store.update(current_card={**current, "replacement_delivery": delivery})
+        return {"replacement_authorization": lineage, "replacement_delivery": delivery}
+
+    monkeypatch.setattr(awf_plan, "dispatch_authorized_replacement", dispatch)
+    monkeypatch.setattr(
+        application,
+        "_machine",
+        lambda _repo: SimpleNamespace(profiles=(SimpleNamespace(role="architect"),)),
+    )
 
     first = application.authorize_replacement(
         tmp_path,
@@ -318,5 +337,7 @@ def test_replacement_authorization_is_one_shot_per_old_delivery(monkeypatch, tmp
         old_role="coder",
     )
 
-    assert first == second == lineage
+    assert first == second
+    assert first["replacement_authorization"] == lineage
+    assert len(dispatches) == 1
     assert store.load()["current_card"]["replacement_authorization"] == lineage

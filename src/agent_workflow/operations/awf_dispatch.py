@@ -158,7 +158,12 @@ def build_payload(
     report: str,
     review_report: str,
     provenance: dict[str, object] | None,
+    source_event_id: int = 0,
 ) -> dict[str, object]:
+    require(
+        isinstance(source_event_id, int) and source_event_id >= 0,
+        "invalid Workflow source event ID",
+    )
     payload: dict[str, object] = {
         "task_id": task_id,
         "branch": branch,
@@ -174,9 +179,11 @@ def build_payload(
     payload_sha256 = canonical_payload_sha256(payload)
     return {
         **payload,
-        "awf_delivery_id": make_delivery_id("architect", event_type, payload_sha256, 0),
+        "awf_delivery_id": make_delivery_id(
+            "architect", event_type, payload_sha256, source_event_id
+        ),
         "awf_payload_sha256": payload_sha256,
-        "awf_source_event_id": 0,
+        "awf_source_event_id": source_event_id,
     }
 
 
@@ -230,7 +237,7 @@ def dispatch(
     args: argparse.Namespace,
     *,
     before_send: Callable[[Path, dict[str, object]], None] | None = None,
-) -> None:
+) -> dict[str, object]:
     repo = args.repo.resolve()
     card_path = Path(args.card)
     if not card_path.is_absolute():
@@ -450,6 +457,7 @@ def dispatch(
         report=report,
         review_report=review_report,
         provenance=provenance,
+        source_event_id=int(getattr(args, "source_event_id", 0)),
     )
     encoded_payload = canonical_json(payload)
     if args.dry_run:
@@ -457,7 +465,7 @@ def dispatch(
         print(f"           type={args.event_type}  from=architect  to={args.to}")
         print(f"           payload={encoded_payload}")
         print("[dispatch] (dry-run) nothing sent.")
-        return
+        return payload
 
     if before_send is not None:
         # The Plan product path injects the existing Fast/Deep gate here: after
@@ -500,6 +508,7 @@ def dispatch(
         f"[dispatch] event sent (type={args.event_type} to={args.to}). "
         f"A '{args.to}' listener will pick it up and execute."
     )
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
