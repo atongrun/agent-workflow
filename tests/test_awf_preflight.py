@@ -489,6 +489,84 @@ def test_deep_inflight_event_restores_exact_baseline_without_reusable_cache(tmp_
     assert not awf_preflight.cache_path(value.state_root).exists()
 
 
+def test_deep_inflight_timeout_preserves_exact_probe_for_resume(tmp_path, monkeypatch):
+    value = args(tmp_path, intent="remote-dispatch")
+    value.inflight_event_id = 299
+
+    class FixedUUID:
+        hex = "3" * 32
+
+    monkeypatch.setattr(awf_preflight, "run_fast", lambda _args: passing_fast(tmp_path))
+    monkeypatch.setattr(
+        awf_preflight,
+        "pending_count",
+        lambda _config, role: 1 if role == "architect" else 0,
+    )
+    monkeypatch.setattr(awf_preflight.uuid, "uuid4", lambda: FixedUUID())
+    monkeypatch.setattr(awf_preflight.shutil, "which", lambda value: f"/tools/{value}")
+    monkeypatch.setattr(
+        awf_preflight,
+        "run_command",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        awf_preflight,
+        "wait_for_result",
+        lambda *_args: (_ for _ in ()).throw(
+            awf_preflight.PreflightError("DEEP_REPLY_TIMEOUT", "late result")
+        ),
+    )
+
+    report = awf_preflight.run_deep(value)
+
+    assert report["required_next_action"] == "resume_deep_preflight"
+    assert report["deep"] == {
+        "required": True,
+        "current": False,
+        "error_code": "DEEP_REPLY_TIMEOUT",
+        "probe_id": "awf-preflight-" + "3" * 32,
+        "pending_before": {"architect": 1, "coder": 0},
+        "inflight_event_id": 299,
+    }
+
+
+def test_resume_deep_inflight_result_is_one_shot_and_non_cacheable(tmp_path, monkeypatch):
+    value = args(tmp_path, intent="remote-dispatch")
+    value.inflight_event_id = 299
+    value.probe_id = "awf-preflight-" + "4" * 32
+    monkeypatch.setattr(awf_preflight, "run_fast", lambda _args: passing_fast(tmp_path))
+    monkeypatch.setattr(
+        awf_preflight,
+        "pending_count",
+        lambda _config, role: 1 if role == "architect" else 0,
+    )
+    awf_preflight.atomic_write(
+        awf_preflight.probe_dir(value.state_root, value.probe_id) / "source-result.json",
+        {
+            "format": "awf.preflight-control-result.v1",
+            "probe_id": value.probe_id,
+            "fingerprint": "a" * 64,
+            "request_event_id": 121,
+            "reply_event_id": 122,
+            "request_type": awf_preflight.REQUEST_TYPE,
+            "result_type": awf_preflight.RESULT_TYPE,
+            "source_role": "architect",
+            "target_role": "coder",
+            "request_child_rc": 0,
+            "result_child_rc": 0,
+        },
+    )
+
+    report = awf_preflight.run_resume_deep(value)
+
+    assert report["status"] == "PASS"
+    assert report["deep"]["recovered_after_timeout"] is True
+    assert report["deep"]["pending_before"] == {"architect": 1, "coder": 0}
+    assert report["deep"]["pending_after"] == {"architect": 1, "coder": 0}
+    assert report["deep"]["inflight_event_id"] == 299
+    assert not awf_preflight.cache_path(value.state_root).exists()
+
+
 def test_resume_deep_finalizes_existing_result_without_sending(tmp_path, monkeypatch):
     value = args(tmp_path, intent="remote-dispatch")
     value.probe_id = "awf-preflight-" + "9" * 32
