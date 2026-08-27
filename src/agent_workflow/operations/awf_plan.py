@@ -365,12 +365,15 @@ def _run_dispatch_preflight(
     previous_deep = previous_report.get("deep") if isinstance(previous_report, dict) else None
     resume_probe = ""
     if (
-        isinstance(previous_deep, dict)
-        and previous_deep.get("error_code") == "DEEP_REPLY_TIMEOUT"
+        isinstance(previous_report, dict)
+        and previous_report.get("required_next_action") == "resume_deep_preflight"
+        and isinstance(previous_deep, dict)
         and previous_deep.get("inflight_event_id") == preflight_args.inflight_event_id
         and isinstance(previous_deep.get("probe_id"), str)
     ):
         resume_probe = previous_deep["probe_id"]
+    if run.get("status") == "dispatch_blocked" and not resume_probe:
+        raise PlanOperationError("Deep resume identity is unavailable; no new probe is legal")
     with _preflight_environment(Path(args.config).resolve()):
         if resume_probe:
             preflight_args.probe_id = resume_probe
