@@ -435,6 +435,60 @@ def test_deep_success_requires_matching_result_and_zero_pending(tmp_path, monkey
     assert awf_preflight.cache_path(value.state_root).is_file()
 
 
+def test_deep_inflight_event_restores_exact_baseline_without_reusable_cache(tmp_path, monkeypatch):
+    value = args(tmp_path, intent="remote-dispatch")
+    value.inflight_event_id = 299
+    fixed_id = "2" * 32
+
+    class FixedUUID:
+        hex = fixed_id
+
+    monkeypatch.setattr(awf_preflight, "run_fast", lambda _args: passing_fast(tmp_path))
+    monkeypatch.setattr(
+        awf_preflight,
+        "pending_count",
+        lambda _config, role: 1 if role == "architect" else 0,
+    )
+    monkeypatch.setattr(awf_preflight.uuid, "uuid4", lambda: FixedUUID())
+    monkeypatch.setattr(awf_preflight.shutil, "which", lambda value: f"/tools/{value}")
+
+    def fake_run(argv, **_kwargs):
+        values = [str(value) for value in argv]
+        if "send" in values:
+            payload = json.loads(values[values.index("--payload") + 1])
+            awf_preflight.atomic_write(
+                awf_preflight.probe_dir(value.state_root, payload["probe_id"])
+                / "source-result.json",
+                {
+                    "format": "awf.preflight-control-result.v1",
+                    "probe_id": payload["probe_id"],
+                    "fingerprint": "a" * 64,
+                    "request_event_id": 111,
+                    "reply_event_id": 112,
+                    "request_type": awf_preflight.REQUEST_TYPE,
+                    "result_type": awf_preflight.RESULT_TYPE,
+                    "source_role": "architect",
+                    "target_role": "coder",
+                    "request_child_rc": 0,
+                    "result_child_rc": 0,
+                },
+            )
+        return subprocess.CompletedProcess(values, 0, "", "")
+
+    monkeypatch.setattr(awf_preflight, "run_command", fake_run)
+
+    report = awf_preflight.run_deep(value)
+
+    assert report["status"] == "PASS"
+    assert report["deep"]["inflight_event_id"] == 299
+    assert report["deep"]["pending_before"] == {"architect": 1, "coder": 0}
+    assert report["deep"]["pending_after"] == {"architect": 1, "coder": 0}
+    assert report["deep"]["request_ack_evidence"] == (
+        "inferred-handler-success-and-baseline-restored"
+    )
+    assert not awf_preflight.cache_path(value.state_root).exists()
+
+
 def test_resume_deep_finalizes_existing_result_without_sending(tmp_path, monkeypatch):
     value = args(tmp_path, intent="remote-dispatch")
     value.probe_id = "awf-preflight-" + "9" * 32

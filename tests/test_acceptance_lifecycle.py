@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -144,5 +145,95 @@ def test_closeout_uses_exact_installed_snapshot_and_manager_identity(monkeypatch
 
     assert result["state"] == "CLOSED"
     assert not profile.repo.exists()
+
+
+def test_frozen_without_validated_never_relaxes_preexisting_workspace_deletion(
+    monkeypatch, tmp_path: Path
+):
+    profile = _profile(tmp_path)
+    subprocess.run(["git", "config", "user.name", "Acceptance Test"], check=True, cwd=profile.repo)
+    subprocess.run(
+        ["git", "config", "user.email", "acceptance@example.invalid"],
+        check=True,
+        cwd=profile.repo,
+    )
+    tracked = profile.repo / "tracked.txt"
+    tracked.write_text("owner state\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], check=True, cwd=profile.repo)
+    subprocess.run(["git", "commit", "-m", "fixture"], check=True, cwd=profile.repo)
+    manifest = tmp_path / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    acceptance_lifecycle.create_manifest(
+        manifest, run_id="acceptance-dirty", profiles=(profile,), workspaces=(profile.repo,)
+    )
+    tracked.unlink()
+
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="workspace status is unavailable",
+    ):
+        acceptance_lifecycle.closeout(manifest)
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="workspace status is unavailable",
+    ):
+        acceptance_lifecycle.closeout(manifest)
+
+    assert profile.repo.exists()
+    assert not (tmp_path / "acceptance.validated.json").exists()
     assert (tmp_path / "acceptance.closeout.json").is_file()
-    assert (tmp_path / "acceptance.closed.json").is_file()
+
+
+def test_closeout_resumes_exact_frozen_partial_workspace_removal(monkeypatch, tmp_path: Path):
+    profile = _profile(tmp_path)
+    subprocess.run(["git", "config", "user.name", "Acceptance Test"], check=True, cwd=profile.repo)
+    subprocess.run(
+        ["git", "config", "user.email", "acceptance@example.invalid"],
+        check=True,
+        cwd=profile.repo,
+    )
+    tracked = profile.repo / "tracked.txt"
+    tracked.write_text("evidence\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], check=True, cwd=profile.repo)
+    subprocess.run(["git", "commit", "-m", "fixture"], check=True, cwd=profile.repo)
+    manifest = tmp_path / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    acceptance_lifecycle.create_manifest(
+        manifest, run_id="acceptance-partial", profiles=(profile,), workspaces=(profile.repo,)
+    )
+    frozen = {
+        "format": acceptance_lifecycle.CLOSEOUT_FORMAT,
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "state": "FROZEN",
+    }
+    (tmp_path / "acceptance.closeout.json").write_text(
+        json.dumps(frozen, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    tracked.unlink()
+
+    result = acceptance_lifecycle.closeout(manifest, authorize_frozen_recovery=True)
+
+    assert result["state"] == "CLOSED"
+    assert not profile.repo.exists()

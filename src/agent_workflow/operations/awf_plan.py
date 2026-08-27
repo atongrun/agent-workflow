@@ -279,6 +279,14 @@ def _preflight_args(
     repo: Path,
     intent: str,
 ) -> argparse.Namespace:
+    event_id = getattr(args, "event_id", None)
+    if event_id is not None:
+        try:
+            event_id = int(event_id)
+        except (TypeError, ValueError) as exc:
+            raise PlanOperationError("in-flight Plan event identity is invalid") from exc
+        if event_id < 1:
+            raise PlanOperationError("in-flight Plan event identity is invalid")
     return argparse.Namespace(
         repo=repo,
         config=Path(args.config).resolve(),
@@ -298,6 +306,7 @@ def _preflight_args(
         ttl_seconds=86400,
         timeout=60.0,
         force=False,
+        inflight_event_id=event_id,
     )
 
 
@@ -1192,7 +1201,12 @@ def _approval_observation(repo: Path, provenance: dict[str, object]) -> dict[str
     raise PlanOperationError("approval or mergeability is not safely observable")
 
 
-def _profile_operation_args(profile: node.NodeProfile, plan: PlanFact) -> argparse.Namespace:
+def _profile_operation_args(
+    profile: node.NodeProfile,
+    plan: PlanFact,
+    *,
+    inflight_event_id: int | None = None,
+) -> argparse.Namespace:
     return argparse.Namespace(
         profile=str(profile.path),
         profile_sha256=profile.digest,
@@ -1207,6 +1221,7 @@ def _profile_operation_args(profile: node.NodeProfile, plan: PlanFact) -> argpar
         head_repo=str(profile.values.get("head_repo", "")),
         gh_bin=str(profile.values.get("gh_bin", "gh")),
         model_tool=str(profile.values.get("tool_executable", "") or profile.values["tool"]),
+        inflight_event_id=inflight_event_id,
     )
 
 
@@ -1675,10 +1690,26 @@ def handle_card_terminal(
             last_completion=completed,
             stop_reason="",
         )
+        continuation_args = None
+        event_id = getattr(args, "event_id", None)
+        if event_id is not None:
+            try:
+                event_id = int(event_id)
+                architect_profile = node.load_profile(binding.profile)
+            except (TypeError, ValueError, node.NodeError) as exc:
+                raise PlanOperationError("in-flight terminal event identity is invalid") from exc
+            if event_id < 1 or architect_profile.digest != binding.profile_sha256:
+                raise PlanOperationError("in-flight terminal event identity is invalid")
+            continuation_args = _profile_operation_args(
+                architect_profile,
+                PlanFact.from_mapping(run["plan"]),
+                inflight_event_id=event_id,
+            )
         _continue_milestone(
             store=store,
             source_repo=source_repo,
             state_root=state_root,
+            operation_args=continuation_args,
         )
     return {
         "terminal_state": "completed",
@@ -1718,6 +1749,7 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--reviewer-model", default="")
     handler = commands.add_parser("handle-start")
     for name in (
+        "event-id",
         "run-id",
         "mode",
         "plan-json",

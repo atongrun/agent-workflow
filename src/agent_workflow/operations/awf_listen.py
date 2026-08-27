@@ -468,6 +468,8 @@ def build_plan_start_handler_argv(
         python_exe,
         plan_script,
         "handle-start",
+        "--event-id",
+        "{id}",
         "--run-id",
         "{payload.run_id}",
         "--mode",

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import uuid
 from pathlib import Path
@@ -186,7 +187,37 @@ def _validated_entries(value: dict[str, object]) -> tuple[list[dict[str, object]
     return entries, [str(workspace) for workspace in normalized_workspaces]
 
 
-def closeout(path: Path) -> dict[str, object]:
+def _partial_workspace_removal(status: str) -> bool:
+    lines = [line.strip() for line in status.splitlines() if line.strip()]
+    return bool(lines) and all(re.fullmatch(r"D\s+.+", line) is not None for line in lines)
+
+
+def _remove_workspace(path: Path, *, windows: bool | None = None) -> None:
+    """Remove one exact workspace, retrying Windows read-only Git files only."""
+    root = path.resolve()
+    use_windows_retry = os.name == "nt" if windows is None else windows
+    if not use_windows_retry:
+        shutil.rmtree(root)
+        return
+
+    def retry_readonly(function, candidate: str, error_info) -> None:
+        error = error_info[1]
+        resolved = Path(candidate).resolve()
+        if not isinstance(error, PermissionError) or (
+            resolved != root and root not in resolved.parents
+        ):
+            raise error
+        os.chmod(resolved, stat.S_IWRITE | stat.S_IREAD)
+        function(resolved)
+
+    shutil.rmtree(root, onerror=retry_readonly)
+
+
+def closeout(
+    path: Path,
+    *,
+    authorize_frozen_recovery: bool = False,
+) -> dict[str, object]:
     """Freeze evidence, then stop/uninstall only exact manifest-owned identities."""
     path = Path(path)
     value = _load(path)
@@ -195,7 +226,26 @@ def closeout(path: Path) -> dict[str, object]:
         "manifest_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "state": "FROZEN",
     }
-    _write_json(path.with_name(f"{path.stem}.closeout.json"), frozen, replace=False)
+    frozen_path = path.with_name(f"{path.stem}.closeout.json")
+    validated_path = path.with_name(f"{path.stem}.validated.json")
+    closed_path = path.with_name(f"{path.stem}.closed.json")
+    frozen_exists = frozen_path.exists()
+    if frozen_exists:
+        if _load(frozen_path) != frozen:
+            raise AcceptanceLifecycleError("CLEANUP_BLOCKED: frozen closeout identity drifted")
+    else:
+        _write_json(frozen_path, frozen, replace=False)
+    expected_validated = {**frozen, "state": "VALIDATED"}
+    validated_exists = validated_path.exists()
+    if validated_exists and _load(validated_path) != expected_validated:
+        raise AcceptanceLifecycleError("CLEANUP_BLOCKED: validated identity drifted")
+    recovering = validated_exists or (frozen_exists and authorize_frozen_recovery)
+    expected_closed = {**frozen, "state": "CLOSED"}
+    if closed_path.exists():
+        closed = _load(closed_path)
+        if closed != expected_closed:
+            raise AcceptanceLifecycleError("CLEANUP_BLOCKED: closed identity drifted")
+        return closed
     entries, workspaces = _validated_entries(value)
     loaded: list[tuple[node.NodeProfile, dict[str, object], str]] = []
     for entry in entries:
@@ -219,9 +269,12 @@ def closeout(path: Path) -> dict[str, object]:
                 "CLEANUP_BLOCKED: native installation identity is unknown"
             )
         loaded.append((active, entry, str(status)))
+    installation_by_workspace = {entry[1]["workspace"]: entry[2] for entry in loaded}
     for workspace in workspaces:
         candidate = _canonical_path(workspace, label="workspace")
         if not candidate.is_dir():
+            if recovering and installation_by_workspace.get(workspace) == "not_installed":
+                continue
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace identity is unknown")
         result = subprocess.run(
             ["git", "-C", str(candidate), "status", "--porcelain"],
@@ -229,8 +282,12 @@ def closeout(path: Path) -> dict[str, object]:
             text=True,
             check=False,
         )
-        if result.returncode or result.stdout:
+        if result.returncode or (
+            result.stdout and (not recovering or not _partial_workspace_removal(result.stdout))
+        ):
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace status is unavailable")
+    if not validated_exists:
+        _write_json(validated_path, expected_validated, replace=False)
     for profile, entry, status in loaded:
         if status == "not_installed":
             observation = node.lifecycle_facts(profile).get("running_observation")
@@ -267,9 +324,9 @@ def closeout(path: Path) -> dict[str, object]:
             )
     for workspace in workspaces:
         candidate = _canonical_path(workspace, label="workspace")
-        shutil.rmtree(candidate)
+        if candidate.exists():
+            _remove_workspace(candidate)
         if candidate.exists():
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: generated workspace remains")
-    closed = path.with_name(f"{path.stem}.closed.json")
-    _write_json(closed, {**frozen, "state": "CLOSED"}, replace=False)
-    return _load(closed)
+    _write_json(closed_path, expected_closed, replace=False)
+    return _load(closed_path)

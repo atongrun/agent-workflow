@@ -67,6 +67,7 @@ def test_plan_start_handler_uses_structured_payload_and_exact_profile(tmp_path: 
 
     assert "{payload.plan}" in argv
     assert "{payload.architect}" in argv
+    assert argv[argv.index("--event-id") + 1] == "{id}"
     assert argv[argv.index("--profile-sha256") + 1] == "sha256:" + "a" * 64
 
 
