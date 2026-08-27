@@ -1668,6 +1668,22 @@ def verification_env() -> dict[str, str]:
     return e
 
 
+def resolve_verification_argv(
+    argv: list[str],
+    *,
+    os_name: str = os.name,
+    executable: str = sys.executable,
+) -> list[str]:
+    """Resolve the frozen Python alias to the current Windows runner."""
+    if os_name != "nt" or not argv or argv[0].casefold() not in {"python", "python.exe"}:
+        return list(argv)
+    runtime = Path(executable).absolute()
+    runtime_python = runtime.with_name("python.exe")
+    if runtime.name.casefold() not in {"python.exe", "pythonw.exe"} or not runtime_python.is_file():
+        return list(argv)
+    return [str(runtime_python), *argv[1:]]
+
+
 _CAPTURED_STDOUT_MAX_BYTES = 16 * 1024
 _CAPTURED_STDERR_MAX_BYTES = 16 * 1024
 
@@ -3243,7 +3259,7 @@ def run_verifications(repo: str, contract: PostflightContract) -> None:
     """
     for i, argv in enumerate(contract.verification_commands):
         log(f"postflight verification [{i + 1}/{len(contract.verification_commands)}]")
-        rc = spawn(argv, cwd=repo, env=verification_env())
+        rc = spawn(resolve_verification_argv(argv), cwd=repo, env=verification_env())
         if rc != 0:
             die(f"postflight verification [{i + 1}] failed (rc={rc})")
 
