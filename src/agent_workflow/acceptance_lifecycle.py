@@ -192,6 +192,25 @@ def _partial_workspace_removal(status: str) -> bool:
     return bool(lines) and all(re.fullmatch(r"D\s+.+", line) is not None for line in lines)
 
 
+def _explicit_frozen_recovery_status(status: str) -> bool:
+    lines = [line.strip() for line in status.splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        if re.fullmatch(r"D\s+.+", line) is not None:
+            continue
+        untracked = re.fullmatch(r"\?\?\s+(.+)", line)
+        if untracked is None:
+            return False
+        path = untracked.group(1)
+        if not (
+            path.endswith("/__pycache__/")
+            or re.fullmatch(r"(?:^|.*/)__pycache__/[^/]+\.pyc", path) is not None
+        ):
+            return False
+    return True
+
+
 def _remove_workspace(path: Path, *, windows: bool | None = None) -> None:
     """Remove one exact workspace, retrying Windows read-only Git files only."""
     root = path.resolve()
@@ -239,7 +258,8 @@ def closeout(
     validated_exists = validated_path.exists()
     if validated_exists and _load(validated_path) != expected_validated:
         raise AcceptanceLifecycleError("CLEANUP_BLOCKED: validated identity drifted")
-    recovering = validated_exists or (frozen_exists and authorize_frozen_recovery)
+    explicit_frozen_recovery = frozen_exists and authorize_frozen_recovery and not validated_exists
+    recovering = validated_exists or explicit_frozen_recovery
     expected_closed = {**frozen, "state": "CLOSED"}
     if closed_path.exists():
         closed = _load(closed_path)
@@ -282,9 +302,12 @@ def closeout(
             text=True,
             check=False,
         )
-        if result.returncode or (
-            result.stdout and (not recovering or not _partial_workspace_removal(result.stdout))
-        ):
+        recoverable_status = (
+            _explicit_frozen_recovery_status(result.stdout)
+            if explicit_frozen_recovery
+            else _partial_workspace_removal(result.stdout)
+        )
+        if result.returncode or (result.stdout and (not recovering or not recoverable_status)):
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace status is unavailable")
     if not validated_exists:
         _write_json(validated_path, expected_validated, replace=False)

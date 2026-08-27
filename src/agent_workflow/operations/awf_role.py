@@ -1551,6 +1551,7 @@ def _model_base_env() -> dict[str, str]:
             del e[key]
     e.setdefault("PYTHONUTF8", "1")
     e.setdefault("PYTHONIOENCODING", "utf-8")
+    e.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     return e
 
 

@@ -205,7 +205,10 @@ def test_closeout_resumes_exact_frozen_partial_workspace_removal(monkeypatch, tm
     )
     tracked = profile.repo / "tracked.txt"
     tracked.write_text("evidence\n", encoding="utf-8")
-    subprocess.run(["git", "add", "tracked.txt"], check=True, cwd=profile.repo)
+    source = profile.repo / "src"
+    source.mkdir()
+    (source / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt", "src/module.py"], check=True, cwd=profile.repo)
     subprocess.run(["git", "commit", "-m", "fixture"], check=True, cwd=profile.repo)
     manifest = tmp_path / "acceptance.json"
     monkeypatch.setattr(
@@ -232,6 +235,9 @@ def test_closeout_resumes_exact_frozen_partial_workspace_removal(monkeypatch, tm
         json.dumps(frozen, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     tracked.unlink()
+    cache = profile.repo / "src/__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "generated.pyc").write_bytes(b"cache")
 
     result = acceptance_lifecycle.closeout(manifest, authorize_frozen_recovery=True)
 

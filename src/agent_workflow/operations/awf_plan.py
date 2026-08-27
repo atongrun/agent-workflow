@@ -524,6 +524,10 @@ def _persist_and_dispatch_taskcard(
     branch: str,
     frozen_base: str,
 ) -> dict[str, object]:
+    existing_card = store.load().get("current_card")
+    prepared_dispatch = (
+        existing_card.get("prepared_dispatch") if isinstance(existing_card, dict) else None
+    )
     destination = repo / "docs" / "tasks" / f"{task_id}.md"
     if raw:
         try:
@@ -555,6 +559,8 @@ def _persist_and_dispatch_taskcard(
         "frozen_base": frozen_base,
         "status": "dispatching",
     }
+    if isinstance(prepared_dispatch, dict):
+        card["prepared_dispatch"] = prepared_dispatch
     store.update(status="card_dispatching", current_card=card)
 
     from agent_workflow.operations import awf_dispatch
@@ -580,14 +586,35 @@ def _persist_and_dispatch_taskcard(
         no_push=False,
         dry_run=False,
     )
+
+    def before_send(current_repo: Path, payload: dict[str, object]) -> None:
+        prepared = {
+            "format": "awf.plan-prepared-dispatch.v1",
+            "delivery_id": payload.get("awf_delivery_id"),
+            "payload_sha256": payload.get("awf_payload_sha256"),
+            "commit": payload.get("commit"),
+            "canonical_sha256": hashlib.sha256(
+                json.dumps(
+                    payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+        if not all(isinstance(value, str) and value for value in prepared.values()):
+            raise PlanOperationError("prepared business dispatch identity is invalid")
+        current = store.load().get("current_card")
+        if not isinstance(current, dict) or current.get("status") != "dispatching":
+            raise PlanOperationError("prepared business dispatch card identity drifted")
+        prior = current.get("prepared_dispatch")
+        if prior is None:
+            store.update(current_card={**current, "prepared_dispatch": prepared})
+        elif prior != prepared:
+            raise PlanOperationError("prepared business dispatch identity drifted")
+        _run_dispatch_preflight(args, store=store, repo=current_repo)
+
     try:
         awf_dispatch.dispatch(
             dispatch_args,
-            before_send=lambda current_repo, _payload: _run_dispatch_preflight(
-                args,
-                store=store,
-                repo=current_repo,
-            ),
+            before_send=before_send,
         )
     except PlanOperationError as exc:
         store.update(status="dispatch_blocked", stop_reason=str(exc))
@@ -598,7 +625,14 @@ def _persist_and_dispatch_taskcard(
             stop_reason="business dispatch failed or became ambiguous; no automatic retry",
         )
         raise
-    card = {**card, "status": "active", "taskcard_commit": str(_git(repo, "rev-parse", "HEAD"))}
+    current = store.load().get("current_card")
+    if not isinstance(current, dict) or not isinstance(current.get("prepared_dispatch"), dict):
+        raise PlanOperationError("prepared business dispatch identity is unavailable")
+    card = {
+        **current,
+        "status": "active",
+        "taskcard_commit": current["prepared_dispatch"]["commit"],
+    }
     return store.update(status="card_active", current_card=card)
 
 
@@ -628,6 +662,7 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     if existing.get("status") == "card_active":
         return existing
     invocation = existing.get("architect_invocation")
+    resume_persisted_card = False
     if isinstance(invocation, dict):
         card = existing.get("current_card")
         if not (
@@ -636,12 +671,17 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
             and existing.get("status") == "dispatch_blocked"
             and isinstance(card, dict)
             and card.get("status") == "dispatching"
+            and isinstance(card.get("prepared_dispatch"), dict)
         ):
             raise PlanOperationError(
                 "Architect invocation already started; provider replay is forbidden"
             )
-    plan_bytes = _checkout_plan_main(repo, plan)
-    _run_authoring_fast(args, store=store, repo=repo)
+        resume_persisted_card = True
+    if resume_persisted_card:
+        plan_bytes = b""
+    else:
+        plan_bytes = _checkout_plan_main(repo, plan)
+        _run_authoring_fast(args, store=store, repo=repo)
     coder = dict(value["coder"])
     reviewer = dict(value["reviewer"])
     raw, task_id, branch = _invoke_taskcard_architect(

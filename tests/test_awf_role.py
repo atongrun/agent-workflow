@@ -1443,6 +1443,7 @@ def test_model_env_strips_credentials_and_runner_metadata(monkeypatch):
     # UTF-8 settings present (from child_env)
     assert "PYTHONUTF8" in env
     assert "PYTHONIOENCODING" in env
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
 def test_model_env_replaces_existing_process_git_config(monkeypatch, tmp_path):
