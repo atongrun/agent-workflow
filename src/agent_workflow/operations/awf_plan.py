@@ -421,6 +421,7 @@ def _invoke_taskcard_architect(
             render_provider_invocation(spec),
             stdout_path=str(output),
             stdout_max_bytes=64 * 1024,
+            stderr_path=str(output.with_suffix(".stderr")),
         )
     except BaseException:
         store.update(
@@ -739,6 +740,7 @@ def _invoke_next_architect(
                 render_provider_invocation(spec),
                 stdout_path=str(output),
                 stdout_max_bytes=64 * 1024,
+                stderr_path=str(output.with_suffix(".stderr")),
             )
         except BaseException:
             store.update(
@@ -982,6 +984,7 @@ def _invoke_terminal_decision(
             render_provider_invocation(spec),
             stdout_path=str(output),
             stdout_max_bytes=64 * 1024,
+            stderr_path=str(output.with_suffix(".stderr")),
         )
     except BaseException:
         store.update(

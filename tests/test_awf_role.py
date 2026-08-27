@@ -2753,6 +2753,155 @@ def test_spawn_stdout_path_writes_only_after_success(
         assert stdout_path.read_text(encoding="utf-8") == "review stdout"
 
 
+@pytest.mark.parametrize(("returncode", "stderr_written"), [(0, False), (3, True)])
+def test_spawn_persists_bounded_stderr_only_after_nonzero(
+    monkeypatch, tmp_path, returncode, stderr_written
+):
+    import io
+
+    stdout_path = tmp_path / "architect.stdout"
+    stderr_path = tmp_path / "architect.stderr"
+
+    class CapturingProcess:
+        pid = 4321
+
+        def __init__(self):
+            self.returncode = returncode
+            self.stdout = io.StringIO("semantic stdout")
+            self.stderr = io.StringIO("provider diagnostic")
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self):
+            return self.returncode
+
+    def fake_start(*args, **kwargs):
+        assert kwargs["stderr"] is subprocess.PIPE
+        return CapturingProcess()
+
+    monkeypatch.setattr(awf_role, "start_command", fake_start)
+
+    assert (
+        awf_role.spawn(
+            ["opencode"],
+            stdout_path=str(stdout_path),
+            stderr_path=str(stderr_path),
+        )
+        == returncode
+    )
+
+    assert stderr_path.exists() is stderr_written
+    if stderr_written:
+        assert stderr_path.read_text(encoding="utf-8") == "provider diagnostic"
+        assert not stdout_path.exists()
+    else:
+        assert stdout_path.read_text(encoding="utf-8") == "semantic stdout"
+
+
+def test_spawn_discards_stderr_after_bounded_prefix(monkeypatch, tmp_path):
+    import io
+
+    stdout_path = tmp_path / "architect.stdout"
+    stderr_path = tmp_path / "architect.stderr"
+
+    class CapturingProcess:
+        pid = 4321
+        returncode = 3
+        stdout = io.StringIO("")
+        stderr = io.StringIO("x" * 40)
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr(awf_role, "start_command", lambda *args, **kwargs: CapturingProcess())
+
+    assert (
+        awf_role.spawn(
+            ["opencode"],
+            stdout_path=str(stdout_path),
+            stderr_path=str(stderr_path),
+            stderr_max_bytes=16,
+        )
+        == 3
+    )
+
+    assert stderr_path.read_text(encoding="utf-8") == (
+        "x" * 16 + "\n[stderr truncated at 16 bytes]\n"
+    )
+
+
+def test_spawn_reaps_real_child_before_propagating_stdout_interrupt(monkeypatch, tmp_path):
+    original_start = awf_role.start_command
+    captured = {}
+
+    def tracking_start(*args, **kwargs):
+        captured["process"] = original_start(*args, **kwargs)
+        return captured["process"]
+
+    monkeypatch.setattr(awf_role, "start_command", tracking_start)
+    monkeypatch.setattr(
+        awf_role,
+        "read_bounded_stdout",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    stdout_path = tmp_path / "architect.stdout"
+    stderr_path = tmp_path / "architect.stderr"
+
+    with pytest.raises(KeyboardInterrupt):
+        awf_role.spawn(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdout_path=str(stdout_path),
+            stderr_path=str(stderr_path),
+        )
+
+    assert captured["process"].poll() is not None
+    assert not stdout_path.exists()
+    assert not stderr_path.exists()
+
+
+def test_spawn_reaps_real_child_and_propagates_stderr_reader_failure(monkeypatch, tmp_path):
+    original_start = awf_role.start_command
+    captured = {}
+
+    def tracking_start(*args, **kwargs):
+        captured["process"] = original_start(*args, **kwargs)
+        return captured["process"]
+
+    monkeypatch.setattr(awf_role, "start_command", tracking_start)
+    monkeypatch.setattr(
+        awf_role,
+        "read_bounded_stream",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("stderr drain failed")),
+    )
+    stdout_path = tmp_path / "architect.stdout"
+    stderr_path = tmp_path / "architect.stderr"
+
+    with pytest.raises(OSError, match="stderr drain failed"):
+        awf_role.spawn(
+            [
+                sys.executable,
+                "-c",
+                "import sys,time; sys.stderr.write('x'*65536); sys.stderr.flush(); time.sleep(30)",
+            ],
+            stdout_path=str(stdout_path),
+            stderr_path=str(stderr_path),
+        )
+
+    assert captured["process"].poll() is not None
+    assert not stdout_path.exists()
+    assert not stderr_path.exists()
+
+
 @pytest.mark.parametrize(("returncode", "should_write"), [(0, True), (4, False)])
 def test_tracked_spawn_stdout_path_preserves_phase_evidence(
     monkeypatch, tmp_path, returncode, should_write
