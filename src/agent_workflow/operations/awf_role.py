@@ -1737,6 +1737,7 @@ def spawn(
                 cwd=cwd,
                 stdin=PIPE if stdin is not None else DEVNULL,
                 stdout=PIPE if stdout_path is not None else None,
+                stderr=PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -1762,17 +1763,61 @@ def spawn(
                 f"{tracked_phase}_cwd": str(Path(cwd).resolve()) if cwd else os.getcwd(),
             },
         )
+        stderr_capture: dict[str, object] = {"text": "", "truncated": False, "error": None}
+        stderr_thread = None
+        cleanup_started = threading.Event()
+        stderr_stream = getattr(proc, "stderr", None)
+        if stderr_stream is not None:
+
+            def drain_tracked_stderr() -> None:
+                try:
+                    text, truncated = read_bounded_stream(stderr_stream, _CAPTURED_STDERR_MAX_BYTES)
+                except BaseException as exc:
+                    if not cleanup_started.is_set():
+                        stderr_capture["error"] = exc
+                        if proc.poll() is None:
+                            proc.kill()
+                        stdout_stream = getattr(proc, "stdout", None)
+                        if stdout_stream is not None:
+                            stdout_stream.close()
+                else:
+                    stderr_capture.update(text=text, truncated=truncated)
+
+            stderr_thread = threading.Thread(target=drain_tracked_stderr, daemon=True)
+            stderr_thread.start()
         try:
             if stdout_path is not None:
                 stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc, stdout_max_bytes)
+            elif stderr_thread is not None:
+                if stdin is not None:
+                    if proc.stdin is None:
+                        die("tracked model stdin pipe is unavailable")
+                    try:
+                        proc.stdin.write(stdin)
+                        proc.stdin.close()
+                    except BrokenPipeError:
+                        # A provider may exit normally with a nonzero result before
+                        # consuming all input. Preserve its real rc and stderr.
+                        try:
+                            proc.stdin.close()
+                        except BrokenPipeError:
+                            pass
+                proc.wait()
+                stdout_text = ""
+                stdout_limit_exceeded = False
             else:
                 proc.communicate(stdin)
                 stdout_text = ""
                 stdout_limit_exceeded = False
         except BaseException:
+            cleanup_started.set()
             if proc.poll() is None:
                 proc.kill()
             proc.wait()
+            if stderr_stream is not None:
+                stderr_stream.close()
+            if stderr_thread is not None:
+                stderr_thread.join(timeout=5.0)
             record(
                 evidence,
                 f"{tracked_phase}_exit",
@@ -1783,6 +1828,19 @@ def spawn(
                 },
             )
             raise
+        if stderr_thread is not None:
+            stderr_thread.join(timeout=5.0)
+            if stderr_thread.is_alive():
+                cleanup_started.set()
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                stderr_stream.close()
+                stderr_thread.join(timeout=0.1)
+                raise RuntimeError("tracked model stderr did not close after process exit")
+        stderr_error = stderr_capture["error"]
+        if isinstance(stderr_error, BaseException):
+            raise stderr_error
         record(
             evidence,
             f"{tracked_phase}_exit",
@@ -1800,6 +1858,11 @@ def spawn(
             die(f"captured model stdout exceeds {stdout_max_bytes // 1024} KiB")
         if stdout_path is not None and proc.returncode == 0:
             atomic_write_text(Path(stdout_path), stdout_text or "")
+        if proc.returncode != 0 and stderr_thread is not None:
+            stderr_text = str(stderr_capture["text"])
+            if stderr_capture["truncated"] is True:
+                stderr_text += f"\n[stderr truncated at {_CAPTURED_STDERR_MAX_BYTES} bytes]\n"
+            atomic_write_text(evidence.run_dir / f"{tracked_phase}.stderr", stderr_text)
         return proc.returncode
     if stdout_path is not None:
         proc = start_command(
