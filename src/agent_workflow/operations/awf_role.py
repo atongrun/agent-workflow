@@ -1736,7 +1736,10 @@ def spawn(
                 argv,
                 cwd=cwd,
                 stdin=PIPE if stdin is not None else DEVNULL,
-                stdout=PIPE if stdout_path is not None else None,
+                # pythonw has no usable inherited stdout on Windows. Model CLIs
+                # still write progress there, so discard it explicitly unless
+                # this call owns a bounded capture path.
+                stdout=PIPE if stdout_path is not None else DEVNULL,
                 stderr=PIPE,
                 text=True,
                 encoding="utf-8",

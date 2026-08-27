@@ -573,6 +573,29 @@ def test_tracked_subprocess_preserves_early_exit_stderr_with_large_stdin(tmp_pat
     assert (evidence.run_dir / "codex.stderr").read_text(encoding="utf-8") == "early fail"
 
 
+def test_tracked_subprocess_discards_uncaptured_stdout(monkeypatch, tmp_path):
+    real_start_command = awf_role.start_command
+    observed = {}
+
+    def capture_start_command(*args, **kwargs):
+        observed["stdout"] = kwargs["stdout"]
+        return real_start_command(*args, **kwargs)
+
+    monkeypatch.setattr(awf_role, "start_command", capture_start_command)
+    evidence = awf_role.RunEvidence(56, "coder", state_root=tmp_path)
+
+    rc = awf_role.spawn(
+        [sys.executable, "-c", "print('provider progress')"],
+        cwd=str(tmp_path),
+        env=awf_role.model_env(),
+        evidence=evidence,
+        tracked_phase="opencode",
+    )
+
+    assert rc == 0
+    assert observed["stdout"] is awf_role.DEVNULL
+
+
 def test_controlled_subprocess_interruption_kills_and_reaps_before_exit_evidence(
     monkeypatch, tmp_path
 ):
