@@ -90,6 +90,7 @@ def test_opencode_coder_matches_legacy_same_fixture(tmp_path: Path, model: str) 
     assert rendered.cwd == str(tmp_path)
     assert rendered.environment == ENVIRONMENT
     assert rendered.stdin is None
+    assert "--pure" in rendered.argv
     assert rendered.file_inputs == ()
 
 
@@ -122,6 +123,7 @@ def test_opencode_reviewer_matches_legacy_same_fixture(tmp_path: Path, card_atta
     assert [rendered.executable, *rendered.argv] == legacy
     assert rendered.stdin is None
     assert rendered.file_inputs == ()
+    assert "--pure" in rendered.argv
 
 
 def test_codex_reviewer_matches_legacy_argv_and_stdin(tmp_path: Path) -> None:
@@ -359,6 +361,7 @@ def test_closed_dispatch_rejects_unsupported_selection_or_options(tmp_path: Path
     architect = render_provider_invocation(
         invocation_spec(tmp_path, role="architect", provider="opencode", **common)
     )
+    assert architect.argv[:3] == ("run", "--pure", "--dir")
     assert "task_id" in architect.argv[-1]
     with pytest.raises(ContractError, match="options are invalid"):
         render_provider_invocation(
