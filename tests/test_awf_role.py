@@ -7346,8 +7346,11 @@ def test_verification_stops_on_first_failure(tmp_path):
         awf_role.run_verifications(str(tmp_path), contract)
 
 
-def test_verification_env_strips_credentials_and_pythonutf8(monkeypatch):
+def test_verification_env_strips_credentials_and_prepends_runtime(monkeypatch, tmp_path):
     """Verification keeps UTF-8 output but removes credentials and forced UTF-8 mode."""
+    runtime = tmp_path / "venv" / "Scripts" / "pythonw.exe"
+    monkeypatch.setattr(awf_role.sys, "executable", str(runtime))
+    monkeypatch.setenv("PATH", os.pathsep.join(["other-bin", str(runtime.parent)]))
     monkeypatch.setenv("AWF_CODER_TOKEN", "should-not-leak")
     monkeypatch.setenv("AGENT_BUS_TOKEN", "should-not-leak")
     monkeypatch.setenv("PYTHONUTF8", "1")
@@ -7358,6 +7361,24 @@ def test_verification_env_strips_credentials_and_pythonutf8(monkeypatch):
     assert "AGENT_BUS_TOKEN" not in result
     assert "PYTHONUTF8" not in result
     assert result["PYTHONIOENCODING"] == "utf-8"
+    path_entries = result["PATH"].split(os.pathsep)
+    assert path_entries[0] == str(runtime.parent.absolute())
+    assert path_entries.count(str(runtime.parent.absolute())) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable symlink behavior")
+def test_verification_env_keeps_virtualenv_bin_when_python_is_symlink(monkeypatch, tmp_path):
+    base_python = tmp_path / "base" / "python"
+    base_python.parent.mkdir()
+    base_python.touch()
+    venv_python = tmp_path / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(base_python)
+    monkeypatch.setattr(awf_role.sys, "executable", str(venv_python))
+
+    result = awf_role.verification_env()
+
+    assert result["PATH"].split(os.pathsep)[0] == str(venv_python.parent.absolute())
 
 
 def test_run_verifications_uses_verification_env(monkeypatch, tmp_path):
