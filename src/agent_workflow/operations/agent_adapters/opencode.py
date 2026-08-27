@@ -28,7 +28,7 @@ def render_executor_argv(
     finding_enabled: bool = False,
 ) -> list[str]:
     """Render the OpenCode executor argv without reading files or starting a process."""
-    argv = [binary, "run", "--pure", "--dir", workspace, "-f", card_file]
+    argv = [binary, "run", "--dir", workspace, "-f", card_file]
     if model:
         argv += ["-m", model]
     instructions = prompt
@@ -55,7 +55,7 @@ def render_reviewer_argv(
     finding_enabled: bool = False,
 ) -> list[str]:
     """Render the OpenCode reviewer argv without reading files or starting a process."""
-    argv = [binary, "run", "--pure", "--dir", workspace]
+    argv = [binary, "run", "--dir", workspace]
     if card_file:
         argv += ["-f", card_file]
     if model:

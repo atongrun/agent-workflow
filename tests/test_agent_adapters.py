@@ -42,7 +42,6 @@ def test_render_opencode_executor_argv_is_exact(model, normalized_feedback):
     expected = [
         "opencode-test",
         "run",
-        "--pure",
         "--dir",
         "/workspace",
         "-f",
@@ -78,7 +77,7 @@ def test_render_opencode_executor_preserves_windows_workspace_and_report_path():
 
     assert argv[0] == r"C:\Program Files\OpenCode\opencode.exe"
     assert argv[argv.index("--dir") + 1] == workspace
-    assert len(argv) == 11
+    assert len(argv) == 10
     assert argv[-2] == "--"
     assert f"Write the complete ImplementationReport to exactly: {report_path}\n" in argv[-1]
     assert "<!-- awf-dogfood-finding-v1" not in argv[-1]
@@ -99,7 +98,7 @@ def test_render_opencode_reviewer_argv_is_exact(model, card_file):
         review_report_path=".awf/review.md",
     )
 
-    expected = ["opencode-test", "run", "--pure", "--dir", "/workspace"]
+    expected = ["opencode-test", "run", "--dir", "/workspace"]
     if card_file:
         expected += ["-f", card_file]
     if model:
