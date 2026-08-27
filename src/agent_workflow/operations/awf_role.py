@@ -27,6 +27,7 @@ Design:
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -1726,6 +1727,11 @@ def read_bounded_stream(stream, max_bytes: int) -> tuple[str, bool]:
     return retained.decode("utf-8", "replace"), truncated
 
 
+def _is_closed_stdin_error(exc: OSError, *, os_name: str = os.name) -> bool:
+    """Recognize platform-specific writes to a child-closed stdin pipe."""
+    return isinstance(exc, BrokenPipeError) or (os_name == "nt" and exc.errno == errno.EINVAL)
+
+
 def spawn(
     argv: list[str],
     *,
@@ -1738,6 +1744,7 @@ def spawn(
     stdout_max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES,
     stderr_path: str | None = None,
     stderr_max_bytes: int = _CAPTURED_STDERR_MAX_BYTES,
+    discard_output: bool = False,
 ) -> int:
     """Run a command as a real argv (no shell). Handles Windows .cmd/.bat shims.
 
@@ -1753,6 +1760,10 @@ def spawn(
         die("captured model stdout cannot be combined with explicit stdin")
     if stderr_path is not None and (stdout_path is None or evidence is not None):
         die("captured model stderr requires untracked captured stdout")
+    if discard_output and (
+        stdout_path is not None or stderr_path is not None or evidence is not None
+    ):
+        die("discarded output is only supported for untracked commands")
     executable = Path(argv[0]).name if argv else "<empty>"
     log(f"exec: {executable} argc={len(argv)}")
     if evidence is not None and tracked_phase is not None:
@@ -1824,13 +1835,16 @@ def spawn(
                     try:
                         proc.stdin.write(stdin)
                         proc.stdin.close()
-                    except BrokenPipeError:
+                    except OSError as exc:
+                        if not _is_closed_stdin_error(exc):
+                            raise
                         # A provider may exit normally with a nonzero result before
                         # consuming all input. Preserve its real rc and stderr.
                         try:
                             proc.stdin.close()
-                        except BrokenPipeError:
-                            pass
+                        except OSError as close_exc:
+                            if not _is_closed_stdin_error(close_exc):
+                                raise
                 proc.wait()
                 stdout_text = ""
                 stdout_limit_exceeded = False
@@ -1972,6 +1986,8 @@ def spawn(
         cwd=cwd,
         input=stdin,
         stdin=DEVNULL if stdin is None else None,
+        stdout=DEVNULL if discard_output else None,
+        stderr=DEVNULL if discard_output else None,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -3259,7 +3275,12 @@ def run_verifications(repo: str, contract: PostflightContract) -> None:
     """
     for i, argv in enumerate(contract.verification_commands):
         log(f"postflight verification [{i + 1}/{len(contract.verification_commands)}]")
-        rc = spawn(resolve_verification_argv(argv), cwd=repo, env=verification_env())
+        rc = spawn(
+            resolve_verification_argv(argv),
+            cwd=repo,
+            env=verification_env(),
+            discard_output=True,
+        )
         if rc != 0:
             die(f"postflight verification [{i + 1}] failed (rc={rc})")
 
