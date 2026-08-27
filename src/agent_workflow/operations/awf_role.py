@@ -34,6 +34,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1657,6 +1658,7 @@ def verification_env() -> dict[str, str]:
 
 
 _CAPTURED_STDOUT_MAX_BYTES = 16 * 1024
+_CAPTURED_STDERR_MAX_BYTES = 16 * 1024
 
 
 def read_bounded_stdout(proc, max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES) -> tuple[str, bool]:
@@ -1680,6 +1682,23 @@ def read_bounded_stdout(proc, max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES) -> tu
     return "".join(chunks), False
 
 
+def read_bounded_stream(stream, max_bytes: int) -> tuple[str, bool]:
+    """Drain one text stream to EOF while retaining only a bounded UTF-8 prefix."""
+    retained = bytearray()
+    truncated = False
+    while True:
+        chunk = stream.read(4096)
+        if not chunk:
+            break
+        data = chunk.encode("utf-8", "replace") if isinstance(chunk, str) else bytes(chunk)
+        remaining = max_bytes - len(retained)
+        if remaining > 0:
+            retained.extend(data[:remaining])
+        if len(data) > max(remaining, 0):
+            truncated = True
+    return retained.decode("utf-8", "replace"), truncated
+
+
 def spawn(
     argv: list[str],
     *,
@@ -1690,6 +1709,8 @@ def spawn(
     tracked_phase: str | None = None,
     stdout_path: str | None = None,
     stdout_max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES,
+    stderr_path: str | None = None,
+    stderr_max_bytes: int = _CAPTURED_STDERR_MAX_BYTES,
 ) -> int:
     """Run a command as a real argv (no shell). Handles Windows .cmd/.bat shims.
 
@@ -1703,6 +1724,8 @@ def spawn(
     """
     if stdout_path is not None and stdin is not None:
         die("captured model stdout cannot be combined with explicit stdin")
+    if stderr_path is not None and (stdout_path is None or evidence is not None):
+        die("captured model stderr requires untracked captured stdout")
     executable = Path(argv[0]).name if argv else "<empty>"
     log(f"exec: {executable} argc={len(argv)}")
     if evidence is not None and tracked_phase is not None:
@@ -1783,17 +1806,73 @@ def spawn(
             cwd=cwd,
             stdin=DEVNULL,
             stdout=PIPE,
+            stderr=PIPE if stderr_path is not None else None,
             text=True,
             encoding="utf-8",
             errors="replace",
             env=env or child_env(),
             allow_shell_wrapper=True,
         )
-        stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc, stdout_max_bytes)
+        stderr_capture: dict[str, object] = {"text": "", "truncated": False, "error": None}
+        stderr_thread = None
+        cleanup_started = threading.Event()
+        if stderr_path is not None:
+            if proc.stderr is None:
+                die("captured model stderr pipe is unavailable")
+
+            def drain_stderr() -> None:
+                try:
+                    text, truncated = read_bounded_stream(proc.stderr, stderr_max_bytes)
+                except BaseException as exc:
+                    if not cleanup_started.is_set():
+                        stderr_capture["error"] = exc
+                        if proc.poll() is None:
+                            proc.kill()
+                        if proc.stdout is not None:
+                            proc.stdout.close()
+                else:
+                    stderr_capture.update(text=text, truncated=truncated)
+
+            stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+            stderr_thread.start()
+        try:
+            stdout_text, stdout_limit_exceeded = read_bounded_stdout(proc, stdout_max_bytes)
+        except BaseException as stdout_error:
+            cleanup_started.set()
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            if proc.stderr is not None:
+                proc.stderr.close()
+            if stderr_thread is not None:
+                stderr_thread.join(timeout=5.0)
+            stderr_error = stderr_capture["error"]
+            if isinstance(stderr_error, BaseException):
+                raise stderr_error
+            raise stdout_error
+        if stderr_thread is not None:
+            stderr_thread.join(timeout=5.0)
+            if stderr_thread.is_alive():
+                cleanup_started.set()
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                if proc.stderr is not None:
+                    proc.stderr.close()
+                stderr_thread.join(timeout=0.1)
+                raise RuntimeError("captured model stderr did not close after process exit")
+        stderr_error = stderr_capture["error"]
+        if isinstance(stderr_error, BaseException):
+            raise stderr_error
         if stdout_limit_exceeded:
             die(f"captured model stdout exceeds {stdout_max_bytes // 1024} KiB")
         if proc.returncode == 0:
             atomic_write_text(Path(stdout_path), stdout_text)
+        elif stderr_path is not None:
+            stderr_text = str(stderr_capture["text"])
+            if stderr_capture["truncated"] is True:
+                stderr_text += f"\n[stderr truncated at {stderr_max_bytes} bytes]\n"
+            atomic_write_text(Path(stderr_path), stderr_text)
         return proc.returncode
     proc = run_command(
         argv,
@@ -3355,6 +3434,8 @@ def spawn_rendered(
     tracked_phase: str | None = None,
     stdout_path: str | None = None,
     stdout_max_bytes: int = _CAPTURED_STDOUT_MAX_BYTES,
+    stderr_path: str | None = None,
+    stderr_max_bytes: int = _CAPTURED_STDERR_MAX_BYTES,
 ) -> int:
     if not rendered.environment:
         die("provider environment is not bound")
@@ -3382,6 +3463,8 @@ def spawn_rendered(
         tracked_phase=tracked_phase,
         stdout_path=stdout_path,
         stdout_max_bytes=stdout_max_bytes,
+        stderr_path=stderr_path,
+        stderr_max_bytes=stderr_max_bytes,
     )
 
 
