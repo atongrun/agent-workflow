@@ -303,15 +303,12 @@ def _preflight_args(
 
 @contextmanager
 def _preflight_environment(config_path: Path):
-    """Bind Fast/Deep to one deterministic non-provider network environment."""
-    names = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy")
+    """Keep the private Bus off proxies without changing GitHub's host routing."""
+    names = ("NO_PROXY", "no_proxy")
     previous = {name: os.environ.get(name) for name in names}
     try:
-        for name in names:
-            os.environ.pop(name, None)
         config = load_config(config_path)
-        for url in (config["AGENT_BUS_URL"], "https://github.com", "https://api.github.com"):
-            add_url_host_to_no_proxy(os.environ, url)
+        add_url_host_to_no_proxy(os.environ, config["AGENT_BUS_URL"])
         yield
     finally:
         for name, value in previous.items():
