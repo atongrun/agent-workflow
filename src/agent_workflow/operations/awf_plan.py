@@ -628,6 +628,7 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
     if existing.get("status") == "card_active":
         return existing
     invocation = existing.get("architect_invocation")
+    resume_persisted_card = False
     if isinstance(invocation, dict):
         card = existing.get("current_card")
         if not (
@@ -640,8 +641,12 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
             raise PlanOperationError(
                 "Architect invocation already started; provider replay is forbidden"
             )
-    plan_bytes = _checkout_plan_main(repo, plan)
-    _run_authoring_fast(args, store=store, repo=repo)
+        resume_persisted_card = True
+    if resume_persisted_card:
+        plan_bytes = b""
+    else:
+        plan_bytes = _checkout_plan_main(repo, plan)
+        _run_authoring_fast(args, store=store, repo=repo)
     coder = dict(value["coder"])
     reviewer = dict(value["reviewer"])
     raw, task_id, branch = _invoke_taskcard_architect(

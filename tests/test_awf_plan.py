@@ -508,8 +508,16 @@ CARD-001
         },
         architect_invocation={"kind": "taskcard", "status": "result_persisted"},
     )
-    monkeypatch.setattr(awf_plan, "_checkout_plan_main", lambda *_a, **_k: b"# Plan\n")
-    monkeypatch.setattr(awf_plan, "_run_authoring_fast", lambda *_a, **_k: {"status": "PASS"})
+    monkeypatch.setattr(
+        awf_plan,
+        "_checkout_plan_main",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not reset workspace")),
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_run_authoring_fast",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not repeat authoring Fast")),
+    )
     monkeypatch.setattr(
         awf_plan,
         "persist_architect_taskcard",
