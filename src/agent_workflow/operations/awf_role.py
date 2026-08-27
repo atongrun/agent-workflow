@@ -4490,6 +4490,7 @@ def role_coder(a: argparse.Namespace) -> int:
             postflight_started=True,
             postflight_status="running",
         )
+        postflight_step = "capture_finding"
         try:
             model_report = resolve_repo_file(model_repo, a.report, "ImplementationReport")
             capture_dogfood_finding(
@@ -4500,18 +4501,30 @@ def role_coder(a: argparse.Namespace) -> int:
                 evidence=evidence,
             )
             # 4. ImplementationReport gate — fail before any write or downstream event
+            postflight_step = "validate_report"
             check_report(str(model_report))
 
             # 5. Rerun every verification command from the frozen contract
+            postflight_step = "run_verifications"
             run_verifications(model_repo, contract)
+            postflight_step = "verify_git_metadata_after_verification"
             assert_model_git_metadata(model_repo)
+            postflight_step = "stage_implementation_report"
             stage_model_artifact(model_repo, a.report, "ImplementationReport")
 
             # 6. Enforce all delta gates (paths, artifacts, secrets, diff check)
+            postflight_step = "run_delta_gates"
             run_postflight_delta_gates(model_repo, contract)
+            postflight_step = "verify_git_metadata_after_delta"
             assert_model_git_metadata(model_repo)
-        except BaseException:
-            record(evidence, "postflight_fail", postflight_status="fail")
+        except BaseException as exc:
+            record(
+                evidence,
+                "postflight_fail",
+                postflight_status="fail",
+                postflight_failure_step=postflight_step,
+                postflight_error_type=type(exc).__name__,
+            )
             raise
         postflight_manifest_sha256 = (
             durable_model_manifest_sha256(model_repo) if checkpoint is not None else ""

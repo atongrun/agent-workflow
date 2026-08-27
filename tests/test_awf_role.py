@@ -5592,6 +5592,9 @@ def test_model_completed_postflight_failure_replays_without_model_or_rework(monk
     with pytest.raises(SystemExit, match="1"):
         awf_role.role_coder(ns)
     assert model_calls == ["model"]
+    first_result = json.loads(ns.evidence.result_path.read_text(encoding="utf-8"))
+    assert first_result["postflight_failure_step"] == "run_verifications"
+    assert first_result["postflight_error_type"] == "SystemExit"
     checkpoint_path = awf_role.delivery_state_path(ns.evidence, "checkpoint", ns.delivery_id)
     first_checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
     assert first_checkpoint["phase"] == "model_completed"
