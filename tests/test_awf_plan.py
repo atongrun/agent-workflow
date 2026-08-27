@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from contextlib import nullcontext
 from dataclasses import replace
@@ -53,6 +54,24 @@ def facts(tmp_path: Path, *, mode: str = "one-card"):
         reviewer_model="",
     )
     return binding, plan, payload
+
+
+def prepared_payload(commit: str) -> tuple[dict[str, object], dict[str, str]]:
+    payload: dict[str, object] = {
+        "awf_delivery_id": "awf:" + "d" * 64,
+        "awf_payload_sha256": "p" * 64,
+        "commit": commit,
+    }
+    prepared = {
+        "format": "awf.plan-prepared-dispatch.v1",
+        "delivery_id": str(payload["awf_delivery_id"]),
+        "payload_sha256": str(payload["awf_payload_sha256"]),
+        "commit": commit,
+        "canonical_sha256": hashlib.sha256(
+            json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest(),
+    }
+    return payload, prepared
 
 
 def handler_args(tmp_path: Path, payload: dict[str, object]) -> argparse.Namespace:
@@ -453,7 +472,7 @@ CARD-001
 
     def dispatch(_args, *, before_send):
         calls.append("dispatch-prepared")
-        before_send(repo, {})
+        before_send(repo, prepared_payload("5" * 40)[0])
         calls.append("business-send")
 
     monkeypatch.setattr(awf_dispatch, "dispatch", dispatch)
@@ -497,6 +516,7 @@ CARD-001
     args = handler_args(tmp_path, payload)
     store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
     store.create(payload, repo=repo)
+    dispatch_payload, prepared = prepared_payload("6" * 40)
     store.update(
         status="dispatch_blocked",
         current_card={
@@ -505,6 +525,7 @@ CARD-001
             "branch": "codex/CARD-001",
             "frozen_base": plan.main_sha,
             "status": "dispatching",
+            "prepared_dispatch": prepared,
         },
         architect_invocation={"kind": "taskcard", "status": "result_persisted"},
     )
@@ -527,7 +548,7 @@ CARD-001
     monkeypatch.setattr(awf_plan, "_git", lambda *_a, **_k: "6" * 40)
 
     def dispatch(_args, *, before_send):
-        before_send(repo, {})
+        before_send(repo, dispatch_payload)
 
     monkeypatch.setattr(awf_dispatch, "dispatch", dispatch)
 
