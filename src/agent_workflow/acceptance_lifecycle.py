@@ -213,7 +213,11 @@ def _remove_workspace(path: Path, *, windows: bool | None = None) -> None:
     shutil.rmtree(root, onerror=retry_readonly)
 
 
-def closeout(path: Path) -> dict[str, object]:
+def closeout(
+    path: Path,
+    *,
+    authorize_frozen_recovery: bool = False,
+) -> dict[str, object]:
     """Freeze evidence, then stop/uninstall only exact manifest-owned identities."""
     path = Path(path)
     value = _load(path)
@@ -223,13 +227,19 @@ def closeout(path: Path) -> dict[str, object]:
         "state": "FROZEN",
     }
     frozen_path = path.with_name(f"{path.stem}.closeout.json")
+    validated_path = path.with_name(f"{path.stem}.validated.json")
     closed_path = path.with_name(f"{path.stem}.closed.json")
-    recovering = frozen_path.exists()
-    if recovering:
+    frozen_exists = frozen_path.exists()
+    if frozen_exists:
         if _load(frozen_path) != frozen:
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: frozen closeout identity drifted")
     else:
         _write_json(frozen_path, frozen, replace=False)
+    expected_validated = {**frozen, "state": "VALIDATED"}
+    validated_exists = validated_path.exists()
+    if validated_exists and _load(validated_path) != expected_validated:
+        raise AcceptanceLifecycleError("CLEANUP_BLOCKED: validated identity drifted")
+    recovering = validated_exists or (frozen_exists and authorize_frozen_recovery)
     expected_closed = {**frozen, "state": "CLOSED"}
     if closed_path.exists():
         closed = _load(closed_path)
@@ -276,6 +286,8 @@ def closeout(path: Path) -> dict[str, object]:
             result.stdout and (not recovering or not _partial_workspace_removal(result.stdout))
         ):
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace status is unavailable")
+    if not validated_exists:
+        _write_json(validated_path, expected_validated, replace=False)
     for profile, entry, status in loaded:
         if status == "not_installed":
             observation = node.lifecycle_facts(profile).get("running_observation")
