@@ -120,6 +120,51 @@ def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     assert store.load()["preflight"]["remote_dispatch"] == report
 
 
+def test_remote_dispatch_resumes_only_the_same_inflight_timed_out_probe(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _binding, _plan, payload = facts(tmp_path)
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=tmp_path / "repo")
+    store.update(
+        preflight={
+            "remote_dispatch": {
+                "deep": {
+                    "error_code": "DEEP_REPLY_TIMEOUT",
+                    "probe_id": "awf-preflight-" + "5" * 32,
+                    "inflight_event_id": 299,
+                }
+            }
+        }
+    )
+    args = handler_args(tmp_path, payload)
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(awf_plan, "_preflight_environment", lambda _path: nullcontext())
+    monkeypatch.setattr(
+        awf_preflight,
+        "run_resume_deep",
+        lambda selected: (
+            observed.update(
+                probe_id=selected.probe_id,
+                inflight_event_id=selected.inflight_event_id,
+            )
+            or {"status": "PASS", "allow_remote_dispatch": True}
+        ),
+    )
+    monkeypatch.setattr(
+        awf_preflight,
+        "run_deep",
+        lambda _args: (_ for _ in ()).throw(AssertionError("must not send a new probe")),
+    )
+
+    awf_plan._run_dispatch_preflight(args, store=store, repo=tmp_path / "repo")
+
+    assert observed == {
+        "probe_id": "awf-preflight-" + "5" * 32,
+        "inflight_event_id": 299,
+    }
+
+
 def test_handler_preflight_binds_exact_inflight_event(tmp_path: Path) -> None:
     _binding, _plan, payload = facts(tmp_path)
     args = handler_args(tmp_path, payload)
@@ -375,6 +420,63 @@ CARD-001
     ]
     assert result["status"] == "card_active"
     assert result["current_card"]["branch"] == "codex/CARD-001"
+
+
+def test_handle_start_reentry_resumes_persisted_card_without_provider_replay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _binding, plan, payload = facts(tmp_path)
+    repo = tmp_path / "repo"
+    destination = repo / "docs/tasks/CARD-001.md"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(
+        f"""# TaskCard
+
+## Task ID
+
+CARD-001
+
+- **Task branch**: `codex/CARD-001`
+- **Frozen base**: `{plan.main_sha}`
+
+<!-- awf-reviewer-selection
+{{"coder":{{"model":"","tool":"opencode"}},"reviewer":{{"model":"","tool":"opencode"}}}}
+-->
+""".encode()
+    )
+    args = handler_args(tmp_path, payload)
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=repo)
+    store.update(
+        status="dispatch_blocked",
+        current_card={
+            "task_id": "CARD-001",
+            "path": "docs/tasks/CARD-001.md",
+            "branch": "codex/CARD-001",
+            "frozen_base": plan.main_sha,
+            "status": "dispatching",
+        },
+        architect_invocation={"kind": "taskcard", "status": "result_persisted"},
+    )
+    monkeypatch.setattr(awf_plan, "_checkout_plan_main", lambda *_a, **_k: b"# Plan\n")
+    monkeypatch.setattr(awf_plan, "_run_authoring_fast", lambda *_a, **_k: {"status": "PASS"})
+    monkeypatch.setattr(
+        awf_plan,
+        "persist_architect_taskcard",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not persist again")),
+    )
+    monkeypatch.setattr(awf_plan, "_run_dispatch_preflight", lambda *_a, **_k: {"status": "PASS"})
+    monkeypatch.setattr(awf_plan, "_git", lambda *_a, **_k: "6" * 40)
+
+    def dispatch(_args, *, before_send):
+        before_send(repo, {})
+
+    monkeypatch.setattr(awf_dispatch, "dispatch", dispatch)
+
+    result = awf_plan.handle_start(args)
+
+    assert result["status"] == "card_active"
+    assert result["current_card"]["taskcard_commit"] == "6" * 40
 
 
 def terminal_fixture(tmp_path: Path, *, mode: str = "one-card"):

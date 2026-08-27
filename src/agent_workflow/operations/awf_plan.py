@@ -279,7 +279,9 @@ def _preflight_args(
     repo: Path,
     intent: str,
 ) -> argparse.Namespace:
-    event_id = getattr(args, "event_id", None)
+    event_id = getattr(args, "inflight_event_id", None)
+    if event_id is None:
+        event_id = getattr(args, "event_id", None)
     if event_id is not None:
         try:
             event_id = int(event_id)
@@ -354,16 +356,32 @@ def _run_dispatch_preflight(
 ) -> dict[str, object]:
     from agent_workflow.operations import awf_preflight
 
-    if store.load().get("stop_requested") is True:
+    run = store.load()
+    if run.get("stop_requested") is True:
         raise PlanOperationError("PlanRun stop was requested before business dispatch")
     preflight_args = _preflight_args(args, repo=repo, intent="remote-dispatch")
+    previous = run.get("preflight")
+    previous_report = previous.get("remote_dispatch") if isinstance(previous, dict) else None
+    previous_deep = previous_report.get("deep") if isinstance(previous_report, dict) else None
+    resume_probe = ""
+    if (
+        isinstance(previous_deep, dict)
+        and previous_deep.get("error_code") == "DEEP_REPLY_TIMEOUT"
+        and previous_deep.get("inflight_event_id") == preflight_args.inflight_event_id
+        and isinstance(previous_deep.get("probe_id"), str)
+    ):
+        resume_probe = previous_deep["probe_id"]
     with _preflight_environment(Path(args.config).resolve()):
-        fast = awf_preflight.run_fast(preflight_args).report
-        report = fast
-        if fast.get("allow_remote_dispatch") is not True:
-            if fast.get("required_next_action") != "run_deep_preflight":
-                raise PlanOperationError("Fast Preflight denied remote business dispatch")
-            report = awf_preflight.run_deep(preflight_args)
+        if resume_probe:
+            preflight_args.probe_id = resume_probe
+            report = awf_preflight.run_resume_deep(preflight_args)
+        else:
+            fast = awf_preflight.run_fast(preflight_args).report
+            report = fast
+            if fast.get("allow_remote_dispatch") is not True:
+                if fast.get("required_next_action") != "run_deep_preflight":
+                    raise PlanOperationError("Fast Preflight denied remote business dispatch")
+                report = awf_preflight.run_deep(preflight_args)
     current = store.load().get("preflight")
     preflight = dict(current) if isinstance(current, dict) else {}
     preflight["remote_dispatch"] = report
@@ -608,9 +626,17 @@ def handle_start(args: argparse.Namespace) -> dict[str, object]:
         return existing
     invocation = existing.get("architect_invocation")
     if isinstance(invocation, dict):
-        raise PlanOperationError(
-            "Architect invocation already started; provider replay is forbidden"
-        )
+        card = existing.get("current_card")
+        if not (
+            invocation.get("kind") == "taskcard"
+            and invocation.get("status") == "result_persisted"
+            and existing.get("status") == "dispatch_blocked"
+            and isinstance(card, dict)
+            and card.get("status") == "dispatching"
+        ):
+            raise PlanOperationError(
+                "Architect invocation already started; provider replay is forbidden"
+            )
     plan_bytes = _checkout_plan_main(repo, plan)
     _run_authoring_fast(args, store=store, repo=repo)
     coder = dict(value["coder"])

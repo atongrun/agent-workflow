@@ -896,7 +896,29 @@ def _run_deep(args: argparse.Namespace) -> dict[str, object]:
     )
     if sent.returncode != 0:
         raise PreflightError("DEEP_SEND_FAILED", "disposable request could not be sent")
-    result = wait_for_result(result_file, args.timeout)
+    try:
+        result = wait_for_result(result_file, args.timeout)
+    except PreflightError as exc:
+        if exc.code != "DEEP_REPLY_TIMEOUT":
+            raise
+        report = dict(fast.report)
+        report.update(
+            {
+                "mode": "deep",
+                "status": "FAIL",
+                "allow_remote_dispatch": False,
+                "required_next_action": "resume_deep_preflight",
+                "deep": {
+                    "required": True,
+                    "current": False,
+                    "error_code": exc.code,
+                    "probe_id": probe_id,
+                    "pending_before": before,
+                    "inflight_event_id": inflight_event_id,
+                },
+            }
+        )
+        return report
     after = wait_for_pending(fast.config, roles, expected, min(args.timeout, 20))
     return finalize_deep_report(
         args,
@@ -961,18 +983,22 @@ def _run_resume_deep(args: argparse.Namespace) -> dict[str, object]:
     if not isinstance(result, dict):
         raise PreflightError("DEEP_RESULT_MISSING", "durable source result is invalid")
     roles = (args.source_role, args.target_role)
+    inflight_event_id = getattr(args, "inflight_event_id", None)
+    expected = {
+        args.source_role: 1 if inflight_event_id is not None else 0,
+        args.target_role: 0,
+    }
     pending_after = {role: pending_count(fast.config, role) for role in roles}
-    if any(pending_after.values()):
-        raise PreflightError("DEEP_PENDING_DRIFT", "disposable queues are not empty")
-    # Deep only emits its request after proving a zero baseline. The durable
-    # same-probe result therefore carries that protocol fact across caller loss.
-    zero_baseline = {role: 0 for role in roles}
+    if pending_after != expected:
+        raise PreflightError("DEEP_PENDING_DRIFT", "disposable queues did not restore baseline")
+    # The durable same-probe result carries the already-proved baseline across
+    # caller loss. In-flight handler proofs remain one-shot and non-cacheable.
     return finalize_deep_report(
         args,
         fast,
         probe_id=args.probe_id,
         result=result,
-        pending_before=zero_baseline,
+        pending_before=expected,
         pending_after=pending_after,
         recovered_after_timeout=True,
     )
@@ -1006,6 +1032,7 @@ def run_resume_deep(args: argparse.Namespace) -> dict[str, object]:
                 "current": False,
                 "probe_id": getattr(args, "probe_id", ""),
                 "error_code": exc.code,
+                "inflight_event_id": getattr(args, "inflight_event_id", None),
             },
         }
 
