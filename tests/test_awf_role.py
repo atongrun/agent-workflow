@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -571,6 +572,12 @@ def test_tracked_subprocess_preserves_early_exit_stderr_with_large_stdin(tmp_pat
     assert result["codex_rc"] == 7
     assert "codex_interrupted" not in result
     assert (evidence.run_dir / "codex.stderr").read_text(encoding="utf-8") == "early fail"
+
+
+def test_windows_invalid_argument_is_a_closed_stdin_pipe_only():
+    assert awf_role._is_closed_stdin_error(OSError(errno.EINVAL, "closed"), os_name="nt")
+    assert not awf_role._is_closed_stdin_error(OSError(errno.EINVAL, "invalid"), os_name="posix")
+    assert not awf_role._is_closed_stdin_error(OSError(errno.EIO, "io"), os_name="nt")
 
 
 def test_tracked_subprocess_discards_uncaptured_stdout(monkeypatch, tmp_path):

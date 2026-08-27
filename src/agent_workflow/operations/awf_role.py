@@ -27,6 +27,7 @@ Design:
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -1726,6 +1727,11 @@ def read_bounded_stream(stream, max_bytes: int) -> tuple[str, bool]:
     return retained.decode("utf-8", "replace"), truncated
 
 
+def _is_closed_stdin_error(exc: OSError, *, os_name: str = os.name) -> bool:
+    """Recognize platform-specific writes to a child-closed stdin pipe."""
+    return isinstance(exc, BrokenPipeError) or (os_name == "nt" and exc.errno == errno.EINVAL)
+
+
 def spawn(
     argv: list[str],
     *,
@@ -1829,13 +1835,16 @@ def spawn(
                     try:
                         proc.stdin.write(stdin)
                         proc.stdin.close()
-                    except BrokenPipeError:
+                    except OSError as exc:
+                        if not _is_closed_stdin_error(exc):
+                            raise
                         # A provider may exit normally with a nonzero result before
                         # consuming all input. Preserve its real rc and stderr.
                         try:
                             proc.stdin.close()
-                        except BrokenPipeError:
-                            pass
+                        except OSError as close_exc:
+                            if not _is_closed_stdin_error(close_exc):
+                                raise
                 proc.wait()
                 stdout_text = ""
                 stdout_limit_exceeded = False
