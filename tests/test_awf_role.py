@@ -2197,8 +2197,9 @@ def test_tool_opencode_exec_injects_bounded_rework_feedback(monkeypatch, tmp_pat
 def test_executor_prompt_reserves_git_writes_for_trusted_runner():
     prompt = (Path(awf_role.__file__).parent / "executor-prompt.md").read_text(encoding="utf-8")
 
-    assert "Do not run `git add`, `git commit`" in prompt
-    assert "The trusted runner alone verifies" in prompt
+    assert "Do not run any Git command" in prompt
+    assert "`git status`, `git diff`, or `git log`" in prompt
+    assert "The trusted runner" in prompt and "alone observes Git state" in prompt
 
 
 def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
