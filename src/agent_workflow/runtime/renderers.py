@@ -106,7 +106,7 @@ class OpenCodeRenderer:
             allowed = {(), (ATTACH_INPUT,)}
         if spec.provider_args not in allowed:
             raise ContractError("OpenCode provider options are invalid")
-        argv = ["run", "--pure", "--dir", spec.workspace]
+        argv = ["run", "--dir", spec.workspace]
         if spec.provider_args:
             argv += ["-f", spec.input_path]
         if spec.model:
