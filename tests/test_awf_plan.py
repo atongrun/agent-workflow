@@ -236,7 +236,7 @@ def test_authorized_replacement_dispatches_one_fresh_causally_bound_delivery(
     assert store.load()["current_card"]["replacement_delivery"] == result["replacement_delivery"]
 
 
-def test_internal_preflight_environment_is_deterministic_and_restored(monkeypatch, tmp_path):
+def test_internal_preflight_environment_bypasses_only_bus_and_restores(monkeypatch, tmp_path):
     config = tmp_path / "dispatch.env"
     config.write_text(
         "AGENT_BUS_URL=http://100.108.67.47:8800\n"
@@ -254,12 +254,12 @@ def test_internal_preflight_environment_is_deterministic_and_restored(monkeypatc
     monkeypatch.setenv("no_proxy", "original")
 
     with awf_plan._preflight_environment(config):
-        assert "HTTP_PROXY" not in awf_plan.os.environ
+        assert awf_plan.os.environ["HTTP_PROXY"] == "http://127.0.0.1:7897"
         assert set(awf_plan.os.environ["NO_PROXY"].split(",")) == {
+            "original",
             "100.108.67.47",
-            "github.com",
-            "api.github.com",
         }
+        assert "github.com" not in awf_plan.os.environ["NO_PROXY"]
         assert awf_plan.os.environ["no_proxy"] == awf_plan.os.environ["NO_PROXY"]
 
     assert awf_plan.os.environ["HTTP_PROXY"] == "http://127.0.0.1:7897"
