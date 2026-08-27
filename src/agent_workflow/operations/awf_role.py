@@ -1792,8 +1792,16 @@ def spawn(
                 if stdin is not None:
                     if proc.stdin is None:
                         die("tracked model stdin pipe is unavailable")
-                    proc.stdin.write(stdin)
-                    proc.stdin.close()
+                    try:
+                        proc.stdin.write(stdin)
+                        proc.stdin.close()
+                    except BrokenPipeError:
+                        # A provider may exit normally with a nonzero result before
+                        # consuming all input. Preserve its real rc and stderr.
+                        try:
+                            proc.stdin.close()
+                        except BrokenPipeError:
+                            pass
                 proc.wait()
                 stdout_text = ""
                 stdout_limit_exceeded = False
