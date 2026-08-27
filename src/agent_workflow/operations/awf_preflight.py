@@ -706,15 +706,24 @@ def wait_for_result(path: Path, timeout: float) -> dict[str, object]:
     raise PreflightError("DEEP_REPLY_TIMEOUT", "disposable result was not acknowledged in time")
 
 
-def wait_for_zero(config: dict[str, str], roles: tuple[str, str], timeout: float) -> dict[str, int]:
+def wait_for_pending(
+    config: dict[str, str],
+    roles: tuple[str, str],
+    expected: dict[str, int],
+    timeout: float,
+) -> dict[str, int]:
     deadline = time.monotonic() + timeout
     latest: dict[str, int] = {}
     while time.monotonic() < deadline:
         latest = {role: pending_count(config, role) for role in roles}
-        if all(value == 0 for value in latest.values()):
+        if latest == expected:
             return latest
         time.sleep(0.2)
     raise PreflightError("DEEP_PENDING_DRIFT", "disposable queues did not return to baseline")
+
+
+def wait_for_zero(config: dict[str, str], roles: tuple[str, str], timeout: float) -> dict[str, int]:
+    return wait_for_pending(config, roles, {role: 0 for role in roles}, timeout)
 
 
 def validate_deep_result(
@@ -782,6 +791,15 @@ def finalize_deep_report(
         "request_ack_evidence": "inferred-handler-success-and-zero-pending",
         "reply_ack_evidence": "inferred-handler-success-and-zero-pending",
     }
+    inflight_event_id = getattr(args, "inflight_event_id", None)
+    if inflight_event_id is not None:
+        deep.update(
+            {
+                "inflight_event_id": inflight_event_id,
+                "request_ack_evidence": "inferred-handler-success-and-baseline-restored",
+                "reply_ack_evidence": "inferred-handler-success-and-baseline-restored",
+            }
+        )
     if recovered_after_timeout:
         deep["recovered_after_timeout"] = True
     report = {
@@ -796,7 +814,8 @@ def finalize_deep_report(
         "deep": deep,
     }
     report = sign_deep_report(report, fast.config, args.source_role, args.target_role)
-    atomic_write(cache_path(args.state_root), report)
+    if inflight_event_id is None:
+        atomic_write(cache_path(args.state_root), report)
     return report
 
 
@@ -824,8 +843,17 @@ def _run_deep(args: argparse.Namespace) -> dict[str, object]:
         report["required_next_action"] = "fix_fast_preflight"
         return report
     roles = (args.source_role, args.target_role)
+    inflight_event_id = getattr(args, "inflight_event_id", None)
+    if inflight_event_id is not None and (
+        type(inflight_event_id) is not int or inflight_event_id < 1
+    ):
+        raise PreflightError("DEEP_IDENTITY_INVALID", "in-flight event identity is invalid")
+    expected = {
+        args.source_role: 1 if inflight_event_id is not None else 0,
+        args.target_role: 0,
+    }
     before = {role: pending_count(fast.config, role) for role in roles}
-    if any(before.values()):
+    if before != expected:
         report = dict(fast.report)
         report.update({"mode": "deep", "status": "FAIL", "allow_remote_dispatch": False})
         report["required_next_action"] = "fix_fast_preflight"
@@ -869,7 +897,7 @@ def _run_deep(args: argparse.Namespace) -> dict[str, object]:
     if sent.returncode != 0:
         raise PreflightError("DEEP_SEND_FAILED", "disposable request could not be sent")
     result = wait_for_result(result_file, args.timeout)
-    after = wait_for_zero(fast.config, roles, min(args.timeout, 20))
+    after = wait_for_pending(fast.config, roles, expected, min(args.timeout, 20))
     return finalize_deep_report(
         args,
         fast,

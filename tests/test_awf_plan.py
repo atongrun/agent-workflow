@@ -57,6 +57,7 @@ def facts(tmp_path: Path, *, mode: str = "one-card"):
 
 def handler_args(tmp_path: Path, payload: dict[str, object]) -> argparse.Namespace:
     return argparse.Namespace(
+        event_id="299",
         run_id=payload["run_id"],
         mode=payload["mode"],
         plan_json=json.dumps(payload["plan"]),
@@ -117,6 +118,15 @@ def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     assert calls == ["deep"]
     assert report["allow_remote_dispatch"] is True
     assert store.load()["preflight"]["remote_dispatch"] == report
+
+
+def test_handler_preflight_binds_exact_inflight_event(tmp_path: Path) -> None:
+    _binding, _plan, payload = facts(tmp_path)
+    args = handler_args(tmp_path, payload)
+
+    result = awf_plan._preflight_args(args, repo=tmp_path / "repo", intent="remote-dispatch")
+
+    assert result.inflight_event_id == 299
 
 
 def test_managed_architect_snapshot_matches_frozen_source_binding(
