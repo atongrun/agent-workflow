@@ -7403,11 +7403,13 @@ def test_run_verifications_uses_verification_env(monkeypatch, tmp_path):
     """Frozen verification commands use the dedicated default-locale environment."""
     expected_env = {"AWF_TEST_VERIFICATION_ENV": "1"}
     captured_env: dict[str, str] = {}
+    captured_discard = []
 
     monkeypatch.setattr(awf_role, "verification_env", lambda: expected_env)
 
-    def capturing_spawn(argv, *, cwd=None, stdin=None, env=None):
+    def capturing_spawn(argv, *, cwd=None, stdin=None, env=None, discard_output=False):
         captured_env.update(env or {})
+        captured_discard.append(discard_output)
         return 0
 
     monkeypatch.setattr(awf_role, "spawn", capturing_spawn)
@@ -7419,6 +7421,7 @@ def test_run_verifications_uses_verification_env(monkeypatch, tmp_path):
     awf_role.run_verifications(str(tmp_path), contract)
 
     assert captured_env == expected_env
+    assert captured_discard == [True]
 
 
 def test_verification_child_runs_without_pythonutf8(monkeypatch, tmp_path):
