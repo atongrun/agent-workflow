@@ -7381,6 +7381,24 @@ def test_verification_env_keeps_virtualenv_bin_when_python_is_symlink(monkeypatc
     assert result["PATH"].split(os.pathsep)[0] == str(venv_python.parent.absolute())
 
 
+def test_windows_verification_python_alias_resolves_to_runner_sibling(tmp_path):
+    pythonw = tmp_path / "venv" / "Scripts" / "pythonw.exe"
+    pythonw.parent.mkdir(parents=True)
+    pythonw.touch()
+    python = pythonw.with_name("python.exe")
+    python.touch()
+
+    assert awf_role.resolve_verification_argv(
+        ["python", "-m", "pytest", "-q"], os_name="nt", executable=str(pythonw)
+    ) == [str(python.absolute()), "-m", "pytest", "-q"]
+    assert awf_role.resolve_verification_argv(
+        ["ruff", "check"], os_name="nt", executable=str(pythonw)
+    ) == ["ruff", "check"]
+    assert awf_role.resolve_verification_argv(
+        ["python", "-V"], os_name="posix", executable=str(pythonw)
+    ) == ["python", "-V"]
+
+
 def test_run_verifications_uses_verification_env(monkeypatch, tmp_path):
     """Frozen verification commands use the dedicated default-locale environment."""
     expected_env = {"AWF_TEST_VERIFICATION_ENV": "1"}
