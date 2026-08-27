@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -145,7 +144,7 @@ def _taskcard_payload_text(text: str) -> dict[str, object]:
 
 
 def taskcard_allowed_paths(card_path: Path) -> tuple[str, ...]:
-    return parse_postflight_contract(card_path, sys.executable).allowed_paths
+    return parse_postflight_contract(card_path, "{python}").allowed_paths
 
 
 def _validate_taskcard_binding(card_path: Path, required_report_path: str) -> None:

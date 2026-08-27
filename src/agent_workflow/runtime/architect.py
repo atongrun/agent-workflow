@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import sys
 from pathlib import Path, PurePosixPath
 from typing import Mapping
 
@@ -246,7 +245,7 @@ def _validated_taskcard(raw: bytes, destination: Path, repo: Path) -> tuple[str,
         or re.fullmatch(r"[A-Za-z0-9._/-]+", branch) is None
     ):
         raise ArtifactError("Architect TaskCard identity does not match its branch")
-    postflight = parse_postflight_text(text, sys.executable)
+    postflight = parse_postflight_text(text, "{python}")
     allowed = postflight.allowed_paths
     implementation = compile_implementation_report_path(task_id)
     review = compile_review_report_path(task_id)
