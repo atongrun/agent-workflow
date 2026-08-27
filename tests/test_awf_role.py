@@ -528,6 +528,30 @@ def test_controlled_subprocess_persists_real_pid_and_return_code(tmp_path, child
     assert result["opencode_rc"] == expected_rc
     assert result["opencode_duration_seconds"] >= 0
     assert result["postflight_started"] is False
+    diagnostic = evidence.run_dir / "opencode.stderr"
+    assert diagnostic.exists() is (child_rc != 0)
+
+
+def test_tracked_subprocess_retains_only_bounded_stderr_on_failure(tmp_path):
+    evidence = awf_role.RunEvidence(58, "coder", state_root=tmp_path)
+
+    rc = awf_role.spawn(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stderr.write('x' * 65536); raise SystemExit(3)",
+        ],
+        cwd=str(tmp_path),
+        env=awf_role.model_env(),
+        evidence=evidence,
+        tracked_phase="opencode",
+    )
+
+    assert rc == 3
+    assert (evidence.run_dir / "opencode.stderr").read_text(encoding="utf-8") == (
+        "x" * awf_role._CAPTURED_STDERR_MAX_BYTES
+        + f"\n[stderr truncated at {awf_role._CAPTURED_STDERR_MAX_BYTES} bytes]\n"
+    )
 
 
 def test_controlled_subprocess_interruption_kills_and_reaps_before_exit_evidence(
