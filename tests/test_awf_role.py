@@ -7362,8 +7362,23 @@ def test_verification_env_strips_credentials_and_prepends_runtime(monkeypatch, t
     assert "PYTHONUTF8" not in result
     assert result["PYTHONIOENCODING"] == "utf-8"
     path_entries = result["PATH"].split(os.pathsep)
-    assert path_entries[0] == str(runtime.parent.resolve())
-    assert path_entries.count(str(runtime.parent.resolve())) == 1
+    assert path_entries[0] == str(runtime.parent.absolute())
+    assert path_entries.count(str(runtime.parent.absolute())) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable symlink behavior")
+def test_verification_env_keeps_virtualenv_bin_when_python_is_symlink(monkeypatch, tmp_path):
+    base_python = tmp_path / "base" / "python"
+    base_python.parent.mkdir()
+    base_python.touch()
+    venv_python = tmp_path / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(base_python)
+    monkeypatch.setattr(awf_role.sys, "executable", str(venv_python))
+
+    result = awf_role.verification_env()
+
+    assert result["PATH"].split(os.pathsep)[0] == str(venv_python.parent.absolute())
 
 
 def test_run_verifications_uses_verification_env(monkeypatch, tmp_path):
