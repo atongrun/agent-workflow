@@ -1655,6 +1655,16 @@ def verification_env() -> dict[str, str]:
     e = model_env()
     e.pop("PYTHONUTF8", None)
     e["PYTHONIOENCODING"] = "utf-8"
+    # Native managers launch the handler by exact python/pythonw path, but their
+    # inherited PATH need not contain that environment's bin/Scripts directory.
+    # Frozen `python -m ...` verification must resolve to the installed runner.
+    runtime_bin = str(Path(sys.executable).resolve().parent)
+    path_entries = [
+        entry
+        for entry in e.get("PATH", "").split(os.pathsep)
+        if entry and os.path.normcase(str(Path(entry).resolve())) != os.path.normcase(runtime_bin)
+    ]
+    e["PATH"] = os.pathsep.join([runtime_bin, *path_entries])
     return e
 
 
