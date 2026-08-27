@@ -53,8 +53,8 @@ Coder, Reviewer), covering all nine cells without nine separate workflow impleme
 
 Trusted AWF code renders argv/stdin/file inputs, strips credentials from model environments, and
 hash-binds every invocation. Pi disables sessions, extensions, skills, prompt templates, and context
-files. OpenCode runs with its built-in `--pure` isolation so host-installed plugins cannot alter the
-trusted invocation. Codex uses its explicit read-only or workspace-write sandbox.
+files. OpenCode runs through its direct non-interactive CLI surface with the same closed input/output
+contract. Codex uses its explicit read-only or workspace-write sandbox.
 
 ## TaskCard boundary
 

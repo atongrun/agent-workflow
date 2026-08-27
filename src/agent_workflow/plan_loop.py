@@ -626,27 +626,17 @@ def architect_context(
     }
     if last_completion is not None:
         facts["last_completed_card"] = dict(last_completion)
-    selection_json = json.dumps(
-        {"coder": dict(coder), "reviewer": dict(reviewer)},
-        separators=(",", ":"),
-        sort_keys=True,
-    )
     return (
         "# Trusted ArchitectContext\n\n"
-        "Use only these exact facts and the committed Plan. Produce one complete TaskCard as raw "
-        "Markdown with no surrounding code fence.\n"
-        "Write `## Task ID`, a blank line, then the bare Task ID without backticks. Write the "
-        "Task branch using this literal shape: - **Task branch**: `agent/<TASK_ID>`. "
-        "Write Frozen base as an exact standalone line with no suffix. "
-        "The final path "
-        "component of the Task branch must equal the Task ID character-for-character, including "
-        "case, with no descriptive suffix. The awf-postflight "
-        "allowed_paths must contain exactly one `.awf/artifacts/impl-report-<TASK_ID>.md` and one "
-        "`.awf/artifacts/review-report-<TASK_ID>.md`; the TaskCard path itself must not be "
-        "allowed.\n"
-        f"The TaskCard must contain `- **Frozen base**: `{observed_main}`` and exactly this "
-        "awf-reviewer-selection JSON object: "
-        f"`{selection_json}`.\n\n"
+        "Use only these exact facts and the committed Plan. Reason silently. Output only one raw "
+        "JSON object with no Markdown, code fence, introduction, or trailing text. The object must "
+        "contain exactly these fields: `task_id` (safe string), `objective` (string), `scope` "
+        "(non-empty string array), `change_paths` (non-empty repository-relative POSIX path "
+        "array), `constraints` (non-empty string array), `acceptance_criteria` (non-empty string "
+        "array), and `verification_commands` (non-empty array of non-empty argv string arrays). "
+        "Do not include a branch, frozen base, provider selection, report path, postflight block, "
+        "or any other authority field; trusted AWF code injects those after validation. Do not "
+        "include the generated TaskCard path, `.git`, or `.awf/artifacts` in change_paths.\n\n"
         "## Durable facts\n\n```json\n"
         + json.dumps(facts, ensure_ascii=False, indent=2, sort_keys=True)
         + "\n```\n\n## Exact committed Plan\n\n"
@@ -675,11 +665,6 @@ def next_architect_context(
         raise PlanLoopError("last CompletedCardFact is invalid")
     if any(_SAFE_ID.fullmatch(value) is None for value in completed_task_ids):
         raise PlanLoopError("completed TaskCard identity is invalid")
-    selection_json = json.dumps(
-        {"coder": dict(coder), "reviewer": dict(reviewer)},
-        separators=(",", ":"),
-        sort_keys=True,
-    )
     facts = {
         "plan": plan.to_mapping(),
         "fresh_main": fresh_main,
@@ -696,21 +681,17 @@ def next_architect_context(
         "Use only the durable facts, exact committed Plan and read-only repository at fresh_main. "
         "Reason silently: never print repository verification, analysis, a summary, or an "
         "introduction before the closed outcome. Return exactly one closed outcome. If Plan work "
-        "remains, return one complete next TaskCard as raw Markdown with no wrapper or outcome "
-        "label. If the Plan milestone is fully complete, stdout must contain only the single line "
+        "remains, return only one raw JSON object with exactly these fields: `task_id`, "
+        "`objective`, `scope`, `change_paths`, `constraints`, `acceptance_criteria`, and "
+        "`verification_commands`. Use the same closed semantic types as the first Architect call: "
+        "strings, non-empty string arrays, repository-relative POSIX change paths, and non-empty "
+        "argv string arrays. Do not add Markdown, a code fence, an outcome label, or authority "
+        "fields; trusted AWF code assembles the TaskCard. If the Plan milestone is fully complete, "
+        "stdout must contain only the single line "
         "`MILESTONE_COMPLETE`, with no text before or after it. If facts prevent a safe next "
         "decision, return "
         "`BLOCKED` on the first line and a non-empty reason on following lines. Do not "
         "pre-generate later cards.\n\n"
-        "For a TaskCard, write `## Task ID`, a blank line, then the bare Task ID without "
-        "backticks. Write the Task branch using this literal shape: "
-        "- **Task branch**: `agent/<TASK_ID>`. The final branch component must exactly equal "
-        "Task ID character-for-character. Write Frozen base as an exact standalone line with no "
-        f"suffix: - **Frozen base**: `{fresh_main}`. Include exactly this "
-        f"awf-reviewer-selection JSON object: `{selection_json}`. The awf-postflight allowed_paths "
-        "must contain exactly one `.awf/artifacts/impl-report-<TASK_ID>.md` and one "
-        "`.awf/artifacts/review-report-<TASK_ID>.md`; the TaskCard path itself must not be "
-        "allowed.\n\n"
         "## Durable facts\n\n```json\n"
         + json.dumps(facts, ensure_ascii=False, indent=2, sort_keys=True)
         + "\n```\n\n## Exact committed Plan\n\n"
