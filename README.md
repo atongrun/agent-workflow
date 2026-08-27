@@ -127,9 +127,10 @@ The start command returns after the durable Architect start is accepted. The ini
 shell does not need to remain open.
 
 The same product projection is available to an initiating Agent as MCP `get_status` and to an
-operator as `awf plan status --run <plan-run-id>`. Both are read-only. The currently exposed
-approval/replacement MCP operations fail closed until their exact Plan authority is implemented;
-they do not provide a retry or replay path.
+operator as `awf plan status --run <plan-run-id>`. Both are read-only. Approval continuation is
+available only after fresh observation of the exact Human-approved protected-branch state. A Coder
+replacement is available only for one exactly proved blocked delivery and creates a fresh delivery;
+Architect/Reviewer failures, unknown outcomes, and old events are never replayed.
 
 MCP lifecycle operations require a separate explicit Human instruction for that exact PlanRun; a
 Plan-start authorization never doubles as permission to stop or deinitialize local bindings.
@@ -169,6 +170,11 @@ AWF runs only one active TaskCard at a time:
 7. AWF reads the new main before asking the Architect what comes next.
 
 There is no pre-generated TaskCard queue and no concurrent milestone scheduler.
+
+All three Architect providers return the same closed semantic object. Trusted AWF code assembles
+the Markdown TaskCard and injects its exact Task ID/branch, frozen main, Coder/Reviewer selection,
+report paths, and postflight contract. One TaskCard must remain one bounded independently
+reviewable and mergeable change; the Plan keeps later decisions with the next fresh Architect.
 
 ## How safety works
 
@@ -210,7 +216,7 @@ recovery procedure explicitly requires it.
 
 This release candidate does not yet provide:
 
-- automatic recovery after an Architect or Coder process crash;
+- automatic replay or same-delivery recovery after an Architect process crash;
 - provider-session restoration or partial workspace takeover;
 - automatic correction or same-card retry for invalid Architect output;
 - stop-and-resume for an active milestone;
@@ -234,9 +240,9 @@ Compatibility, administration, and development commands remain available. Use:
 awf --help
 ```
 
-The current Plan-start CLI defaults Coder and Reviewer to OpenCode with their tool defaults. When a
-run uses another configured Reviewer or an explicit model, the initiating Agent must pass the
-matching optional overrides shown by `awf plan start --help`.
+MCP Plan start derives Architect, Coder, and Reviewer tools/models from the exact local machine
+binding. The compatibility `awf plan start` CLI still exposes explicit provider overrides for
+operator/debugging use; those parameters are not part of the normal Human interaction.
 
 For deeper implementation and evidence details, see:
 

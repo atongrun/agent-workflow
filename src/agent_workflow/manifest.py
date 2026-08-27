@@ -16,6 +16,12 @@ from pathlib import Path
 from subprocess import run as _run
 from typing import Any
 
+from agent_workflow.operations.awf_taskcard import (
+    TaskCardContractError,
+    reviewer_selection_contract,
+    reviewer_selection_present,
+)
+
 FORMAT = "awf.run-manifest.v1"
 COMPILER_FORMAT = "awf.run-contract-compiler.v1"
 REPORT_FORMAT = "awf.run-contract-report.v1"
@@ -279,19 +285,48 @@ def derive_manifest(
         text = card.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise ManifestError("TaskCard is unreadable") from exc
-    section = re.search(r"(?ms)^## Task ID\s*$([\s\S]*?)(?=^## |\Z)", text)
-    task_id = ""
-    if section:
-        for line in section.group(1).splitlines():
-            candidate = line.strip()
-            if candidate and not candidate.startswith("<!--") and not candidate.endswith("-->"):
-                task_id = candidate.strip("[]")
-                break
-    task_id = task_id or card.stem
-    task_id = re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-")
+    section = re.search(r"(?m)^## Task ID[ \t]*$", text)
+    task = re.search(
+        r"(?m)^## Task ID[ \t]*\r?\n(?:[ \t]*\r?\n)*"
+        r"`?([A-Za-z0-9][A-Za-z0-9._-]*)`?[ \t]*$",
+        text,
+    )
+    if section is not None and task is None:
+        raise ManifestError("TaskCard does not contain a usable Task ID")
+    task_id = task.group(1) if task is not None else card.stem
     if not _ID_RE.fullmatch(task_id):
         raise ManifestError("TaskCard does not contain a usable Task ID")
-    branch_match = re.search(r"(?m)^- \*\*Task branch\*\*: `([^`]+)`", text)
+    branch_marker = re.search(r"(?m)^- \*\*Task branch\*\*:", text)
+    branch_match = re.search(r"(?m)^- \*\*Task branch\*\*: `([^`]+)`[ \t]*$", text)
+    if branch_marker is not None and branch_match is None:
+        raise ManifestError("TaskCard does not contain a usable Task branch")
+    try:
+        selection = reviewer_selection_contract(text, fallback_tool=tool, fallback_model=model)
+    except TaskCardContractError as exc:
+        raise ManifestError("TaskCard reviewer selection is invalid") from exc
+    explicit_selection = reviewer_selection_present(text)
+    if explicit_selection:
+        if (tool or model) and (tool, model) != (selection.coder.tool, selection.coder.model):
+            raise ManifestError("TaskCard coder selection conflicts with manifest override")
+        if reviewer_tool or reviewer_model:
+            selected_reviewer_tool = reviewer_tool or tool
+            selected_reviewer_model = reviewer_model
+            if (selected_reviewer_tool, selected_reviewer_model) != (
+                selection.reviewer.tool,
+                selection.reviewer.model,
+            ):
+                raise ManifestError("TaskCard reviewer selection conflicts with manifest override")
+        if branch_match is not None and branch_match.group(1).rsplit("/", 1)[-1] != task_id:
+            raise ManifestError("TaskCard task identity conflicts with Task branch")
+        selected_tool = selection.coder.tool
+        selected_model = selection.coder.model
+        selected_reviewer_tool = selection.reviewer.tool
+        selected_reviewer_model = selection.reviewer.model
+    else:
+        selected_tool = tool
+        selected_model = model
+        selected_reviewer_tool = reviewer_tool or tool
+        selected_reviewer_model = reviewer_model if reviewer_tool or reviewer_model else model
     selected_branch = branch or (branch_match.group(1) if branch_match else f"awf/{task_id}")
     values = {
         "format": FORMAT,
@@ -308,10 +343,10 @@ def derive_manifest(
             "review": f".awf/artifacts/review-report-{task_id}.md",
         },
         "models": {
-            "tool": tool,
-            "model": model,
-            "reviewer_tool": reviewer_tool or tool,
-            "reviewer_model": reviewer_model if reviewer_tool or reviewer_model else model,
+            "tool": selected_tool,
+            "model": selected_model,
+            "reviewer_tool": selected_reviewer_tool,
+            "reviewer_model": selected_reviewer_model,
         },
         "rework_budget": rework_budget,
         "provenance": {

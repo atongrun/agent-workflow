@@ -91,7 +91,7 @@ def verify_plan_check(awf: Path, root: Path, clean_env: dict[str, str]) -> None:
         + json.dumps(
             {
                 "allowed_paths": ["result.txt", implementation, review],
-                "verification_commands": [],
+                "verification_commands": [["{python}", "-c", "print('wheel-check')"]],
             }
         )
         + "\n-->\n",

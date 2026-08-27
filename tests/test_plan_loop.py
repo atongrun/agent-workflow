@@ -163,9 +163,10 @@ def test_architect_context_and_taskcard_binding_are_closed(tmp_path: Path) -> No
 
     assert fact.blob_sha256 in context
     assert "# Exact Plan" in context
-    assert "review-report-<TASK_ID>.md" in context
-    assert "equal the Task ID character-for-character" in context
-    assert "agent/<TASK_ID>" in context
+    assert "Output only one raw JSON object" in context
+    assert "`verification_commands`" in context
+    assert "trusted AWF code injects those after validation" in context
+    assert "raw Markdown" not in context
     assert (task_id, branch) == ("CARD-001", "codex/CARD-001")
     with pytest.raises(PlanLoopError, match="fresh upstream main"):
         validate_taskcard_binding(
@@ -277,6 +278,9 @@ def test_completed_card_facts_are_immutable_and_feed_minimal_next_context(tmp_pa
     assert "MILESTONE_COMPLETE" in context
     assert "stdout must contain only the single line" in context
     assert "Reason silently" in context
+    assert "return only one raw JSON object" in context
+    assert "trusted AWF code assembles the TaskCard" in context
+    assert "raw Markdown" not in context
     assert "Do not pre-generate later cards" in context
     changed = {**completion, "completed_at": "changed"}
     with pytest.raises(PlanLoopError, match="malformed"):
