@@ -126,9 +126,19 @@ def _authority_consistent(store: PlanRunStore, run: Mapping[str, object]) -> boo
             and isinstance(delivery.get("event_id"), int)
             and isinstance(delivery.get("source_event_id"), int)
             and isinstance(approval, Mapping)
-            and approval.get("status") == "waiting"
-            and approval.get("review_decision") == "REVIEW_REQUIRED"
-            and approval.get("mergeability") == "BLOCKED"
+            and (
+                (
+                    approval.get("status") == "waiting"
+                    and approval.get("review_decision") == "REVIEW_REQUIRED"
+                    and approval.get("mergeability") == "BLOCKED"
+                )
+                or (
+                    approval.get("status") == "human_merge_required"
+                    and approval.get("review_decision") == "APPROVED"
+                    and approval.get("mergeability") == "CLEAN"
+                    and approval.get("merge_authority") == "external"
+                )
+            )
             and not stopped
         )
     if status in {"completed", "stopped", "blocked", "rejected"}:

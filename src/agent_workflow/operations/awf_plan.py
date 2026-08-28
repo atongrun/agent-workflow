@@ -1215,6 +1215,18 @@ def _merge_and_observe(
             stop_reason="merge effect is ambiguous; no automatic retry",
         )
         raise PlanOperationError("merge effect is ambiguous; do not retry automatically")
+    return _observe_exact_merge(store=store, repo=repo, provenance=provenance)
+
+
+def _observe_exact_merge(
+    *,
+    store: PlanRunStore,
+    repo: Path,
+    provenance: dict[str, object],
+    effect_attempted: bool = True,
+    method: str = "merge",
+) -> dict[str, object]:
+    """Read one Human or trusted-runner merge without acquiring merge authority."""
     observed = _gh_json(
         str(repo),
         "pr",
@@ -1223,22 +1235,35 @@ def _merge_and_observe(
         "--repo",
         str(provenance["upstream_repo"]),
         "--json",
-        "number,state,headRefOid,mergeCommit",
+        "number,state,baseRefOid,headRefOid,statusCheckRollup,mergeCommit",
     )
     merge_commit = observed.get("mergeCommit") if isinstance(observed, dict) else None
     merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else ""
+    checks = observed.get("statusCheckRollup") if isinstance(observed, dict) else None
+    states = (
+        [_check_conclusion(item) for item in checks if isinstance(item, dict)]
+        if isinstance(checks, list)
+        else []
+    )
     if (
         not isinstance(observed, dict)
         or observed.get("number") != provenance["pull_request"]
         or observed.get("state") != "MERGED"
+        or observed.get("baseRefOid") != provenance["base_sha"]
         or observed.get("headRefOid") != provenance["head_sha"]
+        or not isinstance(checks, list)
+        or not checks
+        or len(states) != len(checks)
+        or not all(state == "passed" for state in states)
         or re.fullmatch(r"[0-9a-f]{40,64}", str(merge_oid)) is None
     ):
-        store.update(
-            status="merge_ambiguous",
-            stop_reason="merge command returned but exact merged observation is unavailable",
-        )
-        raise PlanOperationError("merge observation is ambiguous; do not retry automatically")
+        if effect_attempted:
+            store.update(
+                status="merge_ambiguous",
+                stop_reason="merge command returned but exact merged observation is unavailable",
+            )
+            raise PlanOperationError("merge observation is ambiguous; do not retry automatically")
+        raise PlanOperationError("exact Human merge is not yet safely observable")
     plan = PlanFact.from_mapping(store.load()["plan"])
     tracking = f"refs/remotes/{plan.upstream_remote}/{plan.base_ref}"
     _git(
@@ -1249,9 +1274,18 @@ def _merge_and_observe(
         f"+refs/heads/{plan.base_ref}:{tracking}",
     )
     if str(_git(repo, "rev-parse", f"{tracking}^{{commit}}")) != merge_oid:
-        store.update(status="merge_ambiguous", stop_reason="upstream main merge fact drifted")
+        if effect_attempted:
+            store.update(status="merge_ambiguous", stop_reason="upstream main merge fact drifted")
         raise PlanOperationError("upstream main does not match the exact observed merge")
-    return {"state": "MERGED", "commit": str(merge_oid), "method": "merge"}
+    return {"state": "MERGED", "commit": str(merge_oid), "method": method}
+
+
+def _local_merge_authority(repo: Path, upstream_repo: str) -> bool:
+    value = _gh_json(str(repo), "api", f"repos/{upstream_repo}")
+    permissions = value.get("permissions") if isinstance(value, dict) else None
+    if not isinstance(permissions, dict) or not isinstance(permissions.get("push"), bool):
+        raise PlanOperationError("local GitHub merge authority is not safely observable")
+    return permissions["push"] is True
 
 
 def _approval_observation(repo: Path, provenance: dict[str, object]) -> dict[str, object]:
@@ -1442,6 +1476,25 @@ def dispatch_authorized_replacement(
     return {"replacement_authorization": lineage, "replacement_delivery": delivery}
 
 
+def _human_merge_requested(approval: object) -> bool:
+    if not isinstance(approval, dict):
+        return False
+    external_marker = (
+        approval.get("status") == "human_merge_required"
+        or approval.get("merge_authority") == "external"
+    )
+    if not external_marker:
+        return False
+    if not (
+        approval.get("status") == "human_merge_required"
+        and approval.get("review_decision") == "APPROVED"
+        and approval.get("mergeability") == "CLEAN"
+        and approval.get("merge_authority") == "external"
+    ):
+        raise PlanOperationError("waiting PlanRun Human merge marker is invalid")
+    return True
+
+
 def continue_after_approval(
     *, repo: Path, state_root: Path, run_id: str, architect_profile: node.NodeProfile
 ) -> dict[str, object]:
@@ -1478,10 +1531,21 @@ def continue_after_approval(
         for key in ("upstream_repo", "base_ref", "base_sha", "head_sha")
     ):
         raise PlanOperationError("waiting PlanRun approval identity is invalid")
-    approval = _approval_observation(repo, provenance)
-    if approval.get("status") != "approved":
-        raise PlanOperationError("exact PR head still requires Human approval")
-    merge = _merge_and_observe(store=store, repo=repo, provenance=provenance, card=card)
+    recorded_approval = card.get("approval")
+    human_merge = _human_merge_requested(recorded_approval)
+    if human_merge:
+        merge = _observe_exact_merge(
+            store=store,
+            repo=repo,
+            provenance=provenance,
+            effect_attempted=False,
+            method="external",
+        )
+    else:
+        approval = _approval_observation(repo, provenance)
+        if approval.get("status") != "approved":
+            raise PlanOperationError("exact PR head still requires Human approval")
+        merge = _merge_and_observe(store=store, repo=repo, provenance=provenance, card=card)
     completed_card = {**card, "status": "completed", "merge": merge}
     completed = completed_card_fact(
         run=run,
@@ -1818,6 +1882,38 @@ def handle_card_terminal(
             status="waiting_for_human_approval",
             current_card=waiting_card,
             stop_reason="exact PR head requires Human approval before trusted merge",
+        )
+        return {"pending_state": "WAITING_FOR_HUMAN_APPROVAL"}
+    if not _local_merge_authority(source_repo, str(provenance["upstream_repo"])):
+        task_id = args.branch.rsplit("/", 1)[-1]
+        waiting_card = {
+            **card,
+            "ci": ci,
+            "approval": {
+                **approval,
+                "status": "human_merge_required",
+                "merge_authority": "external",
+            },
+            "terminal_delivery": {
+                "run_id": str(
+                    getattr(args, "run_id", "") or os.environ.get("AWF_RUN_ID") or f"task-{task_id}"
+                ),
+                "event_id": evidence.event_id,
+                "delivery_id": input_context["delivery_id"],
+                "payload_sha256": input_context["payload_sha256"],
+                "source_event_id": input_context["source_event_id"],
+                "branch": args.branch,
+                "commit": args.commit,
+                "implementation_path": args.report,
+                "review_path": args.review_report,
+                "implementation_sha256": implementation_sha256,
+                "review_sha256": review_sha256,
+            },
+        }
+        store.update(
+            status="waiting_for_human_approval",
+            current_card=waiting_card,
+            stop_reason="exact approved PR head requires Human merge authority",
         )
         return {"pending_state": "WAITING_FOR_HUMAN_APPROVAL"}
     merge = _merge_and_observe(
