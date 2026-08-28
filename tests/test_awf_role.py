@@ -4307,6 +4307,98 @@ def test_reviewer_outbox_resume_removes_managed_report(monkeypatch, tmp_path):
     assert not managed_report.exists()
 
 
+def test_new_reviewer_removes_only_exact_prior_report_consumed_by_architect(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run("git", "init", "-b", "main", cwd=repo)
+    run("git", "config", "user.email", "test@example.com", cwd=repo)
+    run("git", "config", "user.name", "Test", cwd=repo)
+    (repo / "README.md").write_text("fixture\n", encoding="utf-8")
+    run("git", "add", "README.md", cwd=repo)
+    run("git", "commit", "-m", "fixture", cwd=repo)
+
+    relative_report = ".awf/artifacts/review-report-old-card.md"
+    report = repo / relative_report
+    report.parent.mkdir(parents=True)
+    markdown = _review_markdown("PASS")
+    report.write_text(markdown, encoding="utf-8")
+    normalized = awf_role.parse_review_report(report)
+    state_root = tmp_path / "state"
+    provenance = _pr_provenance()
+    old_evidence = awf_role.RunEvidence(501, "reviewer", state_root=state_root)
+    old_input = {
+        "key": "awf:" + "1" * 64,
+        "delivery_id": "awf:" + "1" * 64,
+        "payload_sha256": "sha256:" + "2" * 64,
+        "source_event_id": 500,
+    }
+    payload = awf_role.build_delivery_payload(
+        "reviewer",
+        "decision:awf-ready-v3",
+        {
+            "task_id": "old-card",
+            "branch": provenance["head_ref"],
+            "commit": provenance["head_sha"],
+            "report": "implementation-old-card.md",
+            "review_report_path": relative_report,
+            "review_report": normalized,
+            **awf_role.provenance_payload(provenance),
+        },
+        old_evidence,
+    )
+    outbox_path, outbox = awf_role.prepare_outbox(
+        old_evidence,
+        old_input,
+        action="reviewer.pass",
+        branch=str(provenance["head_ref"]),
+        source_commit=str(provenance["head_sha"]),
+        evidence_commit=str(provenance["head_sha"]),
+        to_role="architect",
+        event_type="decision:awf-ready-v3",
+        payload=payload,
+        provenance=provenance,
+    )
+    awf_role._set_outbox_status(outbox_path, outbox, "ambiguous")
+    architect_evidence = awf_role.RunEvidence(502, "architect", state_root=state_root)
+    awf_role.complete_inbox(
+        architect_evidence,
+        str(payload["awf_delivery_id"]),
+        str(payload["awf_payload_sha256"]),
+    )
+
+    current = awf_role.RunEvidence(503, "reviewer", state_root=state_root)
+    awf_role._remove_completed_prior_review_report(
+        str(repo),
+        current,
+        {"delivery_id": "awf:" + "3" * 64},
+    )
+
+    assert not report.exists()
+    assert current.state["last_phase"] == "prior_review_report_removed"
+
+
+def test_new_reviewer_keeps_prior_report_without_exact_architect_completion(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run("git", "init", "-b", "main", cwd=repo)
+    run("git", "config", "user.email", "test@example.com", cwd=repo)
+    run("git", "config", "user.name", "Test", cwd=repo)
+    (repo / "README.md").write_text("fixture\n", encoding="utf-8")
+    run("git", "add", "README.md", cwd=repo)
+    run("git", "commit", "-m", "fixture", cwd=repo)
+    report = repo / ".awf/artifacts/review-report-old-card.md"
+    report.parent.mkdir(parents=True)
+    report.write_text(_review_markdown("PASS"), encoding="utf-8")
+
+    awf_role._remove_completed_prior_review_report(
+        str(repo),
+        awf_role.RunEvidence(504, "reviewer", state_root=tmp_path / "state"),
+        {"delivery_id": "awf:" + "4" * 64},
+    )
+
+    assert report.is_file()
+
+
 def test_terminal_delivery_chain_binds_prepared_coder_and_reviewer_outboxes(tmp_path):
     state_root = tmp_path / "state"
     provenance = _pr_provenance()

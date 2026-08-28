@@ -4894,6 +4894,104 @@ def _remove_delivered_review_report(repo: str, a: argparse.Namespace) -> None:
         log(f"warning: failed to remove delivered ReviewReport: {exc}")
 
 
+def _remove_completed_prior_review_report(
+    repo: str,
+    evidence: RunEvidence | None,
+    input_context: dict[str, object],
+) -> None:
+    """Remove only an exact prior-card report already consumed by Architect."""
+    if evidence is None:
+        return
+    status = git_out(repo, "status", "--porcelain", "--untracked-files=all")
+    if not status:
+        return
+    matches = [
+        re.fullmatch(r"\?\? (\.awf/artifacts/review-report-[A-Za-z0-9._-]+\.md)", line)
+        for line in status.splitlines()
+    ]
+    if not matches or any(match is None for match in matches):
+        return
+
+    outbox_dir = evidence.state_dir / "outbox" / "reviewer"
+    for match in matches:
+        assert match is not None
+        relative_path = match.group(1)
+        report_path = Path(repo) / Path(relative_path)
+        try:
+            report_markdown = report_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return
+        candidates: list[dict[str, object]] = []
+        for outbox_path in sorted(outbox_dir.glob("*.json")):
+            try:
+                outbox = _load_delivery_record(outbox_path, "prior reviewer outbox")
+            except SystemExit:
+                continue
+            if not isinstance(outbox, dict):
+                continue
+            payload = outbox.get("payload")
+            embedded = payload.get("review_report") if isinstance(payload, dict) else None
+            if (
+                outbox.get("format") != "awf.outbox.v2"
+                or outbox.get("source_role") != "reviewer"
+                or outbox.get("action") != "reviewer.pass"
+                or outbox.get("input_delivery_id") == input_context.get("delivery_id")
+                or not isinstance(payload, dict)
+                or payload.get("review_report_path") != relative_path
+                or not isinstance(payload.get("report"), str)
+                or not isinstance(embedded, dict)
+                or embedded.get("markdown") != report_markdown
+            ):
+                continue
+            try:
+                validate_outbox_record(outbox)
+                resolved = resolve_review_report_path(
+                    repo,
+                    relative_path,
+                    str(payload["report"]),
+                )
+            except SystemExit:
+                continue
+            if resolved != report_path.resolve():
+                continue
+            if outbox.get("status") == "sent":
+                candidates.append(outbox)
+                continue
+            if outbox.get("status") != "ambiguous":
+                continue
+            delivery_id = str(outbox.get("delivery_id", ""))
+            payload_sha256 = str(outbox.get("payload_sha256", ""))
+            digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+            try:
+                completed = _load_delivery_record(
+                    evidence.state_dir / "inbox" / "architect" / f"{digest}.json",
+                    "prior Architect inbox",
+                )
+            except SystemExit:
+                continue
+            if completed == {
+                "format": "awf.inbox.v1",
+                "state_root_sha256": state_root_binding(evidence.state_dir),
+                "role": "architect",
+                "delivery_id": delivery_id,
+                "payload_sha256": payload_sha256,
+                "status": "completed",
+            }:
+                candidates.append(outbox)
+        if len(candidates) != 1:
+            return
+
+    for match in matches:
+        assert match is not None
+        relative_path = match.group(1)
+        (Path(repo) / relative_path).unlink()
+        record(
+            evidence,
+            "prior_review_report_removed",
+            review_report_path=relative_path,
+        )
+
+
 def role_reviewer(a: argparse.Namespace) -> int:
     repo = str(Path(env("AWF_REPO_DIR", required=True)).resolve())
     script_dir = env("AWF_SCRIPT_DIR", required=True)
@@ -4919,6 +5017,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     except SystemExit:
         record(evidence, "fork_pr_rejected", reason="outbox_provenance_drift")
         raise
+    _remove_completed_prior_review_report(repo, evidence, input_context)
     gate = pre_invocation_gate(a, "reviewer", evidence)
     renderer_binding = provider_invocation_binding(
         a, "reviewer", input_context, gate, tool=tool, model=model
