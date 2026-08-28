@@ -616,7 +616,9 @@ def test_merge_intent_precedes_exact_effect_and_observation(monkeypatch, tmp_pat
         lambda *_a, **_k: {
             "number": 7,
             "state": "MERGED",
+            "baseRefOid": "4" * 40,
             "headRefOid": "6" * 40,
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
             "mergeCommit": {"oid": "7" * 40},
         },
     )
@@ -670,6 +672,80 @@ def test_ambiguous_merge_is_persisted_and_never_retried(monkeypatch, tmp_path: P
         )
 
 
+def test_local_merge_authority_uses_exact_authenticated_repository_permissions(
+    monkeypatch, tmp_path: Path
+) -> None:
+    observed = []
+    monkeypatch.setattr(
+        awf_plan,
+        "_gh_json",
+        lambda *args: observed.append(args) or {"permissions": {"pull": True, "push": False}},
+    )
+
+    assert not awf_plan._local_merge_authority(tmp_path, "owner/project")
+    assert observed == [(str(tmp_path), "api", "repos/owner/project")]
+
+
+def test_read_only_human_merge_observation_preserves_waiting_when_pr_is_open(
+    monkeypatch, tmp_path: Path
+) -> None:
+    store, _args, provenance, _evidence, _input_context = terminal_fixture(tmp_path)
+    store.update(status="waiting_for_human_approval")
+    calls = []
+    monkeypatch.setattr(
+        awf_plan,
+        "_gh_json",
+        lambda *args: (
+            calls.append(args)
+            or {
+                "number": provenance["pull_request"],
+                "state": "OPEN",
+                "baseRefOid": provenance["base_sha"],
+                "headRefOid": provenance["head_sha"],
+                "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
+                "mergeCommit": None,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_git",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("an unmerged PR must not reach upstream merge observation")
+        ),
+    )
+
+    with pytest.raises(awf_plan.PlanOperationError, match="not yet safely observable"):
+        awf_plan._observe_exact_merge(
+            store=store,
+            repo=tmp_path,
+            provenance=provenance,
+            effect_attempted=False,
+            method="external",
+        )
+
+    assert store.load()["status"] == "waiting_for_human_approval"
+    assert store.completions() == ()
+    assert len(calls) == 1
+    assert "merge" not in calls[0]
+
+
+def test_human_merge_marker_requires_complete_approved_clean_external_facts() -> None:
+    with pytest.raises(awf_plan.PlanOperationError, match="Human merge marker is invalid"):
+        awf_plan._human_merge_requested(
+            {"status": "human_merge_required", "merge_authority": "external"}
+        )
+
+    assert awf_plan._human_merge_requested(
+        {
+            "status": "human_merge_required",
+            "review_decision": "APPROVED",
+            "mergeability": "CLEAN",
+            "merge_authority": "external",
+        }
+    )
+
+
 def test_plan_terminal_approve_creates_completed_card_fact(monkeypatch, tmp_path: Path) -> None:
     store, args, provenance, evidence, input_context = terminal_fixture(tmp_path)
     source = tmp_path / "source"
@@ -699,6 +775,7 @@ def test_plan_terminal_approve_creates_completed_card_fact(monkeypatch, tmp_path
         "_merge_and_observe",
         lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "merge"},
     )
+    monkeypatch.setattr(awf_plan, "_local_merge_authority", lambda *_a, **_k: True)
 
     result = awf_plan.handle_card_terminal(
         args=args,
@@ -764,6 +841,7 @@ def test_terminal_exact_provenance_recovers_ambiguous_business_dispatch(
         "_merge_and_observe",
         lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "merge"},
     )
+    monkeypatch.setattr(awf_plan, "_local_merge_authority", lambda *_a, **_k: True)
     monkeypatch.setattr(awf_plan, "_git", lambda *_args, **_kwargs: "9" * 40)
     monkeypatch.setattr(awf_plan, "_git_is_ancestor", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
@@ -866,6 +944,151 @@ def test_plan_terminal_waits_for_approval_without_merge(monkeypatch, tmp_path: P
 
     assert result == {"pending_state": "WAITING_FOR_HUMAN_APPROVAL"}
     assert store.load()["status"] == "waiting_for_human_approval"
+
+
+def test_plan_terminal_waits_for_human_merge_without_local_upstream_authority(
+    monkeypatch, tmp_path: Path
+) -> None:
+    store, args, provenance, evidence, input_context = terminal_fixture(tmp_path)
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setenv("AWF_REPO_DIR", str(source))
+    monkeypatch.setattr(
+        awf_plan,
+        "_invoke_terminal_decision",
+        lambda **_kwargs: {"verdict": "approve", "sha256": "8" * 64, "bytes": 10},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_wait_exact_ci",
+        lambda *_a, **_k: {"conclusion": "SUCCESS", "head_sha": "6" * 40, "checks": 1},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_approval_observation",
+        lambda *_a, **_k: {
+            "status": "approved",
+            "review_decision": "APPROVED",
+            "mergeability": "CLEAN",
+        },
+    )
+    monkeypatch.setattr(awf_plan, "_local_merge_authority", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        awf_plan,
+        "_merge_and_observe",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("read-only local identity must not attempt upstream merge")
+        ),
+    )
+
+    result = awf_plan.handle_card_terminal(
+        args=args,
+        evidence=evidence,
+        input_context=input_context,
+        review_report={"verdict": "PASS"},
+        provenance=provenance,
+        terminal_repo=tmp_path / "terminal",
+        implementation_sha256="sha256:" + "1" * 64,
+        review_sha256="sha256:" + "2" * 64,
+    )
+
+    assert result == {"pending_state": "WAITING_FOR_HUMAN_APPROVAL"}
+    waiting = store.load()
+    assert waiting["status"] == "waiting_for_human_approval"
+    assert waiting["current_card"]["approval"] == {
+        "status": "human_merge_required",
+        "review_decision": "APPROVED",
+        "mergeability": "CLEAN",
+        "merge_authority": "external",
+    }
+
+
+def test_continue_after_approval_observes_exact_human_merge_without_local_merge(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from agent_workflow.operations import awf_control_plane
+
+    store, _args, provenance, _evidence, _input_context = terminal_fixture(tmp_path)
+    run = store.load()
+    current = dict(run["current_card"])
+    terminal_delivery = {
+        "run_id": "task-CARD-001",
+        "event_id": 9,
+        "delivery_id": "awf:" + "a" * 64,
+        "payload_sha256": "sha256:" + "b" * 64,
+        "source_event_id": 8,
+        "branch": current["branch"],
+        "commit": provenance["head_sha"],
+        "implementation_path": ".awf/artifacts/impl-report-CARD-001.md",
+        "review_path": ".awf/artifacts/review-report-CARD-001.md",
+        "implementation_sha256": "sha256:" + "1" * 64,
+        "review_sha256": "sha256:" + "2" * 64,
+    }
+    store.update(
+        status="waiting_for_human_approval",
+        current_card={
+            **current,
+            "status": "deciding",
+            "pull_request": provenance["pull_request"],
+            "base_sha": provenance["base_sha"],
+            "head_sha": provenance["head_sha"],
+            "implementation_report_sha256": terminal_delivery["implementation_sha256"],
+            "review_report_sha256": terminal_delivery["review_sha256"],
+            "decision": {"verdict": "approve", "sha256": "8" * 64, "bytes": 10},
+            "ci": {"conclusion": "SUCCESS", "head_sha": provenance["head_sha"], "checks": 1},
+            "approval": {
+                "status": "human_merge_required",
+                "review_decision": "APPROVED",
+                "mergeability": "CLEAN",
+                "merge_authority": "external",
+            },
+            "terminal_delivery": terminal_delivery,
+        },
+    )
+    terminal = {}
+
+    class Ledger:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def recover(self):
+            return {}, {"branch": current["branch"]}
+
+        def mark_terminal(self, **kwargs):
+            terminal.update(kwargs)
+
+    monkeypatch.setattr(awf_control_plane, "RunLedger", Ledger)
+    monkeypatch.setattr(
+        awf_plan,
+        "_observe_exact_merge",
+        lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "external"},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_approval_observation",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("already-merged Human path must not require an OPEN PR")
+        ),
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_merge_and_observe",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("read-only local identity must not attempt upstream merge")
+        ),
+    )
+
+    result = awf_plan.continue_after_approval(
+        repo=tmp_path / "source",
+        state_root=tmp_path / "state",
+        run_id=str(run["run_id"]),
+        architect_profile=SimpleNamespace(),
+    )
+
+    assert result["status"] == "completed"
+    assert result["last_completion"]["merge"]["commit"] == "7" * 40
+    assert result["last_completion"]["merge"]["method"] == "external"
+    assert terminal["terminal_state"] == "completed"
 
 
 def _completed_milestone_store(tmp_path: Path):
@@ -1089,6 +1312,7 @@ def test_terminal_completion_enters_milestone_only_after_fact_is_persisted(
         "_merge_and_observe",
         lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "merge"},
     )
+    monkeypatch.setattr(awf_plan, "_local_merge_authority", lambda *_a, **_k: True)
     observed: list[str] = []
 
     def continue_after_fact(**_kwargs):

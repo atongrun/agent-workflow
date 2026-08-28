@@ -95,6 +95,52 @@ def test_unknown_status_never_advertises_continue_or_replacement(monkeypatch, tm
     assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
 
 
+def test_exact_external_human_merge_marker_advertises_only_bounded_continuation(
+    monkeypatch, tmp_path: Path
+):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(
+        status="waiting_for_human_approval",
+        current_card={
+            "task_id": "RC2-P3-001",
+            "branch": "codex/rc2-p3",
+            "status": "deciding",
+            "approval": {
+                "status": "human_merge_required",
+                "review_decision": "APPROVED",
+                "mergeability": "CLEAN",
+                "merge_authority": "external",
+            },
+            "terminal_delivery": {
+                "run_id": "task-RC2-P3-001",
+                "event_id": 9,
+                "delivery_id": "awf:" + "a" * 64,
+                "payload_sha256": "sha256:" + "b" * 64,
+                "source_event_id": 8,
+                "branch": "codex/rc2-p3",
+                "commit": "c" * 40,
+                "implementation_path": ".awf/artifacts/impl.md",
+                "review_path": ".awf/artifacts/review.md",
+                "implementation_sha256": "sha256:" + "d" * 64,
+                "review_sha256": "sha256:" + "e" * 64,
+            },
+        },
+    )
+    monkeypatch.setattr(application, "_machine", lambda _repo: _machine(state_root))
+
+    result = application.status(tmp_path, run_id=str(payload["run_id"]))
+
+    assert result["allowed_actions"] == [
+        "get_status",
+        "doctor",
+        "continue_after_approval",
+        "stop",
+    ]
+
+
 def test_no_replay_provider_failure_projects_blocked_ambiguous_without_replacement(
     monkeypatch, tmp_path: Path
 ):
