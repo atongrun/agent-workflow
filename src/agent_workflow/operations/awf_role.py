@@ -4064,7 +4064,7 @@ def terminal_delivery_chain_matches(
         or coder.get("action") != "coder.review_handoff"
         or coder.get("branch") != branch
         or coder.get("provenance") != expected_provenance
-        or coder.get("status") not in {"prepared", "sent"}
+        or coder.get("status") not in {"prepared", "sent", "ambiguous"}
     ):
         return False
     reviewer_delivery_id = coder.get("delivery_id")
@@ -4084,7 +4084,7 @@ def terminal_delivery_chain_matches(
         or reviewer.get("action") != expected_action
         or reviewer.get("branch") != branch
         or reviewer.get("provenance") != expected_provenance
-        or reviewer.get("status") not in {"prepared", "sent"}
+        or reviewer.get("status") not in {"prepared", "sent", "ambiguous"}
         or reviewer.get("delivery_id") != terminal_input_context.get("delivery_id")
         or reviewer.get("payload_sha256") != terminal_input_context.get("payload_sha256")
         or reviewer_payload.get("awf_source_event_id")

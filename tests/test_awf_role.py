@@ -4355,6 +4355,13 @@ def test_terminal_delivery_chain_binds_prepared_coder_and_reviewer_outboxes(tmp_
         payload=decision_payload,
         provenance=provenance,
     )
+    coder_outbox_path = awf_role.delivery_state_path(coder_evidence, "outbox", prepared_delivery_id)
+    reviewer_outbox_path = awf_role.delivery_state_path(
+        reviewer_evidence, "outbox", review_payload["awf_delivery_id"]
+    )
+    for path in (coder_outbox_path, reviewer_outbox_path):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        awf_role._set_outbox_status(path, value, "ambiguous")
     terminal_input = {
         "delivery_id": decision_payload["awf_delivery_id"],
         "payload_sha256": decision_payload["awf_payload_sha256"],
@@ -4362,6 +4369,17 @@ def test_terminal_delivery_chain_binds_prepared_coder_and_reviewer_outboxes(tmp_
     }
 
     assert awf_role.terminal_delivery_chain_matches(
+        state_root,
+        prepared_delivery_id=prepared_delivery_id,
+        prepared_payload_sha256=prepared_payload_sha256,
+        terminal_input_context=terminal_input,
+        branch=branch,
+        provenance=provenance,
+        reviewer_verdict="PASS",
+    )
+    coder_value = json.loads(coder_outbox_path.read_text(encoding="utf-8"))
+    awf_role._set_outbox_status(coder_outbox_path, coder_value, "attempting")
+    assert not awf_role.terminal_delivery_chain_matches(
         state_root,
         prepared_delivery_id=prepared_delivery_id,
         prepared_payload_sha256=prepared_payload_sha256,
