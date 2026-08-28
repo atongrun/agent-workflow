@@ -766,6 +766,11 @@ def test_terminal_exact_provenance_recovers_ambiguous_business_dispatch(
     )
     monkeypatch.setattr(awf_plan, "_git", lambda *_args, **_kwargs: "9" * 40)
     monkeypatch.setattr(awf_plan, "_git_is_ancestor", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        awf_plan,
+        "terminal_delivery_chain_matches",
+        lambda *_args, **_kwargs: True,
+    )
 
     result = awf_plan.handle_card_terminal(
         args=args,

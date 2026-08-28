@@ -34,7 +34,12 @@ from agent_workflow.operations.awf_dispatch import DispatchError
 from agent_workflow.operations.awf_executor import ExecutionFailure
 from agent_workflow.operations.awf_executor import run as run_command
 from agent_workflow.operations.awf_network import add_url_host_to_no_proxy
-from agent_workflow.operations.awf_role import _gh_json, _provider_spec, spawn_rendered
+from agent_workflow.operations.awf_role import (
+    _gh_json,
+    _provider_spec,
+    spawn_rendered,
+    terminal_delivery_chain_matches,
+)
 from agent_workflow.operations.awf_taskcard import reviewer_selection_contract
 from agent_workflow.plan_loop import (
     PLAN_START_TYPE,
@@ -1612,6 +1617,15 @@ def handle_card_terminal(
                 prepared_blob
                 and prepared_blob == terminal_blob
                 and _git_is_ancestor(terminal_repo, prepared_commit, str(provenance["head_sha"]))
+                and terminal_delivery_chain_matches(
+                    Path(evidence.state_dir),
+                    prepared_delivery_id=str(prepared["delivery_id"]),
+                    prepared_payload_sha256=str(prepared["payload_sha256"]),
+                    terminal_input_context=input_context,
+                    branch=args.branch,
+                    provenance=provenance,
+                    reviewer_verdict=str(review_report["verdict"]),
+                )
             )
         if exact_downstream:
             card_value = {
