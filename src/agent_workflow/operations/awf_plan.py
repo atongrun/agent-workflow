@@ -350,6 +350,22 @@ def _preflight_environment(config_path: Path):
                 os.environ[name] = value
 
 
+@contextmanager
+def _exact_config_environment(config_path: Path):
+    """Bind one initiating continuation to its exact profile config, then restore the process."""
+    values = load_config(config_path)
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        os.environ.update(values)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def _run_authoring_fast(
     args: argparse.Namespace,
     *,
@@ -1589,12 +1605,16 @@ def continue_after_approval(
     store.update(
         status="card_completed", current_card=None, last_completion=completed, stop_reason=""
     )
-    return _continue_milestone(
-        store=store,
-        source_repo=repo,
-        state_root=state_root,
-        operation_args=_profile_operation_args(architect_profile, plan),
-    )
+    try:
+        with _exact_config_environment(Path(architect_profile.config_path).resolve()):
+            return _continue_milestone(
+                store=store,
+                source_repo=repo,
+                state_root=state_root,
+                operation_args=_profile_operation_args(architect_profile, plan),
+            )
+    except ConfigError as exc:
+        raise PlanOperationError("strict operations configuration is invalid") from exc
 
 
 def _waiting_terminal_delivery(card: dict[str, object]) -> dict[str, object]:

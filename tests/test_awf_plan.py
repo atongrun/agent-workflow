@@ -390,6 +390,31 @@ def test_internal_preflight_environment_bypasses_only_bus_and_restores(monkeypat
     assert awf_plan.os.environ["NO_PROXY"] == "original"
 
 
+def test_exact_config_environment_overrides_and_restores_process_values(monkeypatch, tmp_path):
+    config = tmp_path / "dispatch.env"
+    monkeypatch.setattr(
+        awf_plan,
+        "load_config",
+        lambda path: (
+            {
+                "AGENT_BUS_URL": "http://same-host-bus:8800",
+                "AWF_ARCH_TOKEN": "exact-architect-token",
+            }
+            if path == config
+            else {}
+        ),
+    )
+    monkeypatch.setenv("AGENT_BUS_URL", "http://unrelated-bus:8800")
+    monkeypatch.delenv("AWF_ARCH_TOKEN", raising=False)
+
+    with awf_plan._exact_config_environment(config):
+        assert awf_plan.os.environ["AGENT_BUS_URL"] == "http://same-host-bus:8800"
+        assert awf_plan.os.environ["AWF_ARCH_TOKEN"] == "exact-architect-token"
+
+    assert awf_plan.os.environ["AGENT_BUS_URL"] == "http://unrelated-bus:8800"
+    assert "AWF_ARCH_TOKEN" not in awf_plan.os.environ
+
+
 def test_invalid_pi_taskcard_result_is_persisted_and_never_replayed(monkeypatch, tmp_path):
     binding, plan, payload = facts(tmp_path)
     repo = tmp_path / "repo"
