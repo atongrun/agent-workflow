@@ -4911,11 +4911,6 @@ def role_reviewer(a: argparse.Namespace) -> int:
         except SystemExit:
             record(evidence, "fork_pr_rejected", reason="invalid_or_untrusted_provenance")
             raise
-    gate = pre_invocation_gate(a, "reviewer", evidence)
-    renderer_binding = provider_invocation_binding(
-        a, "reviewer", input_context, gate, tool=tool, model=model
-    )
-
     try:
         if resume_outbox(a, "reviewer", repo, evidence, input_context):
             _remove_delivered_review_report(repo, a)
@@ -4924,6 +4919,10 @@ def role_reviewer(a: argparse.Namespace) -> int:
     except SystemExit:
         record(evidence, "fork_pr_rejected", reason="outbox_provenance_drift")
         raise
+    gate = pre_invocation_gate(a, "reviewer", evidence)
+    renderer_binding = provider_invocation_binding(
+        a, "reviewer", input_context, gate, tool=tool, model=model
+    )
     duplicate = gate is not None and getattr(gate, "reason", "") == "duplicate_event"
     checkpoint_path: Path | None = None
     checkpoint: dict[str, object] | None = None
