@@ -48,8 +48,10 @@ def _architect_instruction(mode: tuple[str, ...]) -> str:
         )
     if mode == ("terminal-decision",):
         return (
-            "Return only the complete closed Architect Decision with verdict approve, "
-            "request_changes, reject, or escalate. Do not edit, merge, or invent rework."
+            "Return only the complete closed Architect Decision Markdown. Include exactly one "
+            "verdict line formatted `**Verdict:** approve`, `**Verdict:** request_changes`, "
+            "`**Verdict:** reject`, or `**Verdict:** escalate`. Do not use JSON or a code fence. "
+            "Do not edit, merge, or invent rework."
         )
     if mode == ("milestone-next",):
         return (

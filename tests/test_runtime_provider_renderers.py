@@ -147,6 +147,9 @@ def test_opencode_architect_closed_modes_materialize_trusted_context(
 
     assert rendered.argv[rendered.argv.index("-f") + 1] == str(context_path)
     assert rendered.file_inputs == (RenderedInputFile(str(context_path), context.encode("utf-8")),)
+    if mode == ("terminal-decision",):
+        assert "`**Verdict:** approve`" in rendered.argv[-1]
+        assert "Do not use JSON or a code fence" in rendered.argv[-1]
 
 
 def test_codex_reviewer_matches_legacy_argv_and_stdin(tmp_path: Path) -> None:
