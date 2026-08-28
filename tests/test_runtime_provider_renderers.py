@@ -20,6 +20,7 @@ from agent_workflow.runtime import (
     ATTACH_INPUT,
     ContractError,
     InvocationSpec,
+    RenderedInputFile,
     render_provider_invocation,
 )
 
@@ -122,6 +123,30 @@ def test_opencode_reviewer_matches_legacy_same_fixture(tmp_path: Path, card_atta
     assert [rendered.executable, *rendered.argv] == legacy
     assert rendered.stdin is None
     assert rendered.file_inputs == ()
+
+
+@pytest.mark.parametrize("mode", [("milestone-next",), ("terminal-decision",)])
+def test_opencode_architect_closed_modes_materialize_trusted_context(
+    tmp_path: Path, mode: tuple[str, ...]
+) -> None:
+    context_path = tmp_path / ".awf" / "architect-context.md"
+    context = "trusted Architect facts\n"
+    rendered = render_provider_invocation(
+        invocation_spec(
+            tmp_path,
+            role="architect",
+            provider="opencode",
+            model="provider/model",
+            executable="opencode-test",
+            input_path=context_path,
+            input_text=context,
+            report_path=tmp_path / ".awf" / "architect-result.md",
+            provider_args=mode,
+        )
+    )
+
+    assert rendered.argv[rendered.argv.index("-f") + 1] == str(context_path)
+    assert rendered.file_inputs == (RenderedInputFile(str(context_path), context.encode("utf-8")),)
 
 
 def test_codex_reviewer_matches_legacy_argv_and_stdin(tmp_path: Path) -> None:

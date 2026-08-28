@@ -120,6 +120,12 @@ class OpenCodeRenderer:
             tuple(argv),
             spec.workspace,
             environment=spec.environment,
+            file_inputs=(
+                (RenderedInputFile(spec.input_path, spec.input_text.encode("utf-8")),)
+                if spec.role == "architect"
+                and spec.provider_args in {("milestone-next",), ("terminal-decision",)}
+                else ()
+            ),
         )
 
 
