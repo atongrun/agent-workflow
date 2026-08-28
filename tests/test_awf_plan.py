@@ -139,6 +139,66 @@ def test_remote_dispatch_reuses_current_deep_or_runs_existing_deep(
     assert store.load()["preflight"]["remote_dispatch"] == report
 
 
+def test_handler_reuses_exact_initiating_deep_after_current_fast_passes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _binding, _plan, payload = facts(tmp_path)
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=tmp_path / "repo")
+    previous = {
+        "format": "awf.preflight-report.v1",
+        "mode": "deep",
+        "status": "PASS",
+        "allow_remote_dispatch": True,
+        "required_next_action": "remote_dispatch_allowed",
+        "fingerprint": "a" * 64,
+        "deep": {"current": True},
+    }
+    store.update(preflight={"remote_dispatch": previous})
+    args = handler_args(tmp_path, payload)
+    selected: dict[str, object] = {}
+    monkeypatch.setattr(awf_plan, "_preflight_environment", lambda _path: nullcontext())
+    monkeypatch.setattr(
+        awf_preflight,
+        "run_fast",
+        lambda _args: SimpleNamespace(
+            report={
+                "status": "FAIL",
+                "allow_remote_dispatch": False,
+                "required_next_action": "run_deep_preflight",
+                "layers": [
+                    {
+                        "id": "agent-bus",
+                        "status": "PASS",
+                        "evidence": {"pending": {"architect": 1, "coder": 0}},
+                    }
+                ],
+            },
+            config={"AWF_ARCH_TOKEN": "a", "AWF_CODER_TOKEN": "b"},
+        ),
+    )
+    monkeypatch.setattr(awf_preflight, "cache_path", lambda root: root / "latest-deep.json")
+    monkeypatch.setattr(awf_preflight, "utc_now", lambda: "now")
+
+    def load(path, fingerprint, now, **kwargs):
+        selected.update(path=path, fingerprint=fingerprint, now=now, **kwargs)
+        return previous
+
+    monkeypatch.setattr(awf_preflight, "load_current_cache", load)
+    monkeypatch.setattr(
+        awf_preflight,
+        "run_deep",
+        lambda _args: pytest.fail("busy Architect listener must not start a second Deep probe"),
+    )
+
+    report = awf_plan._run_dispatch_preflight(args, store=store, repo=tmp_path / "repo")
+
+    assert report == previous
+    assert selected["fingerprint"] == "a" * 64
+    assert selected["source_role"] == "architect"
+    assert selected["target_role"] == "coder"
+
+
 def test_remote_dispatch_resumes_only_the_same_inflight_timed_out_probe(
     monkeypatch, tmp_path: Path
 ) -> None:

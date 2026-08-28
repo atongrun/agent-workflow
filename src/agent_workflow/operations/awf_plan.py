@@ -416,12 +416,56 @@ def _run_dispatch_preflight(
             preflight_args.probe_id = resume_probe
             report = awf_preflight.run_resume_deep(preflight_args)
         else:
-            fast = awf_preflight.run_fast(preflight_args).report
+            fast_result = awf_preflight.run_fast(preflight_args)
+            fast = fast_result.report
             report = fast
             if fast.get("allow_remote_dispatch") is not True:
                 if fast.get("required_next_action") != "run_deep_preflight":
                     raise PlanOperationError("Fast Preflight denied remote business dispatch")
-                report = awf_preflight.run_deep(preflight_args)
+                previous_fingerprint = (
+                    previous_report.get("fingerprint")
+                    if isinstance(previous_report, dict)
+                    else None
+                )
+                previous_current = (
+                    awf_preflight.load_current_cache(
+                        awf_preflight.cache_path(preflight_args.state_root),
+                        previous_fingerprint,
+                        awf_preflight.utc_now(),
+                        config=fast_result.config,
+                        source_role=preflight_args.source_role,
+                        target_role=preflight_args.target_role,
+                    )
+                    if isinstance(previous_fingerprint, str)
+                    else None
+                )
+                bus_layer = next(
+                    (
+                        layer
+                        for layer in fast.get("layers", [])
+                        if isinstance(layer, dict) and layer.get("id") == "agent-bus"
+                    ),
+                    None,
+                )
+                bus_evidence = bus_layer.get("evidence") if isinstance(bus_layer, dict) else None
+                expected_pending = {
+                    preflight_args.source_role: 1,
+                    preflight_args.target_role: 0,
+                }
+                # The initiating MCP call already proved the cross-role Deep
+                # round trip.  A managed Architect handler cannot launch a
+                # second probe whose result must be consumed by the same busy
+                # listener.  Reuse only that exact authenticated, unexpired
+                # report after the current handler's full Fast layers pass.
+                if (
+                    isinstance(previous_report, dict)
+                    and previous_current == previous_report
+                    and isinstance(bus_evidence, dict)
+                    and bus_evidence.get("pending") == expected_pending
+                ):
+                    report = previous_report
+                else:
+                    report = awf_preflight.run_deep(preflight_args)
     current = store.load().get("preflight")
     preflight = dict(current) if isinstance(current, dict) else {}
     preflight["remote_dispatch"] = report
