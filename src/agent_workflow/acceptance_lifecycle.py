@@ -229,10 +229,13 @@ def _mirrored_retained_review_status(workspace: Path, status: str, state_root: P
         if source.is_symlink() or not source.is_file():
             return False
         try:
+            source_size = source.stat().st_size
+            if source_size > _MAX_RETAINED_REVIEW_REPORT_BYTES:
+                return False
             content = source.read_bytes()
         except OSError:
             return False
-        if len(content) > _MAX_RETAINED_REVIEW_REPORT_BYTES:
+        if len(content) != source_size:
             return False
         digest = hashlib.sha256(content).digest()
         mirrored = False
@@ -250,6 +253,9 @@ def _mirrored_retained_review_status(workspace: Path, status: str, state_root: P
                 if not candidate_relative.endswith(f"/.awf/artifacts/{source.name}"):
                     continue
                 try:
+                    candidate_size = candidate.stat().st_size
+                    if candidate_size != len(content):
+                        continue
                     candidate_content = candidate.read_bytes()
                 except OSError:
                     continue

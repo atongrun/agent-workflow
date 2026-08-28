@@ -729,7 +729,11 @@ def test_terminal_exact_provenance_recovers_ambiguous_business_dispatch(
         current_card={
             **current,
             "status": "dispatching",
-            "prepared_dispatch": {"commit": "5" * 40},
+            "prepared_dispatch": {
+                "commit": "5" * 40,
+                "delivery_id": "awf:" + "a" * 64,
+                "payload_sha256": "sha256:" + "b" * 64,
+            },
         },
         stop_reason="business dispatch failed or became ambiguous; no automatic retry",
     )
@@ -760,6 +764,8 @@ def test_terminal_exact_provenance_recovers_ambiguous_business_dispatch(
         "_merge_and_observe",
         lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "merge"},
     )
+    monkeypatch.setattr(awf_plan, "_git", lambda *_args, **_kwargs: "9" * 40)
+    monkeypatch.setattr(awf_plan, "_git_is_ancestor", lambda *_args, **_kwargs: True)
 
     result = awf_plan.handle_card_terminal(
         args=args,
@@ -776,9 +782,10 @@ def test_terminal_exact_provenance_recovers_ambiguous_business_dispatch(
     recovery = store.load()["last_completion"]["card"]["dispatch_recovery"]
     assert recovery["source"] == "verified_terminal_provenance"
     assert recovery["pull_request"] == 7
+    assert recovery["prepared_delivery_id"] == "awf:" + "a" * 64
 
 
-def test_terminal_ambiguous_dispatch_rejects_non_pr_downstream_fact(tmp_path: Path) -> None:
+def test_terminal_ambiguous_dispatch_rejects_unrelated_pr_head(monkeypatch, tmp_path: Path) -> None:
     store, args, provenance, evidence, input_context = terminal_fixture(tmp_path)
     current = dict(store.load()["current_card"])
     store.update(
@@ -786,10 +793,15 @@ def test_terminal_ambiguous_dispatch_rejects_non_pr_downstream_fact(tmp_path: Pa
         current_card={
             **current,
             "status": "dispatching",
-            "prepared_dispatch": {"commit": "5" * 40},
+            "prepared_dispatch": {
+                "commit": "5" * 40,
+                "delivery_id": "awf:" + "a" * 64,
+                "payload_sha256": "sha256:" + "b" * 64,
+            },
         },
     )
-    provenance["pull_request"] = 0
+    monkeypatch.setattr(awf_plan, "_git", lambda *_args, **_kwargs: "9" * 40)
+    monkeypatch.setattr(awf_plan, "_git_is_ancestor", lambda *_args, **_kwargs: False)
 
     with pytest.raises(awf_plan.PlanOperationError, match="not eligible"):
         awf_plan.handle_card_terminal(

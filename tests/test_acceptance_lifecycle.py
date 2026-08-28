@@ -218,6 +218,16 @@ def test_explicit_frozen_recovery_accepts_only_mirrored_review_report(monkeypatc
     report = profile.repo / ".awf" / "artifacts" / "review-report-task.md"
     report.parent.mkdir(parents=True)
     report.write_text("# Review Report\n\nPASS\n", encoding="utf-8")
+    oversized = (
+        profile.state_root
+        / "event-11"
+        / "model-workspace-test"
+        / ".awf"
+        / "artifacts"
+        / report.name
+    )
+    oversized.parent.mkdir(parents=True)
+    oversized.write_bytes(b"x" * (acceptance_lifecycle._MAX_RETAINED_REVIEW_REPORT_BYTES + 1))
     mirror = (
         profile.state_root
         / "event-12"

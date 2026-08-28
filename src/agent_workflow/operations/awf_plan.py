@@ -95,6 +95,22 @@ def _git(repo: Path, *args: str, binary: bool = False) -> str | bytes:
     return result.stdout.strip()
 
 
+def _git_is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        result = run_command(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", ancestor, descendant],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+    except ExecutionFailure as exc:
+        raise PlanOperationError("trusted Git ancestry check failed") from exc
+    if result.returncode not in {0, 1}:
+        raise PlanOperationError("trusted Git ancestry check failed")
+    return result.returncode == 0
+
+
 def _profile_for_machine(machine: facade.MachineContract, role: str):
     profile = next((item for item in machine.profiles if item.role == role), None)
     if profile is None:
@@ -1561,11 +1577,16 @@ def handle_card_terminal(
     ):
         plan_value = run.get("plan")
         prepared = card_value.get("prepared_dispatch")
+        prepared_commit = prepared.get("commit") if isinstance(prepared, dict) else None
         exact_downstream = (
             isinstance(plan_value, dict)
             and isinstance(prepared, dict)
-            and isinstance(prepared.get("commit"), str)
-            and bool(prepared["commit"])
+            and isinstance(prepared_commit, str)
+            and re.fullmatch(r"[0-9a-f]{40,64}", prepared_commit) is not None
+            and isinstance(prepared.get("delivery_id"), str)
+            and prepared["delivery_id"].startswith("awf:")
+            and isinstance(prepared.get("payload_sha256"), str)
+            and re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", prepared["payload_sha256"]) is not None
             and card_value.get("branch") == args.branch
             and card_value.get("path") == args.card
             and card_value.get("frozen_base") == provenance.get("base_sha")
@@ -1576,6 +1597,22 @@ def handle_card_terminal(
             and isinstance(provenance.get("pull_request"), int)
             and provenance["pull_request"] > 0
         )
+        if exact_downstream:
+            prepared_blob = _git(
+                terminal_repo,
+                "rev-parse",
+                f"{prepared_commit}:{card_value['path']}",
+            )
+            terminal_blob = _git(
+                terminal_repo,
+                "rev-parse",
+                f"{provenance['head_sha']}:{card_value['path']}",
+            )
+            exact_downstream = bool(
+                prepared_blob
+                and prepared_blob == terminal_blob
+                and _git_is_ancestor(terminal_repo, prepared_commit, str(provenance["head_sha"]))
+            )
         if exact_downstream:
             card_value = {
                 **card_value,
@@ -1588,6 +1625,8 @@ def handle_card_terminal(
                     "source_event_id": input_context["source_event_id"],
                     "pull_request": provenance["pull_request"],
                     "head_sha": provenance["head_sha"],
+                    "prepared_delivery_id": prepared["delivery_id"],
+                    "prepared_payload_sha256": prepared["payload_sha256"],
                 },
             }
             run = store.update(status="card_active", current_card=card_value, stop_reason="")
