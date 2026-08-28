@@ -4292,6 +4292,13 @@ def test_reviewer_outbox_resume_removes_managed_report(monkeypatch, tmp_path):
     monkeypatch.setattr(awf_role, "resume_outbox", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         awf_role,
+        "pre_invocation_gate",
+        lambda *_args, **_kwargs: pytest.fail(
+            "durable reviewer outbox recovery must precede dirty-workspace invocation gates"
+        ),
+    )
+    monkeypatch.setattr(
+        awf_role,
         "tool_opencode_review",
         lambda *args, **kwargs: pytest.fail("outbox resume must not invoke reviewer"),
     )
