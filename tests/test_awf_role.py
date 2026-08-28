@@ -4279,6 +4279,108 @@ def test_reviewer_v2_routes_are_persisted_in_sent_outbox(
     assert len(tool_calls) == 1
 
 
+def test_reviewer_outbox_resume_removes_managed_report(monkeypatch, tmp_path):
+    ns, _send_calls, _tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        _review_markdown("PASS"),
+    )
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    managed_report = repo / ns.review_report
+    managed_report.parent.mkdir(parents=True, exist_ok=True)
+    managed_report.write_text(_review_markdown("PASS"), encoding="utf-8")
+    monkeypatch.setattr(awf_role, "resume_outbox", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_review",
+        lambda *args, **kwargs: pytest.fail("outbox resume must not invoke reviewer"),
+    )
+
+    assert awf_role.role_reviewer(ns) == 0
+    assert not managed_report.exists()
+
+
+def test_terminal_delivery_chain_binds_prepared_coder_and_reviewer_outboxes(tmp_path):
+    state_root = tmp_path / "state"
+    provenance = _pr_provenance()
+    branch = str(provenance["head_ref"])
+    prepared_delivery_id = "awf:" + "a" * 64
+    prepared_payload_sha256 = "sha256:" + "b" * 64
+    coder_evidence = awf_role.RunEvidence(411, "coder", state_root=state_root)
+    review_payload = awf_role.build_delivery_payload(
+        "coder",
+        "task:awf-review-v3",
+        {"task_id": "task", "branch": branch, **awf_role.provenance_payload(provenance)},
+        coder_evidence,
+    )
+    awf_role.prepare_outbox(
+        coder_evidence,
+        {
+            "key": prepared_delivery_id,
+            "delivery_id": prepared_delivery_id,
+            "payload_sha256": prepared_payload_sha256,
+            "source_event_id": 408,
+        },
+        action="coder.review_handoff",
+        branch=branch,
+        source_commit="5" * 40,
+        evidence_commit=str(provenance["head_sha"]),
+        to_role="reviewer",
+        event_type="task:awf-review-v3",
+        payload=review_payload,
+        provenance=provenance,
+    )
+    reviewer_evidence = awf_role.RunEvidence(412, "reviewer", state_root=state_root)
+    reviewer_input = {
+        "key": review_payload["awf_delivery_id"],
+        "delivery_id": review_payload["awf_delivery_id"],
+        "payload_sha256": review_payload["awf_payload_sha256"],
+        "source_event_id": review_payload["awf_source_event_id"],
+    }
+    decision_payload = awf_role.build_delivery_payload(
+        "reviewer",
+        "decision:awf-ready-v3",
+        {"task_id": "task", "branch": branch, **awf_role.provenance_payload(provenance)},
+        reviewer_evidence,
+    )
+    awf_role.prepare_outbox(
+        reviewer_evidence,
+        reviewer_input,
+        action="reviewer.pass",
+        branch=branch,
+        source_commit=str(provenance["head_sha"]),
+        evidence_commit=str(provenance["head_sha"]),
+        to_role="architect",
+        event_type="decision:awf-ready-v3",
+        payload=decision_payload,
+        provenance=provenance,
+    )
+    terminal_input = {
+        "delivery_id": decision_payload["awf_delivery_id"],
+        "payload_sha256": decision_payload["awf_payload_sha256"],
+        "source_event_id": decision_payload["awf_source_event_id"],
+    }
+
+    assert awf_role.terminal_delivery_chain_matches(
+        state_root,
+        prepared_delivery_id=prepared_delivery_id,
+        prepared_payload_sha256=prepared_payload_sha256,
+        terminal_input_context=terminal_input,
+        branch=branch,
+        provenance=provenance,
+        reviewer_verdict="PASS",
+    )
+    assert not awf_role.terminal_delivery_chain_matches(
+        state_root,
+        prepared_delivery_id="awf:" + "c" * 64,
+        prepared_payload_sha256=prepared_payload_sha256,
+        terminal_input_context=terminal_input,
+        branch=branch,
+        provenance=provenance,
+        reviewer_verdict="PASS",
+    )
+
+
 @pytest.mark.parametrize(
     "content",
     [

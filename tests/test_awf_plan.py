@@ -575,6 +575,7 @@ def terminal_fixture(tmp_path: Path, *, mode: str = "one-card"):
     )
     args = argparse.Namespace(
         branch="codex/CARD-001",
+        card="docs/tasks/CARD-001.md",
         commit="6" * 40,
         report=".awf/artifacts/impl-report-CARD-001.md",
         review_report=".awf/artifacts/review-report-CARD-001.md",
@@ -716,6 +717,108 @@ def test_plan_terminal_approve_creates_completed_card_fact(monkeypatch, tmp_path
     assert run["current_card"] is None
     assert run["last_completion"]["merge"]["commit"] == "7" * 40
     assert store.completions() == (run["last_completion"],)
+
+
+def test_terminal_exact_provenance_recovers_ambiguous_business_dispatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    store, args, provenance, evidence, input_context = terminal_fixture(tmp_path)
+    current = dict(store.load()["current_card"])
+    store.update(
+        status="dispatch_ambiguous",
+        current_card={
+            **current,
+            "status": "dispatching",
+            "prepared_dispatch": {
+                "commit": "5" * 40,
+                "delivery_id": "awf:" + "a" * 64,
+                "payload_sha256": "sha256:" + "b" * 64,
+            },
+        },
+        stop_reason="business dispatch failed or became ambiguous; no automatic retry",
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setenv("AWF_REPO_DIR", str(source))
+    monkeypatch.setattr(
+        awf_plan,
+        "_invoke_terminal_decision",
+        lambda **_kwargs: {"verdict": "approve", "sha256": "8" * 64, "bytes": 10},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_wait_exact_ci",
+        lambda *_a, **_k: {"conclusion": "SUCCESS", "head_sha": "6" * 40, "checks": 1},
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_approval_observation",
+        lambda *_a, **_k: {
+            "status": "approved",
+            "review_decision": "APPROVED",
+            "mergeability": "CLEAN",
+        },
+    )
+    monkeypatch.setattr(
+        awf_plan,
+        "_merge_and_observe",
+        lambda **_kwargs: {"state": "MERGED", "commit": "7" * 40, "method": "merge"},
+    )
+    monkeypatch.setattr(awf_plan, "_git", lambda *_args, **_kwargs: "9" * 40)
+    monkeypatch.setattr(awf_plan, "_git_is_ancestor", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        awf_plan,
+        "terminal_delivery_chain_matches",
+        lambda *_args, **_kwargs: True,
+    )
+
+    result = awf_plan.handle_card_terminal(
+        args=args,
+        evidence=evidence,
+        input_context=input_context,
+        review_report={"verdict": "PASS"},
+        provenance=provenance,
+        terminal_repo=tmp_path / "terminal",
+        implementation_sha256="sha256:" + "1" * 64,
+        review_sha256="sha256:" + "2" * 64,
+    )
+
+    assert result["terminal_state"] == "completed"
+    recovery = store.load()["last_completion"]["card"]["dispatch_recovery"]
+    assert recovery["source"] == "verified_terminal_provenance"
+    assert recovery["pull_request"] == 7
+    assert recovery["prepared_delivery_id"] == "awf:" + "a" * 64
+
+
+def test_terminal_ambiguous_dispatch_rejects_unrelated_pr_head(monkeypatch, tmp_path: Path) -> None:
+    store, args, provenance, evidence, input_context = terminal_fixture(tmp_path)
+    current = dict(store.load()["current_card"])
+    store.update(
+        status="dispatch_ambiguous",
+        current_card={
+            **current,
+            "status": "dispatching",
+            "prepared_dispatch": {
+                "commit": "5" * 40,
+                "delivery_id": "awf:" + "a" * 64,
+                "payload_sha256": "sha256:" + "b" * 64,
+            },
+        },
+    )
+    monkeypatch.setattr(awf_plan, "_git", lambda *_args, **_kwargs: "9" * 40)
+    monkeypatch.setattr(awf_plan, "_git_is_ancestor", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(awf_plan.PlanOperationError, match="not eligible"):
+        awf_plan.handle_card_terminal(
+            args=args,
+            evidence=evidence,
+            input_context=input_context,
+            review_report={"verdict": "PASS"},
+            provenance=provenance,
+            terminal_repo=tmp_path / "terminal",
+            implementation_sha256="sha256:" + "1" * 64,
+            review_sha256="sha256:" + "2" * 64,
+        )
 
 
 def test_plan_terminal_waits_for_approval_without_merge(monkeypatch, tmp_path: Path) -> None:

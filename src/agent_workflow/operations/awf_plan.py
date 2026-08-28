@@ -34,7 +34,12 @@ from agent_workflow.operations.awf_dispatch import DispatchError
 from agent_workflow.operations.awf_executor import ExecutionFailure
 from agent_workflow.operations.awf_executor import run as run_command
 from agent_workflow.operations.awf_network import add_url_host_to_no_proxy
-from agent_workflow.operations.awf_role import _gh_json, _provider_spec, spawn_rendered
+from agent_workflow.operations.awf_role import (
+    _gh_json,
+    _provider_spec,
+    spawn_rendered,
+    terminal_delivery_chain_matches,
+)
 from agent_workflow.operations.awf_taskcard import reviewer_selection_contract
 from agent_workflow.plan_loop import (
     PLAN_START_TYPE,
@@ -93,6 +98,22 @@ def _git(repo: Path, *args: str, binary: bool = False) -> str | bytes:
     if binary:
         return result.stdout if isinstance(result.stdout, bytes) else result.stdout.encode("utf-8")
     return result.stdout.strip()
+
+
+def _git_is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        result = run_command(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", ancestor, descendant],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+    except ExecutionFailure as exc:
+        raise PlanOperationError("trusted Git ancestry check failed") from exc
+    if result.returncode not in {0, 1}:
+        raise PlanOperationError("trusted Git ancestry check failed")
+    return result.returncode == 0
 
 
 def _profile_for_machine(machine: facade.MachineContract, role: str):
@@ -1554,6 +1575,75 @@ def handle_card_terminal(
     if run.get("status") in {"merge_intent", "merge_ambiguous"}:
         raise PlanOperationError("merge mutation is ambiguous; no automatic terminal replay")
     card_value = run.get("current_card")
+    if (
+        run.get("status") == "dispatch_ambiguous"
+        and isinstance(card_value, dict)
+        and card_value.get("status") == "dispatching"
+    ):
+        plan_value = run.get("plan")
+        prepared = card_value.get("prepared_dispatch")
+        prepared_commit = prepared.get("commit") if isinstance(prepared, dict) else None
+        exact_downstream = (
+            isinstance(plan_value, dict)
+            and isinstance(prepared, dict)
+            and isinstance(prepared_commit, str)
+            and re.fullmatch(r"[0-9a-f]{40,64}", prepared_commit) is not None
+            and isinstance(prepared.get("delivery_id"), str)
+            and prepared["delivery_id"].startswith("awf:")
+            and isinstance(prepared.get("payload_sha256"), str)
+            and re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", prepared["payload_sha256"]) is not None
+            and card_value.get("branch") == args.branch
+            and card_value.get("path") == args.card
+            and card_value.get("frozen_base") == provenance.get("base_sha")
+            and plan_value.get("repository") == provenance.get("upstream_repo")
+            and plan_value.get("base_ref") == provenance.get("base_ref")
+            and provenance.get("head_ref") == args.branch
+            and provenance.get("head_sha") == args.commit
+            and isinstance(provenance.get("pull_request"), int)
+            and provenance["pull_request"] > 0
+        )
+        if exact_downstream:
+            prepared_blob = _git(
+                terminal_repo,
+                "rev-parse",
+                f"{prepared_commit}:{card_value['path']}",
+            )
+            terminal_blob = _git(
+                terminal_repo,
+                "rev-parse",
+                f"{provenance['head_sha']}:{card_value['path']}",
+            )
+            exact_downstream = bool(
+                prepared_blob
+                and prepared_blob == terminal_blob
+                and _git_is_ancestor(terminal_repo, prepared_commit, str(provenance["head_sha"]))
+                and terminal_delivery_chain_matches(
+                    Path(evidence.state_dir),
+                    prepared_delivery_id=str(prepared["delivery_id"]),
+                    prepared_payload_sha256=str(prepared["payload_sha256"]),
+                    terminal_input_context=input_context,
+                    branch=args.branch,
+                    provenance=provenance,
+                    reviewer_verdict=str(review_report["verdict"]),
+                )
+            )
+        if exact_downstream:
+            card_value = {
+                **card_value,
+                "status": "active",
+                "taskcard_commit": prepared["commit"],
+                "dispatch_recovery": {
+                    "format": "awf.plan-dispatch-recovery.v1",
+                    "source": "verified_terminal_provenance",
+                    "terminal_event_id": evidence.event_id,
+                    "source_event_id": input_context["source_event_id"],
+                    "pull_request": provenance["pull_request"],
+                    "head_sha": provenance["head_sha"],
+                    "prepared_delivery_id": prepared["delivery_id"],
+                    "prepared_payload_sha256": prepared["payload_sha256"],
+                },
+            }
+            run = store.update(status="card_active", current_card=card_value, stop_reason="")
     if card_value is None and run.get("status") in {
         "completed",
         "milestone_completed",

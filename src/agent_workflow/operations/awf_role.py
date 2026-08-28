@@ -4031,6 +4031,69 @@ def validate_outbox_record(record_value: dict[str, object]) -> None:
         die("legacy outbox must not contain PR provenance")
 
 
+def terminal_delivery_chain_matches(
+    state_root: Path,
+    *,
+    prepared_delivery_id: str,
+    prepared_payload_sha256: str,
+    terminal_input_context: dict[str, object],
+    branch: str,
+    provenance: dict[str, object],
+    reviewer_verdict: str,
+) -> bool:
+    """Verify coder -> reviewer -> architect durable causality without replaying transport."""
+
+    def load(role: str, input_delivery_id: str) -> dict[str, object] | None:
+        digest = hashlib.sha256(input_delivery_id.encode("utf-8")).hexdigest()
+        path = state_root / "outbox" / role / f"{digest}.json"
+        try:
+            value = _load_delivery_record(path, f"{role} causal outbox")
+            if value is not None:
+                validate_outbox_record(value)
+            return value
+        except SystemExit:
+            return None
+
+    coder = load("coder", prepared_delivery_id)
+    if coder is None:
+        return False
+    expected_provenance = provenance_payload(provenance)
+    if (
+        coder.get("input_delivery_id") != prepared_delivery_id
+        or coder.get("input_payload_sha256") != prepared_payload_sha256
+        or coder.get("action") != "coder.review_handoff"
+        or coder.get("branch") != branch
+        or coder.get("provenance") != expected_provenance
+        or coder.get("status") not in {"prepared", "sent"}
+    ):
+        return False
+    reviewer_delivery_id = coder.get("delivery_id")
+    if not isinstance(reviewer_delivery_id, str):
+        return False
+    reviewer = load("reviewer", reviewer_delivery_id)
+    expected_action = "reviewer.pass" if reviewer_verdict == "PASS" else "reviewer.blocked"
+    coder_payload = coder.get("payload")
+    reviewer_payload = reviewer.get("payload") if isinstance(reviewer, dict) else None
+    if (
+        not isinstance(reviewer, dict)
+        or not isinstance(coder_payload, dict)
+        or not isinstance(reviewer_payload, dict)
+        or reviewer.get("input_delivery_id") != reviewer_delivery_id
+        or reviewer.get("input_payload_sha256") != coder.get("payload_sha256")
+        or reviewer.get("input_source_event_id") != coder_payload.get("awf_source_event_id")
+        or reviewer.get("action") != expected_action
+        or reviewer.get("branch") != branch
+        or reviewer.get("provenance") != expected_provenance
+        or reviewer.get("status") not in {"prepared", "sent"}
+        or reviewer.get("delivery_id") != terminal_input_context.get("delivery_id")
+        or reviewer.get("payload_sha256") != terminal_input_context.get("payload_sha256")
+        or reviewer_payload.get("awf_source_event_id")
+        != terminal_input_context.get("source_event_id")
+    ):
+        return False
+    return True
+
+
 def prepare_outbox(
     evidence: RunEvidence | None,
     input_context: dict[str, object],
@@ -4822,6 +4885,15 @@ def role_coder(a: argparse.Namespace) -> int:
     return 0
 
 
+def _remove_delivered_review_report(repo: str, a: argparse.Namespace) -> None:
+    """Remove the managed copy after its durable downstream outbox is sent."""
+    review_report_path = resolve_review_report_path(repo, a.review_report, a.report)
+    try:
+        review_report_path.unlink(missing_ok=True)
+    except OSError as exc:
+        log(f"warning: failed to remove delivered ReviewReport: {exc}")
+
+
 def role_reviewer(a: argparse.Namespace) -> int:
     repo = str(Path(env("AWF_REPO_DIR", required=True)).resolve())
     script_dir = env("AWF_SCRIPT_DIR", required=True)
@@ -4846,6 +4918,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
 
     try:
         if resume_outbox(a, "reviewer", repo, evidence, input_context):
+            _remove_delivered_review_report(repo, a)
             record(evidence, "outbox_replay_complete")
             return 0
     except SystemExit:
@@ -5268,10 +5341,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     # trusted checkout dirty after the delivery has completed: the same managed
     # Reviewer workspace must be reusable for the next dynamically authored
     # card in a Plan loop.
-    try:
-        review_report_path.unlink(missing_ok=True)
-    except OSError as exc:
-        log(f"warning: failed to remove delivered ReviewReport: {exc}")
+    _remove_delivered_review_report(repo, a)
     return 0
 
 
