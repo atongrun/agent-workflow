@@ -195,6 +195,73 @@ def test_frozen_without_validated_never_relaxes_preexisting_workspace_deletion(
     assert (tmp_path / "acceptance.closeout.json").is_file()
 
 
+def test_explicit_frozen_recovery_accepts_only_mirrored_review_report(monkeypatch, tmp_path: Path):
+    profile = _profile(tmp_path)
+    project = profile.repo / ".awf" / "project.yaml"
+    project.parent.mkdir(parents=True)
+    project.write_text("kind: Project\n", encoding="utf-8")
+    subprocess.run(["git", "add", str(project)], check=True, cwd=profile.repo)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Acceptance Test",
+            "-c",
+            "user.email=acceptance@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        cwd=profile.repo,
+    )
+    report = profile.repo / ".awf" / "artifacts" / "review-report-task.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Review Report\n\nPASS\n", encoding="utf-8")
+    mirror = (
+        profile.state_root
+        / "event-12"
+        / "model-workspace-test"
+        / ".awf"
+        / "artifacts"
+        / report.name
+    )
+    mirror.parent.mkdir(parents=True)
+    mirror.write_bytes(report.read_bytes())
+    manifest = profile.state_root / "plan-runs" / "plan-1" / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    monkeypatch.setattr(node, "stop", lambda _profile: 0)
+    monkeypatch.setattr(node, "uninstall", lambda _profile: pytest.fail("must not uninstall"))
+    acceptance_lifecycle.create_manifest(
+        manifest,
+        run_id="acceptance-mirrored-review",
+        profiles=(profile,),
+        workspaces=(profile.repo,),
+    )
+
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="workspace status is unavailable",
+    ):
+        acceptance_lifecycle.closeout(manifest)
+    result = acceptance_lifecycle.closeout(manifest, authorize_frozen_recovery=True)
+
+    assert result["state"] == "CLOSED"
+    assert mirror.is_file()
+    assert not profile.repo.exists()
+
+
 def test_closeout_resumes_exact_frozen_partial_workspace_removal(monkeypatch, tmp_path: Path):
     profile = _profile(tmp_path)
     subprocess.run(["git", "config", "user.name", "Acceptance Test"], check=True, cwd=profile.repo)

@@ -18,6 +18,10 @@ from agent_workflow import node
 MANIFEST_FORMAT = "awf.acceptance-lifecycle.v1"
 CLOSEOUT_FORMAT = "awf.acceptance-lifecycle-closeout.v1"
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_RETAINED_REVIEW_REPORT_RE = re.compile(
+    r"^\?\?\s+(\.awf/artifacts/review-report-[A-Za-z0-9._-]+\.md)$"
+)
+_MAX_RETAINED_REVIEW_REPORT_BYTES = 64 * 1024
 _ENTRY_FIELDS = {
     "profile",
     "profile_sha256",
@@ -211,6 +215,57 @@ def _explicit_frozen_recovery_status(status: str) -> bool:
     return True
 
 
+def _mirrored_retained_review_status(workspace: Path, status: str, state_root: Path) -> bool:
+    """Accept only run-owned ReviewReports already retained byte-for-byte in event evidence."""
+    lines = [line.strip() for line in status.splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        match = _RETAINED_REVIEW_REPORT_RE.fullmatch(line)
+        if match is None:
+            return False
+        relative = match.group(1)
+        source = workspace / relative
+        if source.is_symlink() or not source.is_file():
+            return False
+        try:
+            content = source.read_bytes()
+        except OSError:
+            return False
+        if len(content) > _MAX_RETAINED_REVIEW_REPORT_BYTES:
+            return False
+        digest = hashlib.sha256(content).digest()
+        mirrored = False
+        for event_dir in state_root.iterdir():
+            if (
+                not re.fullmatch(r"event-[1-9][0-9]*", event_dir.name)
+                or event_dir.is_symlink()
+                or not event_dir.is_dir()
+            ):
+                continue
+            for candidate in event_dir.rglob(source.name):
+                if candidate.is_symlink() or not candidate.is_file():
+                    continue
+                candidate_relative = candidate.relative_to(event_dir).as_posix()
+                if not candidate_relative.endswith(f"/.awf/artifacts/{source.name}"):
+                    continue
+                try:
+                    candidate_content = candidate.read_bytes()
+                except OSError:
+                    continue
+                if (
+                    len(candidate_content) == len(content)
+                    and hashlib.sha256(candidate_content).digest() == digest
+                ):
+                    mirrored = True
+                    break
+            if mirrored:
+                break
+        if not mirrored:
+            return False
+    return True
+
+
 def _remove_workspace(path: Path, *, windows: bool | None = None) -> None:
     """Remove one exact workspace, retrying Windows read-only Git files only."""
     root = path.resolve()
@@ -290,6 +345,10 @@ def closeout(
             )
         loaded.append((active, entry, str(status)))
     installation_by_workspace = {entry[1]["workspace"]: entry[2] for entry in loaded}
+    state_roots = {profile.state_root for profile, _entry, _status in loaded}
+    if len(state_roots) != 1:
+        raise AcceptanceLifecycleError("CLEANUP_BLOCKED: state root identity is unknown")
+    state_root = next(iter(state_roots))
     for workspace in workspaces:
         candidate = _canonical_path(workspace, label="workspace")
         if not candidate.is_dir():
@@ -297,16 +356,16 @@ def closeout(
                 continue
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace identity is unknown")
         result = subprocess.run(
-            ["git", "-C", str(candidate), "status", "--porcelain"],
+            ["git", "-C", str(candidate), "status", "--porcelain", "--untracked-files=all"],
             capture_output=True,
             text=True,
             check=False,
         )
-        recoverable_status = (
-            _explicit_frozen_recovery_status(result.stdout)
-            if explicit_frozen_recovery
-            else _partial_workspace_removal(result.stdout)
-        )
+        recoverable_status = _partial_workspace_removal(result.stdout)
+        if explicit_frozen_recovery:
+            recoverable_status = _explicit_frozen_recovery_status(
+                result.stdout
+            ) or _mirrored_retained_review_status(candidate, result.stdout, state_root)
         if result.returncode or (result.stdout and (not recovering or not recoverable_status)):
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace status is unavailable")
     if not validated_exists:

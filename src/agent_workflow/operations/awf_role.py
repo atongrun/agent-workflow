@@ -4822,6 +4822,15 @@ def role_coder(a: argparse.Namespace) -> int:
     return 0
 
 
+def _remove_delivered_review_report(repo: str, a: argparse.Namespace) -> None:
+    """Remove the managed copy after its durable downstream outbox is sent."""
+    review_report_path = resolve_review_report_path(repo, a.review_report, a.report)
+    try:
+        review_report_path.unlink(missing_ok=True)
+    except OSError as exc:
+        log(f"warning: failed to remove delivered ReviewReport: {exc}")
+
+
 def role_reviewer(a: argparse.Namespace) -> int:
     repo = str(Path(env("AWF_REPO_DIR", required=True)).resolve())
     script_dir = env("AWF_SCRIPT_DIR", required=True)
@@ -4846,6 +4855,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
 
     try:
         if resume_outbox(a, "reviewer", repo, evidence, input_context):
+            _remove_delivered_review_report(repo, a)
             record(evidence, "outbox_replay_complete")
             return 0
     except SystemExit:
@@ -5268,10 +5278,7 @@ def role_reviewer(a: argparse.Namespace) -> int:
     # trusted checkout dirty after the delivery has completed: the same managed
     # Reviewer workspace must be reusable for the next dynamically authored
     # card in a Plan loop.
-    try:
-        review_report_path.unlink(missing_ok=True)
-    except OSError as exc:
-        log(f"warning: failed to remove delivered ReviewReport: {exc}")
+    _remove_delivered_review_report(repo, a)
     return 0
 
 

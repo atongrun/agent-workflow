@@ -1554,6 +1554,43 @@ def handle_card_terminal(
     if run.get("status") in {"merge_intent", "merge_ambiguous"}:
         raise PlanOperationError("merge mutation is ambiguous; no automatic terminal replay")
     card_value = run.get("current_card")
+    if (
+        run.get("status") == "dispatch_ambiguous"
+        and isinstance(card_value, dict)
+        and card_value.get("status") == "dispatching"
+    ):
+        plan_value = run.get("plan")
+        prepared = card_value.get("prepared_dispatch")
+        exact_downstream = (
+            isinstance(plan_value, dict)
+            and isinstance(prepared, dict)
+            and isinstance(prepared.get("commit"), str)
+            and bool(prepared["commit"])
+            and card_value.get("branch") == args.branch
+            and card_value.get("path") == args.card
+            and card_value.get("frozen_base") == provenance.get("base_sha")
+            and plan_value.get("repository") == provenance.get("upstream_repo")
+            and plan_value.get("base_ref") == provenance.get("base_ref")
+            and provenance.get("head_ref") == args.branch
+            and provenance.get("head_sha") == args.commit
+            and isinstance(provenance.get("pull_request"), int)
+            and provenance["pull_request"] > 0
+        )
+        if exact_downstream:
+            card_value = {
+                **card_value,
+                "status": "active",
+                "taskcard_commit": prepared["commit"],
+                "dispatch_recovery": {
+                    "format": "awf.plan-dispatch-recovery.v1",
+                    "source": "verified_terminal_provenance",
+                    "terminal_event_id": evidence.event_id,
+                    "source_event_id": input_context["source_event_id"],
+                    "pull_request": provenance["pull_request"],
+                    "head_sha": provenance["head_sha"],
+                },
+            }
+            run = store.update(status="card_active", current_card=card_value, stop_reason="")
     if card_value is None and run.get("status") in {
         "completed",
         "milestone_completed",

@@ -4279,6 +4279,27 @@ def test_reviewer_v2_routes_are_persisted_in_sent_outbox(
     assert len(tool_calls) == 1
 
 
+def test_reviewer_outbox_resume_removes_managed_report(monkeypatch, tmp_path):
+    ns, _send_calls, _tool_calls = _prepare_reviewer_routing(
+        monkeypatch,
+        tmp_path,
+        _review_markdown("PASS"),
+    )
+    repo = Path(os.environ["AWF_REPO_DIR"])
+    managed_report = repo / ns.review_report
+    managed_report.parent.mkdir(parents=True, exist_ok=True)
+    managed_report.write_text(_review_markdown("PASS"), encoding="utf-8")
+    monkeypatch.setattr(awf_role, "resume_outbox", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        awf_role,
+        "tool_opencode_review",
+        lambda *args, **kwargs: pytest.fail("outbox resume must not invoke reviewer"),
+    )
+
+    assert awf_role.role_reviewer(ns) == 0
+    assert not managed_report.exists()
+
+
 @pytest.mark.parametrize(
     "content",
     [
