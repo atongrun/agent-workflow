@@ -245,6 +245,8 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
         (b"# Decision\n\n`**Verdict:** APPROVE`\n", "approve"),
         (b"# Decision\n\n**Verdict** : request_changes\n", "request_changes"),
         (b"# Decision\n\n Verdict : REJECT \n", "reject"),
+        (b"# Decision\n\n**Verdict: `approve`**\n", "approve"),
+        (b"# Decision\n\n**Verdict:** `escalate`\n", "escalate"),
     ],
 )
 def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) -> None:
@@ -264,6 +266,8 @@ def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) 
         b"# Decision\n\n**Verdict: approve\n",
         b"# Decision\n\n**Verdict:** approve**\n",
         b"# Decision\n\n**Verdict:** **approve**\n",
+        b"# Decision\n\n**Verdict: `approve**\n",
+        b"# Decision\n\n**Verdict: `maybe`**\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** approve\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** reject\n",
     ],
