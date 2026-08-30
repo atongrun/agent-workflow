@@ -12,6 +12,15 @@ Rules:
   it meet each acceptance criterion, did it touch anything the card marked out of scope?
 - Run only the card's SAFE verification commands (unit tests, --help). Do NOT run any
   command that needs a real secret token or hits a remote server.
+- The trusted runner has already executed the card's safe verification commands after the
+  model changes and validated the committed ImplementationReport before review dispatch.
+  Independently rerun a safe command when the reviewer environment supports it. If the exact
+  command cannot start solely because this read-only reviewer sandbox or its local toolchain is
+  unavailable, that inability alone is not BLOCKED or REQUEST_CHANGES when the tracked
+  ImplementationReport records an exact PASS and inspection of the diff and tests supports it;
+  record the reviewer rerun limitation as advisory evidence. A command that runs and exposes a
+  failing behavior is still a deterministic failure. Missing or ambiguous trusted-runner evidence,
+  or an actual inability to assess an acceptance criterion, remains BLOCKED.
 - Do not "improve" or refactor the code. You review; you do not implement.
 - Write the complete ReviewReport at the exact repository-relative path supplied by the trusted
   runner. Use exactly one machine block in this form (the JSON object must be inside the HTML
