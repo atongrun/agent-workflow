@@ -4715,15 +4715,18 @@ def test_v3_reviewer_send_failure_replay_does_not_rerun_model(monkeypatch, tmp_p
     assert len(send_calls) == 2
 
 
+@pytest.mark.parametrize("tool", ["codex", "opencode"])
 def test_v3_reviewer_pr_verify_failure_reimports_durable_report_without_model(
     monkeypatch,
     tmp_path,
+    tool,
 ):
     content = _review_markdown("PASS", blocked_reason=None)
     ns, send_calls, tool_calls = _prepare_reviewer_routing(
         monkeypatch,
         tmp_path,
         content,
+        tool=tool,
     )
     provenance = _pr_provenance()
     ns.commit = provenance["head_sha"]
