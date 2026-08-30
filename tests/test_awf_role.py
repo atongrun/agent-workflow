@@ -2361,6 +2361,62 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
     ]
 
 
+def test_tool_opencode_review_promotes_stdout_when_report_missing(monkeypatch, tmp_path):
+    card_file = tmp_path / "card.md"
+    card_file.write_text("task")
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("instructions")
+    report_path = tmp_path / ".awf" / "review.md"
+
+    def fake_spawn(_argv, **kwargs):
+        Path(kwargs["stdout_path"]).write_text("review report from stdout\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(awf_role, "spawn", fake_spawn)
+
+    assert (
+        awf_role.tool_opencode_review(
+            str(tmp_path),
+            "main",
+            str(prompt_file),
+            str(card_file),
+            "provider/model",
+            str(report_path),
+        )
+        == 0
+    )
+    assert report_path.read_text(encoding="utf-8") == "review report from stdout\n"
+
+
+def test_tool_opencode_review_never_overwrites_model_report(monkeypatch, tmp_path):
+    card_file = tmp_path / "card.md"
+    card_file.write_text("task")
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("instructions")
+    report_path = tmp_path / ".awf" / "review.md"
+    report_path.parent.mkdir(parents=True)
+
+    def fake_spawn(_argv, **kwargs):
+        report_path.write_text("model-written report\n", encoding="utf-8")
+        Path(kwargs["stdout_path"]).write_text("different stdout\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(awf_role, "spawn", fake_spawn)
+
+    assert (
+        awf_role.tool_opencode_review(
+            str(tmp_path),
+            "main",
+            str(prompt_file),
+            str(card_file),
+            "provider/model",
+            str(report_path),
+        )
+        == 0
+    )
+    assert report_path.read_text(encoding="utf-8") == "model-written report\n"
+
+
 def test_tool_pi_review_uses_model_env_and_stdout_path(monkeypatch, tmp_path):
     """The Pi reviewer adapter captures stdout and lets the trusted runner write the report."""
     prompt_file = tmp_path / "prompt.md"

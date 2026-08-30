@@ -3800,11 +3800,46 @@ def tool_opencode_review(
         report_path=review_report_path,
         provider_args=(ATTACH_INPUT,) if attached_card else (),
     )
-    return spawn_rendered(
-        render_provider_invocation(spec),
-        evidence=evidence,
-        tracked_phase="opencode" if evidence is not None else None,
-    )
+    retained_output = getattr(evidence, "run_dir", None)
+    temporary_output = retained_output is None
+    if temporary_output:
+        with tempfile.NamedTemporaryFile(
+            prefix="awf-opencode-review-", suffix=".stdout", delete=False
+        ) as handle:
+            output_path = Path(handle.name)
+    else:
+        output_path = Path(retained_output) / "opencode-review.stdout"
+    try:
+        rc = spawn_rendered(
+            render_provider_invocation(spec),
+            evidence=evidence,
+            tracked_phase="opencode" if evidence is not None else None,
+            stdout_path=str(output_path),
+            stdout_max_bytes=64 * 1024,
+        )
+        report_path = Path(review_report_path)
+        if not report_path.is_absolute():
+            report_path = Path(repo) / report_path
+        if rc == 0 and not report_path.is_file() and output_path.is_file():
+            raw = output_path.read_bytes()
+            if raw:
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with report_path.open("xb") as report:
+                        report.write(raw)
+                        report.flush()
+                        os.fsync(report.fileno())
+                except FileExistsError:
+                    pass
+                record(
+                    evidence,
+                    "opencode_review_stdout_promoted",
+                    review_report_sha256="sha256:" + hashlib.sha256(raw).hexdigest(),
+                )
+        return rc
+    finally:
+        if temporary_output:
+            output_path.unlink(missing_ok=True)
 
 
 def tool_pi_review(
