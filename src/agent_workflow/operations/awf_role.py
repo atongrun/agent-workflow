@@ -5064,7 +5064,16 @@ def role_reviewer(a: argparse.Namespace) -> int:
     duplicate = gate is not None and getattr(gate, "reason", "") == "duplicate_event"
     checkpoint_path: Path | None = None
     checkpoint: dict[str, object] | None = None
-    if provenance is not None and evidence is not None and tool in {"opencode", "pi"}:
+    if (
+        provenance is not None
+        and evidence is not None
+        and tool
+        in {
+            "codex",
+            "opencode",
+            "pi",
+        }
+    ):
         checkpoint_path = delivery_state_path(
             evidence,
             "checkpoint",
