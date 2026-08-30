@@ -41,6 +41,10 @@ _DECISION_PRESENTATION = re.compile(
     r")$"
 )
 _DECISION_LABEL = re.compile(r"(?i)^(?:\*\*\s*)?verdict\b")
+_DECISION_CODE_VALUE = re.compile(
+    r"(?i)(:\s*(?:\*\*\s*)?)`(approve|request_changes|reject|escalate)`"
+    r"(?=\s*(?:\*\*)?\s*$)"
+)
 _CLOSED_NEXT = frozenset({"MILESTONE_COMPLETE", "BLOCKED"})
 
 
@@ -715,6 +719,7 @@ def _normalize_decision_syntax(text: str) -> str:
         line = raw_line.strip()
         while len(line) >= 2 and line.startswith("`") and line.endswith("`"):
             line = line[1:-1].strip()
+        line = _DECISION_CODE_VALUE.sub(lambda match: match.group(1) + match.group(2), line)
         if _DECISION_LABEL.match(line) is None:
             normalized.append(raw_line)
             continue
