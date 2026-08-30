@@ -248,7 +248,7 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
         (b"# Decision\n\n**Verdict: `approve`**\n", "approve"),
         (b"# Decision\n\n**Verdict:** `escalate`\n", "escalate"),
         (
-            b"Confirmed: scope clean. No rework exists. Verdict **approve** is final; proceed.\n",
+            b"Confirmed: scope clean. No rework exists. Verdict **approve** is final.\n",
             "approve",
         ),
         (b"Review complete. Verdict `request_changes` is final.\n", "request_changes"),
@@ -280,6 +280,9 @@ def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) 
         b"No decision: Verdict **approve** was not issued.\n",
         b"Text: Verdict `reject` was superseded.\n",
         b"Review complete. Verdict **approve** is final?\n",
+        b"Review complete. Verdict **approve** is final; not really.\n",
+        b"Review complete. Verdict **approve** is final; unless CI is red.\n",
+        b"Review complete. Verdict `reject` is final. Is it?\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** approve\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** reject\n",
     ],
