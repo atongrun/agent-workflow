@@ -2275,6 +2275,15 @@ def test_executor_prompt_reserves_git_writes_for_trusted_runner():
     assert "The trusted runner" in prompt and "alone observes Git state" in prompt
 
 
+def test_reviewer_prompt_distinguishes_runner_evidence_from_sandbox_limitations():
+    prompt = (Path(awf_role.__file__).parent / "reviewer-prompt.md").read_text(encoding="utf-8")
+
+    assert "validated the committed ImplementationReport" in prompt
+    assert "that inability alone is not BLOCKED or REQUEST_CHANGES" in prompt
+    assert "failing behavior is still a deterministic failure" in prompt
+    assert "Missing or ambiguous trusted-runner evidence" in prompt
+
+
 def test_tool_codex_review_uses_model_env_and_stdin(monkeypatch, tmp_path):
     """The Codex reviewer adapter passes model_env() and stdin to spawn()."""
     prompt_file = tmp_path / "prompt.md"
