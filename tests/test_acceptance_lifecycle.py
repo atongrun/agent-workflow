@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from agent_workflow import acceptance_lifecycle, node
+from agent_workflow.plan_loop import ArchitectBinding, PlanFact, PlanRunStore, plan_start_payload
 
 
 def _profile(tmp_path: Path) -> node.NodeProfile:
@@ -270,6 +271,202 @@ def test_explicit_frozen_recovery_accepts_only_mirrored_review_report(monkeypatc
     assert result["state"] == "CLOSED"
     assert mirror.is_file()
     assert not profile.repo.exists()
+
+
+def test_explicit_frozen_recovery_freezes_bound_untracked_taskcard(monkeypatch, tmp_path: Path):
+    profile = _profile(tmp_path)
+    project = profile.repo / ".awf" / "project.yaml"
+    project.parent.mkdir(parents=True)
+    project.write_text("kind: Project\n", encoding="utf-8")
+    subprocess.run(["git", "add", str(project)], check=True, cwd=profile.repo)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Acceptance Test",
+            "-c",
+            "user.email=acceptance@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        cwd=profile.repo,
+    )
+    task_id = "formal-failed-card"
+    relative = f"docs/tasks/{task_id}.md"
+    taskcard = profile.repo / relative
+    taskcard.parent.mkdir(parents=True)
+    taskcard.write_text("# Task Card\n\nretained failure evidence\n", encoding="utf-8")
+    plan = PlanFact(
+        repository="owner/project",
+        upstream_remote="upstream",
+        base_ref="main",
+        path="docs/plan.md",
+        commit="1" * 40,
+        blob_oid="2" * 40,
+        blob_sha256="3" * 64,
+        main_sha="4" * 40,
+    )
+    binding = ArchitectBinding(
+        profile=str(profile.path),
+        profile_sha256=profile.digest,
+        workspace=str(profile.repo),
+        tool="pi",
+        model_mode="explicit",
+        model_ref="deepseek/deepseek-v4-flash",
+    )
+    payload = plan_start_payload(
+        plan,
+        binding,
+        mode="milestone",
+        coder_tool="opencode",
+        coder_model="deepseek/deepseek-v4-flash",
+        reviewer_tool="codex",
+        reviewer_model="",
+    )
+    store = PlanRunStore(profile.state_root, str(payload["run_id"]))
+    store.create(payload, repo=profile.repo)
+    store.update(
+        status="dispatch_ambiguous",
+        current_card={
+            "task_id": task_id,
+            "path": relative,
+            "branch": f"agent/{task_id}",
+            "frozen_base": plan.main_sha,
+            "status": "dispatching",
+        },
+        stop_reason="business dispatch failed or became ambiguous; no automatic retry",
+    )
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    manifest = tmp_path / "acceptance.json"
+    acceptance_lifecycle.create_manifest(
+        manifest,
+        run_id="acceptance-mirrored-taskcard",
+        profiles=(profile,),
+        workspaces=(profile.repo,),
+    )
+
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="workspace status is unavailable",
+    ):
+        acceptance_lifecycle.closeout(manifest)
+    mirror = store.directory / "retained-taskcards" / taskcard.name
+    assert mirror.read_bytes() == taskcard.read_bytes()
+
+    result = acceptance_lifecycle.closeout(manifest, authorize_frozen_recovery=True)
+
+    assert result["state"] == "CLOSED"
+    assert mirror.is_file()
+    assert not profile.repo.exists()
+
+
+def test_taskcard_recovery_rejects_foreign_plan_run_workspace(monkeypatch, tmp_path: Path):
+    profile = _profile(tmp_path)
+    project = profile.repo / ".awf" / "project.yaml"
+    project.parent.mkdir(parents=True)
+    project.write_text("kind: Project\n", encoding="utf-8")
+    subprocess.run(["git", "add", str(project)], check=True, cwd=profile.repo)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Acceptance Test",
+            "-c",
+            "user.email=acceptance@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        cwd=profile.repo,
+    )
+    task_id = "foreign-failed-card"
+    relative = f"docs/tasks/{task_id}.md"
+    taskcard = profile.repo / relative
+    taskcard.parent.mkdir(parents=True)
+    taskcard.write_text("# Task Card\n\nforeign collision\n", encoding="utf-8")
+    foreign_repo = tmp_path / "foreign-workspace"
+    foreign_repo.mkdir()
+    plan = PlanFact(
+        repository="owner/project",
+        upstream_remote="upstream",
+        base_ref="main",
+        path="docs/plan.md",
+        commit="1" * 40,
+        blob_oid="2" * 40,
+        blob_sha256="3" * 64,
+        main_sha="4" * 40,
+    )
+    binding = ArchitectBinding(
+        profile=str(profile.path),
+        profile_sha256=profile.digest,
+        workspace=str(profile.repo),
+        tool="pi",
+        model_mode="explicit",
+        model_ref="deepseek/deepseek-v4-flash",
+    )
+    payload = plan_start_payload(
+        plan,
+        binding,
+        mode="milestone",
+        coder_tool="opencode",
+        coder_model="deepseek/deepseek-v4-flash",
+        reviewer_tool="codex",
+        reviewer_model="",
+    )
+    store = PlanRunStore(profile.state_root, str(payload["run_id"]))
+    store.create(payload, repo=foreign_repo)
+    store.update(
+        status="dispatch_ambiguous",
+        current_card={
+            "task_id": task_id,
+            "path": relative,
+            "branch": f"agent/{task_id}",
+            "frozen_base": plan.main_sha,
+            "status": "dispatching",
+        },
+        stop_reason="business dispatch failed or became ambiguous; no automatic retry",
+    )
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    manifest = tmp_path / "acceptance.json"
+    acceptance_lifecycle.create_manifest(
+        manifest,
+        run_id="acceptance-foreign-taskcard",
+        profiles=(profile,),
+        workspaces=(profile.repo,),
+    )
+
+    with pytest.raises(acceptance_lifecycle.AcceptanceLifecycleError):
+        acceptance_lifecycle.closeout(manifest)
+    mirror = store.directory / "retained-taskcards" / taskcard.name
+    assert not mirror.exists()
+    with pytest.raises(acceptance_lifecycle.AcceptanceLifecycleError):
+        acceptance_lifecycle.closeout(manifest, authorize_frozen_recovery=True)
+    assert profile.repo.exists()
 
 
 def test_closeout_resumes_exact_frozen_partial_workspace_removal(monkeypatch, tmp_path: Path):
