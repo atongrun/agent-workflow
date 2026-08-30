@@ -73,6 +73,20 @@ class PlanOperationError(RuntimeError):
     """Credential-safe failure at the Plan operations boundary."""
 
 
+_OPENCODE_JSON_FENCE = re.compile(
+    rb"\A```json\r?\n(?P<body>.+)\r?\n```\r?\n?\Z",
+    re.DOTALL,
+)
+
+
+def _normalize_architect_provider_output(raw: bytes, *, tool: str) -> bytes:
+    """Discard only OpenCode's exact whole-output JSON presentation fence."""
+    if tool != "opencode":
+        return raw
+    matched = _OPENCODE_JSON_FENCE.fullmatch(raw)
+    return matched.group("body") if matched is not None else raw
+
+
 def _architect_executable(binding: ArchitectBinding) -> str:
     environment = {
         "pi": "AWF_PI_BIN",
@@ -556,7 +570,9 @@ def _invoke_taskcard_architect(
     provider_raw = output.read_bytes()
     try:
         raw = assemble_architect_taskcard(
-            parse_architect_task_semantic(provider_raw),
+            parse_architect_task_semantic(
+                _normalize_architect_provider_output(provider_raw, tool=binding.tool)
+            ),
             frozen_base=plan.main_sha,
             repository=plan.repository,
             base_ref=plan.base_ref,
@@ -863,7 +879,6 @@ def _invoke_next_architect(
             raise PlanOperationError(
                 "next Architect invocation is ambiguous; provider will not replay"
             )
-        raw = output.read_bytes()
     else:
         context_path = workspace / ".awf" / f"architect-next-context-{last_task_id}.md"
         context_path.parent.mkdir(parents=True, exist_ok=True)
@@ -924,7 +939,8 @@ def _invoke_next_architect(
                 stop_reason="Architect next decision exited non-zero; provider replay is forbidden",
             )
             raise PlanOperationError("Architect next decision invocation failed")
-        raw = output.read_bytes()
+    provider_raw = output.read_bytes()
+    raw = _normalize_architect_provider_output(provider_raw, tool=binding.tool)
     try:
         outcome, body = parse_next_output(raw)
         task_id = ""
@@ -953,7 +969,7 @@ def _invoke_next_architect(
                 "kind": "milestone-next",
                 "status": "result_invalid",
                 "authorization_sha256": authorization,
-                "result_sha256": hashlib.sha256(raw).hexdigest(),
+                "result_sha256": hashlib.sha256(provider_raw).hexdigest(),
                 "fresh_main": fresh_main,
                 "last_completion_sha256": last_completion.get("sha256", ""),
             },
@@ -965,7 +981,7 @@ def _invoke_next_architect(
             "kind": "milestone-next",
             "status": "result_persisted",
             "authorization_sha256": authorization,
-            "result_sha256": hashlib.sha256(raw).hexdigest(),
+            "result_sha256": hashlib.sha256(provider_raw).hexdigest(),
             "fresh_main": fresh_main,
             "last_completion_sha256": last_completion.get("sha256", ""),
             "outcome": outcome,
