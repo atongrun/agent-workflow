@@ -258,8 +258,10 @@ class PiArchitectRenderer:
                 "Make the final decision for this one exact reviewed TaskCard from the attached "
                 "trusted facts. Use only read-only repository inspection tools. Return the "
                 "complete Decision Markdown as stdout using exactly one closed verdict: "
-                "approve, request_changes, reject, or escalate. Do not edit files, merge, or "
-                "invent rework."
+                "approve, request_changes, reject, or escalate. The verdict line must be exactly "
+                "`**Verdict:** approve`, `**Verdict:** request_changes`, `**Verdict:** reject`, "
+                "or `**Verdict:** escalate`; the closing Markdown bold marker belongs before the "
+                "value, never after it. Do not edit files, merge, or invent rework."
             )
         elif spec.provider_args == ("milestone-next",):
             message = (

@@ -295,6 +295,10 @@ def test_pi_architect_terminal_decision_is_fresh_read_only_closed_mode(tmp_path:
     assert "--no-session" in rendered.argv
     assert "--no-approve" in rendered.argv
     assert any("exactly one closed verdict" in token for token in rendered.argv)
+    assert any("`**Verdict:** approve`" in token for token in rendered.argv)
+    assert any(
+        "closing Markdown bold marker belongs before the value" in token for token in rendered.argv
+    )
     assert all("TaskCard Markdown" not in token for token in rendered.argv)
 
 
