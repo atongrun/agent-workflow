@@ -475,6 +475,30 @@ def test_exact_config_environment_overrides_and_restores_process_values(monkeypa
     assert "AWF_ARCH_TOKEN" not in awf_plan.os.environ
 
 
+def test_plan_start_send_captures_agent_bus_stdio(monkeypatch, tmp_path):
+    profile = SimpleNamespace(config_path=tmp_path / "dispatch.env")
+    monkeypatch.setattr(awf_plan, "load_into_environment", lambda _path: None)
+    monkeypatch.setenv("AGENT_BUS_URL", "http://127.0.0.1:18802")
+    monkeypatch.setenv("AWF_ARCH_TOKEN", "controlled-test-token")
+    monkeypatch.setenv("AWF_BUS_BIN", str(tmp_path / "agent-bus.exe"))
+    observed: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        observed["argv"] = argv
+        observed.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="sent\n", stderr="")
+
+    monkeypatch.setattr(awf_plan, "run_command", fake_run)
+
+    awf_plan._send_plan_start(profile, {"run_id": "plan-test"})
+
+    assert observed["capture_output"] is True
+    assert observed["text"] is True
+    assert observed["encoding"] == "utf-8"
+    assert observed["errors"] == "replace"
+    assert "controlled-test-token" in observed["secrets"]
+
+
 def test_invalid_pi_taskcard_result_is_persisted_and_never_replayed(monkeypatch, tmp_path):
     binding, plan, payload = facts(tmp_path)
     repo = tmp_path / "repo"

@@ -42,9 +42,11 @@ def test_mcp_get_status_delegates_to_application(monkeypatch):
 
 
 def test_mcp_stdio_lists_tools_and_returns_structured_tool_result(monkeypatch):
-    monkeypatch.setattr(
-        mcp, "call_tool", lambda _name, _arguments: {"current_state": "card_active"}
-    )
+    def noisy_call_tool(_name, _arguments):
+        print("application stdout must not enter MCP protocol")
+        return {"current_state": "card_active"}
+
+    monkeypatch.setattr(mcp, "call_tool", noisy_call_tool)
     source = io.StringIO(
         "\n".join(
             (
