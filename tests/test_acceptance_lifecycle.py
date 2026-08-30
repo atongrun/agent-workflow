@@ -13,7 +13,7 @@ from agent_workflow import acceptance_lifecycle, node
 from agent_workflow.plan_loop import ArchitectBinding, PlanFact, PlanRunStore, plan_start_payload
 
 
-def _profile(tmp_path: Path) -> node.NodeProfile:
+def _profile(tmp_path: Path, *, role: str = "coder") -> node.NodeProfile:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
@@ -22,8 +22,8 @@ def _profile(tmp_path: Path) -> node.NodeProfile:
         json.dumps(
             {
                 "format": node.PROFILE_FORMAT,
-                "name": "acceptance-coder",
-                "role": "coder",
+                "name": f"acceptance-{role}",
+                "role": role,
                 "repo": str(workspace),
                 "tool": "opencode",
                 "upstream_repo": "owner/project",
@@ -274,7 +274,7 @@ def test_explicit_frozen_recovery_accepts_only_mirrored_review_report(monkeypatc
 
 
 def test_explicit_frozen_recovery_freezes_bound_untracked_taskcard(monkeypatch, tmp_path: Path):
-    profile = _profile(tmp_path)
+    profile = _profile(tmp_path, role="architect")
     project = profile.repo / ".awf" / "project.yaml"
     project.parent.mkdir(parents=True)
     project.write_text("kind: Project\n", encoding="utf-8")
@@ -298,6 +298,14 @@ def test_explicit_frozen_recovery_freezes_bound_untracked_taskcard(monkeypatch, 
     taskcard = profile.repo / relative
     taskcard.parent.mkdir(parents=True)
     taskcard.write_text("# Task Card\n\nretained failure evidence\n", encoding="utf-8")
+    coder_source = tmp_path / "coder-profile.json"
+    coder_values = {
+        **profile.values,
+        "name": "acceptance-coder",
+        "role": "coder",
+    }
+    coder_source.write_text(json.dumps(coder_values), encoding="utf-8")
+    coder_profile = node.load_profile(str(coder_source))
     plan = PlanFact(
         repository="owner/project",
         upstream_remote="upstream",
@@ -325,8 +333,10 @@ def test_explicit_frozen_recovery_freezes_bound_untracked_taskcard(monkeypatch, 
         reviewer_tool="codex",
         reviewer_model="",
     )
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
     store = PlanRunStore(profile.state_root, str(payload["run_id"]))
-    store.create(payload, repo=profile.repo)
+    store.create(payload, repo=source_repo)
     store.update(
         status="dispatch_ambiguous",
         current_card={
@@ -354,7 +364,7 @@ def test_explicit_frozen_recovery_freezes_bound_untracked_taskcard(monkeypatch, 
     acceptance_lifecycle.create_manifest(
         manifest,
         run_id="acceptance-mirrored-taskcard",
-        profiles=(profile,),
+        profiles=(profile, coder_profile),
         workspaces=(profile.repo,),
     )
 
@@ -374,7 +384,7 @@ def test_explicit_frozen_recovery_freezes_bound_untracked_taskcard(monkeypatch, 
 
 
 def test_taskcard_recovery_rejects_foreign_plan_run_workspace(monkeypatch, tmp_path: Path):
-    profile = _profile(tmp_path)
+    profile = _profile(tmp_path, role="architect")
     project = profile.repo / ".awf" / "project.yaml"
     project.parent.mkdir(parents=True)
     project.write_text("kind: Project\n", encoding="utf-8")
@@ -400,6 +410,8 @@ def test_taskcard_recovery_rejects_foreign_plan_run_workspace(monkeypatch, tmp_p
     taskcard.write_text("# Task Card\n\nforeign collision\n", encoding="utf-8")
     foreign_repo = tmp_path / "foreign-workspace"
     foreign_repo.mkdir()
+    foreign_profile = tmp_path / "foreign-profile.json"
+    foreign_profile.write_text("{}\n", encoding="utf-8")
     plan = PlanFact(
         repository="owner/project",
         upstream_remote="upstream",
@@ -411,9 +423,9 @@ def test_taskcard_recovery_rejects_foreign_plan_run_workspace(monkeypatch, tmp_p
         main_sha="4" * 40,
     )
     binding = ArchitectBinding(
-        profile=str(profile.path),
-        profile_sha256=profile.digest,
-        workspace=str(profile.repo),
+        profile=str(foreign_profile),
+        profile_sha256="sha256:" + "f" * 64,
+        workspace=str(foreign_repo),
         tool="pi",
         model_mode="explicit",
         model_ref="deepseek/deepseek-v4-flash",
@@ -428,7 +440,7 @@ def test_taskcard_recovery_rejects_foreign_plan_run_workspace(monkeypatch, tmp_p
         reviewer_model="",
     )
     store = PlanRunStore(profile.state_root, str(payload["run_id"]))
-    store.create(payload, repo=foreign_repo)
+    store.create(payload, repo=tmp_path / "foreign-source")
     store.update(
         status="dispatch_ambiguous",
         current_card={
@@ -466,6 +478,42 @@ def test_taskcard_recovery_rejects_foreign_plan_run_workspace(monkeypatch, tmp_p
     assert not mirror.exists()
     with pytest.raises(acceptance_lifecycle.AcceptanceLifecycleError):
         acceptance_lifecycle.closeout(manifest, authorize_frozen_recovery=True)
+    assert profile.repo.exists()
+
+
+def test_taskcard_recovery_rejects_duplicate_architect_workspace(monkeypatch, tmp_path: Path):
+    profile = _profile(tmp_path, role="architect")
+    duplicate_source = tmp_path / "duplicate-architect.json"
+    duplicate_source.write_text(
+        json.dumps({**profile.values, "name": "acceptance-architect-duplicate"}),
+        encoding="utf-8",
+    )
+    duplicate = node.load_profile(str(duplicate_source))
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-architect.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    manifest = tmp_path / "acceptance.json"
+    acceptance_lifecycle.create_manifest(
+        manifest,
+        run_id="acceptance-duplicate-architect",
+        profiles=(profile, duplicate),
+        workspaces=(profile.repo,),
+    )
+
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="Architect profile identity is ambiguous",
+    ):
+        acceptance_lifecycle.closeout(manifest)
     assert profile.repo.exists()
 
 

@@ -5287,6 +5287,48 @@ def test_dispatch_captures_agent_bus_stdio_for_pythonw(monkeypatch, tmp_path):
     assert observed["errors"] == "replace"
 
 
+def test_dispatch_preserves_explicit_reviewer_tool_default_model(tmp_path):
+    repo = tmp_path / "repo"
+    run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    (repo / "task.md").write_text(
+        """card
+<!-- awf-reviewer-selection
+{
+  "coder": {"tool": "opencode", "model": "deepseek/deepseek-v4-flash"},
+  "reviewer": {"tool": "codex", "model": ""}
+}
+-->
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        awf_dispatch.main(
+            [
+                "--repo",
+                str(repo),
+                "--card",
+                "task.md",
+                "--tool",
+                "opencode",
+                "--model",
+                "deepseek/deepseek-v4-flash",
+                "--reviewer-tool",
+                "codex",
+                "--branch",
+                "feature/task",
+                "--type",
+                "task:awf-impl-v2",
+                "--no-push",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+
 def test_windows_native_dispatch_rejects_command_wrappers():
     with pytest.raises(
         awf_dispatch.DispatchError,

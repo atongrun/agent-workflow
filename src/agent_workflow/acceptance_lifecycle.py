@@ -275,7 +275,12 @@ def _mirrored_retained_review_status(workspace: Path, status: str, state_root: P
 
 
 def _bound_plan_run_dir(
-    state_root: Path, workspace: Path, relative: str, task_id: str
+    state_root: Path,
+    workspace: Path,
+    profile: Path,
+    profile_sha256: str,
+    relative: str,
+    task_id: str,
 ) -> Path | None:
     from agent_workflow.plan_loop import PlanLoopError, PlanRunStore
 
@@ -292,12 +297,22 @@ def _bound_plan_run_dir(
             continue
         try:
             run = PlanRunStore(state_root, candidate.name).load()
-            run_repo = _canonical_path(run.get("repo"), label="PlanRun repository")
+            architect = run.get("architect")
+            if not isinstance(architect, dict):
+                continue
+            run_workspace = _canonical_path(
+                architect.get("workspace"), label="PlanRun Architect workspace"
+            )
+            run_profile = _canonical_path(
+                architect.get("profile"), label="PlanRun Architect profile"
+            )
         except (AcceptanceLifecycleError, PlanLoopError):
             continue
         card = run.get("current_card")
         if (
-            run_repo != workspace.resolve()
+            run_workspace != workspace.resolve()
+            or run_profile != profile.resolve()
+            or architect.get("profile_sha256") != profile_sha256
             or run.get("status") not in {"dispatch_ambiguous", "dispatch_blocked"}
             or not isinstance(card, dict)
             or card.get("status") != "dispatching"
@@ -309,7 +324,13 @@ def _bound_plan_run_dir(
     return matches[0] if len(matches) == 1 else None
 
 
-def _freeze_retained_taskcards(workspace: Path, status: str, state_root: Path) -> bool:
+def _freeze_retained_taskcards(
+    workspace: Path,
+    status: str,
+    state_root: Path,
+    profile: Path,
+    profile_sha256: str,
+) -> bool:
     lines = [line.strip() for line in status.splitlines() if line.strip()]
     if not lines:
         return False
@@ -328,7 +349,14 @@ def _freeze_retained_taskcards(workspace: Path, status: str, state_root: Path) -
             return False
         if len(content) > _MAX_RETAINED_TASKCARD_BYTES:
             return False
-        plan_dir = _bound_plan_run_dir(state_root, workspace, relative, task_id)
+        plan_dir = _bound_plan_run_dir(
+            state_root,
+            workspace,
+            profile,
+            profile_sha256,
+            relative,
+            task_id,
+        )
         if plan_dir is None:
             return False
         prepared.append((plan_dir / "retained-taskcards" / source.name, content))
@@ -348,7 +376,13 @@ def _freeze_retained_taskcards(workspace: Path, status: str, state_root: Path) -
     return True
 
 
-def _mirrored_retained_taskcard_status(workspace: Path, status: str, state_root: Path) -> bool:
+def _mirrored_retained_taskcard_status(
+    workspace: Path,
+    status: str,
+    state_root: Path,
+    profile: Path,
+    profile_sha256: str,
+) -> bool:
     lines = [line.strip() for line in status.splitlines() if line.strip()]
     if not lines:
         return False
@@ -358,7 +392,14 @@ def _mirrored_retained_taskcard_status(workspace: Path, status: str, state_root:
             return False
         relative, task_id = match.groups()
         source = workspace / relative
-        plan_dir = _bound_plan_run_dir(state_root, workspace, relative, task_id)
+        plan_dir = _bound_plan_run_dir(
+            state_root,
+            workspace,
+            profile,
+            profile_sha256,
+            relative,
+            task_id,
+        )
         if plan_dir is None or source.is_symlink() or not source.is_file():
             return False
         mirror = plan_dir / "retained-taskcards" / source.name
@@ -455,6 +496,17 @@ def closeout(
             )
         loaded.append((active, entry, str(status)))
     installation_by_workspace = {entry[1]["workspace"]: entry[2] for entry in loaded}
+    architect_by_workspace: dict[str, tuple[node.NodeProfile, dict[str, object], str]] = {}
+    for loaded_entry in loaded:
+        profile, entry, _status = loaded_entry
+        if profile.role != "architect":
+            continue
+        workspace = str(entry["workspace"])
+        if workspace in architect_by_workspace:
+            raise AcceptanceLifecycleError(
+                "CLEANUP_BLOCKED: Architect profile identity is ambiguous"
+            )
+        architect_by_workspace[workspace] = loaded_entry
     state_roots = {profile.state_root for profile, _entry, _status in loaded}
     if len(state_roots) != 1:
         raise AcceptanceLifecycleError("CLEANUP_BLOCKED: state root identity is unknown")
@@ -471,14 +523,37 @@ def closeout(
             text=True,
             check=False,
         )
-        if result.returncode == 0 and result.stdout and not recovering:
-            _freeze_retained_taskcards(candidate, result.stdout, state_root)
+        architect_entry = architect_by_workspace.get(workspace)
+        if (
+            result.returncode == 0
+            and result.stdout
+            and not recovering
+            and architect_entry is not None
+        ):
+            profile, entry, _status = architect_entry
+            _freeze_retained_taskcards(
+                candidate,
+                result.stdout,
+                state_root,
+                Path(str(entry["profile"])),
+                profile.digest,
+            )
         recoverable_status = _partial_workspace_removal(result.stdout)
         if explicit_frozen_recovery:
+            taskcard_recoverable = False
+            if architect_entry is not None:
+                profile, entry, _status = architect_entry
+                taskcard_recoverable = _mirrored_retained_taskcard_status(
+                    candidate,
+                    result.stdout,
+                    state_root,
+                    Path(str(entry["profile"])),
+                    profile.digest,
+                )
             recoverable_status = (
                 _explicit_frozen_recovery_status(result.stdout)
                 or _mirrored_retained_review_status(candidate, result.stdout, state_root)
-                or _mirrored_retained_taskcard_status(candidate, result.stdout, state_root)
+                or taskcard_recoverable
             )
         if result.returncode or (result.stdout and (not recovering or not recoverable_status)):
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace status is unavailable")
