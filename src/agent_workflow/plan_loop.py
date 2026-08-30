@@ -32,6 +32,15 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
 _FROZEN_BASE = re.compile(r"(?m)^- \*\*Frozen base\*\*: `([0-9a-f]{40,64})`(?:\s+[^\r\n]*)?$")
 _SELECTION = re.compile(r"<!--\s*awf-reviewer-selection\s*\n(.*?)\n\s*-->", re.DOTALL)
 _DECISION = re.compile(r"(?mi)^\*\*Verdict:\*\*\s*(approve|request_changes|reject|escalate)\s*$")
+_DECISION_PRESENTATION = re.compile(
+    r"(?ix)^(?:"
+    r"verdict\s*:\s*(approve|request_changes|reject|escalate)"
+    r"|\*\*\s*verdict\s*:\s*(approve|request_changes|reject|escalate)\s*\*\*"
+    r"|\*\*\s*verdict\s*:\s*\*\*\s*(approve|request_changes|reject|escalate)"
+    r"|\*\*\s*verdict\s*\*\*\s*:\s*(approve|request_changes|reject|escalate)"
+    r")$"
+)
+_DECISION_LABEL = re.compile(r"(?i)^(?:\*\*\s*)?verdict\b")
 _CLOSED_NEXT = frozenset({"MILESTONE_COMPLETE", "BLOCKED"})
 
 
@@ -699,6 +708,24 @@ def next_architect_context(
     )
 
 
+def _normalize_decision_syntax(text: str) -> str:
+    """Canonicalize bounded Markdown presentation around one explicit verdict line."""
+    normalized = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        while len(line) >= 2 and line.startswith("`") and line.endswith("`"):
+            line = line[1:-1].strip()
+        if _DECISION_LABEL.match(line) is None:
+            normalized.append(raw_line)
+            continue
+        match = _DECISION_PRESENTATION.fullmatch(line)
+        if match is None:
+            raise PlanLoopError("Architect Decision requires exactly one closed verdict")
+        verdict = next(value for value in match.groups() if value is not None)
+        normalized.append(f"**Verdict:** {verdict.lower()}")
+    return "\n".join(normalized)
+
+
 def parse_decision(raw: bytes) -> dict[str, object]:
     if not raw or len(raw) > 64 * 1024:
         raise PlanLoopError("Architect Decision is missing or oversized")
@@ -706,7 +733,7 @@ def parse_decision(raw: bytes) -> dict[str, object]:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise PlanLoopError("Architect Decision is not UTF-8") from exc
-    verdicts = _DECISION.findall(text)
+    verdicts = _DECISION.findall(_normalize_decision_syntax(text))
     if len(verdicts) != 1:
         raise PlanLoopError("Architect Decision requires exactly one closed verdict")
     return {

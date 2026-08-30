@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -235,6 +236,41 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
             ci={"conclusion": "SUCCESS"},
             merge={"state": "MERGED", "commit": "c" * 40},
         )
+
+
+@pytest.mark.parametrize(
+    ("raw", "verdict"),
+    [
+        (b"# Decision\n\n**Verdict: approve**\n", "approve"),
+        (b"# Decision\n\n`**Verdict:** APPROVE`\n", "approve"),
+        (b"# Decision\n\n**Verdict** : request_changes\n", "request_changes"),
+        (b"# Decision\n\n Verdict : REJECT \n", "reject"),
+    ],
+)
+def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) -> None:
+    decision = parse_decision(raw)
+
+    assert decision["verdict"] == verdict
+    assert decision["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert decision["bytes"] == len(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"# Decision\n\nVerdict: maybe\n",
+        b"# Decision\n\nVerdict approve\n",
+        b"# Decision\n\n**Verdict: approve because tests pass**\n",
+        b"# Decision\n\n**Verdict: approve\n",
+        b"# Decision\n\n**Verdict:** approve**\n",
+        b"# Decision\n\n**Verdict:** **approve**\n",
+        b"# Decision\n\n**Verdict: approve**\n**Verdict:** approve\n",
+        b"# Decision\n\n**Verdict: approve**\n**Verdict:** reject\n",
+    ],
+)
+def test_decision_parser_tolerant_syntax_keeps_semantics_fail_closed(raw: bytes) -> None:
+    with pytest.raises(PlanLoopError, match="exactly one closed verdict"):
+        parse_decision(raw)
 
 
 def test_completed_card_facts_are_immutable_and_feed_minimal_next_context(tmp_path: Path) -> None:
