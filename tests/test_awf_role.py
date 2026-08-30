@@ -3099,7 +3099,7 @@ def test_bounded_postflight_git_out_kills_oversized_diff(monkeypatch, tmp_path, 
 
 
 def test_send_event_stdin_devnull(monkeypatch):
-    """send_event() uses subprocess.DEVNULL for its subprocess.run call."""
+    """send_event() is safe under pythonw and never reads inherited stdin."""
     monkeypatch.setenv("AGENT_BUS_URL", "http://bus")
     monkeypatch.setenv("AWF_CODER_TOKEN", "tok")
 
@@ -3114,6 +3114,10 @@ def test_send_event_stdin_devnull(monkeypatch):
     awf_role.send_event("coder", "reviewer", "task:awf-review", {"k": "v"})
 
     assert captured.get("stdin") is subprocess.DEVNULL
+    assert captured.get("capture_output") is True
+    assert captured.get("text") is True
+    assert captured.get("encoding") == "utf-8"
+    assert captured.get("errors") == "replace"
 
 
 # ---------------------------------------------------------------------------
