@@ -3908,6 +3908,10 @@ def send_event(from_role: str, to_role: str, etype: str, payload: dict) -> bool:
             argv,
             env=cenv,
             stdin=DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             allow_shell_wrapper=True,
             secrets=(token,),
         ).returncode

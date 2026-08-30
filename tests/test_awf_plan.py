@@ -508,6 +508,121 @@ def test_invalid_pi_taskcard_result_is_persisted_and_never_replayed(monkeypatch,
     assert not (repo / ".awf" / f"architect-context-{run['run_id']}.md").exists()
 
 
+def test_opencode_taskcard_accepts_only_exact_whole_output_json_fence(monkeypatch, tmp_path):
+    binding, plan, _payload = facts(tmp_path)
+    binding = replace(binding, tool="opencode")
+    payload = plan_start_payload(
+        plan,
+        binding,
+        mode="one-card",
+        coder_tool="opencode",
+        coder_model="",
+        reviewer_tool="opencode",
+        reviewer_model="",
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=repo)
+    args = handler_args(tmp_path, payload)
+    args.tool = "opencode"
+    semantic = json.dumps(
+        {
+            "task_id": "CARD-001",
+            "objective": "Bounded first card",
+            "scope": ["Implement one bounded change."],
+            "change_paths": ["src/example.py"],
+            "constraints": ["Preserve authority."],
+            "acceptance_criteria": ["Focused test passes."],
+            "verification_commands": [["python", "-m", "pytest", "-q"]],
+        }
+    ).encode("utf-8")
+    fenced = b"```json\n" + semantic + b"\n```\n"
+    fenced_crlf = b"```json\r\n" + semantic + b"\r\n```\r\n"
+
+    def fenced_result(_rendered, **kwargs):
+        Path(kwargs["stdout_path"]).write_bytes(fenced)
+        return 0
+
+    monkeypatch.setattr(awf_plan, "spawn_rendered", fenced_result)
+
+    raw, task_id, branch = awf_plan._invoke_taskcard_architect(
+        args,
+        store=store,
+        plan=plan,
+        binding=binding,
+        plan_bytes=b"# Plan\n",
+        repo=repo,
+        coder={"tool": "opencode", "model": ""},
+        reviewer={"tool": "opencode", "model": ""},
+    )
+
+    assert (task_id, branch) == ("CARD-001", "agent/CARD-001")
+    assert b"<!-- awf-reviewer-selection" in raw
+    assert (
+        store.load()["architect_invocation"]["result_sha256"] == hashlib.sha256(fenced).hexdigest()
+    )
+    assert awf_plan._normalize_architect_provider_output(fenced_crlf, tool="opencode") == semantic
+    assert (
+        awf_plan._normalize_architect_provider_output(
+            b"prose\n" + fenced,
+            tool="opencode",
+        )
+        == b"prose\n" + fenced
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        b"```json\n{}\n```\n```json\n{}\n```\n",
+        b"prose\n```json\n{}\n```\n",
+    ],
+    ids=("extra-fence", "leading-prose"),
+)
+def test_opencode_taskcard_rejects_nonexact_fence_without_replay(monkeypatch, tmp_path, invalid):
+    binding, plan, _payload = facts(tmp_path)
+    binding = replace(binding, tool="opencode")
+    payload = plan_start_payload(
+        plan,
+        binding,
+        mode="one-card",
+        coder_tool="opencode",
+        coder_model="",
+        reviewer_tool="opencode",
+        reviewer_model="",
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = PlanRunStore(tmp_path / "state", str(payload["run_id"]))
+    store.create(payload, repo=repo)
+    args = handler_args(tmp_path, payload)
+    args.tool = "opencode"
+
+    def extra_fence_result(_rendered, **kwargs):
+        Path(kwargs["stdout_path"]).write_bytes(invalid)
+        return 0
+
+    monkeypatch.setattr(awf_plan, "spawn_rendered", extra_fence_result)
+
+    with pytest.raises(awf_plan.PlanLoopError, match="invalid"):
+        awf_plan._invoke_taskcard_architect(
+            args,
+            store=store,
+            plan=plan,
+            binding=binding,
+            plan_bytes=b"# Plan\n",
+            repo=repo,
+            coder={"tool": "opencode", "model": ""},
+            reviewer={"tool": "opencode", "model": ""},
+        )
+
+    run = store.load()
+    assert run["status"] == "architect_output_invalid_no_replay"
+    assert run["architect_invocation"]["status"] == "result_invalid"
+    assert run["architect_invocation"]["result_sha256"] == hashlib.sha256(invalid).hexdigest()
+
+
 def test_handle_start_orders_fast_before_pi_and_deep_before_business_send(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1340,7 +1455,8 @@ def test_next_architect_assembles_semantic_taskcard_for_every_provider(
 
     def rendered_call(rendered, **kwargs):
         observed["provider"] = rendered.executable
-        Path(kwargs["stdout_path"]).write_bytes(semantic)
+        provider_output = b"```json\n" + semantic + b"\n```\n" if tool == "opencode" else semantic
+        Path(kwargs["stdout_path"]).write_bytes(provider_output)
         return 0
 
     monkeypatch.setattr(awf_plan, "spawn_rendered", rendered_call)
