@@ -1400,6 +1400,12 @@ def _approval_observation(repo: Path, provenance: dict[str, object]) -> dict[str
     mergeability = str(value.get("mergeStateStatus") or "")
     if review == "APPROVED" and mergeability == "CLEAN":
         return {"status": "approved", "review_decision": review, "mergeability": mergeability}
+    if not review and mergeability == "CLEAN":
+        return {
+            "status": "approved",
+            "review_decision": review,
+            "mergeability": mergeability,
+        }
     if review == "REVIEW_REQUIRED" and mergeability == "BLOCKED":
         return {"status": "waiting", "review_decision": review, "mergeability": mergeability}
     raise PlanOperationError("approval or mergeability is not safely observable")
@@ -1567,7 +1573,7 @@ def _human_merge_requested(approval: object) -> bool:
         return False
     if not (
         approval.get("status") == "human_merge_required"
-        and approval.get("review_decision") == "APPROVED"
+        and approval.get("review_decision") in {"", "APPROVED"}
         and approval.get("mergeability") == "CLEAN"
         and approval.get("merge_authority") == "external"
     ):
