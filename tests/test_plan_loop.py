@@ -279,6 +279,7 @@ def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) 
         b"Review complete; Verdict **approve** is not final.\n",
         b"No decision: Verdict **approve** was not issued.\n",
         b"Text: Verdict `reject` was superseded.\n",
+        b"Review complete. Verdict **approve** is final?\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** approve\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** reject\n",
     ],

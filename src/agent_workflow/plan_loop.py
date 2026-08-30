@@ -49,7 +49,7 @@ _DECISION_INLINE_PRESENTATION = re.compile(
     r"(?i)(?:^|[.!?]\s+)verdict\s*:?\s*(?:"
     r"\*\*(approve|request_changes|reject|escalate)\*\*"
     r"|`(approve|request_changes|reject|escalate)`"
-    r")\s+is\s+final(?=\s*(?:[.;!?]|$))"
+    r")\s+is\s+final(?=\s*(?:[.;]|$))"
 )
 _DECISION_INLINE_LABEL = re.compile(r"(?i)(?:^|[.!?]\s+)verdict\s*:?\s*(?:\*\*|`)")
 _CLOSED_NEXT = frozenset({"MILESTONE_COMPLETE", "BLOCKED"})
