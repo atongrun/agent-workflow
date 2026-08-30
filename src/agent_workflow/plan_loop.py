@@ -45,6 +45,13 @@ _DECISION_CODE_VALUE = re.compile(
     r"(?i)(:\s*(?:\*\*\s*)?)`(approve|request_changes|reject|escalate)`"
     r"(?=\s*(?:\*\*)?\s*$)"
 )
+_DECISION_INLINE_PRESENTATION = re.compile(
+    r"(?i)(?:^|[.!?]\s+)verdict\s*:?\s*(?:"
+    r"\*\*(approve|request_changes|reject|escalate)\*\*"
+    r"|`(approve|request_changes|reject|escalate)`"
+    r")\s+is\s+final\s*[.;]?\s*$"
+)
+_DECISION_INLINE_LABEL = re.compile(r"(?i)(?:^|[.!?]\s+)verdict\s*:?\s*(?:\*\*|`)")
 _CLOSED_NEXT = frozenset({"MILESTONE_COMPLETE", "BLOCKED"})
 
 
@@ -720,14 +727,21 @@ def _normalize_decision_syntax(text: str) -> str:
         while len(line) >= 2 and line.startswith("`") and line.endswith("`"):
             line = line[1:-1].strip()
         line = _DECISION_CODE_VALUE.sub(lambda match: match.group(1) + match.group(2), line)
-        if _DECISION_LABEL.match(line) is None:
+        match = _DECISION_PRESENTATION.fullmatch(line)
+        if match is not None:
+            verdict = next(value for value in match.groups() if value is not None)
+            normalized.append(f"**Verdict:** {verdict.lower()}")
+            continue
+        labels = list(_DECISION_INLINE_LABEL.finditer(line))
+        matches = list(_DECISION_INLINE_PRESENTATION.finditer(line))
+        if len(labels) != len(matches) or (_DECISION_LABEL.match(line) is not None and not matches):
+            raise PlanLoopError("Architect Decision requires exactly one closed verdict")
+        if not matches:
             normalized.append(raw_line)
             continue
-        match = _DECISION_PRESENTATION.fullmatch(line)
-        if match is None:
-            raise PlanLoopError("Architect Decision requires exactly one closed verdict")
-        verdict = next(value for value in match.groups() if value is not None)
-        normalized.append(f"**Verdict:** {verdict.lower()}")
+        for match in matches:
+            verdict = next(value for value in match.groups() if value is not None)
+            normalized.append(f"**Verdict:** {verdict.lower()}")
     return "\n".join(normalized)
 
 
