@@ -74,7 +74,7 @@ class PlanOperationError(RuntimeError):
 
 
 _OPENCODE_JSON_FENCE = re.compile(
-    rb"\A```json\r?\n(?P<body>.+)\r?\n```\r?\n?\Z",
+    rb"\A```json(?:\r\n|\n)(?P<body>.+?)(?:\r\n|\n)```(?:(?:\r\n|\n))?\Z",
     re.DOTALL,
 )
 
