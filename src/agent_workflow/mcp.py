@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 from collections.abc import Callable, Mapping
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -186,7 +188,8 @@ def serve(stdin: object = sys.stdin, stdout: object = sys.stdout) -> int:
                         "MCP tool is not part of the AWF product surface"
                     )
                 try:
-                    payload = call_tool(name, params.get("arguments", {}))
+                    with redirect_stdout(io.StringIO()):
+                        payload = call_tool(name, params.get("arguments", {}))
                 except application.ApplicationError as exc:
                     result = {
                         "content": [{"type": "text", "text": str(exc)}],

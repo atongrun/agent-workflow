@@ -171,6 +171,10 @@ def _send_plan_start(profile, payload: dict[str, object]) -> None:
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
             ],
             env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             secrets=(token,),
             allow_shell_wrapper=True,
         )
