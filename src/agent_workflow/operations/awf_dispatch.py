@@ -306,7 +306,7 @@ def dispatch(
     reviewer_tool_arg = getattr(args, "reviewer_tool", "")
     reviewer_model_arg = getattr(args, "reviewer_model", "")
     reviewer_tool = reviewer_tool_arg or args.tool
-    reviewer_model = reviewer_model_arg or args.model
+    reviewer_model = reviewer_model_arg if reviewer_tool_arg else args.model
     require(
         (selections.coder.tool, selections.coder.model) == (args.tool, args.model),
         "TaskCard coder selection conflicts with owner RunManifest",
