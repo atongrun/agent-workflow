@@ -95,8 +95,9 @@ def test_unknown_status_never_advertises_continue_or_replacement(monkeypatch, tm
     assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
 
 
+@pytest.mark.parametrize("review_decision", ["", "APPROVED"])
 def test_exact_external_human_merge_marker_advertises_only_bounded_continuation(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, review_decision: str
 ):
     payload = _payload(tmp_path)
     state_root = tmp_path / "state"
@@ -110,7 +111,7 @@ def test_exact_external_human_merge_marker_advertises_only_bounded_continuation(
             "status": "deciding",
             "approval": {
                 "status": "human_merge_required",
-                "review_decision": "APPROVED",
+                "review_decision": review_decision,
                 "mergeability": "CLEAN",
                 "merge_authority": "external",
             },

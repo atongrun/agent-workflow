@@ -910,6 +910,31 @@ def test_local_merge_authority_uses_exact_authenticated_repository_permissions(
     assert observed == [(str(tmp_path), "api", "repos/owner/project")]
 
 
+def test_clean_pr_without_required_review_is_ready_for_local_merge(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _store, _args, provenance, _evidence, _input_context = terminal_fixture(tmp_path)
+    monkeypatch.setattr(
+        awf_plan,
+        "_gh_json",
+        lambda *_args: {
+            "number": provenance["pull_request"],
+            "state": "OPEN",
+            "baseRefOid": provenance["base_sha"],
+            "headRefOid": provenance["head_sha"],
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "reviewDecision": "",
+            "mergeStateStatus": "CLEAN",
+        },
+    )
+
+    assert awf_plan._approval_observation(tmp_path, provenance) == {
+        "status": "approved",
+        "review_decision": "",
+        "mergeability": "CLEAN",
+    }
+
+
 def test_read_only_human_merge_observation_preserves_waiting_when_pr_is_open(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -954,7 +979,10 @@ def test_read_only_human_merge_observation_preserves_waiting_when_pr_is_open(
     assert "merge" not in calls[0]
 
 
-def test_human_merge_marker_requires_complete_approved_clean_external_facts() -> None:
+@pytest.mark.parametrize("review_decision", ["", "APPROVED"])
+def test_human_merge_marker_requires_complete_approved_clean_external_facts(
+    review_decision: str,
+) -> None:
     with pytest.raises(awf_plan.PlanOperationError, match="Human merge marker is invalid"):
         awf_plan._human_merge_requested(
             {"status": "human_merge_required", "merge_authority": "external"}
@@ -963,7 +991,7 @@ def test_human_merge_marker_requires_complete_approved_clean_external_facts() ->
     assert awf_plan._human_merge_requested(
         {
             "status": "human_merge_required",
-            "review_decision": "APPROVED",
+            "review_decision": review_decision,
             "mergeability": "CLEAN",
             "merge_authority": "external",
         }
@@ -1170,8 +1198,9 @@ def test_plan_terminal_waits_for_approval_without_merge(monkeypatch, tmp_path: P
     assert store.load()["status"] == "waiting_for_human_approval"
 
 
+@pytest.mark.parametrize("review_decision", ["", "APPROVED"])
 def test_plan_terminal_waits_for_human_merge_without_local_upstream_authority(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, review_decision: str
 ) -> None:
     store, args, provenance, evidence, input_context = terminal_fixture(tmp_path)
     source = tmp_path / "source"
@@ -1192,7 +1221,7 @@ def test_plan_terminal_waits_for_human_merge_without_local_upstream_authority(
         "_approval_observation",
         lambda *_a, **_k: {
             "status": "approved",
-            "review_decision": "APPROVED",
+            "review_decision": review_decision,
             "mergeability": "CLEAN",
         },
     )
@@ -1221,14 +1250,15 @@ def test_plan_terminal_waits_for_human_merge_without_local_upstream_authority(
     assert waiting["status"] == "waiting_for_human_approval"
     assert waiting["current_card"]["approval"] == {
         "status": "human_merge_required",
-        "review_decision": "APPROVED",
+        "review_decision": review_decision,
         "mergeability": "CLEAN",
         "merge_authority": "external",
     }
 
 
+@pytest.mark.parametrize("review_decision", ["", "APPROVED"])
 def test_continue_after_approval_observes_exact_human_merge_without_local_merge(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, review_decision: str
 ) -> None:
     from agent_workflow.operations import awf_control_plane
 
@@ -1262,7 +1292,7 @@ def test_continue_after_approval_observes_exact_human_merge_without_local_merge(
             "ci": {"conclusion": "SUCCESS", "head_sha": provenance["head_sha"], "checks": 1},
             "approval": {
                 "status": "human_merge_required",
-                "review_decision": "APPROVED",
+                "review_decision": review_decision,
                 "mergeability": "CLEAN",
                 "merge_authority": "external",
             },

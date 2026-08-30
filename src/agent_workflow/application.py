@@ -134,7 +134,7 @@ def _authority_consistent(store: PlanRunStore, run: Mapping[str, object]) -> boo
                 )
                 or (
                     approval.get("status") == "human_merge_required"
-                    and approval.get("review_decision") == "APPROVED"
+                    and approval.get("review_decision") in {"", "APPROVED"}
                     and approval.get("mergeability") == "CLEAN"
                     and approval.get("merge_authority") == "external"
                 )
