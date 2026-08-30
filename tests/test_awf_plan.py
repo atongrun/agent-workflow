@@ -572,7 +572,15 @@ def test_opencode_taskcard_accepts_only_exact_whole_output_json_fence(monkeypatc
     )
 
 
-def test_opencode_taskcard_rejects_extra_fence_without_replay(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        b"```json\n{}\n```\n```json\n{}\n```\n",
+        b"prose\n```json\n{}\n```\n",
+    ],
+    ids=("extra-fence", "leading-prose"),
+)
+def test_opencode_taskcard_rejects_nonexact_fence_without_replay(monkeypatch, tmp_path, invalid):
     binding, plan, _payload = facts(tmp_path)
     binding = replace(binding, tool="opencode")
     payload = plan_start_payload(
@@ -590,7 +598,6 @@ def test_opencode_taskcard_rejects_extra_fence_without_replay(monkeypatch, tmp_p
     store.create(payload, repo=repo)
     args = handler_args(tmp_path, payload)
     args.tool = "opencode"
-    invalid = b"```json\n{}\n```\n```json\n{}\n```\n"
 
     def extra_fence_result(_rendered, **kwargs):
         Path(kwargs["stdout_path"]).write_bytes(invalid)
