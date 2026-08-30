@@ -500,7 +500,18 @@ def dispatch(
         encoded_payload,
     ]
     try:
-        sent = run_command(bus_argv, env=environment, secrets=(token,))
+        # Managed Windows listeners run under pythonw and have no inherited
+        # console handles.  Capture the client output so a successful POST is
+        # not misreported as ambiguous when the CLI prints its response.
+        sent = run_command(
+            bus_argv,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            secrets=(token,),
+        )
     except ExecutionFailure as exc:
         fail(str(exc))
     require(sent.returncode == 0, "agent-bus send failed")

@@ -5180,6 +5180,53 @@ def test_dispatch_bypasses_proxy_for_private_bus_host(tmp_path, monkeypatch):
     ]
 
 
+def test_dispatch_captures_agent_bus_stdio_for_pythonw(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    run("git", "init", "-b", "main", str(repo), cwd=tmp_path)
+    run("git", "config", "user.name", "AWF Test", cwd=repo)
+    run("git", "config", "user.email", "awf-test@example.invalid", cwd=repo)
+    (repo / "task.md").write_text("task\n", encoding="utf-8")
+    fake_bus = tmp_path / ("fake-agent-bus.exe" if os.name == "nt" else "fake-agent-bus")
+    fake_bus.write_text("", encoding="utf-8")
+    fake_bus.chmod(0o755)
+    monkeypatch.setenv("AGENT_BUS_URL", "http://127.0.0.1:18802")
+    monkeypatch.setenv("AWF_ARCH_TOKEN", "controlled-test-token")
+    monkeypatch.setenv("AWF_BUS_BIN", dispatch_shell_path(fake_bus))
+    real_run = awf_dispatch.run_command
+    observed: dict[str, object] = {}
+
+    def intercept_bus(argv, **kwargs):
+        if argv[0] == str(fake_bus):
+            observed.update(kwargs)
+            return subprocess.CompletedProcess(argv, 0, "sent\n", "")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(awf_dispatch, "run_command", intercept_bus)
+
+    assert (
+        awf_dispatch.main(
+            [
+                "--repo",
+                str(repo),
+                "--card",
+                "task.md",
+                "--tool",
+                "opencode",
+                "--branch",
+                "feature/task",
+                "--type",
+                "task:awf-impl-v2",
+                "--no-push",
+            ]
+        )
+        == 0
+    )
+    assert observed["capture_output"] is True
+    assert observed["text"] is True
+    assert observed["encoding"] == "utf-8"
+    assert observed["errors"] == "replace"
+
+
 def test_windows_native_dispatch_rejects_command_wrappers():
     with pytest.raises(
         awf_dispatch.DispatchError,
