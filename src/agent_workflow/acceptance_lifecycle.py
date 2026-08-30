@@ -21,7 +21,9 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _RETAINED_REVIEW_REPORT_RE = re.compile(
     r"^\?\?\s+(\.awf/artifacts/review-report-[A-Za-z0-9._-]+\.md)$"
 )
+_RETAINED_TASKCARD_RE = re.compile(r"^\?\?\s+(docs/tasks/([A-Za-z0-9._-]+)\.md)$")
 _MAX_RETAINED_REVIEW_REPORT_BYTES = 64 * 1024
+_MAX_RETAINED_TASKCARD_BYTES = 64 * 1024
 _ENTRY_FIELDS = {
     "profile",
     "profile_sha256",
@@ -272,6 +274,108 @@ def _mirrored_retained_review_status(workspace: Path, status: str, state_root: P
     return True
 
 
+def _bound_plan_run_dir(
+    state_root: Path, workspace: Path, relative: str, task_id: str
+) -> Path | None:
+    from agent_workflow.plan_loop import PlanLoopError, PlanRunStore
+
+    matches: list[Path] = []
+    plan_runs = state_root / "plan-runs"
+    if not plan_runs.is_dir() or plan_runs.is_symlink():
+        return None
+    for candidate in plan_runs.iterdir():
+        if (
+            candidate.is_symlink()
+            or not candidate.is_dir()
+            or not candidate.name.startswith("plan-")
+        ):
+            continue
+        try:
+            run = PlanRunStore(state_root, candidate.name).load()
+            run_repo = _canonical_path(run.get("repo"), label="PlanRun repository")
+        except (AcceptanceLifecycleError, PlanLoopError):
+            continue
+        card = run.get("current_card")
+        if (
+            run_repo != workspace.resolve()
+            or run.get("status") not in {"dispatch_ambiguous", "dispatch_blocked"}
+            or not isinstance(card, dict)
+            or card.get("status") != "dispatching"
+            or card.get("path") != relative
+            or card.get("task_id") != task_id
+        ):
+            continue
+        matches.append(candidate)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _freeze_retained_taskcards(workspace: Path, status: str, state_root: Path) -> bool:
+    lines = [line.strip() for line in status.splitlines() if line.strip()]
+    if not lines:
+        return False
+    prepared: list[tuple[Path, bytes]] = []
+    for line in lines:
+        match = _RETAINED_TASKCARD_RE.fullmatch(line)
+        if match is None:
+            return False
+        relative, task_id = match.groups()
+        source = workspace / relative
+        if source.is_symlink() or not source.is_file():
+            return False
+        try:
+            content = source.read_bytes()
+        except OSError:
+            return False
+        if len(content) > _MAX_RETAINED_TASKCARD_BYTES:
+            return False
+        plan_dir = _bound_plan_run_dir(state_root, workspace, relative, task_id)
+        if plan_dir is None:
+            return False
+        prepared.append((plan_dir / "retained-taskcards" / source.name, content))
+    for destination, content in prepared:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            if destination.is_symlink() or destination.read_bytes() != content:
+                return False
+            continue
+        try:
+            with destination.open("xb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            return False
+    return True
+
+
+def _mirrored_retained_taskcard_status(workspace: Path, status: str, state_root: Path) -> bool:
+    lines = [line.strip() for line in status.splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        match = _RETAINED_TASKCARD_RE.fullmatch(line)
+        if match is None:
+            return False
+        relative, task_id = match.groups()
+        source = workspace / relative
+        plan_dir = _bound_plan_run_dir(state_root, workspace, relative, task_id)
+        if plan_dir is None or source.is_symlink() or not source.is_file():
+            return False
+        mirror = plan_dir / "retained-taskcards" / source.name
+        try:
+            content = source.read_bytes()
+            if (
+                len(content) > _MAX_RETAINED_TASKCARD_BYTES
+                or mirror.is_symlink()
+                or not mirror.is_file()
+                or mirror.read_bytes() != content
+            ):
+                return False
+        except OSError:
+            return False
+    return True
+
+
 def _remove_workspace(path: Path, *, windows: bool | None = None) -> None:
     """Remove one exact workspace, retrying Windows read-only Git files only."""
     root = path.resolve()
@@ -367,11 +471,15 @@ def closeout(
             text=True,
             check=False,
         )
+        if result.returncode == 0 and result.stdout and not recovering:
+            _freeze_retained_taskcards(candidate, result.stdout, state_root)
         recoverable_status = _partial_workspace_removal(result.stdout)
         if explicit_frozen_recovery:
-            recoverable_status = _explicit_frozen_recovery_status(
-                result.stdout
-            ) or _mirrored_retained_review_status(candidate, result.stdout, state_root)
+            recoverable_status = (
+                _explicit_frozen_recovery_status(result.stdout)
+                or _mirrored_retained_review_status(candidate, result.stdout, state_root)
+                or _mirrored_retained_taskcard_status(candidate, result.stdout, state_root)
+            )
         if result.returncode or (result.stdout and (not recovering or not recoverable_status)):
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: workspace status is unavailable")
     if not validated_exists:
