@@ -3748,6 +3748,14 @@ def tool_codex_review(
         f"\n\nReviewReport output path: {review_report_path}\n"
         "\n--- Required ReviewReport template ---\n\n" + review_report_template
     )
+    if card_text:
+        invocation_input += (
+            "\n\nThe attached TaskCard is trusted Agent Workflow authority metadata that the "
+            "dispatcher committed before implementation. Its presence in the exact branch diff "
+            "is expected, is not an implementation scope deviation, and must never be removed or "
+            "requested for removal. Evaluate allowed implementation paths against the remaining "
+            "diff."
+        )
     if os.environ.get("AWF_FINDING_ENABLED") == "1":
         invocation_input += CODEX_FINDING_INSTRUCTIONS
     if card_text:

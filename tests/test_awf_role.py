@@ -2637,6 +2637,8 @@ def test_tool_codex_review_preserves_model_card_and_tracked_phase(monkeypatch, t
         "--- TaskCard (acceptance criteria to verify) ---\n\n# TaskCard\n"
         in captured["kwargs"]["stdin"]
     )
+    assert "trusted Agent Workflow authority metadata" in captured["kwargs"]["stdin"]
+    assert "must never be removed or requested for removal" in captured["kwargs"]["stdin"]
     assert captured["kwargs"]["evidence"] is evidence
     assert captured["kwargs"]["tracked_phase"] == "codex"
 
