@@ -248,10 +248,10 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
         (b"# Decision\n\n**Verdict: `approve`**\n", "approve"),
         (b"# Decision\n\n**Verdict:** `escalate`\n", "escalate"),
         (
-            b"Confirmed: scope clean. Verdict **approve** is final; proceed to merge gate.\n",
+            b"Confirmed: scope clean. No rework exists. Verdict **approve** is final; proceed.\n",
             "approve",
         ),
-        (b"Review complete; Verdict `request_changes`.\n", "request_changes"),
+        (b"Review complete. Verdict `request_changes` is final.\n", "request_changes"),
     ],
 )
 def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) -> None:
@@ -276,6 +276,9 @@ def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) 
         b"Review complete; Verdict **approve is final.\n",
         b"Review complete; Verdict **maybe**.\n",
         b"Verdict **approve** here, but Verdict `reject` there.\n",
+        b"Review complete; Verdict **approve** is not final.\n",
+        b"No decision: Verdict **approve** was not issued.\n",
+        b"Text: Verdict `reject` was superseded.\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** approve\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** reject\n",
     ],
