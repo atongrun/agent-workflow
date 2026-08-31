@@ -260,6 +260,13 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
             "approve",
         ),
         (b"**Verdict: REJECT** -> trusted-merge-gate\n", "reject"),
+        (
+            b"No rework is warranted; the change is PASS-reviewed. "
+            b"Decision final: **approve \xe2\x86\x92 merge**.\n\n"
+            b"Provide specific evidence to re-evaluate.\n",
+            "approve",
+        ),
+        (b"Decision final: **approve -> merge**;\n", "approve"),
     ],
 )
 def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) -> None:
@@ -295,6 +302,13 @@ def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) 
         b"**Verdict: approve** -> trusted-merge-gate unless CI is red\n",
         b"**Verdict: approve** -> trusted-merge-gate?\n",
         b"**Verdict: approve** -> trusted-merge-gate\n**Verdict:** reject\n",
+        b"Decision final: **reject -> merge**.\n",
+        b"Decision final: **approve -> merge** unless CI is red.\n",
+        b"Decision final: **approve -> merge**?\n",
+        b"Decision final: **approve -> merge**. Decision final: **approve -> merge**.\n",
+        b"**Verdict:** reject. Decision final: **approve -> merge**.\n",
+        b"Verdict **reject** is final. Decision final: **approve -> merge**.\n",
+        b"Decision final: **approve -> merge**.\n**Verdict:** reject\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** approve\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** reject\n",
     ],
