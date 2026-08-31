@@ -10,7 +10,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
-from agent_workflow import application
+from agent_workflow import __version__, application
 
 
 def tool_definitions() -> tuple[dict[str, object], ...]:
@@ -175,7 +175,7 @@ def serve(stdin: object = sys.stdin, stdout: object = sys.stdout) -> int:
                 result: object = {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": "agent-workflow", "version": "0.4.0rc1"},
+                    "serverInfo": {"name": "agent-workflow", "version": __version__},
                 }
             elif method == "tools/list":
                 result = {"tools": list(tool_definitions())}
