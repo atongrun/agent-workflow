@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 
-from agent_workflow import mcp
+from agent_workflow import __version__, mcp
 
 
 def test_mcp_exposes_only_the_frozen_product_tools():
@@ -70,6 +70,7 @@ def test_mcp_stdio_lists_tools_and_returns_structured_tool_result(monkeypatch):
 
     replies = [json.loads(line) for line in destination.getvalue().splitlines()]
     assert replies[0]["result"]["capabilities"] == {"tools": {"listChanged": False}}
+    assert replies[0]["result"]["serverInfo"]["version"] == __version__
     assert len(replies[1]["result"]["tools"]) == 7
     assert json.loads(replies[2]["result"]["content"][0]["text"]) == {
         "current_state": "card_active"
