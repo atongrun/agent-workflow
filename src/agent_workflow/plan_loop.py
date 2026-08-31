@@ -49,6 +49,12 @@ _DECISION_TRUSTED_GATE_PRESENTATION = re.compile(
     r"(?i)^\*\*\s*verdict\s*:\s*(approve|request_changes|reject|escalate)\s*\*\*"
     r"\s*(?:→|->)\s*trusted-merge-gate\s*$"
 )
+_DECISION_FINAL_MERGE_PRESENTATION = re.compile(
+    r"(?i)(?:^|[.!?]\s+)decision\s+final\s*:\s*\*\*\s*(approve)"
+    r"\s*(?:→|->)\s*merge\s*\*\*"
+    r"\s*[.;]?\s*$"
+)
+_DECISION_FINAL_MERGE_LABEL = re.compile(r"(?i)(?:^|[.!?]\s+)decision\s+final\s*:")
 _DECISION_INLINE_PRESENTATION = re.compile(
     r"(?i)(?:^|[.!?]\s+)verdict\s*:?\s*(?:"
     r"\*\*(approve|request_changes|reject|escalate)\*\*"
@@ -734,6 +740,17 @@ def _normalize_decision_syntax(text: str) -> str:
         gate_match = _DECISION_TRUSTED_GATE_PRESENTATION.fullmatch(line)
         if gate_match is not None:
             normalized.append(f"**Verdict:** {gate_match.group(1).lower()}")
+            continue
+        final_merge_labels = list(_DECISION_FINAL_MERGE_LABEL.finditer(line))
+        final_merge_matches = list(_DECISION_FINAL_MERGE_PRESENTATION.finditer(line))
+        if len(final_merge_labels) != len(final_merge_matches):
+            raise PlanLoopError("Architect Decision requires exactly one closed verdict")
+        if final_merge_matches:
+            prefix = line[: final_merge_matches[0].start()]
+            if prefix.strip():
+                normalized.extend(_normalize_decision_syntax(prefix).splitlines())
+            for final_merge_match in final_merge_matches:
+                normalized.append(f"**Verdict:** {final_merge_match.group(1).lower()}")
             continue
         match = _DECISION_PRESENTATION.fullmatch(line)
         if match is not None:
