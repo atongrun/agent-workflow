@@ -2218,6 +2218,7 @@ def test_tool_opencode_exec_uses_model_env(monkeypatch, tmp_path):
     assert captured["argv"] == [
         "opencode-test",
         "run",
+        "--pure",
         "--dir",
         str(tmp_path),
         "-f",
@@ -2359,6 +2360,7 @@ def test_tool_opencode_review_uses_model_env(monkeypatch, tmp_path):
     assert captured["argv"] == [
         "opencode-test",
         "run",
+        "--pure",
         "--dir",
         str(tmp_path),
         "-f",
@@ -2690,6 +2692,7 @@ def test_tool_opencode_card_prompt_boundary_without_model(monkeypatch, tmp_path,
     assert captured["argv"] == [
         "opencode-test",
         "run",
+        "--pure",
         "--dir",
         str(tmp_path),
         "-f",
