@@ -32,6 +32,22 @@ _ENTRY_FIELDS = {
     "manager",
     "manager_id",
 }
+_MACHINE_CONFIG_FIELDS = {
+    "format",
+    "machine",
+    "project",
+    "repo",
+    "state_root",
+    "finding_enabled",
+    "roles",
+}
+_MACHINE_ROLE_FIELDS = {
+    "profile",
+    "profile_sha256",
+    "workspace",
+    "tool",
+    "model_selection",
+}
 
 
 class AcceptanceLifecycleError(RuntimeError):
@@ -97,6 +113,106 @@ def _installation(profile: node.NodeProfile) -> dict[str, object]:
 
 def _active_profile(profile: node.NodeProfile) -> node.NodeProfile:
     return node.load_installed_profile(str(profile.authoring_path)) or profile
+
+
+def _raw_contains_identity(raw: str, identity: str) -> bool:
+    encoded = json.dumps(identity, ensure_ascii=False)[1:-1]
+    return identity in raw or encoded in raw
+
+
+def _exact_machine_binding(
+    entries: list[dict[str, object]],
+    loaded: list[tuple[node.NodeProfile, dict[str, object], str]],
+) -> Path | None:
+    """Find one exact platform binding that owns all manifest profiles, or fail closed."""
+    expected = {str(entry["profile"]): entry for entry in entries}
+    expected_workspaces = {str(entry["workspace"]) for entry in entries}
+    profiles = {str(entry["profile"]): profile for profile, entry, _status in loaded}
+    projects_root = node.default_config_home().expanduser().absolute() / "projects"
+    if not projects_root.is_dir():
+        return None
+    matches: list[Path] = []
+    for project_dir in projects_root.iterdir():
+        candidate = project_dir / "machine.json"
+        if not candidate.exists():
+            continue
+        raw = ""
+        try:
+            raw = candidate.read_text(encoding="utf-8")
+            value = json.loads(raw)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            if any(
+                _raw_contains_identity(raw, identity)
+                for identity in (*expected, *expected_workspaces)
+            ):
+                raise AcceptanceLifecycleError(
+                    "CLEANUP_BLOCKED: platform machine binding identity drifted"
+                )
+            continue
+        roles = value.get("roles") if isinstance(value, dict) else None
+        if not isinstance(roles, dict):
+            continue
+        bindings = [binding for binding in roles.values() if isinstance(binding, dict)]
+        referenced = {
+            str(binding.get("profile"))
+            for binding in bindings
+            if binding.get("profile") in expected
+        }
+        referenced_workspaces = {
+            str(binding.get("workspace"))
+            for binding in bindings
+            if binding.get("workspace") in expected_workspaces
+        }
+        if not referenced and not referenced_workspaces:
+            continue
+        if (
+            _has_symlink(candidate)
+            or set(value) != _MACHINE_CONFIG_FIELDS
+            or value.get("format") != "awf.machine-config.v1"
+            or set(referenced) != set(expected)
+            or len(bindings) != len(expected)
+            or set(profiles) != set(expected)
+        ):
+            raise AcceptanceLifecycleError(
+                "CLEANUP_BLOCKED: platform machine binding identity drifted"
+            )
+        repo = _canonical_path(value.get("repo"), label="machine repository")
+        expected_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()
+        if project_dir.name != expected_key:
+            raise AcceptanceLifecycleError(
+                "CLEANUP_BLOCKED: platform machine binding identity drifted"
+            )
+        for role, binding in roles.items():
+            if not isinstance(binding, dict) or set(binding) != _MACHINE_ROLE_FIELDS:
+                raise AcceptanceLifecycleError(
+                    "CLEANUP_BLOCKED: platform machine binding identity drifted"
+                )
+            entry = expected.get(str(binding["profile"]))
+            profile = profiles.get(str(binding["profile"]))
+            if entry is None or profile is None:
+                raise AcceptanceLifecycleError(
+                    "CLEANUP_BLOCKED: platform machine binding identity drifted"
+                )
+            model = str(profile.values.get("model", ""))
+            expected_model_selection = {
+                "mode": "explicit" if model else "tool-default",
+                "ref": model,
+            }
+            if (
+                role != profile.role
+                or binding["profile_sha256"] != entry["profile_sha256"]
+                or binding["workspace"] != entry["workspace"]
+                or binding["tool"] != profile.values.get("tool")
+                or binding["model_selection"] != expected_model_selection
+                or value["state_root"] != str(profile.state_root)
+            ):
+                raise AcceptanceLifecycleError(
+                    "CLEANUP_BLOCKED: platform machine binding identity drifted"
+                )
+        matches.append(candidate)
+    if len(matches) > 1:
+        raise AcceptanceLifecycleError("CLEANUP_BLOCKED: platform machine binding is ambiguous")
+    return matches[0] if matches else None
 
 
 def create_manifest(
@@ -467,15 +583,27 @@ def closeout(
     explicit_frozen_recovery = frozen_exists and authorize_frozen_recovery and not validated_exists
     recovering = validated_exists or explicit_frozen_recovery
     expected_closed = {**frozen, "state": "CLOSED"}
-    if closed_path.exists():
+    closed_exists = closed_path.exists()
+    if closed_exists:
         closed = _load(closed_path)
         if closed != expected_closed:
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: closed identity drifted")
-        return closed
     entries, workspaces = _validated_entries(value)
     loaded: list[tuple[node.NodeProfile, dict[str, object], str]] = []
+    missing_profiles: list[dict[str, object]] = []
     for entry in entries:
-        profile = node.load_profile(str(_canonical_path(entry["profile"], label="profile")))
+        source = _canonical_path(entry["profile"], label="profile")
+        if not source.exists():
+            if (
+                not recovering
+                or node.load_installed_profile(str(source)) is not None
+                or Path(str(entry["installed_profile"])).exists()
+                or Path(str(entry["workspace"])).exists()
+            ):
+                raise AcceptanceLifecycleError("CLEANUP_BLOCKED: profile identity drifted")
+            missing_profiles.append(entry)
+            continue
+        profile = node.load_profile(str(source))
         active, expected_installed = _active_profile(profile), str(entry["installed_profile"])
         if (
             profile.digest != entry["profile_sha256"]
@@ -495,7 +623,11 @@ def closeout(
                 "CLEANUP_BLOCKED: native installation identity is unknown"
             )
         loaded.append((active, entry, str(status)))
+    machine_binding = _exact_machine_binding(entries, loaded)
     installation_by_workspace = {entry[1]["workspace"]: entry[2] for entry in loaded}
+    installation_by_workspace.update(
+        {entry["workspace"]: "not_installed" for entry in missing_profiles}
+    )
     architect_by_workspace: dict[str, tuple[node.NodeProfile, dict[str, object], str]] = {}
     for loaded_entry in loaded:
         profile, entry, _status = loaded_entry
@@ -508,9 +640,9 @@ def closeout(
             )
         architect_by_workspace[workspace] = loaded_entry
     state_roots = {profile.state_root for profile, _entry, _status in loaded}
-    if len(state_roots) != 1:
+    if loaded and len(state_roots) != 1:
         raise AcceptanceLifecycleError("CLEANUP_BLOCKED: state root identity is unknown")
-    state_root = next(iter(state_roots))
+    state_root = next(iter(state_roots)) if state_roots else None
     for workspace in workspaces:
         candidate = _canonical_path(workspace, label="workspace")
         if not candidate.is_dir():
@@ -599,5 +731,15 @@ def closeout(
             _remove_workspace(candidate)
         if candidate.exists():
             raise AcceptanceLifecycleError("CLEANUP_BLOCKED: generated workspace remains")
-    _write_json(closed_path, expected_closed, replace=False)
+    if machine_binding is not None:
+        machine_binding.unlink()
+        if machine_binding.exists():
+            raise AcceptanceLifecycleError("CLEANUP_BLOCKED: platform machine binding remains")
+    for _profile, entry, _status in loaded:
+        source = _canonical_path(entry["profile"], label="profile")
+        source.unlink()
+        if source.exists():
+            raise AcceptanceLifecycleError("CLEANUP_BLOCKED: authoring profile remains")
+    if not closed_exists:
+        _write_json(closed_path, expected_closed, replace=False)
     return _load(closed_path)

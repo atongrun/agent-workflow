@@ -63,7 +63,247 @@ def test_closeout_preserves_frozen_evidence_and_removes_exact_workspace(
     assert result["state"] == "CLOSED"
     assert (tmp_path / "acceptance.closeout.json").is_file()
     assert not profile.repo.exists()
+    assert not profile.path.exists()
+
+
+def _machine_binding(monkeypatch, tmp_path: Path, profile: node.NodeProfile) -> Path:
+    config_home = tmp_path / "config"
+    monkeypatch.setattr(node, "default_config_home", lambda: config_home)
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    key = hashlib.sha256(str(source_repo.resolve()).encode("utf-8")).hexdigest()
+    path = config_home / "projects" / key / "machine.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "format": "awf.machine-config.v1",
+                "machine": "acceptance-machine",
+                "project": "acceptance-project",
+                "repo": str(source_repo.resolve()),
+                "state_root": str(profile.state_root),
+                "finding_enabled": False,
+                "roles": {
+                    profile.role: {
+                        "profile": str(profile.path),
+                        "profile_sha256": profile.digest,
+                        "workspace": str(profile.repo),
+                        "tool": profile.values["tool"],
+                        "model_selection": {"mode": "tool-default", "ref": ""},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_malformed_binding_detection_matches_json_escaped_windows_identity():
+    identity = r"C:\Users\atong\AppData\Roaming\awf\profiles\acceptance.json"
+    raw = (
+        '{"profile":"C:\\\\Users\\\\atong\\\\AppData\\\\Roaming\\\\awf\\\\profiles'
+        '\\\\acceptance.json"'
+    )
+
+    assert acceptance_lifecycle._raw_contains_identity(raw, identity)
+
+
+def test_closeout_removes_exact_platform_binding_and_authoring_profile(monkeypatch, tmp_path: Path):
+    profile = _profile(tmp_path)
+    binding = _machine_binding(monkeypatch, tmp_path, profile)
+    manifest = tmp_path / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    acceptance_lifecycle.create_manifest(
+        manifest, run_id="acceptance-binding", profiles=(profile,), workspaces=(profile.repo,)
+    )
+
+    result = acceptance_lifecycle.closeout(manifest)
+
+    assert result["state"] == "CLOSED"
+    assert not binding.exists()
+    assert not profile.path.exists()
+
+
+def test_closeout_refuses_drifted_platform_model_selection_before_mutation(
+    monkeypatch, tmp_path: Path
+):
+    profile = _profile(tmp_path)
+    binding = _machine_binding(monkeypatch, tmp_path, profile)
+    value = json.loads(binding.read_text(encoding="utf-8"))
+    value["roles"][profile.role]["model_selection"] = {
+        "mode": "explicit",
+        "ref": "other/provider-model",
+    }
+    binding.write_text(json.dumps(value), encoding="utf-8")
+    manifest = tmp_path / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    acceptance_lifecycle.create_manifest(
+        manifest, run_id="acceptance-binding-drift", profiles=(profile,), workspaces=(profile.repo,)
+    )
+
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="platform machine binding identity drifted",
+    ):
+        acceptance_lifecycle.closeout(manifest)
+
+    assert binding.exists()
     assert profile.path.exists()
+    assert profile.repo.exists()
+    assert not (tmp_path / "acceptance.validated.json").exists()
+
+
+def test_closeout_refuses_drifted_platform_profile_path_before_mutation(
+    monkeypatch, tmp_path: Path
+):
+    profile = _profile(tmp_path)
+    binding = _machine_binding(monkeypatch, tmp_path, profile)
+    value = json.loads(binding.read_text(encoding="utf-8"))
+    value["roles"][profile.role]["profile"] = str(tmp_path / "other-profile.json")
+    binding.write_text(json.dumps(value), encoding="utf-8")
+    manifest = tmp_path / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    acceptance_lifecycle.create_manifest(
+        manifest,
+        run_id="acceptance-binding-profile-drift",
+        profiles=(profile,),
+        workspaces=(profile.repo,),
+    )
+
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="platform machine binding identity drifted",
+    ):
+        acceptance_lifecycle.closeout(manifest)
+
+    assert binding.exists()
+    assert profile.path.exists()
+    assert profile.repo.exists()
+
+
+def _write_lifecycle_marker(manifest: Path, *, suffix: str, state: str) -> None:
+    frozen = {
+        "format": acceptance_lifecycle.CLOSEOUT_FORMAT,
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "state": state,
+    }
+    manifest.with_name(f"{manifest.stem}.{suffix}.json").write_text(
+        json.dumps(frozen, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def test_closed_closeout_refuses_machine_binding_when_source_profile_is_missing(
+    monkeypatch, tmp_path: Path
+):
+    profile = _profile(tmp_path)
+    binding = _machine_binding(monkeypatch, tmp_path, profile)
+    manifest = tmp_path / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda _profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": "awf-acceptance-coder.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    acceptance_lifecycle.create_manifest(
+        manifest,
+        run_id="acceptance-closed-residue",
+        profiles=(profile,),
+        workspaces=(profile.repo,),
+    )
+    _write_lifecycle_marker(manifest, suffix="closeout", state="FROZEN")
+    _write_lifecycle_marker(manifest, suffix="validated", state="VALIDATED")
+    _write_lifecycle_marker(manifest, suffix="closed", state="CLOSED")
+    profile.path.unlink()
+    acceptance_lifecycle._remove_workspace(profile.repo)
+
+    with pytest.raises(
+        acceptance_lifecycle.AcceptanceLifecycleError,
+        match="platform machine binding identity drifted",
+    ):
+        acceptance_lifecycle.closeout(manifest)
+
+    assert binding.exists()
+
+
+def test_closeout_recovers_after_one_source_profile_was_already_removed(
+    monkeypatch, tmp_path: Path
+):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    first = _profile(first_root, role="architect")
+    second = _profile(second_root, role="coder")
+    manifest = tmp_path / "acceptance.json"
+    monkeypatch.setattr(
+        node,
+        "lifecycle_facts",
+        lambda profile: {
+            "running_observation": {"status": "stopped"},
+            "installation": {
+                "manager": "systemd",
+                "manager_id": f"awf-acceptance-{profile.role}.service",
+                "status": "not_installed",
+            },
+        },
+    )
+    acceptance_lifecycle.create_manifest(
+        manifest,
+        run_id="acceptance-partial-profile-cleanup",
+        profiles=(first, second),
+        workspaces=(first.repo, second.repo),
+    )
+    _write_lifecycle_marker(manifest, suffix="closeout", state="FROZEN")
+    _write_lifecycle_marker(manifest, suffix="validated", state="VALIDATED")
+    first.path.unlink()
+    acceptance_lifecycle._remove_workspace(first.repo)
+
+    result = acceptance_lifecycle.closeout(manifest)
+
+    assert result["state"] == "CLOSED"
+    assert not first.path.exists()
+    assert not second.path.exists()
+    assert not second.repo.exists()
 
 
 def test_closeout_fails_closed_before_mutation_for_drift(monkeypatch, tmp_path: Path):
