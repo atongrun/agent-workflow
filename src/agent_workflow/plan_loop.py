@@ -45,6 +45,10 @@ _DECISION_CODE_VALUE = re.compile(
     r"(?i)(:\s*(?:\*\*\s*)?)`(approve|request_changes|reject|escalate)`"
     r"(?=\s*(?:\*\*)?\s*$)"
 )
+_DECISION_TRUSTED_GATE_PRESENTATION = re.compile(
+    r"(?i)^\*\*\s*verdict\s*:\s*(approve|request_changes|reject|escalate)\s*\*\*"
+    r"\s*(?:→|->)\s*trusted-merge-gate\s*$"
+)
 _DECISION_INLINE_PRESENTATION = re.compile(
     r"(?i)(?:^|[.!?]\s+)verdict\s*:?\s*(?:"
     r"\*\*(approve|request_changes|reject|escalate)\*\*"
@@ -727,6 +731,10 @@ def _normalize_decision_syntax(text: str) -> str:
         while len(line) >= 2 and line.startswith("`") and line.endswith("`"):
             line = line[1:-1].strip()
         line = _DECISION_CODE_VALUE.sub(lambda match: match.group(1) + match.group(2), line)
+        gate_match = _DECISION_TRUSTED_GATE_PRESENTATION.fullmatch(line)
+        if gate_match is not None:
+            normalized.append(f"**Verdict:** {gate_match.group(1).lower()}")
+            continue
         match = _DECISION_PRESENTATION.fullmatch(line)
         if match is not None:
             verdict = next(value for value in match.groups() if value is not None)

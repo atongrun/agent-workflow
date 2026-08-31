@@ -252,6 +252,14 @@ def test_decision_next_output_and_completed_fact_are_closed(tmp_path: Path) -> N
             "approve",
         ),
         (b"Review complete. Verdict `request_changes` is final.\n", "request_changes"),
+        (
+            b"The decision stands exactly as evidenced, unchanged:\n\n"
+            b"**Verdict: approve** \xe2\x86\x92 trusted-merge-gate\n"
+            b"- PR #28 is merge-eligible via the trusted merge gate\n\n"
+            b"Decision closed.\n",
+            "approve",
+        ),
+        (b"**Verdict: REJECT** -> trusted-merge-gate\n", "reject"),
     ],
 )
 def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) -> None:
@@ -283,6 +291,10 @@ def test_decision_parser_normalizes_presentation_only(raw: bytes, verdict: str) 
         b"Review complete. Verdict **approve** is final; not really.\n",
         b"Review complete. Verdict **approve** is final; unless CI is red.\n",
         b"Review complete. Verdict `reject` is final. Is it?\n",
+        b"**Verdict: approve** -> some-other-gate\n",
+        b"**Verdict: approve** -> trusted-merge-gate unless CI is red\n",
+        b"**Verdict: approve** -> trusted-merge-gate?\n",
+        b"**Verdict: approve** -> trusted-merge-gate\n**Verdict:** reject\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** approve\n",
         b"# Decision\n\n**Verdict: approve**\n**Verdict:** reject\n",
     ],
