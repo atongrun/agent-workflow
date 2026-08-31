@@ -125,7 +125,7 @@ def test_opencode_reviewer_matches_legacy_same_fixture(tmp_path: Path, card_atta
     assert rendered.file_inputs == ()
 
 
-@pytest.mark.parametrize("mode", [("milestone-next",), ("terminal-decision",)])
+@pytest.mark.parametrize("mode", [(), ("milestone-next",), ("terminal-decision",)])
 def test_opencode_architect_closed_modes_materialize_trusted_context(
     tmp_path: Path, mode: tuple[str, ...]
 ) -> None:
@@ -147,6 +147,7 @@ def test_opencode_architect_closed_modes_materialize_trusted_context(
 
     assert rendered.argv[rendered.argv.index("-f") + 1] == str(context_path)
     assert rendered.file_inputs == (RenderedInputFile(str(context_path), context.encode("utf-8")),)
+    assert context not in rendered.argv[-1]
     if mode == ("terminal-decision",):
         assert "`**Verdict:** approve`" in rendered.argv[-1]
         assert "Do not use JSON or a code fence" in rendered.argv[-1]

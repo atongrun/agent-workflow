@@ -109,13 +109,13 @@ class OpenCodeRenderer:
         if spec.provider_args not in allowed:
             raise ContractError("OpenCode provider options are invalid")
         argv = ["run", "--pure", "--dir", spec.workspace]
-        if spec.provider_args:
+        if spec.provider_args or spec.role == "architect":
             argv += ["-f", spec.input_path]
         if spec.model:
             argv += ["-m", spec.model]
         prompt = spec.input_text
         if spec.role == "architect":
-            prompt += "\n\n" + _opencode_architect_instruction(spec.provider_args)
+            prompt = _opencode_architect_instruction(spec.provider_args)
         argv += ["--", prompt]
         return RenderedInvocation(
             spec.executable,
@@ -125,7 +125,6 @@ class OpenCodeRenderer:
             file_inputs=(
                 (RenderedInputFile(spec.input_path, spec.input_text.encode("utf-8")),)
                 if spec.role == "architect"
-                and spec.provider_args in {("milestone-next",), ("terminal-decision",)}
                 else ()
             ),
         )
