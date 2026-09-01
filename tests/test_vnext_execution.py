@@ -8,7 +8,12 @@ import pytest
 from agent_workflow.vnext.contracts import RoleBinding, TaskProposal, TaskSpec
 from agent_workflow.vnext.coordinator import CoordinatorError, GitHubEffects
 from agent_workflow.vnext.executor import JobSpec, ReceiptStatus, SSHExecutor
-from agent_workflow.vnext.host import HostConfig, HostError, HostRunner
+from agent_workflow.vnext.host import (
+    HostConfig,
+    HostError,
+    HostRunner,
+    extract_opencode_result,
+)
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -73,7 +78,10 @@ import sys
 workspace = pathlib.Path(sys.argv[sys.argv.index('--dir') + 1])
 assert 'AWF_TEST_TOKEN' not in os.environ
 (workspace / 'result.txt').write_text('vnext\\n', encoding='utf-8')
-print(json.dumps({'status': 'completed', 'summary': 'implemented', 'diagnostics': ''}))
+result = json.dumps({'status': 'completed', 'summary': 'implemented', 'diagnostics': ''})
+print(json.dumps({'type': 'step_start', 'part': {'type': 'step_start'}}))
+print(json.dumps({'type': 'text', 'part': {'type': 'text', 'text': result}}))
+print(json.dumps({'type': 'step_finish', 'part': {'type': 'step_finish'}}))
 """,
         encoding="utf-8",
     )
@@ -106,7 +114,10 @@ def test_host_runner_validates_commits_and_publishes_exact_frozen_ref(tmp_path: 
     )
     receipt = runner.execute(spec)
     assert receipt.status == ReceiptStatus.TERMINAL
-    assert receipt.diagnostics == ""
+    assert receipt.diagnostics.startswith("raw_events=")
+    assert "implemented" not in receipt.diagnostics
+    diagnostic = Path(receipt.diagnostics.removeprefix("raw_events="))
+    assert diagnostic.is_file() and diagnostic.stat().st_size < 1024 * 1024
     assert receipt.result == {
         "status": "completed",
         "summary": "implemented",
@@ -167,6 +178,19 @@ def test_model_environment_strips_secret_named_values(tmp_path: Path, monkeypatc
     receipt = runner.execute(job(base, (sys.executable, "-c", "assert True")))
     assert receipt.status == ReceiptStatus.TERMINAL
     assert "do-not-pass" not in receipt.diagnostics
+
+
+def test_opencode_native_events_extract_exact_typed_result_and_reject_candidates() -> None:
+    raw = b"\n".join(
+        (
+            b'{"type":"step_start","part":{"type":"step_start"}}',
+            b'{"type":"text","part":{"type":"text","text":"{\\"status\\":\\"completed\\","}}',
+            b'{"type":"text","part":{"type":"text","text":"\\"summary\\":\\"done\\",\\"diagnostics\\":\\"\\"}"}}',
+        )
+    )
+    assert extract_opencode_result(raw).summary == "done"
+    with pytest.raises(HostError, match="one typed ImplementationResult"):
+        extract_opencode_result(b'{"type":"text","part":{"type":"text","text":"{}\\n{}"}}')
 
 
 def test_github_effects_reuse_only_exact_single_pr(monkeypatch, tmp_path: Path) -> None:

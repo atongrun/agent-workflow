@@ -26,12 +26,50 @@ from agent_workflow.runtime.workspace import (
     serialize_workspace_delta,
 )
 
-from .contracts import ImplementationResult, RoleBinding, TaskProposal, TaskSpec
+from .contracts import (
+    ContractError,
+    ImplementationResult,
+    RoleBinding,
+    TaskProposal,
+    TaskSpec,
+    one_json_object,
+)
 from .executor import JobReceipt, JobSpec, ReceiptStatus
 
 
 class HostError(RuntimeError):
     """The trusted HostRunner denied or failed one exact Job."""
+
+
+_MAX_PROVIDER_EVENTS = 1024 * 1024
+
+
+def extract_opencode_result(raw: bytes) -> ImplementationResult:
+    """Extract one typed result from OpenCode's native NDJSON text events."""
+    text_parts: list[str] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = one_json_object(line)
+        except ContractError as exc:
+            raise HostError("OpenCode emitted an invalid native JSON event") from exc
+        if event.get("type") != "text":
+            continue
+        part = event.get("part")
+        if (
+            not isinstance(part, dict)
+            or part.get("type") != "text"
+            or not isinstance(part.get("text"), str)
+        ):
+            raise HostError("OpenCode emitted an invalid native text event")
+        text_parts.append(part["text"])
+    if not text_parts:
+        raise HostError("OpenCode emitted no native text Result")
+    try:
+        return ImplementationResult.from_dict(one_json_object("".join(text_parts).encode("utf-8")))
+    except ContractError as exc:
+        raise HostError("OpenCode native text was not one typed ImplementationResult") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,15 +263,15 @@ class HostRunner:
         )
         model_workspace = Path(prepared.path)
         try:
-            implementation = self._invoke_model(job, model_workspace)
+            implementation, diagnostic = self._invoke_model(job, model_workspace)
             if implementation.status != "completed":
                 raise HostError(f"Coder blocked: {implementation.summary}")
             delta = serialize_workspace_delta(str(model_workspace), environment)
-            return self._publish(job, delta, implementation)
+            return self._publish(job, delta, implementation, diagnostic)
         finally:
             shutil.rmtree(model_workspace, ignore_errors=True)
 
-    def _invoke_model(self, job: JobSpec, workspace: Path) -> ImplementationResult:
+    def _invoke_model(self, job: JobSpec, workspace: Path) -> tuple[ImplementationResult, Path]:
         task = job.task
         prompt = {
             "role": "coder",
@@ -253,6 +291,8 @@ class HostRunner:
             self.config.provider_binary,
             *self.config.provider_args,
             "run",
+            "--format",
+            "json",
             "--pure",
             "--dir",
             str(workspace),
@@ -261,15 +301,32 @@ class HostRunner:
             argv += ["-m", self.config.provider_model]
         argv += ["--", json.dumps(prompt, ensure_ascii=False, sort_keys=True)]
         completed = _run(argv, cwd=workspace, environment=dict(_model_environment()))
+        diagnostic = self._retain_events(job.job_id, completed.stdout)
         if completed.returncode != 0:
-            raise HostError(completed.stderr.decode("utf-8", errors="replace")[:4096])
+            detail = completed.stderr.decode("utf-8", errors="replace")[:4096]
+            raise HostError(f"{detail}; raw_events={diagnostic}")
         try:
-            value = json.loads(completed.stdout.decode("utf-8"))
-            return ImplementationResult.from_dict(value)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise HostError("OpenCode returned no unambiguous typed ImplementationResult") from exc
+            return extract_opencode_result(completed.stdout), diagnostic
+        except HostError as exc:
+            raise HostError(f"{exc}; raw_events={diagnostic}") from exc
 
-    def _publish(self, job: JobSpec, delta: Any, result: ImplementationResult) -> JobReceipt:
+    def _retain_events(self, job_id: str, raw: bytes) -> Path:
+        path = self.state / "diagnostics" / f"{job_id}.ndjson"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".tmp-{os.getpid()}")
+        temporary.write_bytes(raw[:_MAX_PROVIDER_EVENTS])
+        os.replace(temporary, path)
+        if len(raw) > _MAX_PROVIDER_EVENTS:
+            raise HostError(f"OpenCode native events exceeded the bound; raw_events={path}")
+        return path
+
+    def _publish(
+        self,
+        job: JobSpec,
+        delta: Any,
+        result: ImplementationResult,
+        diagnostic: Path,
+    ) -> JobReceipt:
         task = job.task
         with tempfile.TemporaryDirectory(prefix="trusted-", dir=self.state) as temporary:
             trusted = Path(temporary)
@@ -349,6 +406,7 @@ class HostRunner:
                 ReceiptStatus.TERMINAL,
                 asdict(result),
                 provenance,
+                f"raw_events={diagnostic}",
             )
 
     def _receipt_path(self, job_id: str) -> Path:
