@@ -1256,9 +1256,12 @@ def test_plan_terminal_waits_for_human_merge_without_local_upstream_authority(
     }
 
 
-@pytest.mark.parametrize("review_decision", ["", "APPROVED"])
+@pytest.mark.parametrize(
+    ("review_decision", "merge_reobserve"),
+    [("", False), ("APPROVED", False), ("APPROVED", True)],
+)
 def test_continue_after_approval_observes_exact_human_merge_without_local_merge(
-    monkeypatch, tmp_path: Path, review_decision: str
+    monkeypatch, tmp_path: Path, review_decision: str, merge_reobserve: bool
 ) -> None:
     from agent_workflow.operations import awf_control_plane
 
@@ -1278,26 +1281,39 @@ def test_continue_after_approval_observes_exact_human_merge_without_local_merge(
         "implementation_sha256": "sha256:" + "1" * 64,
         "review_sha256": "sha256:" + "2" * 64,
     }
-    store.update(
-        status="waiting_for_human_approval",
-        current_card={
-            **current,
-            "status": "deciding",
-            "pull_request": provenance["pull_request"],
-            "base_sha": provenance["base_sha"],
-            "head_sha": provenance["head_sha"],
-            "implementation_report_sha256": terminal_delivery["implementation_sha256"],
-            "review_report_sha256": terminal_delivery["review_sha256"],
-            "decision": {"verdict": "approve", "sha256": "8" * 64, "bytes": 10},
-            "ci": {"conclusion": "SUCCESS", "head_sha": provenance["head_sha"], "checks": 1},
-            "approval": {
-                "status": "human_merge_required",
-                "review_decision": review_decision,
-                "mergeability": "CLEAN",
-                "merge_authority": "external",
-            },
-            "terminal_delivery": terminal_delivery,
+    card = {
+        **current,
+        "status": "deciding",
+        "pull_request": provenance["pull_request"],
+        "base_sha": provenance["base_sha"],
+        "head_sha": provenance["head_sha"],
+        "implementation_report_sha256": terminal_delivery["implementation_sha256"],
+        "review_report_sha256": terminal_delivery["review_sha256"],
+        "decision": {"verdict": "approve", "sha256": "8" * 64, "bytes": 10},
+        "ci": {"conclusion": "SUCCESS", "head_sha": provenance["head_sha"], "checks": 1},
+        "approval": {
+            "status": "human_merge_required",
+            "review_decision": review_decision,
+            "mergeability": "CLEAN",
+            "merge_authority": "external",
         },
+        "terminal_delivery": terminal_delivery,
+    }
+    if merge_reobserve:
+        card["approval"] = {
+            "status": "waiting",
+            "review_decision": "REVIEW_REQUIRED",
+            "mergeability": "BLOCKED",
+        }
+        card["merge"] = {
+            "status": "intent",
+            "method": "merge",
+            "pull_request": provenance["pull_request"],
+            "head_sha": provenance["head_sha"],
+        }
+    store.update(
+        status="merge_ambiguous" if merge_reobserve else "waiting_for_human_approval",
+        current_card=card,
     )
     terminal = {}
 

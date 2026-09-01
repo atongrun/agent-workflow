@@ -1590,7 +1590,10 @@ def continue_after_approval(
     if Path(str(run.get("repo", ""))).resolve() != repo.resolve():
         raise PlanOperationError("PlanRun does not belong to this repository")
     card = run.get("current_card")
-    if run.get("status") != "waiting_for_human_approval" or not isinstance(card, dict):
+    merge_reobserve = run.get("status") == "merge_ambiguous"
+    if run.get("status") not in {"waiting_for_human_approval", "merge_ambiguous"} or not isinstance(
+        card, dict
+    ):
         raise PlanOperationError("PlanRun is not waiting for Human approval")
     delivery = _waiting_terminal_delivery(card)
     from agent_workflow.operations.awf_control_plane import RunLedger
@@ -1617,9 +1620,15 @@ def continue_after_approval(
         for key in ("upstream_repo", "base_ref", "base_sha", "head_sha")
     ):
         raise PlanOperationError("waiting PlanRun approval identity is invalid")
-    recorded_approval = card.get("approval")
-    human_merge = _human_merge_requested(recorded_approval)
-    if human_merge:
+    merge_intent = card.get("merge")
+    if merge_reobserve:
+        if merge_intent != {
+            "status": "intent",
+            "method": "merge",
+            "pull_request": provenance["pull_request"],
+            "head_sha": provenance["head_sha"],
+        }:
+            raise PlanOperationError("ambiguous merge intent identity drifted")
         merge = _observe_exact_merge(
             store=store,
             repo=repo,
@@ -1628,10 +1637,21 @@ def continue_after_approval(
             method="external",
         )
     else:
-        approval = _approval_observation(repo, provenance)
-        if approval.get("status") != "approved":
-            raise PlanOperationError("exact PR head still requires Human approval")
-        merge = _merge_and_observe(store=store, repo=repo, provenance=provenance, card=card)
+        recorded_approval = card.get("approval")
+        human_merge = _human_merge_requested(recorded_approval)
+        if human_merge:
+            merge = _observe_exact_merge(
+                store=store,
+                repo=repo,
+                provenance=provenance,
+                effect_attempted=False,
+                method="external",
+            )
+        else:
+            approval = _approval_observation(repo, provenance)
+            if approval.get("status") != "approved":
+                raise PlanOperationError("exact PR head still requires Human approval")
+            merge = _merge_and_observe(store=store, repo=repo, provenance=provenance, card=card)
     completed_card = {**card, "status": "completed", "merge": merge}
     completed = completed_card_fact(
         run=run,

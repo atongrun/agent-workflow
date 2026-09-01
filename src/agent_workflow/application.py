@@ -190,6 +190,19 @@ def _replacement_state(status: str) -> str:
     return ""
 
 
+def _merge_reobserve_allowed(run: Mapping[str, object]) -> bool:
+    card = run.get("current_card")
+    merge = card.get("merge") if isinstance(card, Mapping) else None
+    return bool(
+        run.get("status") == "merge_ambiguous"
+        and isinstance(merge, Mapping)
+        and merge.get("status") == "intent"
+        and merge.get("method") == "merge"
+        and merge.get("pull_request") == card.get("pull_request")
+        and merge.get("head_sha") == card.get("head_sha")
+    )
+
+
 def status(repo: Path, *, run_id: str) -> dict[str, object]:
     """Return the credential-free, read-only PlanRun product projection."""
     root = Path(repo).resolve()
@@ -209,6 +222,8 @@ def status(repo: Path, *, run_id: str) -> dict[str, object]:
         stop_requested=run.get("stop_requested") is True,
         authority_consistent=consistent,
     )
+    if consistent and run.get("stop_requested") is not True and _merge_reobserve_allowed(run):
+        actions = ("get_status", "doctor", "continue_after_approval", "stop")
     return {
         "current_state": current,
         "current_card": _card(run.get("current_card")),

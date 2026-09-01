@@ -158,6 +158,40 @@ def test_no_replay_provider_failure_projects_blocked_ambiguous_without_replaceme
     assert result["allowed_actions"] == ["get_status", "doctor", "stop"]
 
 
+def test_exact_merge_intent_ambiguity_advertises_only_reobservation(monkeypatch, tmp_path: Path):
+    payload = _payload(tmp_path)
+    state_root = tmp_path / "state"
+    store = PlanRunStore(state_root, str(payload["run_id"]))
+    store.create(payload, repo=tmp_path)
+    store.update(
+        status="merge_ambiguous",
+        current_card={
+            "task_id": "RC2-P3-001",
+            "branch": "codex/rc2-p3",
+            "status": "deciding",
+            "pull_request": 38,
+            "head_sha": "5" * 40,
+            "merge": {
+                "status": "intent",
+                "method": "merge",
+                "pull_request": 38,
+                "head_sha": "5" * 40,
+            },
+        },
+    )
+    monkeypatch.setattr(application, "_machine", lambda _repo: _machine(state_root))
+
+    result = application.status(tmp_path, run_id=str(payload["run_id"]))
+
+    assert result["current_state"] == "BLOCKED_AMBIGUOUS"
+    assert result["allowed_actions"] == [
+        "get_status",
+        "doctor",
+        "continue_after_approval",
+        "stop",
+    ]
+
+
 def test_conflicting_completed_facts_never_advertise_deinit(monkeypatch, tmp_path: Path):
     payload = _payload(tmp_path)
     state_root = tmp_path / "state"
