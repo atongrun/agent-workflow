@@ -23,7 +23,7 @@ next TaskCard / MILESTONE_COMPLETE / BLOCKED
 Humans do not normally write TaskCards or manually coordinate Coder, Reviewer, PRs, merges, and the
 next card. Agent Bus carries events between machines; it is transport, not workflow authority.
 
-Current release: [`v0.4.0-rc.1`](https://github.com/atongrun/agent-workflow/releases/tag/v0.4.0-rc.1)
+Current release: [`v0.4.0-rc.2`](https://github.com/atongrun/agent-workflow/releases/tag/v0.4.0-rc.2)
 
 ## The normal workflow
 
@@ -40,7 +40,7 @@ Install Agent Workflow from the GitHub release:
 
 ```bash
 python -m pip install \
-  https://github.com/atongrun/agent-workflow/releases/download/v0.4.0-rc.1/agent_workflow-0.4.0rc1-py3-none-any.whl
+  https://github.com/atongrun/agent-workflow/releases/download/v0.4.0-rc.2/agent_workflow-0.4.0rc2-py3-none-any.whl
 
 awf version
 ```
@@ -48,7 +48,7 @@ awf version
 Expected output:
 
 ```text
-awf 0.4.0rc1
+awf 0.4.0rc2
 ```
 
 AWF currently expects an owner-only `~/.config/awf/dispatch.env` containing the Agent Bus URL and
@@ -76,18 +76,17 @@ creates separate role workspaces, installs and starts the managed listeners, wai
 connectivity, and prints `Ready` only when the selected roles can receive work.
 
 Roles describe responsibilities, not permanent Agent Tool bindings. A machine may host any subset
-of them. The published `v0.4.0-rc.1` release ships the narrow matrix below; unreleased RC.2 main
-has completed deterministic conformance and fresh non-business CLI/model smoke for the full matrix:
+of them. RC.2 ships the complete conformance-tested provider/role matrix:
 
-| Role | Published RC.1 | Unreleased RC.2 main |
-|---|---|---|
-| Architect | Pi | Pi, OpenCode, Codex |
-| Coder | OpenCode | Pi, OpenCode, Codex |
-| Reviewer | OpenCode, Pi, Codex | Pi, OpenCode, Codex |
+| Role | Supported Agent Tools |
+|---|---|
+| Architect | Pi, OpenCode, Codex |
+| Coder | Pi, OpenCode, Codex |
+| Reviewer | Pi, OpenCode, Codex |
 
-The RC.2 matrix does not claim the two official real-machine topology acceptances or release
-publication; those remain separate gates. Run `awf init` separately on each machine in a
-cross-machine setup.
+The official `uniform-opencode` and Pi Architect → OpenCode Coder → Codex Reviewer topologies both
+completed clean-installed, real-machine, serial two-card acceptance. Run `awf init` separately on
+each machine in a cross-machine setup.
 
 ### 3. Discuss and commit a Plan
 
@@ -109,7 +108,7 @@ The normal Human interaction is a request like:
 > This Plan is approved and committed. Use Agent Workflow to execute it. Continue until the
 > milestone is complete or BLOCKED.
 
-After that explicit authorization, the initiating Agent on unreleased RC.2 main invokes the
+After that explicit authorization, the initiating Agent invokes the
 Agent-native MCP facade (`awf-mcp` or `awf mcp`) and calls `start_plan`. The MCP adapter is a thin
 stdio entry over the same installed authority; it does not own transport, ACK, replay, or merge
 state. `awf plan start` remains the installed debugging and compatibility contract:

@@ -6,6 +6,24 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
+## Current Handoff State: 2026-09-01 RC.2 Final Closeout
+
+RC.2 is release-ready on the exact `main` merge containing this section. The package identity is
+`0.4.0rc2`; exact-head ordinary CI, installed-wheel checks, Windows recovery, macOS runtime and the
+complete Binary Feasibility matrix passed on the final code candidates.
+
+The accepted real-machine evidence includes the R59 `uniform-opencode` two-card milestone and the
+R82 Pi Architect → OpenCode Coder → Codex Reviewer two-card milestone. R86 additionally proved MCP
+entry, exact protected-branch Human approval, external-effect merge re-observation, Windows
+zero-visible-window operation, and exact disposable cleanup. R86 Card 2 repository code and CI
+merged as downstream PR #39; its empty-output OpenCode Reviewer event remains retained as a truthful
+provider failure and was never ACKed, requeued, replayed or rewritten as PASS.
+
+All release-owned R86 profiles, native tasks, platform binding, workspaces, listener processes and
+Bus port are absent; the isolated Bus DB, PlanRun, MCP provenance, zero-popup observation and failed
+Reviewer evidence remain retained. Publication is `v0.4.0-rc.2`; post-RC.2 work must not reopen this
+release merely for presentation variants, optional integrations or broader recovery coverage.
+
 ## Current Handoff State: 2026-08-25 RC.2 Phase 1A Operations Package Closeout
 
 Phase 1A is merged on `main` as `abc5ad2db8f7efcf0531d4fd844cf8bd1558f3cb` through PR #126.

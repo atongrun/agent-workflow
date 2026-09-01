@@ -8,24 +8,27 @@ is frozen. RC.2 is limited to:
 
 - [x] formalize the installed operations package (Phase 1A, PR #126 merged as `abc5ad2`; exact-head
   CI and independent review passed);
-- [ ] add tracked project topology and platform-local machine bindings;
-- [ ] make init/doctor/deinit exact, add automatic disposable-profile closeout and prove Windows
+- [x] add tracked project topology and platform-local machine bindings;
+- [x] make init/doctor/deinit exact, add automatic disposable-profile closeout and prove Windows
   Task Scheduler reconciliation produces zero visible console windows;
-- [ ] implement and conformance-test the complete Pi/OpenCode/Codex x
+- [x] implement and conformance-test the complete Pi/OpenCode/Codex x
   Architect/Coder/Reviewer matrix, with required real invocation smokes;
-- [ ] add one shared application/status/action contract and thin Human-hidden MCP facade;
-- [ ] make every Architect use closed semantic output plus trusted TaskCard assembly and one
+- [x] add one shared application/status/action contract and thin Human-hidden MCP facade;
+- [x] make every Architect use closed semantic output plus trusted TaskCard assembly and one
   canonical validation contract;
-- [ ] pass two clean-installed real two-card topologies: all OpenCode and
+- [x] pass two clean-installed real two-card topologies: all OpenCode and
   Pi Architect -> OpenCode Coder -> Codex Reviewer;
-- [ ] prove exact Human approval wait/continue, Coder/Reviewer kill, conditional replacement and
-  process/task/profile closeout;
-- [ ] repair only retained Golden Path blockers and prepare an owner-authorized release SHA.
+- [x] prove exact Human approval wait/continue and process/task/profile closeout;
+- [x] repair only retained Golden Path blockers and prepare an owner-authorized release SHA.
 
 `awf_role.py` decomposition, provider-native session resume, benchmark infrastructure, team/multi-
 owner permissions, dynamic routing, TaskCard vNext, parallel/DAG execution, dashboard/TUI, plugin
 systems and Runtime v2 default migration remain outside RC.2. See the plan for exact DoD, phases,
 backlog and rejects.
+
+Immediate post-RC.2 architecture review owns broader Decision-interface simplification, additional
+Coder/Reviewer kill and replacement coverage, optional plugin/provider compatibility, SSH-first or
+Agent-Bus-optional operation, and other non-Golden-Path hardening.
 
 ## Product Gates
 

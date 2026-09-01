@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.4.0-rc.2] — 2026-09-01
+
+### Added
+
+- Add tracked project topology, platform-local machine bindings, exact init/doctor/deinit, automatic
+  disposable acceptance closeout and Windows `pythonw.exe` zero-visible-window lifecycle handling.
+- Add the complete Pi/OpenCode/Codex × Architect/Coder/Reviewer matrix, closed Architect semantic
+  output with trusted TaskCard assembly, and the shared CLI/MCP status/action contract.
+- Add the Agent-native MCP entry and exact branch-protected Human approval continuation boundary.
+
+### Changed
+
+- Isolate OpenCode runs from optional plugins and attach long Architect contexts instead of passing
+  them through Windows command-wrapper argv.
+- Normalize bounded Decision presentation syntax before the existing strict semantic parser; missing,
+  conflicting or unknown values remain fail-closed.
+- Re-observe an exact externally completed merge only when it matches a persisted ambiguous merge
+  intent; the merge effect is never repeated.
+
+### Verified
+
+- Complete clean-installed real-machine two-card acceptance for `uniform-opencode` and the
+  Pi Architect → OpenCode Coder → Codex Reviewer topology, with direct
+  `deepseek/deepseek-v4-flash` where selected and no fallback.
+- Pass the final ordinary CI, installed-wheel, Windows recovery, macOS runtime and Binary
+  Feasibility gates; preserve retained failures and exact-close disposable acceptance state.
+
 ## [0.4.0-rc.1] — 2026-08-23
 
 ### Added
@@ -314,7 +341,8 @@ This was an internal candidate and was not published as a Git tag or GitHub Rele
 - GitHub Actions CI (lint + test + validation).
 - Example profiles and workflows.
 
-[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.4.0-rc.1...HEAD
+[Unreleased]: https://github.com/atongrun/agent-workflow/compare/v0.4.0-rc.2...HEAD
+[0.4.0-rc.2]: https://github.com/atongrun/agent-workflow/compare/v0.4.0-rc.1...v0.4.0-rc.2
 [0.4.0-rc.1]: https://github.com/atongrun/agent-workflow/compare/v0.3.0...v0.4.0-rc.1
 [0.3.0]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.7...v0.3.0
 [0.3.0-rc.7]: https://github.com/atongrun/agent-workflow/compare/v0.3.0-rc.6...v0.3.0-rc.7
