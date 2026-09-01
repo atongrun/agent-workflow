@@ -185,11 +185,12 @@ def test_github_effects_reuse_only_exact_single_pr(monkeypatch, tmp_path: Path) 
             base_ref="main",
             head_sha="a" * 40,
             title="task",
+            head_owner="contributor",
         )
         == 42
     )
     assert calls[0][0:3] == ["gh", "pr", "list"]
-    assert calls[0][calls[0].index("--head") + 1] == "awf/run-1-task-01"
+    assert calls[0][calls[0].index("--head") + 1] == "contributor:awf/run-1-task-01"
 
 
 def test_github_effects_deny_duplicate_pr(monkeypatch, tmp_path: Path) -> None:

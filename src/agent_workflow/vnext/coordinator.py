@@ -140,7 +140,16 @@ class GitHubEffects:
             raise CoordinatorError("exact remote Task ref is unavailable")
         return fields[0]
 
-    def ensure_pr(self, *, task_ref: str, base_ref: str, head_sha: str, title: str) -> int:
+    def ensure_pr(
+        self,
+        *,
+        task_ref: str,
+        base_ref: str,
+        head_sha: str,
+        title: str,
+        head_owner: str = "",
+    ) -> int:
+        head = f"{head_owner}:{task_ref}" if head_owner else task_ref
         query = self._json(
             [
                 "gh",
@@ -151,7 +160,7 @@ class GitHubEffects:
                 "--state",
                 "all",
                 "--head",
-                task_ref,
+                head,
                 "--base",
                 base_ref,
                 "--json",
@@ -174,7 +183,7 @@ class GitHubEffects:
                 "--base",
                 base_ref,
                 "--head",
-                task_ref,
+                head,
                 "--title",
                 title,
                 "--body",
