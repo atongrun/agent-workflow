@@ -13,6 +13,8 @@ from typing import Any, Callable
 _SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _ROLES = {"architect", "coder", "reviewer"}
+_REPOSITORY_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_REF_FORBIDDEN = set(" ~^:?*[\\")
 
 
 class ContractError(ValueError):
@@ -75,6 +77,20 @@ def _object(value: object, field: str) -> dict[str, Any]:
     return value
 
 
+def _ref(value: object, field: str) -> str:
+    text = _text(value, field)
+    if (
+        text.startswith(("/", "."))
+        or text.endswith(("/", ".", ".lock"))
+        or "//" in text
+        or ".." in text
+        or "@{" in text
+        or any(character in _REF_FORBIDDEN for character in text)
+    ):
+        raise ContractError(f"{field} is invalid")
+    return text
+
+
 def _pairs_without_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
     value: dict[str, object] = {}
     for key, item in pairs:
@@ -123,7 +139,13 @@ class TaskProposal:
             raise ContractError("TaskProposal change_paths are invalid")
         for raw in self.change_paths:
             path = PurePosixPath(_text(raw, "TaskProposal change path"))
-            if path.is_absolute() or ".." in path.parts or path.as_posix() in {"", "."}:
+            if (
+                "\\" in raw
+                or ":" in raw
+                or path.is_absolute()
+                or ".." in path.parts
+                or path.as_posix() in {"", "."}
+            ):
                 raise ContractError("TaskProposal change path escapes the repository")
         if not self.acceptance_criteria:
             raise ContractError("TaskProposal acceptance_criteria are empty")
@@ -173,9 +195,10 @@ class TaskSpec:
     def __post_init__(self) -> None:
         if not _ID_RE.fullmatch(self.task_id) or self.ordinal < 1:
             raise ContractError("Task authority identity is invalid")
-        _text(self.repository, "Task repository")
-        _text(self.base_ref, "Task base ref")
-        _text(self.task_ref, "Task ref")
+        if not _REPOSITORY_RE.fullmatch(self.repository):
+            raise ContractError("Task repository is invalid")
+        _ref(self.base_ref, "Task base ref")
+        _ref(self.task_ref, "Task ref")
         if not _SHA_RE.fullmatch(self.base_sha):
             raise ContractError("Task base SHA is invalid")
         if len(self.roles) != 3 or {binding.role for binding in self.roles} != _ROLES:

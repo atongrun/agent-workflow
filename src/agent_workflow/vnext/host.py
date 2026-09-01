@@ -92,11 +92,31 @@ def _git(cwd: Path, *args: str, input_bytes: bytes | None = None) -> bytes:
 
 
 def _model_environment() -> tuple[tuple[str, str], ...]:
-    values = {
-        key: value
-        for key, value in os.environ.items()
-        if not any(part in key.upper() for part in ("TOKEN", "PASSWORD", "SECRET", "CREDENTIAL"))
+    allowed = {
+        "APPDATA",
+        "COMSPEC",
+        "HOME",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "LANG",
+        "LC_ALL",
+        "LOCALAPPDATA",
+        "NO_PROXY",
+        "OPENCODE_CONFIG_DIR",
+        "PATH",
+        "PATHEXT",
+        "PI_CODING_AGENT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "WINDIR",
+        "XDG_CONFIG_HOME",
     }
+    values = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     values["PYTHONIOENCODING"] = "utf-8"
     return bind_environment(values)
 
@@ -309,9 +329,13 @@ class HostRunner:
             )
 
     def _receipt_path(self, job_id: str) -> Path:
-        if not job_id or any(
-            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
-            for character in job_id
+        if (
+            not job_id
+            or len(job_id) > 128
+            or any(
+                character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+                for character in job_id
+            )
         ):
             raise HostError("job ID is invalid")
         return self.state / "jobs" / f"{job_id}.json"

@@ -161,6 +161,29 @@ def test_wrong_writer_and_input_identity_fail_closed() -> None:
     assert conflict.authority.status == RunStatus.WAITING
 
 
+def test_conflicting_result_after_terminal_acceptance_waits_without_invalid_state() -> None:
+    started = authority().begin(writer_id="coordinator-1", input_value={"plan": "exact"})
+    pending = started.pending_operation
+    assert pending is not None
+    complete = parse_typed_result("author", raw({"status": "complete", "summary": "finished"}))
+    accepted = started.accept(
+        writer_id="coordinator-1",
+        operation_id=pending.operation_id,
+        input_sha256=pending.input_sha256,
+        result=complete,
+    ).authority
+    conflicting = parse_typed_result("author", raw({"status": "blocked", "reason": "conflict"}))
+    result = accepted.accept(
+        writer_id="coordinator-1",
+        operation_id=pending.operation_id,
+        input_sha256=pending.input_sha256,
+        result=conflicting,
+    )
+    assert result.kind == AcceptanceKind.CONFLICT
+    assert result.authority.status == RunStatus.WAITING
+    assert result.authority.terminal is None
+
+
 @pytest.mark.parametrize(("stage", "budget"), [(Stage.AUTHOR, 2), (Stage.IMPLEMENT, 3)])
 def test_attempt_failure_preserves_identity_and_exhaustion_waits(stage: Stage, budget: int) -> None:
     current = authority(stage)
@@ -234,6 +257,8 @@ def test_task_proposal_and_peer_role_bindings_are_strict() -> None:
     assert task.change_paths == ("src/example.py",)
     with pytest.raises(ContractError, match="escapes"):
         TaskProposal.from_dict({**proposal(), "change_paths": ["../secret"]})
+    with pytest.raises(ContractError, match="escapes"):
+        TaskProposal.from_dict({**proposal(), "change_paths": ["..\\secret"]})
     roles = (
         RoleBinding("architect", "pi", "local"),
         RoleBinding("coder", "opencode", "windows-coder"),

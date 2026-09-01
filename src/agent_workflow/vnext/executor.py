@@ -9,6 +9,9 @@ from enum import StrEnum
 
 from .contracts import ContractError, TaskSpec, canonical_bytes, sha256
 
+_HEX = set("0123456789abcdef")
+_ID = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+
 
 class ExecutorError(RuntimeError):
     """One fixed executor invocation failed or returned an invalid receipt."""
@@ -27,6 +30,25 @@ class JobSpec:
     task: TaskSpec
     reviewed_head_sha: str = ""
     rework_count: int = 0
+
+    def __post_init__(self) -> None:
+        if (
+            not self.job_id
+            or len(self.job_id) > 128
+            or any(character not in _ID for character in self.job_id)
+            or len(self.operation_id) > 128
+            or not self.operation_id
+            or any(character not in _ID for character in self.operation_id)
+            or self.rework_count < 0
+        ):
+            raise ContractError("JobSpec identity is invalid")
+        if self.rework_count and (
+            len(self.reviewed_head_sha) not in (40, 64)
+            or any(character not in _HEX for character in self.reviewed_head_sha)
+        ):
+            raise ContractError("rework JobSpec reviewed head is invalid")
+        if not self.rework_count and self.reviewed_head_sha:
+            raise ContractError("initial JobSpec has a reviewed head")
 
     @property
     def request_sha256(self) -> str:

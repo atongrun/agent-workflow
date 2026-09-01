@@ -149,20 +149,20 @@ class GitHubEffects:
                 "--repo",
                 self.repository,
                 "--state",
-                "open",
+                "all",
                 "--head",
                 task_ref,
                 "--base",
                 base_ref,
                 "--json",
-                "number,headRefOid",
+                "number,headRefOid,state",
             ]
         )
         if len(query) > 1:
             raise CoordinatorError("multiple PRs match the frozen base/head tuple")
         if query:
-            if query[0].get("headRefOid") != head_sha:
-                raise CoordinatorError("existing PR head drifted")
+            if query[0].get("headRefOid") != head_sha or query[0].get("state") != "OPEN":
+                raise CoordinatorError("existing PR is closed or its head drifted")
             return int(query[0]["number"])
         created = self._command(
             [
@@ -183,7 +183,22 @@ class GitHubEffects:
         )
         if created.returncode != 0:
             raise CoordinatorError("PR create effect is ambiguous; reconcile before retry")
-        return self.ensure_pr(task_ref=task_ref, base_ref=base_ref, head_sha=head_sha, title=title)
+        url = created.stdout.decode().strip()
+        created_pr = self._json(
+            [
+                "gh",
+                "pr",
+                "view",
+                url,
+                "--repo",
+                self.repository,
+                "--json",
+                "number,headRefOid,state",
+            ]
+        )
+        if created_pr.get("headRefOid") != head_sha or created_pr.get("state") != "OPEN":
+            raise CoordinatorError("created PR observation does not match the frozen head")
+        return int(created_pr["number"])
 
     def require_ci(self, pr: int, head_sha: str) -> None:
         value = self._json(
@@ -204,7 +219,7 @@ class GitHubEffects:
         if not checks or any(check.get("conclusion") != "SUCCESS" for check in checks):
             raise CoordinatorError("exact-head CI is not successful")
 
-    def merge(self, pr: int, head_sha: str) -> str:
+    def merge(self, pr: int, head_sha: str, base_ref: str) -> str:
         completed = self._command(
             [
                 "gh",
@@ -220,7 +235,7 @@ class GitHubEffects:
         )
         if completed.returncode != 0:
             raise CoordinatorError("merge effect is ambiguous; reconcile before retry")
-        return self.fresh_base("main")
+        return self.fresh_base(base_ref)
 
     def fresh_base(self, base_ref: str) -> str:
         fetched = self._command(["git", "fetch", self.remote, base_ref])

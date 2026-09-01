@@ -68,9 +68,11 @@ def fake_provider(tmp_path: Path) -> Path:
     script.write_text(
         """#!/usr/bin/env python3
 import json
+import os
 import pathlib
 import sys
 workspace = pathlib.Path(sys.argv[sys.argv.index('--dir') + 1])
+assert 'AWF_TEST_TOKEN' not in os.environ
 (workspace / 'result.txt').write_text('vnext\\n', encoding='utf-8')
 print(json.dumps({'status': 'completed', 'summary': 'implemented', 'diagnostics': ''}))
 """,
@@ -167,7 +169,7 @@ def test_github_effects_reuse_only_exact_single_pr(monkeypatch, tmp_path: Path) 
 
     def fake_run(argv, **kwargs):
         calls.append(argv)
-        value = [{"number": 42, "headRefOid": "a" * 40}]
+        value = [{"number": 42, "headRefOid": "a" * 40, "state": "OPEN"}]
         return subprocess.CompletedProcess(argv, 0, json.dumps(value).encode(), b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -189,8 +191,8 @@ def test_github_effects_deny_duplicate_pr(monkeypatch, tmp_path: Path) -> None:
 
     def duplicate(argv, **kwargs):
         value = [
-            {"number": 1, "headRefOid": "a" * 40},
-            {"number": 2, "headRefOid": "a" * 40},
+            {"number": 1, "headRefOid": "a" * 40, "state": "OPEN"},
+            {"number": 2, "headRefOid": "a" * 40, "state": "OPEN"},
         ]
         return subprocess.CompletedProcess(argv, 0, json.dumps(value).encode(), b"")
 

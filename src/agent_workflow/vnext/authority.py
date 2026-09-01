@@ -71,6 +71,15 @@ class RunAuthority:
             "reviewer",
         }:
             raise AuthorityError("RunAuthority requires exactly the three peer Role bindings")
+        expected = {
+            "architect": ("pi", "local"),
+            "coder": ("opencode", "windows-coder"),
+            "reviewer": ("codex", "local"),
+        }
+        if any(
+            (binding.provider, binding.target) != expected[binding.role] for binding in self.roles
+        ):
+            raise AuthorityError("RunAuthority supports only the frozen initial topology")
         if self.status == RunStatus.ACTIVE and (self.waiting_reason or self.terminal):
             raise AuthorityError("active Run has waiting or terminal state")
         if self.status == RunStatus.WAITING and (not self.waiting_reason or self.terminal):
@@ -130,6 +139,7 @@ class RunAuthority:
                 self,
                 status=RunStatus.WAITING,
                 waiting_reason=WaitingReason.HUMAN,
+                terminal=None,
                 last_error="conflicting Result for accepted operation",
             )
             return Acceptance(AcceptanceKind.CONFLICT, waiting)
