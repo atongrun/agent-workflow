@@ -40,6 +40,7 @@ class HostConfig:
     push_remote: str
     state_dir: str
     provider_binary: str = "opencode"
+    provider_args: tuple[str, ...] = ()
     provider_model: str = ""
 
     @classmethod
@@ -56,9 +57,15 @@ class HostConfig:
             "push_remote",
             "state_dir",
             "provider_binary",
+            "provider_args",
             "provider_model",
         }:
             raise HostError("awf-agent config fields are invalid")
+        if not isinstance(value["provider_args"], list) or not all(
+            isinstance(item, str) and item for item in value["provider_args"]
+        ):
+            raise HostError("awf-agent provider_args are invalid")
+        value["provider_args"] = tuple(value["provider_args"])
         return cls(**value)
 
 
@@ -242,7 +249,14 @@ class HostRunner:
             },
             "instruction": "Edit only the allowed paths, then return exactly one JSON object.",
         }
-        argv = [self.config.provider_binary, "run", "--pure", "--dir", str(workspace)]
+        argv = [
+            self.config.provider_binary,
+            *self.config.provider_args,
+            "run",
+            "--pure",
+            "--dir",
+            str(workspace),
+        ]
         if self.config.provider_model:
             argv += ["-m", self.config.provider_model]
         argv += ["--", json.dumps(prompt, ensure_ascii=False, sort_keys=True)]
@@ -302,7 +316,16 @@ class HostRunner:
                     raise HostError(f"verification failed: {argv[0]}")
             if _git(trusted, "write-tree").decode().strip() != tree:
                 raise HostError("verified trusted tree drifted from model tree")
-            _git(trusted, "commit", "-m", f"awf: {task.task_id}")
+            _git(
+                trusted,
+                "-c",
+                "user.name=Agent Workflow",
+                "-c",
+                "user.email=awf@localhost",
+                "commit",
+                "-m",
+                f"awf: {task.task_id}",
+            )
             commit = _git(trusted, "rev-parse", "HEAD^{commit}").decode().strip()
             _git(trusted, "remote", "set-url", "origin", self.config.push_remote)
             _git(trusted, "push", "origin", f"HEAD:refs/heads/{task.task_ref}")

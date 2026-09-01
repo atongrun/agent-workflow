@@ -64,10 +64,9 @@ def repository(tmp_path: Path) -> tuple[Path, Path, str]:
 
 
 def fake_provider(tmp_path: Path) -> Path:
-    script = tmp_path / "fake-opencode"
+    script = tmp_path / "fake_opencode.py"
     script.write_text(
-        """#!/usr/bin/env python3
-import json
+        """import json
 import os
 import pathlib
 import sys
@@ -78,8 +77,17 @@ print(json.dumps({'status': 'completed', 'summary': 'implemented', 'diagnostics'
 """,
         encoding="utf-8",
     )
-    script.chmod(0o755)
     return script
+
+
+def host_config(source: Path, remote: Path, state: Path, provider: Path) -> HostConfig:
+    return HostConfig(
+        str(source),
+        str(remote),
+        str(state),
+        sys.executable,
+        (str(provider),),
+    )
 
 
 def test_host_runner_validates_commits_and_publishes_exact_frozen_ref(tmp_path: Path) -> None:
@@ -87,7 +95,7 @@ def test_host_runner_validates_commits_and_publishes_exact_frozen_ref(tmp_path: 
     provider = fake_provider(tmp_path)
     state = tmp_path / "state"
     state.mkdir()
-    runner = HostRunner(HostConfig(str(source), str(remote), str(state), str(provider)))
+    runner = HostRunner(host_config(source, remote, state, provider))
     spec = job(
         base,
         (
@@ -117,9 +125,7 @@ def test_host_runner_denies_stable_job_id_request_hash_conflict(tmp_path: Path) 
     source, remote, base = repository(tmp_path)
     state = tmp_path / "state"
     state.mkdir()
-    runner = HostRunner(
-        HostConfig(str(source), str(remote), str(state), str(fake_provider(tmp_path)))
-    )
+    runner = HostRunner(host_config(source, remote, state, fake_provider(tmp_path)))
     first = job(base, (sys.executable, "-c", "assert True"))
     assert runner.execute(first).status == ReceiptStatus.TERMINAL
     conflicting = JobSpec(first.job_id, "different-operation", first.task)
@@ -157,7 +163,7 @@ def test_model_environment_strips_secret_named_values(tmp_path: Path, monkeypatc
     provider = fake_provider(tmp_path)
     state = tmp_path / "state"
     state.mkdir()
-    runner = HostRunner(HostConfig(str(source), str(remote), str(state), str(provider)))
+    runner = HostRunner(host_config(source, remote, state, provider))
     receipt = runner.execute(job(base, (sys.executable, "-c", "assert True")))
     assert receipt.status == ReceiptStatus.TERMINAL
     assert "do-not-pass" not in receipt.diagnostics
