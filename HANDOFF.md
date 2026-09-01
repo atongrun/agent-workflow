@@ -6,6 +6,22 @@
 > authoritative for the exact SHA. This
 > document contains no private endpoint, credential, host, personal-path, or event-payload data.
 
+## Current Handoff State: 2026-09-01 VNext Implementation Authorized
+
+The owner terminated the RC.2/legacy Runtime route and froze `main` at
+`533a8950e0c675986319b810e7191793ef578871` as behavioral oracle, failure evidence, regression
+reference and rollback reference. PR #189's RC.2 release-ready narrative was closed without merge.
+Do not create a `v0.4.0-rc.2` tag or Release and do not resume RC.2/Rxx acceptance, Runtime v3, a
+generic Runtime/framework, provider matrix or repository rewrite.
+
+[ADR-0007](docs/adr/0007-vnext-bounded-serial-orchestrator.md) and the
+[VNext implementation plan](docs/plans/vnext-implementation-plan.md) record the bounded replacement:
+one Coordinator, peer Architect/Coder/Reviewer Roles, typed Results, a five-stage serial loop,
+Local+SSH execution, Git Task-branch transport, Coordinator-only PR/CI/merge/base progression and no
+mandatory Agent Bus or background AWF service. Implement only in the authorized phase order and
+apply the mandatory `CONTINUE` / `TERMINATE AWF` Kill Gate immediately after VNX-02 and the single
+real-model vertical-slice Run.
+
 ## Current Handoff State: 2026-08-25 RC.2 Phase 1A Operations Package Closeout
 
 Phase 1A is merged on `main` as `abc5ad2db8f7efcf0531d4fd844cf8bd1558f3cb` through PR #126.
