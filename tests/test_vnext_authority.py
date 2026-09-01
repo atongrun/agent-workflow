@@ -175,6 +175,29 @@ def test_attempt_failure_preserves_identity_and_exhaustion_waits(stage: Stage, b
     assert current.waiting_reason == WaitingReason.BUDGET_EXHAUSTED
 
 
+def test_exact_merge_observation_returns_same_run_to_author_with_fresh_base() -> None:
+    authored = parse_typed_result("author", raw({"status": "next_task", "task": proposal()}))
+    current = accept(authority(), authored).authority
+    implementation = parse_typed_result(
+        "implement", raw({"status": "completed", "summary": "done", "diagnostics": ""})
+    )
+    current = accept(current, implementation).authority
+    review = parse_typed_result(
+        "review",
+        raw({"verdict": "approve", "findings": [], "blocked_reason": "", "rationale": "ok"}),
+    )
+    current = accept(current, review).authority
+    decision = parse_typed_result("decide", raw({"verdict": "approve", "rationale": "ship"}))
+    current = accept(current, decision).authority
+    current = current.observe_merge(
+        writer_id="coordinator-1", task_head_sha="c" * 40, fresh_base_sha="d" * 40
+    )
+    assert current.run_id == "run-17"
+    assert current.stage == Stage.AUTHOR
+    assert current.base_sha == "d" * 40
+    assert current.current_task is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -185,6 +185,31 @@ class RunAuthority:
             pending_operation=None,
         )
 
+    def observe_merge(
+        self, *, writer_id: str, task_head_sha: str, fresh_base_sha: str
+    ) -> RunAuthority:
+        """Accept an exact merged Task head and fresh base observation."""
+        self._require_writer(writer_id)
+        if self.status != RunStatus.ACTIVE or self.stage != Stage.MERGE:
+            raise AuthorityError("Run is not awaiting merge")
+        if self.current_task is None or not task_head_sha or not fresh_base_sha:
+            raise AuthorityError("merge provenance is incomplete")
+        return replace(
+            self,
+            sequence=self.sequence + 1,
+            stage=Stage.AUTHOR,
+            base_sha=fresh_base_sha,
+            current_task=None,
+            pending_operation=None,
+            attempts=(),
+            rework_count=0,
+            last_error="",
+            last_operation_id=f"merge:{task_head_sha}",
+            last_result_sha256=sha256(
+                {"task_head_sha": task_head_sha, "fresh_base_sha": fresh_base_sha}
+            ),
+        )
+
     def _require_writer(self, writer_id: str) -> None:
         if writer_id != self.writer_id:
             raise AuthorityError("RunAuthority writer identity mismatch")

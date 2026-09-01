@@ -12,6 +12,7 @@ from .contracts import (
     TaskSpec,
     parse_typed_result,
 )
+from .executor import JobReceipt, JobSpec, LocalExecutor, ReceiptStatus, SSHExecutor
 
 __all__ = [
     "Acceptance",
@@ -19,11 +20,16 @@ __all__ = [
     "ArchitectDecision",
     "AuthorResult",
     "ImplementationResult",
+    "JobReceipt",
+    "JobSpec",
+    "LocalExecutor",
     "PendingOperation",
     "ReviewResult",
+    "ReceiptStatus",
     "RoleBinding",
     "RunAuthority",
     "TaskProposal",
     "TaskSpec",
+    "SSHExecutor",
     "parse_typed_result",
 ]
