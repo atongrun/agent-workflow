@@ -1,3 +1,13 @@
+> [!IMPORTANT]
+> **项目已终止 / Project discontinued**
+>
+> 本项目已于 2026-09-02 终止，不再继续开发或维护。完整代码与历史保留在
+> `archive/final` 分支；`main` 仅保留终止说明。
+>
+> This project was discontinued on 2026-09-02 and is no longer developed or maintained. The
+> complete codebase and history are preserved on the `archive/final` branch; `main` contains only
+> the discontinuation notice.
+
 # Agent Workflow
 
 Agent Workflow lets an AI Architect safely execute an approved repository Plan through a serial
