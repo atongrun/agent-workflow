@@ -54,6 +54,14 @@ func TestPiControlHelper(t *testing.T) {
 		mu.Lock()
 		switch typ {
 		case "get_state":
+			if mode == "hold_state" {
+				for {
+					if _, err := os.Stat(release); err == nil {
+						break
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
+			}
 			response(id, typ, map[string]any{"sessionId": sessionID, "sessionFile": "/private/native.jsonl", "model": map[string]any{"provider": model.Provider, "id": model.ID, "name": model.Name, "headers": map[string]string{"Authorization": "hidden-model-secret"}, "baseUrl": "https://private.invalid"}, "isStreaming": false, "isCompacting": compacting, "pendingMessageCount": 0})
 		case "get_commands":
 			if mode == "no_commands" {

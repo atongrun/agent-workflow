@@ -40,3 +40,30 @@ New tasks use a private managed working directory under `dataDir/planning/<taskI
 These native controls disable discovered resources, built-in extensions (including MCP) and arbitrary model-facing filesystem/shell tools. They are not OS process isolation. Pi/provider code still runs under the Host account and uses its configured model credentials. The explicit extension remains trusted; configure its path only from operator-controlled source. Existing environment-secret stripping and task/role-scoped extension authentication remain in place.
 
 State version 1 remains readable. A missing planning profile denotes a legacy task and is not upgraded implicitly; its existing project cwd and native history are preserved. New fields are additive. Create-request serialization is unchanged, and new optional Start fields are omitted when absent so historical request hashes continue to replay. New target changes and Start reserve under the same durable state lock, making plan/target authorization atomic. Read-only node verification is bounded before reservation commits; an unavailable or mismatched mapping cannot dispatch.
+
+## Trash and restore
+
+Recoverable deletion keeps the task and all historical records in the same
+state file with `deletedAt`. Native conversation files and workspaces are never
+removed. Idle native Pi processes are closed, and their old process binding is
+cleared so late events cannot revive the task. Startup, eviction and deletion
+are serialized; default lists hide Trash and archived tasks never participate
+in automatic recovery/dispatch. Restoring preserves the original task and
+native session identities, does not replenish budgets, and does not start work.
+
+A lost delete/restore HTTP response must be reconciled using its unchanged
+request identity and payload. A Host restart between the durable deletion
+marker and verified exit receipt leaves `needs_verification`, never automatic
+restoration or redispatch. Verify the original process/receipt before recovery;
+there is deliberately no force-restore or hard-delete bypass for an unknown
+outcome. The UI's confirmation is recoverable deletion only, not a request to
+cancel active work or remove repository data.
+
+Native extension calls carry the immutable lifecycle revision supplied when Pi
+starts. The Host compares it inside the same durable reservation as each new
+extension operation, so an HTTP request delayed across delete/restore cannot
+mutate the restored task. Missing/zero revision is the legacy generation and is
+accepted only for tasks that have never crossed a deletion boundary. Exact
+historical retries still retrieve their existing receipts first. Revision zero
+is omitted from canonical request serialization, preserving old fingerprints;
+credentials and task/role token derivation are unchanged.

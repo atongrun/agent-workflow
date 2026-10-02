@@ -7,11 +7,13 @@ export default function (pi: ExtensionAPI) {
   const token = process.env.AWF_EXTENSION_TOKEN;
   const task = process.env.AWF_TASK_ID;
   const role = process.env.AWF_ROLE;
+  const lifecycleRevision = Number(process.env.AWF_LIFECYCLE_REVISION ?? "0");
+  if (!Number.isSafeInteger(lifecycleRevision) || lifecycleRevision < 0) throw new Error("AWF task lifecycle is invalid");
   if (!host || !token || !task || !role) throw new Error("AWF extension requires a scoped Host session");
   async function call(action: string, toolCallId: string, body: object, signal?: AbortSignal) {
     const response = await fetch(`${host}/internal/tasks/${encodeURIComponent(task!)}/${action}`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-AWF-Role": role! },
-      body: JSON.stringify({ requestId: `${task}:${toolCallId}`, ...body }), signal,
+      body: JSON.stringify({ requestId: `${task}:${toolCallId}`, ...body, lifecycleRevision }), signal,
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error?.message || `AWF returned ${response.status}`);

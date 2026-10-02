@@ -126,3 +126,31 @@ role default before comparing the stored hash. It returns the existing receipt
 and task (200), absent (404), or conflict (409), with no reservation, node lookup,
 Pi start, or external effect. This lets the gateway recover an existing receipt
 before rechecking current GitHub authorization for a new operation.
+
+## Recoverable task deletion
+
+`POST /v1/tasks/{id}/delete` and `POST /v1/tasks/{id}/restore` accept exactly
+`{requestId}` and return the durable `{task,request}` receipt (202). Deletion
+sets additive `task.deletedAt` metadata and increments `lifecycleRevision`; it never removes task/session IDs,
+conversation files, repositories, plans, execution history, or old receipts.
+The default task list and overview exclude deleted tasks. `GET /v1/tasks?deleted=true`
+returns only Trash; `deleted=false` is the default. Detail and receipt reads
+remain available, and task SSE publishes the deletion/restoration snapshot.
+
+Delete is rejected while execution is queued, active, uncertain, reporting or
+under review; Pi is busy, has pending work/dialogs/control; or unresolved
+requests need verification. Idle Pi processes close under the same lifecycle
+lock as process startup and eviction. The durable deletion marker immediately
+blocks new changes and native process startup, and the receipt becomes
+`completed` only after process exit is verified. `accepted` or
+`needs_verification` is not success: retain the original ID and payload, and
+reconcile using `POST /v1/tasks/{id}/requests/{requestId}` with operation
+`delete` or `restore`. Exact replays only retrieve the historical receipt,
+including a delete replay after a later restore. Never replace an uncertain
+request with a new ID.
+
+Restore requires the deletion receipt to have settled and clears only the
+marker. It does not resume a process or automatically start any execution.
+Native conversation reads return `task_deleted` (409) while deleted; after
+explicit restore, opening the conversation resumes the original native history.
+There is no hard-purge endpoint.

@@ -36,6 +36,7 @@ func (s *Server) internalAuth(h http.Handler) http.Handler {
 }
 
 type extensionInput struct {
+	LifecycleRevision  int      `json:"lifecycleRevision,omitempty"`
 	RequestID          string   `json:"requestId"`
 	Content            string   `json:"content,omitempty"`
 	Verdict            string   `json:"verdict,omitempty"`
@@ -55,6 +56,9 @@ func (s *Server) internalAction(w http.ResponseWriter, r *http.Request) {
 		t := st.Tasks[id]
 		if t == nil {
 			return fail("not_found", "task not found", 404)
+		}
+		if in.LifecycleRevision != t.LifecycleRevision {
+			return fail("stale_task_lifecycle", "native request belongs to a previous task lifecycle", 409)
 		}
 		switch op {
 		case "context":

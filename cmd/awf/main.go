@@ -16,9 +16,17 @@ import (
 	"time"
 
 	"github.com/atongrun/agent-workflow/internal/host"
+	"github.com/atongrun/agent-workflow/internal/lifecycle"
 )
 
 func main() {
+	if handled, err := lifecycle.Forward(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -26,7 +34,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: awf host --config host.json | awf request METHOD /v1/path [JSON] | awf update --all")
+		return fmt.Errorf("usage: awf host --config host.json | awf request METHOD /v1/path [JSON] | awf init | awf start | awf stop | awf update [--version vX.Y.Z] | awf version")
 	}
 	switch args[0] {
 	case "host":
@@ -101,8 +109,8 @@ func run(args []string) error {
 			return fmt.Errorf("Host returned HTTP %d", res.StatusCode)
 		}
 		return nil
-	case "update":
-		return fmt.Errorf("update --all is tracked for the next implementation slice; no tools were changed (see docs/roadmap.md)")
+	case "init", "start", "stop", "update", "version", "_serve", "_install":
+		return lifecycle.Run(args, os.Stdin, os.Stdout)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}

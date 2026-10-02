@@ -179,7 +179,8 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		case "start", "rework":
 			s.monitor(id)
 		case "execution/cancel":
-			s.launch(func() { s.cancelExecution(in.RequestID, id, in.ExecutionRequestID) })
+			task, _ := s.task(id)
+			s.launch(func() { s.cancelExecution(in.RequestID, id, in.ExecutionRequestID, task.LifecycleRevision) })
 		case "review":
 			s.launch(func() { s.promptReview(in.RequestID, id) })
 		}
@@ -187,7 +188,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	s.response(w, in.RequestID)
 }
 func executionActive(t *core.Task) bool {
-	if t.Execution == nil {
+	if t.DeletedAt != nil || t.Execution == nil {
 		return false
 	}
 	switch t.Execution.Status {
@@ -197,6 +198,9 @@ func executionActive(t *core.Task) bool {
 	return true
 }
 func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string, revision int, rework bool, expectedTargetRevision *int) error {
+	if t.DeletedAt != nil {
+		return fail("task_deleted", "restore this task before execution", 409)
+	}
 	if err := projectAvailable(st, t); err != nil {
 		return err
 	}
@@ -233,7 +237,7 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 		return fail("budget_exhausted", "execution budget exhausted", 409)
 	}
 	for _, other := range st.Tasks {
-		if other.ID != t.ID && other.ProjectID == t.ProjectID && (executionActive(other) || (other.Status == "review" || other.Status == "reporting")) {
+		if other.DeletedAt == nil && other.ID != t.ID && other.ProjectID == t.ProjectID && (executionActive(other) || (other.Status == "review" || other.Status == "reporting")) {
 			return fail("project_busy", "another task owns this project's execution slot", 409)
 		}
 	}
@@ -403,7 +407,7 @@ func remainingSeconds(t *core.Task) int {
 }
 func projectAvailable(st *core.State, t *core.Task) error {
 	for _, other := range st.Tasks {
-		if other.ID == t.ID || other.ProjectID != t.ProjectID {
+		if other.DeletedAt != nil || other.ID == t.ID || other.ProjectID != t.ProjectID {
 			continue
 		}
 		if executionActive(other) || (other.Status == "review" || other.Status == "reporting") {
@@ -438,7 +442,9 @@ func (s *Server) stopForBudget(id string) {
 			st.Tasks[id].LastError = "Combined execution budget exhausted"
 			return nil
 		})
-		s.launch(func() { s.cancelExecution("budget-"+t.Execution.RequestID, id, t.Execution.RequestID) })
+		s.launch(func() {
+			s.cancelExecution("budget-"+t.Execution.RequestID, id, t.Execution.RequestID, t.LifecycleRevision)
+		})
 	}
 }
 

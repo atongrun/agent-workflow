@@ -424,7 +424,37 @@ func TestNativePiHostIntegration(t *testing.T) {
 			t.Fatalf("reopen Host store: %v", err)
 		}
 		t.Cleanup(reopened.Close)
-		check(reopened)
+		live := check(reopened)
+		originalBytes, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := lifecycleCall(t, reopened, task.ID, "delete", "native-delete")
+		if w.Code != 202 || live.Alive() {
+			t.Fatalf("native delete did not close idle Pi: %d %s", w.Code, w.Body)
+		}
+		if _, err := reopened.client(task.ID, "architect"); err == nil {
+			t.Fatal("deleted task restarted Pi")
+		}
+		if b, err := os.ReadFile(file); err != nil || string(b) != string(originalBytes) {
+			t.Fatal("deletion changed native history")
+		}
+		reopened.Close()
+		archived, err := New(s.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(archived.Close)
+		if archived.store.Snapshot().Tasks[task.ID].DeletedAt == nil {
+			t.Fatal("native task lost Trash state on restart")
+		}
+		if w = lifecycleCall(t, archived, task.ID, "restore", "native-restore"); w.Code != 202 {
+			t.Fatal(w.Body)
+		}
+		if len(archived.clients) != 0 {
+			t.Fatal("restore automatically started native Pi")
+		}
+		check(archived)
 	})
 }
 
@@ -469,6 +499,7 @@ func nativePiCheckDiagnostics(t *testing.T, s *Server, dir, taskID, role, sessio
 		Args                                          []string
 		Cwd, HostURL, TaskID, Role, ScopedTokenSHA256 string
 		AWFEnvNames, Tools, LeakedControlEnv          []string
+		LifecycleRevision                             int
 	}
 	nativePiDecode(t, data, &diagnostic)
 	wantArgs := []string{"--mode", "rpc", "--session-dir", filepath.Join(s.cfg.DataDir, "sessions", taskID, role), "--append-system-prompt", "You are participating in one AWF task. Call awf_task to read the task goal, acceptance criteria, current plan and role before planning or reviewing. Architecture uses awf_plan for a structured plan proposal. Only an explicit user Confirm Plan and Start Execution action authorizes remote execution; ordinary conversation does not. Preserve user work. All Git operations belong to agents. The default task uses one Pi for planning and execution results. A separate reviewer exists only when explicitly enabled. Never fabricate artifacts or test evidence."}
@@ -484,9 +515,12 @@ func nativePiCheckDiagnostics(t *testing.T, s *Server, dir, taskID, role, sessio
 	if diagnostic.Cwd != s.cfg.Projects["p"] || diagnostic.HostURL != s.cfg.InternalURL || diagnostic.TaskID != taskID || diagnostic.Role != role {
 		t.Fatal("native process did not receive the configured project/task/role/Host context")
 	}
-	wantEnv := []string{"AWF_EXTENSION_TOKEN", "AWF_HOST_URL", "AWF_ROLE", "AWF_TASK_ID"}
+	wantEnv := []string{"AWF_EXTENSION_TOKEN", "AWF_HOST_URL", "AWF_LIFECYCLE_REVISION", "AWF_ROLE", "AWF_TASK_ID"}
 	if !reflect.DeepEqual(diagnostic.AWFEnvNames, wantEnv) || len(diagnostic.LeakedControlEnv) != 0 {
 		t.Fatal("parent AWF or configured Host/extension/Node control environment leaked into Pi")
+	}
+	if diagnostic.LifecycleRevision != s.store.Snapshot().Tasks[taskID].LifecycleRevision {
+		t.Fatal("native Pi did not receive the immutable task lifecycle generation")
 	}
 	digest := sha256.Sum256([]byte(s.scopedToken(taskID, role)))
 	if diagnostic.ScopedTokenSHA256 != hex.EncodeToString(digest[:]) {
@@ -551,6 +585,7 @@ export default function (pi) {
       cwd: process.cwd(),
       hostURL: process.env.AWF_HOST_URL,
       taskID, role,
+      lifecycleRevision: Number(process.env.AWF_LIFECYCLE_REVISION || "0"),
       scopedTokenSHA256: createHash("sha256").update(process.env.AWF_EXTENSION_TOKEN || "").digest("hex"),
       awfEnvNames: Object.keys(process.env).filter(k => k.startsWith("AWF_")).sort(),
       leakedControlEnv: ["TEST_HOST_TOKEN", "TEST_EXTENSION_TOKEN", "TEST_NODE_TOKEN"].filter(k => k in process.env),

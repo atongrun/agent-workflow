@@ -24,6 +24,9 @@ func (s *Server) agentViews() []agentView {
 	roles := []string{"architect"}
 	optionalReviewer := st.Settings.Reviewer == "pi"
 	for _, task := range st.Tasks {
+		if task.DeletedAt != nil {
+			continue
+		}
 		if task.Sessions["reviewer"] != nil {
 			optionalReviewer = true
 		}
@@ -35,6 +38,9 @@ func (s *Server) agentViews() []agentView {
 		a := agentView{ID: "pi-" + role, Name: "Pi", Role: role, NodeID: "host"}
 		s.mu.Lock()
 		for _, t := range st.Tasks {
+			if t.DeletedAt != nil {
+				continue
+			}
 			if c := s.clients[t.ID+":"+role]; c != nil && c.Alive() {
 				a.Online = true
 				if ref := t.Sessions[role]; ref != nil && ref.Busy {
@@ -67,6 +73,9 @@ func (s *Server) agentViews() []agentView {
 			a.Error = err.Error()
 		}
 		for _, t := range st.Tasks {
+			if t.DeletedAt != nil {
+				continue
+			}
 			if t.NodeID == id && executionActive(t) {
 				a.CurrentTask = t.ID
 			}

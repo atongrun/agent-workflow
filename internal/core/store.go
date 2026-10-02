@@ -188,7 +188,7 @@ func (s *Store) NativeEvent(taskID, role, processID string, data any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.state.Tasks[taskID]
-	if t == nil || t.Sessions[role] == nil || t.Sessions[role].ProcessID != processID {
+	if t == nil || t.DeletedAt != nil || t.Sessions[role] == nil || t.Sessions[role].ProcessID != processID {
 		return
 	}
 	Emit(&s.state, taskID, "pi.event", data)

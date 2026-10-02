@@ -37,6 +37,13 @@ func (s *Server) requestLookup(w http.ResponseWriter, r *http.Request) {
 	var payload any
 	var payloadID string
 	switch in.Operation {
+	case "delete", "restore":
+		var original lifecycleInput
+		if err := decodeLookupPayload(in.Payload, &original); err != nil {
+			writeError(w, err)
+			return
+		}
+		payload, payloadID = original, original.RequestID
 	case "target":
 		var original targetInput
 		if err := decodeLookupPayload(in.Payload, &original); err != nil {
@@ -59,7 +66,7 @@ func (s *Server) requestLookup(w http.ResponseWriter, r *http.Request) {
 		}
 		payload, payloadID = original, original.RequestID
 	default:
-		writeError(w, fail("invalid_operation", "verified lookup supports only target, start, and rework", 400))
+		writeError(w, fail("invalid_operation", "verified lookup supports only target, start, rework, delete, and restore", 400))
 		return
 	}
 	if payloadID != in.RequestID {

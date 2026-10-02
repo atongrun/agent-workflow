@@ -81,6 +81,9 @@ func (s *Server) boundPiClient(taskID string, binding piBinding) (*pi.Client, er
 	if err != nil {
 		return nil, err
 	}
+	if task.DeletedAt != nil {
+		return nil, fail("task_deleted", "restore this task before using Pi", 409)
+	}
 	ref := task.Sessions[binding.Role]
 	if !bindingMatches(ref, binding) {
 		return nil, fail("stale_pi_session", "Pi session changed; refresh before choosing this action again", 409)

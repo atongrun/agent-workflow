@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 )
 
 type Config struct {
+	LifecycleRevision                                                                                    int
 	Restricted                                                                                           bool
 	Binary, Directory, SessionDirectory, SessionID, SessionFile, Extension, HostURL, Token, TaskID, Role string
 	OnEvent                                                                                              func(json.RawMessage)
@@ -87,7 +89,7 @@ func Start(cfg Config) (*Client, error) {
 			env = append(env, value)
 		}
 	}
-	cmd.Env = append(env, "AWF_HOST_URL="+cfg.HostURL, "AWF_EXTENSION_TOKEN="+cfg.Token, "AWF_TASK_ID="+cfg.TaskID, "AWF_ROLE="+cfg.Role)
+	cmd.Env = append(env, "AWF_HOST_URL="+cfg.HostURL, "AWF_EXTENSION_TOKEN="+cfg.Token, "AWF_TASK_ID="+cfg.TaskID, "AWF_ROLE="+cfg.Role, "AWF_LIFECYCLE_REVISION="+strconv.Itoa(cfg.LifecycleRevision))
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -143,7 +145,6 @@ func (c *Client) read(out io.Reader) {
 	c.mu.Lock()
 	c.err = err
 	c.mu.Unlock()
-	close(c.done)
 	if c.onEvent != nil {
 		c.mu.Lock()
 		intentional := c.intentional
@@ -155,6 +156,8 @@ func (c *Client) read(out io.Reader) {
 		raw, _ := json.Marshal(map[string]string{"type": typ})
 		c.onEvent(raw)
 	}
+	// Exit is complete only after callbacks can no longer mutate Host state.
+	close(c.done)
 }
 func (c *Client) send(v any) error {
 	b, err := json.Marshal(v)
@@ -267,7 +270,15 @@ func (c *Client) Close() error {
 	case <-c.done:
 		return nil
 	case <-time.After(time.Second):
-		return c.cmd.Process.Kill()
+		if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+		select {
+		case <-c.done:
+			return nil
+		case <-time.After(5 * time.Second):
+			return errors.New("Pi exit and final callback were not confirmed")
+		}
 	}
 }
 

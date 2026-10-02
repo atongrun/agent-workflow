@@ -74,6 +74,9 @@ func (s *Server) jobRequest(t *core.Task) node.JobRequest {
 }
 func (s *Server) recoverExecutions() {
 	for _, t := range s.store.Snapshot().Tasks {
+		if t.DeletedAt != nil {
+			continue
+		}
 		if executionActive(t) {
 			s.monitor(t.ID)
 		} else if t.Execution != nil && t.Execution.Status == "completed" && (t.Status == "reporting" || t.Status == "review") {
@@ -99,6 +102,7 @@ func (s *Server) monitor(id string) {
 			if err != nil || !executionActive(t) {
 				return
 			}
+			observedRevision := t.LifecycleRevision
 			var job node.Job
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			status, err := s.nodeCall(ctx, executionNodeID(t), "GET", "/v1/jobs/"+t.Execution.JobID, nil, &job)
@@ -107,7 +111,7 @@ func (s *Server) monitor(id string) {
 				if t.Execution.CancelRequested && !t.Execution.DispatchAttempted {
 					_ = s.store.Update(func(st *core.State) error {
 						cur := st.Tasks[id]
-						if cur.Execution.RequestID == t.Execution.RequestID && !cur.Execution.DispatchAttempted {
+						if cur.DeletedAt == nil && cur.LifecycleRevision == t.LifecycleRevision && cur.Execution.RequestID == t.Execution.RequestID && !cur.Execution.DispatchAttempted {
 							cur.Execution.Status = "cancelled"
 							cur.Status = "cancelled"
 							core.Changed(st, cur)
@@ -122,7 +126,7 @@ func (s *Server) monitor(id string) {
 					marked := false
 					markErr := s.store.Update(func(st *core.State) error {
 						cur := st.Tasks[id]
-						if cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.DispatchAttempted || cur.Execution.CancelRequested {
+						if cur.DeletedAt != nil || cur.LifecycleRevision != t.LifecycleRevision || cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.DispatchAttempted || cur.Execution.CancelRequested {
 							return nil
 						}
 						// Newly reserved runs must revalidate after queueing/restart,
@@ -156,7 +160,7 @@ func (s *Server) monitor(id string) {
 			if err != nil {
 				_ = s.store.Update(func(st *core.State) error {
 					t := st.Tasks[id]
-					if !executionActive(t) {
+					if t.LifecycleRevision != observedRevision || !executionActive(t) {
 						return nil
 					}
 					message := "Node unavailable or outcome unknown: " + err.Error()
@@ -171,6 +175,9 @@ func (s *Server) monitor(id string) {
 			} else if job.ID != t.Execution.JobID || job.TaskID != id || job.RequestID != t.Execution.RequestID {
 				_ = s.store.Update(func(st *core.State) error {
 					t := st.Tasks[id]
+					if t.DeletedAt != nil || t.LifecycleRevision != observedRevision {
+						return nil
+					}
 					t.Status = "needs_verification"
 					t.LastError = "Node returned mismatched execution identity"
 					core.Changed(st, t)
@@ -178,13 +185,18 @@ func (s *Server) monitor(id string) {
 				})
 				return
 			} else {
-				s.applyJob(id, &job)
+				s.applyJob(id, &job, t.LifecycleRevision)
 				latest, _ := s.task(id)
+				if latest.DeletedAt != nil || latest.LifecycleRevision != t.LifecycleRevision {
+					return
+				}
 				if remainingSeconds(latest) <= 0 {
 					s.stopForBudget(id)
 				}
 				if t.Execution.CancelRequested && !job.CancelRequested {
-					s.launch(func() { s.cancelExecution("cancel-reconcile-"+t.Execution.RequestID, id, t.Execution.RequestID) })
+					s.launch(func() {
+						s.cancelExecution("cancel-reconcile-"+t.Execution.RequestID, id, t.Execution.RequestID, t.LifecycleRevision)
+					})
 				}
 				if job.Status == "completed" {
 					s.beginExecutionSummary(id)
@@ -202,9 +214,12 @@ func (s *Server) monitor(id string) {
 		}
 	})
 }
-func (s *Server) applyJob(id string, job *node.Job) {
+func (s *Server) applyJob(id string, job *node.Job, lifecycleRevision int) {
 	_ = s.store.Update(func(st *core.State) error {
 		t := st.Tasks[id]
+		if t == nil || t.DeletedAt != nil || t.LifecycleRevision != lifecycleRevision {
+			return nil
+		}
 		before := string(mustJSON(t))
 		e := t.Execution
 		if e == nil || e.JobID != job.ID || e.RequestID != job.RequestID || t.ID != job.TaskID {
@@ -267,7 +282,7 @@ func (s *Server) applyJob(id string, job *node.Job) {
 }
 func (s *Server) beginAutomaticReview(id string) {
 	t, err := s.task(id)
-	if err != nil {
+	if err != nil || t.DeletedAt != nil || t.Status != "review" {
 		return
 	}
 	if ref := t.Sessions["architect"]; ref != nil && (ref.Busy || ref.Pending) {
@@ -275,6 +290,9 @@ func (s *Server) beginAutomaticReview(id string) {
 	}
 	if remainingSeconds(t) <= 0 {
 		_ = s.store.Update(func(st *core.State) error {
+			if st.Tasks[id].DeletedAt != nil || st.Tasks[id].LifecycleRevision != t.LifecycleRevision || st.Tasks[id].Status != t.Status {
+				return nil
+			}
 			st.Tasks[id].Status = "blocked"
 			st.Tasks[id].LastError = "Budget exhausted before independent review"
 			core.Changed(st, st.Tasks[id])
@@ -285,7 +303,7 @@ func (s *Server) beginAutomaticReview(id string) {
 	requestID := "review-" + t.Execution.RequestID
 	duplicate, err := s.reserve(requestID, id, "auto_review", map[string]string{"executionRequestId": t.Execution.RequestID}, func(st *core.State) error {
 		cur := st.Tasks[id]
-		if cur.Execution == nil || cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.Status != "completed" || cur.Status != "review" {
+		if cur.LifecycleRevision != t.LifecycleRevision || cur.Execution == nil || cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.Status != "completed" || cur.Status != "review" {
 			return fail("stale_execution", "automatic review target changed", 409)
 		}
 		if ref := cur.Sessions["architect"]; ref != nil && (ref.Busy || ref.Pending) {
@@ -310,9 +328,9 @@ func (s *Server) beginAutomaticReview(id string) {
 		s.promptReview(requestID, id)
 	}
 }
-func (s *Server) cancelExecution(requestID, id, targetID string) {
+func (s *Server) cancelExecution(requestID, id, targetID string, lifecycleRevision int) {
 	t, err := s.task(id)
-	if err != nil || t.Execution == nil {
+	if err != nil || t.DeletedAt != nil || t.LifecycleRevision != lifecycleRevision || t.Execution == nil {
 		return
 	}
 	if t.Execution.RequestID != targetID {
@@ -331,7 +349,7 @@ func (s *Server) cancelExecution(requestID, id, targetID string) {
 		s.requestDone(requestID, "needs_verification", fmt.Errorf("cancel receipt identity mismatch"))
 		return
 	}
-	s.applyJob(id, &job)
+	s.applyJob(id, &job, t.LifecycleRevision)
 	s.requestDone(requestID, "accepted_native", nil)
 	s.monitor(id)
 }
@@ -345,7 +363,7 @@ func bounded(text string, limit int) string {
 
 func (s *Server) beginExecutionSummary(id string) {
 	t, err := s.task(id)
-	if err != nil || t.Execution == nil || t.Execution.Status != "completed" {
+	if err != nil || t.DeletedAt != nil || t.Execution == nil || t.Execution.Status != "completed" || (t.Status != "reporting" && t.Status != "review") {
 		return
 	}
 	if t.Settings.Reviewer == "pi" {
@@ -355,6 +373,9 @@ func (s *Server) beginExecutionSummary(id string) {
 	if remainingSeconds(t) <= 0 {
 		_ = s.store.Update(func(st *core.State) error {
 			cur := st.Tasks[id]
+			if cur.DeletedAt != nil || cur.LifecycleRevision != t.LifecycleRevision || cur.Status != t.Status {
+				return nil
+			}
 			cur.Status = "blocked"
 			cur.LastError = "Execution finished but budget is exhausted before the Pi summary"
 			core.Changed(st, cur)
@@ -365,7 +386,7 @@ func (s *Server) beginExecutionSummary(id string) {
 	requestID := "result-" + t.Execution.RequestID
 	duplicate, err := s.reserve(requestID, id, "execution_result", map[string]string{"executionRequestId": t.Execution.RequestID}, func(st *core.State) error {
 		cur := st.Tasks[id]
-		if cur.Execution == nil || cur.Execution.RequestID != t.Execution.RequestID || cur.Status != "reporting" {
+		if cur.LifecycleRevision != t.LifecycleRevision || cur.Execution == nil || cur.Execution.RequestID != t.Execution.RequestID || cur.Status != "reporting" {
 			return fail("stale_execution", "execution result changed", 409)
 		}
 		ref := cur.Sessions["architect"]

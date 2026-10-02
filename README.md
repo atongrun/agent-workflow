@@ -19,6 +19,7 @@ go vet ./...
 go build -o bin/awf ./cmd/awf
 go build -o bin/awf-node ./cmd/awf-node
 GOOS=windows GOARCH=amd64 go build -o bin/awf-node.exe ./cmd/awf-node
+GOOS=windows GOARCH=amd64 go build -o bin/awf.exe ./cmd/awf
 ```
 
 The optional native Pi test uses `AWF_PI_BINARY=/absolute/path/to/pi go test ./internal/host -run NativePiHostIntegration -v`. Without that variable it explicitly skips. It proves the native transport/session contract, not a model-backed coding result. Pi 0.99.2 is the initial supported baseline; the restricted draft/session contract is also verified with official Pi 1.0.0; the OpenCode API adapter was checked against the v1.18.34 native contract.
@@ -36,3 +37,16 @@ Only agents perform Git operations. The Host and node do not clone, branch, comm
 See [recovery and security boundaries](docs/recovery.md) and [remaining acceptance work](docs/roadmap.md).
 
 The initial path uses one Pi process/session for planning, dispatch coordination and results. An independent reviewer is retained as an explicit `enableReviewer: true` deployment option, disabled by default and snapshotted only into newly created tasks.
+
+## Native Windows CLI installation
+
+The per-user native CLI source now includes `awf init`, `awf start`, `awf stop`,
+and AWF-only `awf update`. The installer uses pinned official GitHub releases,
+SHA-256 verification, versioned executables, atomic selection and guarded rollback.
+Initialization reviews exact configuration and optional login autostart; it does
+not pair credentials or change firewall rules. Updates refuse busy or unknown jobs.
+`awf update --all` remains explicitly unimplemented.
+
+See [the Windows CLI contract](docs/windows-cli.md) for packaging, review,
+installation and recovery. **Public installer/release assets and native Windows
+acceptance are separate gates; this source change does not establish either.**

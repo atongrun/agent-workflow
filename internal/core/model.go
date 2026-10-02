@@ -102,6 +102,8 @@ type Completion struct {
 const RestrictedPlanning = "restricted"
 
 type Task struct {
+	LifecycleRevision  int                 `json:"lifecycleRevision,omitempty"`
+	DeletedAt          *time.Time          `json:"deletedAt,omitempty"`
 	PlanningProfile    string              `json:"planningProfile,omitempty"`
 	TargetRevision     int                 `json:"targetRevision"`
 	RepositoryID       string              `json:"repositoryId,omitempty"`

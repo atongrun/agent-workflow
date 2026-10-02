@@ -35,17 +35,18 @@ type Server struct {
 	cfg                   Config
 	store                 *core.Store
 	token, extensionToken string
-	mu                    sync.Mutex
-	clients               map[string]*pi.Client
-	starts                map[string]*sync.Mutex
-	dispatches            map[string]*sync.Mutex
-	monitors              map[string]bool
-	http                  *http.Client
-	stop                  chan struct{}
-	once                  sync.Once
-	wg                    sync.WaitGroup
-	closing               bool
-	starting              int
+	// Serializes Pi startup, eviction, and task deletion without holding the store lock during process I/O.
+	piLifecycle sync.Mutex
+	mu          sync.Mutex
+	clients     map[string]*pi.Client
+	dispatches  map[string]*sync.Mutex
+	monitors    map[string]bool
+	http        *http.Client
+	stop        chan struct{}
+	once        sync.Once
+	wg          sync.WaitGroup
+	closing     bool
+	starting    int
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -104,7 +105,7 @@ func New(c Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: c, store: st, token: token, extensionToken: extension, clients: map[string]*pi.Client{}, starts: map[string]*sync.Mutex{}, monitors: map[string]bool{}, http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, stop: make(chan struct{})}
+	s := &Server{cfg: c, store: st, token: token, extensionToken: extension, clients: map[string]*pi.Client{}, monitors: map[string]bool{}, http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, stop: make(chan struct{})}
 	err = st.Update(func(state *core.State) error {
 		state.Settings.Reviewer = "disabled"
 		if c.EnableReviewer {

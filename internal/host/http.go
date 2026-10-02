@@ -72,6 +72,8 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("GET /v1/tasks", s.listTasks)
 	public.HandleFunc("POST /v1/tasks", s.createTask)
 	public.HandleFunc("GET /v1/tasks/{id}", s.getTask)
+	public.HandleFunc("POST /v1/tasks/{id}/delete", s.taskLifecycle)
+	public.HandleFunc("POST /v1/tasks/{id}/restore", s.taskLifecycle)
 	public.HandleFunc("GET /v1/settings", s.settings)
 	public.HandleFunc("PATCH /v1/settings", s.settings)
 	public.HandleFunc("GET /v1/agents", s.agents)
@@ -113,13 +115,32 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 func sortedTasks(st core.State) []*core.Task {
 	items := make([]*core.Task, 0, len(st.Tasks))
 	for _, t := range st.Tasks {
+		if t.DeletedAt != nil {
+			continue
+		}
 		items = append(items, t)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
 	return items
 }
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"tasks": sortedTasks(s.store.Snapshot())})
+	query := r.URL.Query()
+	if len(query) > 0 && (len(query) != 1 || len(query["deleted"]) != 1 || (query.Get("deleted") != "true" && query.Get("deleted") != "false")) {
+		writeError(w, fail("invalid_query", "deleted must be a single true or false value", 400))
+		return
+	}
+	st := s.store.Snapshot()
+	items := sortedTasks(st)
+	if query.Get("deleted") == "true" {
+		items = []*core.Task{}
+		for _, t := range st.Tasks {
+			if t.DeletedAt != nil {
+				items = append(items, t)
+			}
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].DeletedAt.After(*items[j].DeletedAt) })
+	}
+	writeJSON(w, 200, map[string]any{"tasks": items})
 }
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
@@ -142,6 +163,11 @@ func (s *Server) reserveRequest(id, taskID, op string, payload any, fn func(*cor
 			}
 			duplicate = true
 			return nil
+		}
+		// Historical exact retries are receipts only. Every newly reserved task
+		// mutation, including extension tools and automatic dispatch, is fenced.
+		if task := st.Tasks[taskID]; task != nil && task.DeletedAt != nil && op != "delete" && op != "restore" {
+			return fail("task_deleted", "restore this task before making changes", 409)
 		}
 		request := &core.Request{ID: id, TaskID: taskID, Operation: op, Hash: hash, Status: "accepted", CreatedAt: time.Now().UTC()}
 		if err := fn(st, request); err != nil {

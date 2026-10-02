@@ -187,7 +187,7 @@ func TestStaleJobReceiptCannotOverwriteRework(t *testing.T) {
 		st.Tasks[task.ID].Execution = &core.Execution{RequestID: "current", JobID: "new", Status: "running"}
 		return nil
 	})
-	s.applyJob(task.ID, &node.Job{ID: "old", RequestID: "old", TaskID: task.ID, Status: "completed"})
+	s.applyJob(task.ID, &node.Job{ID: "old", RequestID: "old", TaskID: task.ID, Status: "completed"}, 0)
 	got, _ := s.task(task.ID)
 	if got.Execution.JobID != "new" || got.Execution.Status != "running" {
 		t.Fatal("stale receipt overwrote active job")
@@ -445,7 +445,7 @@ func TestDefaultSinglePiCompletionDoesNotCreateReviewer(t *testing.T) {
 		cur.Execution = &core.Execution{RequestID: "run", JobID: "job", Status: "running"}
 		return nil
 	})
-	s.applyJob(task.ID, &node.Job{ID: "job", TaskID: task.ID, RequestID: "run", Status: "completed", SessionID: "native-executor", Evidence: []node.Evidence{{Kind: "tool", MessageID: "msg_native", CallID: "tool_native", Content: "actual native test output"}}})
+	s.applyJob(task.ID, &node.Job{ID: "job", TaskID: task.ID, RequestID: "run", Status: "completed", SessionID: "native-executor", Evidence: []node.Evidence{{Kind: "tool", MessageID: "msg_native", CallID: "tool_native", Content: "actual native test output"}}}, 0)
 	cur, _ := s.task(task.ID)
 	if cur.Status != "reporting" || cur.Phase != "execution" || cur.Sessions["reviewer"] != nil {
 		t.Fatalf("default execution created review gate: %+v", cur)

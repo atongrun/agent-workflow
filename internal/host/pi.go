@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/atongrun/agent-workflow/internal/core"
@@ -16,25 +15,21 @@ import (
 )
 
 func (s *Server) client(taskID, role string) (*pi.Client, error) {
-	key := taskID + ":" + role
-	s.mu.Lock()
-	lock := s.starts[key]
-	if lock == nil {
-		lock = &sync.Mutex{}
-		s.starts[key] = lock
+	s.piLifecycle.Lock()
+	defer s.piLifecycle.Unlock()
+	t, err := s.task(taskID)
+	if err != nil {
+		return nil, err
 	}
-	s.mu.Unlock()
-	lock.Lock()
-	defer lock.Unlock()
+	if t.DeletedAt != nil {
+		return nil, fail("task_deleted", "restore this task before opening its native conversation", 409)
+	}
+	key := taskID + ":" + role
 	s.mu.Lock()
 	c := s.clients[key]
 	s.mu.Unlock()
 	if c != nil && c.Alive() {
 		return c, nil
-	}
-	t, err := s.task(taskID)
-	if err != nil {
-		return nil, err
 	}
 	directory, err := s.planningDirectory(t)
 	if err != nil {
@@ -77,7 +72,7 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 					continue
 				}
 				session := task.Sessions[parts[1]]
-				if session == nil || session.Busy || session.Pending || len(session.PendingUI) > 0 {
+				if session == nil || !taskPiIdle(task) || lifecycleRequestPending(st, task.ID) {
 					continue
 				}
 				if session.Persisted {
@@ -117,7 +112,7 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 	}); err != nil {
 		return nil, err
 	}
-	c, err = pi.Start(pi.Config{Binary: s.cfg.PiBinary, Directory: directory, Restricted: t.PlanningProfile == core.RestrictedPlanning, SessionDirectory: filepath.Join(s.cfg.DataDir, "sessions", taskID, role), SessionID: ref.ID, SessionFile: sessionFile, Extension: s.cfg.PiExtension, HostURL: s.cfg.InternalURL, Token: s.scopedToken(taskID, role), TaskID: taskID, Role: role, ExcludeEnv: s.controlEnv(), OnEvent: func(raw json.RawMessage) { s.piEvent(taskID, role, processID, raw) }})
+	c, err = pi.Start(pi.Config{LifecycleRevision: t.LifecycleRevision, Binary: s.cfg.PiBinary, Directory: directory, Restricted: t.PlanningProfile == core.RestrictedPlanning, SessionDirectory: filepath.Join(s.cfg.DataDir, "sessions", taskID, role), SessionID: ref.ID, SessionFile: sessionFile, Extension: s.cfg.PiExtension, HostURL: s.cfg.InternalURL, Token: s.scopedToken(taskID, role), TaskID: taskID, Role: role, ExcludeEnv: s.controlEnv(), OnEvent: func(raw json.RawMessage) { s.piEvent(taskID, role, processID, raw) }})
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +187,7 @@ func (s *Server) piEvent(taskID, role, processID string, raw json.RawMessage) {
 	}
 	_ = s.store.Update(func(st *core.State) error {
 		t := st.Tasks[taskID]
-		if t == nil {
+		if t == nil || t.DeletedAt != nil {
 			return nil
 		}
 		ref := t.Sessions[role]
@@ -295,7 +290,7 @@ func (s *Server) piEvent(taskID, role, processID string, raw json.RawMessage) {
 		s.launch(func() { s.expireDialog(taskID, role, processID, event.ID, delay) })
 	}
 	if event.Type == "agent_settled" && role == "architect" {
-		if t, err := s.task(taskID); err == nil && t.Execution != nil && t.Execution.Status == "completed" && (t.Status == "review" || t.Status == "reporting") {
+		if t, err := s.task(taskID); err == nil && t.DeletedAt == nil && t.Execution != nil && t.Execution.Status == "completed" && (t.Status == "review" || t.Status == "reporting") {
 			s.launch(func() { s.beginExecutionSummary(taskID) })
 		}
 	}
@@ -322,6 +317,10 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	c, err := s.client(id, role)
 	if err != nil {
+		if task, taskErr := s.task(id); taskErr == nil && task.DeletedAt != nil {
+			writeError(w, fail("task_deleted", "restore this task before opening its native conversation", 409))
+			return
+		}
 		writeError(w, fail("pi_unavailable", err.Error(), 503))
 		return
 	}
@@ -478,7 +477,7 @@ func (s *Server) watchPiBudget(taskID, role string, c *pi.Client) {
 		case <-ticker.C:
 		}
 		t, err := s.task(taskID)
-		if err != nil || !c.Alive() {
+		if err != nil || t.DeletedAt != nil || !c.Alive() {
 			return
 		}
 		ref := t.Sessions[role]
