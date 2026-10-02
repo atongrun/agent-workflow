@@ -1,0 +1,9 @@
+# Local secrets, durable sessions, build artifacts and toolchains stay local.
+.env
+.env.*
+host.json
+node.json
+state/
+*.exe
+/bin/
+*.test
