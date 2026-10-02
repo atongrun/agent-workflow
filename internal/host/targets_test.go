@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -261,7 +262,14 @@ func TestCatalogIntersectionAndManagedPlanning(t *testing.T) {
 	if firstDir != filepath.Join(s.cfg.DataDir, "planning", first.ID) || firstDir == s.cfg.Projects["p"] {
 		t.Fatal("draft inherited a project or Host cwd")
 	}
-	if info, err := os.Stat(firstDir); err != nil || info.Mode().Perm()&0077 != 0 {
+	info, err := os.Stat(firstDir)
+	if err != nil || !info.IsDir() {
+		t.Fatal("managed directory is unavailable or not a directory")
+	}
+	// Windows permission bits are not a DACL. The standalone Host inherits its
+	// operator-protected dataDir ACL; managed Windows node ACL enforcement and
+	// inherited state/planning-directory ACLs have native lifecycle coverage.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
 		t.Fatal("managed directory is not private")
 	}
 	first = bindTask(t, s, first, "managed-bind")

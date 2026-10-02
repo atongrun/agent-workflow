@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"unsafe"
+
+	"github.com/atongrun/agent-workflow/internal/core"
 )
 
 // These tests use temporary synthetic credentials only. They never open the
@@ -210,5 +212,61 @@ func TestWindowsExternalCredentialRequiresPrivateFileAndParent(t *testing.T) {
 				t.Fatal("broad external credential boundary was accepted")
 			}
 		})
+	}
+}
+
+// A standalone Windows Host does not secure an arbitrary dataDir via POSIX
+// mode bits. Verify real files created by core.Open inherit a deliberately
+// protected fixture root, and that replacements and nested directories retain
+// that DACL. The managed Windows node establishes this boundary itself.
+func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
+	root := t.TempDir()
+	if e := privateRoot(root); e != nil {
+		t.Fatal(e)
+	}
+	hostDir := filepath.Join(root, "host-fixture")
+	store, e := core.Open(hostDir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer store.Close()
+	statePath := filepath.Join(hostDir, "state.json")
+	if e = checkPrivatePath(statePath); e != nil {
+		t.Fatalf("initial Host state DACL: %v", e)
+	}
+	if e = store.Update(func(st *core.State) error { st.Settings.DefaultBranch = "fixture"; return nil }); e != nil {
+		t.Fatal(e)
+	}
+	if e = checkPrivatePath(statePath); e != nil {
+		t.Fatalf("replacement Host state DACL: %v", e)
+	}
+	planning := filepath.Join(hostDir, "planning", "task-fixture")
+	if e = os.MkdirAll(planning, 0700); e != nil {
+		t.Fatal(e)
+	}
+	jobs, e := managedDirectory(root, "state", "jobs")
+	if e != nil {
+		t.Fatal(e)
+	}
+	record := filepath.Join(jobs, "fixture.json")
+	if e = writeJSON(record, map[string]string{"fixture": "not a real job"}); e != nil {
+		t.Fatal(e)
+	}
+	pointer := filepath.Join(root, "current.json")
+	if e = writeJSON(pointer, Pointer{Version: "v1.2.3"}); e != nil {
+		t.Fatal(e)
+	}
+	for _, path := range []string{hostDir, filepath.Dir(planning), planning, filepath.Dir(jobs), jobs, record, pointer} {
+		if e = checkPrivatePath(path); e != nil {
+			t.Fatalf("inherited fixture DACL for %s: %v", filepath.Base(path), e)
+		}
+	}
+	// Prove this is a real DACL assertion rather than a Windows mode-bit bypass.
+	setBroadFixtureACL(t, statePath)
+	if e = checkPrivatePath(statePath); e == nil {
+		t.Fatal("broad state-file DACL was accepted")
+	}
+	if e = validateInstallRoot(root); e == nil {
+		t.Fatal("managed tree accepted a broadly readable state file")
 	}
 }

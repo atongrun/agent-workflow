@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -74,7 +75,13 @@ func TestStatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0077 != 0 {
+	if !info.Mode().IsRegular() {
+		t.Fatalf("state is not a regular file: %v", info.Mode())
+	}
+	// Windows synthesizes mode bits; chmod(0600) does not install a DACL.
+	// Standalone Windows Host privacy requires an operator-protected dataDir.
+	// Native lifecycle tests inspect the real inherited DACL under that boundary.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
 		t.Fatalf("state too broadly readable: %v", info.Mode())
 	}
 }

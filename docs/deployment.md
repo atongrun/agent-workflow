@@ -30,6 +30,24 @@ The Host defaults to at most one live Pi process (configurable 1–4). It evicts
 
 Run `awf host --config /etc/awf/host.json`. For a service manager, configure graceful SIGTERM, restart-on-failure, a private writable state directory and resource limits. Do not deploy two Host writers against the same state directory. Back up the whole state directory, including native Pi sessions, together with node job state using an operationally consistent snapshot. Do not delete locks/state to make a failing startup pass.
 
+### Host permission checks across operating systems
+
+The production control-Host deployment described above uses Linux/POSIX private
+state permissions. On Windows, Go's `FileMode.Perm`, `Mkdir(..., 0700)` and
+`Chmod(..., 0600)` do not describe or install a Windows DACL. A standalone
+`awf host` on Windows requires an operator-provisioned private `dataDir` whose
+files and planning directories inherit the intended account's ACL; the Host does
+not automatically harden an arbitrary Windows directory. A passing Windows
+functional test is not evidence that this separate deployment has been secured.
+
+The managed Windows execution-node CLI has a different, explicit boundary: its
+installer protects the per-user AWF root and its launcher validates real owners,
+DACLs and reparse attributes. Native Windows security tests inspect the actual
+DACLs on inherited state files, replacements and nested directories, including a
+negative broad-DACL fixture. POSIX mode assertions remain active on Unix; their
+Windows replacement is this native ACL coverage, not a claim that `0600` secures
+Windows files.
+
 ## Native Windows execution node
 
 Install the supported native Windows OpenCode release and authenticate its provider through its official interface. Start the native server on loopback:
