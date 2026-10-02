@@ -74,7 +74,9 @@ namespace AwfBootstrap {
 function Assert-AwfDirectoryPath([string] $Path) {
     $item = Get-Item -LiteralPath $Path -Force
     while ($null -ne $item) {
-        if (-not $item.PSIsContainer -or
+        # Parent returns a plain DirectoryInfo without the PowerShell provider's
+        # PSIsContainer property. Check the actual type at every ancestor.
+        if ($item -isnot [IO.DirectoryInfo] -or
             ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             throw 'Bootstrap directories must be real directories, not reparse points.'
         }

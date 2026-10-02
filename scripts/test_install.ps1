@@ -49,6 +49,48 @@ function New-Fixture([string] $Name, [byte[]] $Bytes, [int] $Attributes = 0) {
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('awf-bootstrap-test-' + [Guid]::NewGuid().ToString('N'))
 [void] [IO.Directory]::CreateDirectory($temporary)
 try {
+    # Use real filesystem objects: DirectoryInfo.Parent does not carry the
+    # provider-added PSIsContainer property that Get-Item supplies initially.
+    # StrictMode must remain enabled while walking all the way to the root.
+    $nested = Join-Path $temporary 'directory-chain\one\two'
+    [void] [IO.Directory]::CreateDirectory($nested)
+    Assert-AwfDirectoryPath $nested
+    Assert-AwfDirectoryPath $temporary
+    Assert-AwfDirectoryPath ([IO.Path]::GetPathRoot($temporary))
+    $missing = Join-Path $nested 'missing\child'
+    Assert-Rejected { Assert-AwfDirectoryPath $missing } 'missing nested directory is rejected'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $nested 'missing'))) 'directory validation does not create missing paths'
+    $regularFile = Join-Path $nested 'regular-file'
+    [IO.File]::WriteAllText($regularFile, 'fixture')
+    Assert-Rejected { Assert-AwfDirectoryPath $regularFile } 'regular file is not a directory' 'Bootstrap directories must be real directories*'
+    $stage = New-AwfPrivateStage $nested
+    try {
+        Assert-True ([IO.Directory]::Exists($stage)) 'private bootstrap stage is created under a real nested parent'
+        Assert-AwfDirectoryPath $stage
+    } finally { [IO.Directory]::Delete($stage) }
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        # Junctions need no symlink privilege and exercise a real reparse point
+        # both as the supplied directory and as a plain DirectoryInfo ancestor.
+        $target = Join-Path $temporary 'junction-target'
+        [void] [IO.Directory]::CreateDirectory((Join-Path $target 'child\leaf'))
+        $sentinel = Join-Path $target 'sentinel'
+        [IO.File]::WriteAllText($sentinel, 'preserve')
+        $junction = Join-Path $temporary 'junction'
+        [void] (New-Item -ItemType Junction -Path $junction -Target $target)
+        try {
+            Assert-True (([IO.File]::GetAttributes($junction) -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'fixture is an actual reparse point'
+            Assert-Rejected { Assert-AwfDirectoryPath $junction } 'junction directory rejected' 'Bootstrap directories must be real directories*'
+            Assert-Rejected { Assert-AwfDirectoryPath (Join-Path $junction 'child\leaf') } 'junction ancestor rejected' 'Bootstrap directories must be real directories*'
+            Assert-Rejected { New-AwfPrivateStage (Join-Path $junction 'child\leaf') } 'staging through a junction ancestor rejected' 'Bootstrap directories must be real directories*'
+            Assert-True ((@(Get-ChildItem -LiteralPath (Join-Path $target 'child\leaf') -Force)).Count -eq 0) 'rejected staging leaves target unchanged'
+        } finally {
+            # Remove the link itself, never recursively traverse its target.
+            [IO.Directory]::Delete($junction)
+        }
+        Assert-True ([IO.File]::ReadAllText($sentinel) -ceq 'preserve') 'junction cleanup preserves target'
+    }
+    Write-Host 'Real directory, root, missing-path, file, private-stage, and junction-ancestor tests passed.'
+
     foreach ($tag in @('v0.0.0', 'v1.2.3', 'v123.456.789')) {
         Assert-AwfReleaseVersion $tag
         Assert-AwfReleaseVersion $tag -AllowPrerelease
