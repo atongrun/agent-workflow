@@ -16,19 +16,23 @@ import zipfile
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 VERSION_RE = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
+RC_VERSION_RE = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-rc\.(?:0|[1-9][0-9]*)\Z")
 ARCHITECTURES = ("amd64", "arm64")
 MAX_RELEASE_BYTES = 100 << 20
 MEMBERS = ("awf.exe", "awf-node.exe", "manifest.json")
 
 
-def validate_version(version: str) -> str:
-    if not VERSION_RE.fullmatch(version):
-        raise ValueError("version must be an exact stable tag vX.Y.Z without leading zeros")
+def validate_version(version: str, *, allow_prerelease: bool = False) -> str:
+    if RC_VERSION_RE.fullmatch(version):
+        if not allow_prerelease:
+            raise ValueError("release candidate tags require --allow-prerelease")
+    elif not VERSION_RE.fullmatch(version):
+        raise ValueError("version must be an exact tag vX.Y.Z or vX.Y.Z-rc.N without leading zeros")
     return version
 
 
-def asset_name(version: str, arch: str) -> str:
-    validate_version(version)
+def asset_name(version: str, arch: str, *, allow_prerelease: bool = False) -> str:
+    validate_version(version, allow_prerelease=allow_prerelease)
     if arch not in ARCHITECTURES:
         raise ValueError("architecture must be amd64 or arm64")
     return f"awf_{version}_windows_{arch}.zip"
@@ -48,8 +52,9 @@ def validate_pe(data: bytes, arch: str) -> None:
         raise ValueError("release requires native 64-bit PE executables")
 
 
-def write_archive(destination: Path, version: str, arch: str, binaries: dict[str, bytes]) -> None:
-    asset_name(version, arch)
+def write_archive(destination: Path, version: str, arch: str, binaries: dict[str, bytes],
+                  *, allow_prerelease: bool = False) -> None:
+    asset_name(version, arch, allow_prerelease=allow_prerelease)
     if set(binaries) != {"awf.exe", "awf-node.exe"}:
         raise ValueError("exactly awf.exe and awf-node.exe are required")
     for binary in binaries.values():
@@ -77,11 +82,13 @@ def write_archive(destination: Path, version: str, arch: str, binaries: dict[str
         raise ValueError("release archive exceeds 100 MiB")
 
 
-def build_assets(version: str, output: Path, go: str) -> list[Path]:
-    validate_version(version)
+def build_assets(version: str, output: Path, go: str, *, allow_prerelease: bool = False) -> list[Path]:
+    # Validate before creating the output directory or invoking the compiler.
+    validate_version(version, allow_prerelease=allow_prerelease)
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    names = [asset_name(version, arch) for arch in ARCHITECTURES] + ["install.ps1", "SHA256SUMS"]
+    names = [asset_name(version, arch, allow_prerelease=allow_prerelease)
+             for arch in ARCHITECTURES] + ["install.ps1", "SHA256SUMS"]
     if any((output / name).exists() for name in names):
         raise ValueError("output contains release assets already; use a fresh output directory")
     env = os.environ.copy()
@@ -101,7 +108,8 @@ def build_assets(version: str, output: Path, go: str) -> list[Path]:
                                cwd=REPOSITORY, env=env, check=True)
                 binaries[executable] = path.read_bytes()
                 path.unlink()
-            write_archive(staging / asset_name(version, arch), version, arch, binaries)
+            write_archive(staging / asset_name(version, arch, allow_prerelease=allow_prerelease),
+                          version, arch, binaries, allow_prerelease=allow_prerelease)
         shutil.copyfile(REPOSITORY / "scripts" / "install.ps1", staging / "install.ps1")
         checksum_names = names[:-1]
         sums = "".join(f"{hashlib.sha256((staging / name).read_bytes()).hexdigest()}  {name}\n"
@@ -125,12 +133,13 @@ def build_assets(version: str, output: Path, go: str) -> list[Path]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", required=True, help="exact stable release tag, e.g. v1.2.3")
+    parser.add_argument("--version", required=True, help="exact tag vX.Y.Z, or vX.Y.Z-rc.N with --allow-prerelease")
+    parser.add_argument("--allow-prerelease", action="store_true", help="explicitly allow the exact release candidate tag")
     parser.add_argument("--output", type=Path, required=True, help="local directory with no existing release assets")
     parser.add_argument("--go", default="go", help="installed Go executable; no toolchain is downloaded")
     args = parser.parse_args()
     try:
-        paths = build_assets(args.version, args.output, args.go)
+        paths = build_assets(args.version, args.output, args.go, allow_prerelease=args.allow_prerelease)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Packaging failed: {error}\n")
     for path in paths:

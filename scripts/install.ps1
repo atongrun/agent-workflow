@@ -1,29 +1,40 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-Installs an exact published AWF stable release for the current Windows user.
+Installs an exact published AWF release for the current Windows user.
 .DESCRIPTION
 Downloads only official GitHub release assets. The release ZIP is verified and
 validated before its awf.exe is executed. This script does not configure or start
 AWF, edit the firewall, pair credentials, or change execution policy.
 .PARAMETER Version
-An exact stable release tag, for example v1.2.3. No latest/prerelease aliases.
+An exact stable tag vX.Y.Z, or vX.Y.Z-rc.N with -AllowPrerelease. No aliases.
+.PARAMETER AllowPrerelease
+Explicitly allow the exact release candidate tag named by -Version.
 .PARAMETER Sha256
 Optional independently obtained SHA-256 for this architecture's release ZIP.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z')]
     [string] $Version,
     [ValidatePattern('\A[0-9A-Fa-f]{64}\z')]
-    [string] $Sha256
+    [string] $Sha256,
+    [switch] $AllowPrerelease
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Repository = 'atongrun/agent-workflow'
 $script:MaxReleaseBytes = 100MB
+
+function Assert-AwfReleaseVersion([string] $Tag, [switch] $AllowPrerelease) {
+    if ($Tag -cmatch '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z') { return }
+    if ($Tag -cmatch '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-rc\.(?:0|[1-9][0-9]*)\z') {
+        if (-not $AllowPrerelease) { throw 'Release candidate tags require -AllowPrerelease and an exact -Version.' }
+        return
+    }
+    throw 'Version must be an exact tag vX.Y.Z or vX.Y.Z-rc.N without leading zeros.'
+}
 
 function Get-AwfNativeArchitecture {
     if (-not ('AwfBootstrap.NativeSystem' -as [type])) {
@@ -155,10 +166,13 @@ function Save-AwfOfficialDownload {
     throw 'Too many release redirects.'
 }
 
-function Get-AwfReleaseUrls($Release, [string] $Tag, [string] $Asset) {
+function Get-AwfReleaseUrls($Release, [string] $Tag, [string] $Asset, [switch] $AllowPrerelease) {
+    Assert-AwfReleaseVersion $Tag -AllowPrerelease:$AllowPrerelease
+    $isPrerelease = $Tag.Contains('-rc.')
     if ($Release.tag_name -cne $Tag -or $Release.draft -isnot [bool] -or
-        $Release.prerelease -isnot [bool] -or $Release.draft -or $Release.prerelease) {
-        throw 'Official release is not the requested stable pinned tag.'
+        $Release.prerelease -isnot [bool] -or $Release.draft -or
+        $Release.prerelease -ne $isPrerelease) {
+        throw 'Official release must be the requested non-draft pinned tag with matching prerelease status.'
     }
     $wanted = @{}
     foreach ($name in @($Asset, 'SHA256SUMS')) {
@@ -315,6 +329,7 @@ function Add-AwfUserPath([string] $Bin) {
 }
 
 function Invoke-AwfBootstrap {
+    Assert-AwfReleaseVersion $Version -AllowPrerelease:$AllowPrerelease
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         throw 'This bootstrap requires native Windows PowerShell 5.1 or PowerShell 7 on Windows.'
     }
@@ -341,7 +356,7 @@ function Invoke-AwfBootstrap {
         Save-AwfOfficialDownload -Url "https://api.github.com/repos/$script:Repository/releases/tags/$Version" `
             -Destination $metadataPath -Limit 2MB -Metadata
         $release = [IO.File]::ReadAllText($metadataPath) | ConvertFrom-Json
-        $urls = Get-AwfReleaseUrls $release $Version $asset
+        $urls = Get-AwfReleaseUrls $release $Version $asset -AllowPrerelease:$AllowPrerelease
         $sumsPath = Join-Path $stage 'SHA256SUMS'
         Save-AwfOfficialDownload -Url $urls['SHA256SUMS'] -Destination $sumsPath -Limit 1MB
         $digest = Get-AwfChecksum ([IO.File]::ReadAllText($sumsPath)) $asset
@@ -353,7 +368,9 @@ function Invoke-AwfBootstrap {
         $expanded = Join-Path $stage 'verified'
         Expand-AwfVerifiedArchive -Archive $archive -Destination $expanded -Tag $Version -Architecture $architecture
         $executable = Join-Path $expanded 'awf.exe'
-        & $executable '_install' '--archive' $archive '--version' $Version '--sha256' $digest
+        $installArguments = @('_install', '--archive', $archive, '--version', $Version, '--sha256', $digest)
+        if ($AllowPrerelease) { $installArguments += '--allow-prerelease' }
+        & $executable @installArguments
         if ($LASTEXITCODE -ne 0) { throw "Verified AWF installer failed (exit $LASTEXITCODE). User PATH was not changed." }
         try { Add-AwfUserPath (Join-Path $root 'bin') }
         catch {

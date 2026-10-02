@@ -11,12 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 const Repository = "atongrun/agent-workflow"
 
 var Version = "dev" // Set by the release packaging script.
-var versionRE = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var versionRE = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.(0|[1-9][0-9]*))?$`)
 
 type Pointer struct {
 	Version string `json:"version"`
@@ -29,10 +30,59 @@ type Manifest struct {
 
 func validVersion(v string) error {
 	if !versionRE.MatchString(v) {
-		return errors.New("version must be an exact stable release tag, for example v1.2.3")
+		return errors.New("version must be an exact canonical vX.Y.Z or vX.Y.Z-rc.N release tag")
 	}
 	return nil
 }
+func prereleaseVersion(v string) bool { return strings.Contains(v, "-rc.") }
+func validateReleaseRequest(v string, allowPrerelease bool) error {
+	if v == "" {
+		if allowPrerelease {
+			return errors.New("--allow-prerelease requires an explicit --version vX.Y.Z-rc.N")
+		}
+		return nil
+	}
+	if e := validVersion(v); e != nil {
+		return e
+	}
+	if prereleaseVersion(v) && !allowPrerelease {
+		return errors.New("a pinned RC requires explicit --allow-prerelease opt-in")
+	}
+	return nil
+}
+
+// Canonical numeric strings avoid integer overflow when comparing release tags.
+func compareReleaseVersions(a, b string) (int, error) {
+	x, y := versionRE.FindStringSubmatch(a), versionRE.FindStringSubmatch(b)
+	if x == nil || y == nil {
+		return 0, errors.New("cannot compare invalid release versions")
+	}
+	compare := func(a, b string) int {
+		if len(a) < len(b) {
+			return -1
+		}
+		if len(a) > len(b) {
+			return 1
+		}
+		return strings.Compare(a, b)
+	}
+	for i := 1; i <= 3; i++ {
+		if c := compare(x[i], y[i]); c != 0 {
+			return c, nil
+		}
+	}
+	if x[4] == "" && y[4] == "" {
+		return 0, nil
+	}
+	if x[4] == "" {
+		return 1, nil
+	}
+	if y[4] == "" {
+		return -1, nil
+	}
+	return compare(x[4], y[4]), nil
+}
+
 func DefaultRoot() (string, error) {
 	p := os.Getenv("LOCALAPPDATA")
 	if p == "" || !filepath.IsAbs(p) {

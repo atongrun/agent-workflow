@@ -173,7 +173,7 @@ func TestStageArchiveRejectsInvalidZIPAndVersion(t *testing.T) {
 			t.Fatal("invalid ZIP accepted")
 		}
 	}
-	for _, v := range []string{"", "latest", "1.2.3", "v1.2", "v1.2.3-rc.1", "v1.2.3+meta", "../v1.2.3", "v1.2.3\n"} {
+	for _, v := range []string{"", "latest", "1.2.3", "v1.2", "v1.2.3-beta.1", "v1.2.3+meta", "../v1.2.3", "v1.2.3\n"} {
 		if err := stageArchive(privateReleaseRoot(t), v, "amd64", archiveFixture(t, releaseEntries(v, "amd64"))); err == nil {
 			t.Fatalf("invalid version accepted: %q", v)
 		}
@@ -307,7 +307,7 @@ func TestStageReleaseRequiresPinnedOfficialMetadata(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(b)), Header: make(http.Header)}, nil
 			})}
-			got, err := stageRelease(context.Background(), client, root, tc.requested, tc.arch, tc.pin)
+			got, err := stageRelease(context.Background(), client, root, tc.requested, tc.arch, tc.pin, false, "")
 			if tc.wantOK {
 				if err != nil || got != v {
 					t.Fatalf("stage = %q, %v", got, err)

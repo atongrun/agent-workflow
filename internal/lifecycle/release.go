@@ -103,9 +103,12 @@ func checksum(data []byte, name string) (string, error) {
 	return found, nil
 }
 
-// stageRelease never executes downloaded code. A stable exact tag, expected
+// stageRelease never executes downloaded code. An authorized exact tag, expected
 // official asset URL, digest, archive allowlist, and manifest must all agree.
-func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pin string) (string, error) {
+func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pin string, allowPrerelease bool, currentVersion string) (string, error) {
+	if e := validateReleaseRequest(requested, allowPrerelease); e != nil {
+		return "", e
+	}
 	if arch != "amd64" && arch != "arm64" {
 		return "", errors.New("supported native Windows architectures are amd64 and arm64")
 	}
@@ -124,8 +127,34 @@ func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pi
 	if e = json.Unmarshal(metadata, &release); e != nil {
 		return "", errors.New("invalid official release metadata")
 	}
-	if validVersion(release.Tag) != nil || release.Draft || release.Prerelease || requested != "" && release.Tag != requested {
-		return "", errors.New("release is not the requested stable pinned tag")
+	// Missing/null flags are unknown, never evidence of a non-draft stable or
+	// preview release. Keep Go's metadata boundary aligned with the bootstrap.
+	var flags struct {
+		Draft      *bool `json:"draft"`
+		Prerelease *bool `json:"prerelease"`
+	}
+	if e = json.Unmarshal(metadata, &flags); e != nil || flags.Draft == nil || flags.Prerelease == nil {
+		return "", errors.New("release metadata requires explicit boolean draft and prerelease fields")
+	}
+
+	if validVersion(release.Tag) != nil || release.Draft || requested != "" && release.Tag != requested {
+		return "", errors.New("release is not the requested pinned tag")
+	}
+	isRC := prereleaseVersion(release.Tag)
+	if release.Prerelease != isRC {
+		return "", errors.New("release tag and GitHub prerelease status disagree")
+	}
+	if isRC && (!allowPrerelease || requested == "") {
+		return "", errors.New("prereleases require an exact pinned version and explicit opt-in")
+	}
+	if requested == "" && currentVersion != "" {
+		order, e := compareReleaseVersions(release.Tag, currentVersion)
+		if e != nil {
+			return "", e
+		}
+		if order < 0 {
+			return "", errors.New("latest stable release is older than the installed version; automatic downgrade is blocked")
+		}
 	}
 	name := assetName(release.Tag, arch)
 	wanted := map[string]string{name: "", "SHA256SUMS": ""}

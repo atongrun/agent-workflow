@@ -2,11 +2,12 @@
 
 ## Availability and scope
 
-This is the proposed native Windows lifecycle implementation and its local
-release tooling. **No public installer or binary release assets are currently
-published for `atongrun/agent-workflow`.** The examples below are templates, not
-working download instructions. Publishing a release is a separate authorized
-step; building locally does not create a tag, GitHub release, or upload.
+This document describes the native Windows lifecycle implementation and its
+local release tooling. The examples below are templates and do not assert that
+any tag or public download is available for `atongrun/agent-workflow`. Verify the
+actual published release and assets before use. Publishing a release is a
+separate authorized step; building locally does not create a tag, GitHub release,
+or upload.
 
 Supported targets are native Windows AMD64 and ARM64 on Windows 10/Server
 version 1709 or newer. The bootstrap requires Windows PowerShell 5.1 or PowerShell 7 on Windows and detects the **native OS
@@ -19,9 +20,11 @@ rights, or change execution policy. Run as the intended ordinary Windows user.
 
 After an operator has authorized publication and verified the actual release
 assets, replace `<EXACT_PUBLISHED_TAG>` with an exact stable tag such as `v1.2.3`.
-Tags with leading-zero components, prereleases, build suffixes, or `latest` are
-not accepted by the bootstrap. Do not run a placeholder or assume the example tag
-exists.
+Stable releases are the default. A release candidate is accepted only with an
+exact `vX.Y.Z-rc.N` tag **and** explicit `-AllowPrerelease`; `N` is a nonnegative
+integer with no leading zeros (except `0` itself). All numeric tag components
+must be canonical. Other prerelease formats, build suffixes, uppercase variants,
+and `latest` are rejected. Do not run a placeholder or assume an example tag exists.
 
 The intended release locations are:
 
@@ -67,6 +70,32 @@ session and does not change persisted execution policy. In managed environments,
 follow the administrator's approved script-signing and execution process; use the
 reviewed local script flow instead if interactive script evaluation is prohibited.
 
+### Explicit preview installation template
+
+Only after verifying an actual published **GitHub prerelease**, replace
+`<EXACT_PUBLISHED_RC_TAG>` with its exact `vX.Y.Z-rc.N` tag. For a reviewed local
+bootstrap, opt in explicitly:
+
+```powershell
+.\install.ps1 -Version '<EXACT_PUBLISHED_RC_TAG>' -AllowPrerelease
+# Optional independently verified native-architecture ZIP digest:
+.\install.ps1 -Version '<EXACT_PUBLISHED_RC_TAG>' -AllowPrerelease -Sha256 '<64_HEX_DIGITS_FROM_AN_INDEPENDENT_TRUSTED_SOURCE>'
+```
+
+The preview one-line template retains the same independently verified **script**
+hash check before parsing or execution; it additionally requires an exact RC tag
+and supplies `-AllowPrerelease`. It never discovers or selects a latest preview:
+
+```powershell
+& { $v='<EXACT_PUBLISHED_RC_TAG>'; $pin='<INDEPENDENT_INSTALL_PS1_SHA256>'; if ($v -cnotmatch '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-rc\.(?:0|[1-9][0-9]*)\z' -or $pin -notmatch '\A[0-9A-Fa-f]{64}\z') { throw 'Replace the exact RC tag and independently verified script hash first' }; $tls=[Net.ServicePointManager]::SecurityProtocol; $wc=New-Object Net.WebClient; $sha=[Security.Cryptography.SHA256]::Create(); try { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $b=$wc.DownloadData("https://github.com/atongrun/agent-workflow/releases/download/$v/install.ps1"); if ($b.Length -gt 1MB -or ([BitConverter]::ToString($sha.ComputeHash($b))).Replace('-','') -ine $pin) { throw 'Bootstrap SHA-256 verification failed' }; & ([ScriptBlock]::Create((New-Object Text.UTF8Encoding($false,$true)).GetString($b))) -Version $v -AllowPrerelease } finally { $wc.Dispose(); $sha.Dispose(); [Net.ServicePointManager]::SecurityProtocol=$tls } }
+```
+
+Without explicit opt-in, an RC is rejected before bootstrap staging or network
+requests. Draft releases are always rejected. RC tags require GitHub metadata
+with `prerelease: true`; stable tags require `prerelease: false`, even when
+`-AllowPrerelease` is supplied. Preview opt-in does not persist and does not
+weaken the checksum, official-origin, archive, native-PE, or ACL checks below.
+
 No source/repository override, execution-policy bypass, credential argument, or
 administrator step is supported. If policy blocks the reviewed script, follow
 that machine's approved signing/execution process; do not loosen machine or
@@ -98,8 +127,9 @@ Before running any downloaded executable, bootstrap:
    is deliberately avoided because it may report an emulated CPU on ARM64; see
    [Microsoft’s architecture-detection guidance](https://learn.microsoft.com/en-us/windows/win32/api/wow64apiset/nf-wow64apiset-iswow64process2)
 2. Fetches only the requested tag's official GitHub release metadata; rejects
-   drafts, prereleases, a mismatched tag, missing assets, duplicate selected
-   assets, or assets whose URL differs from the exact official release URL
+   drafts, unapproved RCs, a mismatched tag or prerelease status, missing assets,
+   duplicate selected assets, or assets whose URL differs from the exact official
+   release URL
 3. Downloads bounded content over HTTPS with normal certificate validation;
    redirects are limited to GitHub's release/CDN hosts, while metadata redirects
    are rejected; no bearer token or alternate source is accepted
@@ -125,6 +155,10 @@ absolute archive path:
 ```text
 awf.exe _install --archive <absolute-verified-zip> --version <exact-tag> --sha256 <verified-digest>
 ```
+
+The bootstrap appends `--allow-prerelease` only when the operator supplied
+`-AllowPrerelease`. Native `_install` independently requires that flag for an RC;
+using the private interface directly does not bypass preview policy.
 
 `_install` is a private bootstrap interface, not a separate public installer or
 an unsafe-update workaround. It rechecks the archive and rejects an existing
@@ -206,6 +240,8 @@ awf stop
 awf update --version '<EXACT_PUBLISHED_TAG>'
 # Optional independent archive pin:
 awf update --version '<EXACT_PUBLISHED_TAG>' --sha256 '<64_HEX_DIGITS>'
+# Explicit preview update (exact RC tag and opt-in are both required):
+awf update --version '<EXACT_PUBLISHED_RC_TAG>' --allow-prerelease
 ```
 
 `start` runs managed native OpenCode on `127.0.0.1:4096` and the configured AWF
@@ -228,7 +264,7 @@ runtime or observed exit of that exact child clears the intent. An older child
 cannot clear a newer launch intent. A CLI that exits before observing the result
 leaves the outcome explicitly unresolved for operator diagnosis.
 
-`update` validates an official stable release package and switches the version
+`update` defaults to official stable release packages and switches the version
 pointer only after the job-safety checks. It preserves configuration, credentials,
 native provider authentication, and durable job state. If a running runtime was
 stopped for an update, activation is checked and failure restores the prior
@@ -238,6 +274,12 @@ new pointer is retained for explicit recovery; unverified work is never killed t
 force a rollback. A rollback/restart error requires operator attention; it is not reported as a successful update. The
 explicit pinned-tag form above is recommended; an omitted `--version` resolves
 the official latest stable release once and then pins that result for the run.
+An RC update requires both an exact `--version vX.Y.Z-rc.N` and
+`--allow-prerelease`; the flag alone cannot select a preview. Drafts and
+tag/metadata prerelease mismatches are always rejected. An unpinned update also
+refuses an older stable release when a newer version or RC is already installed;
+it never silently downgrades a preview to an older stable version. A stable
+release with the same core version sorts after its RCs.
 
 `awf update --all` is **reserved for later and currently rejected**. This command
 does not update Pi, OpenCode, or unrelated tools. A bootstrap rerun is not an
@@ -284,6 +326,17 @@ python scripts/package_windows.py --version v1.2.3 --output <EMPTY_LOCAL_RELEASE
 An alternate **local compiler executable**, not a download source, can be selected
 with `--go <absolute-path-to-go>`. `GOCACHE` can point to the local build cache.
 The example version is only a packaging input and makes no publication claim.
+Packaging remains stable-only unless `--allow-prerelease` is explicitly supplied
+with an exact canonical RC tag. For a local fixture (not a publication command):
+
+```text
+python scripts/package_windows.py --version v0.0.0-rc.1 --allow-prerelease --output <EMPTY_LOCAL_FIXTURE_DIRECTORY>
+```
+
+An unapproved RC or malformed tag is rejected before invoking Go or creating or
+changing the output directory. Only `vX.Y.Z` and `vX.Y.Z-rc.N` are supported, with
+no leading zeros, aliases, other prerelease labels, or build suffixes. A published
+RC must separately be marked as a GitHub prerelease; a stable tag must not be.
 
 The packager cross-compiles both Windows architectures using `CGO_ENABLED=0`,
 `-trimpath`, `-buildvcs=false`, an empty Go build ID, and:
@@ -303,6 +356,9 @@ awf_vX.Y.Z_windows_arm64.zip
 install.ps1
 SHA256SUMS
 ```
+
+For an opted-in RC, the complete `-rc.N` suffix is retained in asset names,
+the embedded CLI version, manifest, and versioned installation directory.
 
 Each ZIP contains exactly:
 
@@ -338,7 +394,10 @@ credential changes):
 .\scripts\test_install.ps1
 ```
 
-The native suite covers checksum parsing, official metadata URLs, manifest
+The portable suite covers stable/RC tag grammar, explicit packaging opt-in,
+pre-build rejection without output changes, deterministic archives, checksums,
+and static bootstrap ordering. The native suite covers stable/RC opt-in and
+metadata-flag policy, checksum parsing, official metadata URLs, manifest
 schema, executable machine type, and malicious ZIP cases including traversal,
 duplicates, links/reparse entries, extra members, wrong manifests, and size limits.
 Fixture executables are not run. Run it under both Windows PowerShell 5.1 and

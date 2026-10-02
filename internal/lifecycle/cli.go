@@ -79,11 +79,9 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 		return serve(root)
 	}
 	if args[0] == "_install" {
-		e = privateRoot(root)
-	} else {
-		e = validateInstallRoot(root)
+		return install(root, args[1:], out)
 	}
-	if e != nil {
+	if e = validateInstallRoot(root); e != nil {
 		return e
 	}
 	lock, e := exclusive(root)
@@ -112,21 +110,23 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 		return stop(root, out)
 	case "update":
 		return update(root, args[1:], out)
-	case "_install":
-		return install(root, args[1:], out)
 	}
 	return errors.New("unknown lifecycle command")
 }
 func update(root string, args []string, out io.Writer) error {
 	f := flag.NewFlagSet("update", flag.ContinueOnError)
 	f.SetOutput(out)
-	version := f.String("version", "", "exact stable release tag; latest is resolved and pinned once")
+	version := f.String("version", "", "exact release tag; default resolves latest stable without downgrading")
+	allowPrerelease := f.Bool("allow-prerelease", false, "allow only an explicitly pinned vX.Y.Z-rc.N release")
 	pin := f.String("sha256", "", "optional independently verified archive SHA-256")
 	if e := f.Parse(args); e != nil {
 		return e
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected update arguments")
+	}
+	if e := validateReleaseRequest(*version, *allowPrerelease); e != nil {
+		return e
 	}
 	if e := noPendingStartup(root); e != nil {
 		return e
@@ -170,7 +170,7 @@ func update(root string, args []string, out io.Writer) error {
 		}
 		l.Close()
 	}
-	v, e := stageRelease(context.Background(), releaseClient(), root, *version, runtime.GOARCH, *pin)
+	v, e := stageRelease(context.Background(), releaseClient(), root, *version, runtime.GOARCH, *pin, *allowPrerelease, old.Version)
 	if e != nil {
 		return e
 	}
@@ -286,7 +286,8 @@ func install(root string, args []string, out io.Writer) error {
 	f := flag.NewFlagSet("_install", flag.ContinueOnError)
 	f.SetOutput(out)
 	archive := f.String("archive", "", "verified downloaded ZIP")
-	version := f.String("version", "", "exact stable release tag")
+	version := f.String("version", "", "exact release tag")
+	allowPrerelease := f.Bool("allow-prerelease", false, "explicitly allow a pinned RC bootstrap")
 	digest := f.String("sha256", "", "verified archive SHA-256")
 	if e := f.Parse(args); e != nil {
 		return e
@@ -294,6 +295,22 @@ func install(root string, args []string, out io.Writer) error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected installer arguments")
 	}
+	if *version == "" {
+		return errors.New("bootstrap requires an exact --version")
+	}
+	if e := validateReleaseRequest(*version, *allowPrerelease); e != nil {
+		return e
+	}
+	// Reject an unapproved RC before creating or changing the per-user root.
+	if e := privateRoot(root); e != nil {
+		return e
+	}
+	lock, e := exclusive(root)
+	if e != nil {
+		return e
+	}
+	defer lock.Close()
+
 	if _, e := os.Stat(filepath.Join(root, "current.json")); e == nil {
 		return errors.New("AWF is already installed; use awf update so live-job checks and rollback are enforced")
 	} else if !os.IsNotExist(e) {

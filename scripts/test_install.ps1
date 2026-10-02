@@ -10,9 +10,14 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 function Assert-True([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw "TEST FAILED: $Message" }
 }
-function Assert-Rejected([scriptblock] $Action, [string] $Message) {
+function Assert-Rejected([scriptblock] $Action, [string] $Message, [string] $ExpectedError = '') {
     $rejected = $false
-    try { & $Action } catch { $rejected = $true }
+    try { & $Action } catch {
+        $rejected = $true
+        if ($ExpectedError) {
+            Assert-True ($_.Exception.Message -like $ExpectedError) "$Message (unexpected error: $($_.Exception.Message))"
+        }
+    }
     Assert-True $rejected $Message
 }
 function New-TestPE([string] $Architecture) {
@@ -44,6 +49,26 @@ function New-Fixture([string] $Name, [byte[]] $Bytes, [int] $Attributes = 0) {
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('awf-bootstrap-test-' + [Guid]::NewGuid().ToString('N'))
 [void] [IO.Directory]::CreateDirectory($temporary)
 try {
+    foreach ($tag in @('v0.0.0', 'v1.2.3', 'v123.456.789')) {
+        Assert-AwfReleaseVersion $tag
+        Assert-AwfReleaseVersion $tag -AllowPrerelease
+    }
+    foreach ($tag in @('v0.0.0-rc.0', 'v0.0.0-rc.1', 'v12.34.56-rc.789')) {
+        Assert-Rejected { Assert-AwfReleaseVersion $tag } 'RC requires opt-in' 'Release candidate tags require*'
+        Assert-AwfReleaseVersion $tag -AllowPrerelease
+    }
+    foreach ($tag in @('', 'latest', '1.2.3', 'v1.2', 'v01.2.3', 'V1.2.3', 'v1.2.3-RC.1',
+        'v1.2.3-rc', 'v1.2.3-rc.01', 'v1.2.3-rc.-1', 'v01.2.3-rc.1', 'v1.02.3-rc.1',
+        'v1.2.03-rc.1', 'v1.2.3-rc.1.2', 'v1.2.3-beta.1', 'v1.2.3-rc.1+build',
+        'v1.2.3+build', "v1.2.3-rc.1`n", '../v1.2.3-rc.1', ('v1.2.3-rc.' + [char]0x0661))) {
+        Assert-Rejected { Assert-AwfReleaseVersion $tag } 'noncanonical tag' 'Version must be an exact tag*'
+        Assert-Rejected { Assert-AwfReleaseVersion $tag -AllowPrerelease } 'opt-in does not relax tag grammar' 'Version must be an exact tag*'
+    }
+    # The real entrypoint must reject an unapproved RC before staging, downloads,
+    # architecture detection, PATH writes, or any executable is reached.
+    Assert-Rejected { & (Join-Path $PSScriptRoot 'install.ps1') -Version 'v0.0.0-rc.1' } `
+        'entrypoint RC without opt-in' 'Release candidate tags require*'
+
     $asset = 'awf_v1.2.3_windows_amd64.zip'
     $digest = 'a' * 64
     Assert-True ((Get-AwfChecksum "$digest  $asset`n" $asset) -ceq $digest) 'GNU checksum'
@@ -69,14 +94,44 @@ try {
         )
     }
     [void] (Get-AwfReleaseUrls $release 'v1.2.3' $asset)
+    [void] (Get-AwfReleaseUrls $release 'v1.2.3' $asset -AllowPrerelease)
     $release.prerelease = $true
-    Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset } 'prerelease'
+    Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset } 'stable tag rejects prerelease metadata'
+    Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset -AllowPrerelease } 'stable tag still rejects prerelease metadata with opt-in'
     $release.prerelease = $false
+    $release.draft = $true
+    Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset -AllowPrerelease } 'draft stable release'
+    $release.draft = $false
     $release.assets[0].browser_download_url = 'https://example.invalid/download.zip'
     Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset } 'unofficial URL'
     $release.assets[0].browser_download_url = "https://github.com/atongrun/agent-workflow/releases/download/v1.2.3/$asset"
     $release.assets += $release.assets[0]
     Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset } 'duplicate release asset'
+
+    $rcTag = 'v0.0.0-rc.1'
+    $rcAsset = "awf_${rcTag}_windows_amd64.zip"
+    $rcRelease = [pscustomobject] @{
+        tag_name = $rcTag; draft = $false; prerelease = $true
+        assets = @(
+            [pscustomobject] @{ name = $rcAsset; browser_download_url = "https://github.com/atongrun/agent-workflow/releases/download/$rcTag/$rcAsset" },
+            [pscustomobject] @{ name = 'SHA256SUMS'; browser_download_url = "https://github.com/atongrun/agent-workflow/releases/download/$rcTag/SHA256SUMS" }
+        )
+    }
+    Assert-Rejected { Get-AwfReleaseUrls $rcRelease $rcTag $rcAsset } 'RC metadata requires opt-in'
+    [void] (Get-AwfReleaseUrls $rcRelease $rcTag $rcAsset -AllowPrerelease)
+    $rcRelease.prerelease = $false
+    Assert-Rejected { Get-AwfReleaseUrls $rcRelease $rcTag $rcAsset -AllowPrerelease } 'RC metadata must be prerelease'
+    $rcRelease.prerelease = 'true'
+    Assert-Rejected { Get-AwfReleaseUrls $rcRelease $rcTag $rcAsset -AllowPrerelease } 'RC metadata requires a boolean'
+    $rcRelease.prerelease = $true
+    $rcRelease.draft = $true
+    Assert-Rejected { Get-AwfReleaseUrls $rcRelease $rcTag $rcAsset -AllowPrerelease } 'draft RC'
+    $rcRelease.draft = $false
+    $rcRelease.tag_name = 'v0.0.0-rc.2'
+    Assert-Rejected { Get-AwfReleaseUrls $rcRelease $rcTag $rcAsset -AllowPrerelease } 'RC tag mismatch'
+    $rcRelease.tag_name = $rcTag
+    $rcRelease.assets[0].browser_download_url = 'https://example.invalid/download.zip'
+    Assert-Rejected { Get-AwfReleaseUrls $rcRelease $rcTag $rcAsset -AllowPrerelease } 'RC unofficial URL'
 
     $pe = New-TestPE 'amd64'
     $valid = @((New-Fixture 'awf.exe' $pe), (New-Fixture 'awf-node.exe' $pe),
@@ -86,6 +141,12 @@ try {
     Expand-AwfVerifiedArchive $zipPath (Join-Path $temporary 'valid') 'v1.2.3' 'amd64'
     Assert-True (Test-Path -LiteralPath (Join-Path $temporary 'valid\awf.exe')) 'valid archive extracted'
     Assert-Rejected { Assert-AwfNativeExecutable (Join-Path $temporary 'valid\awf.exe') 'arm64' } 'wrong PE machine'
+    $rcManifest = '{"version":"v0.0.0-rc.1","os":"windows","arch":"amd64"}'
+    $rcZipPath = Join-Path $temporary 'rc-valid.zip'
+    New-TestZip $rcZipPath @($valid[0], $valid[1], (New-Fixture 'manifest.json' ([Text.Encoding]::UTF8.GetBytes($rcManifest))))
+    Expand-AwfVerifiedArchive $rcZipPath (Join-Path $temporary 'rc-valid') $rcTag 'amd64'
+    Assert-True (Test-Path -LiteralPath (Join-Path $temporary 'rc-valid\awf.exe')) 'exact RC archive extracted'
+    Assert-Rejected { Assert-AwfManifest $rcManifest 'v0.0.0-rc.2' 'amd64' } 'RC manifest must match exact candidate'
     $cases = @(
         @((New-Fixture '../awf.exe' $pe), $valid[1], $valid[2]),
         @((New-Fixture 'folder/awf.exe' $pe), $valid[1], $valid[2]),
@@ -110,7 +171,7 @@ try {
     }
     $script:MaxReleaseBytes = 300
     Assert-Rejected { Expand-AwfVerifiedArchive $zipPath (Join-Path $temporary 'oversize') 'v1.2.3' 'amd64' } 'oversized archive'
-    Write-Host 'Checksum, metadata, manifest, PE, and malicious ZIP tests passed.'
+    Write-Host 'Stable/RC policy, checksum, metadata, manifest, PE, and malicious ZIP tests passed.'
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         Write-Host ('Native system architecture: ' + (Get-AwfNativeArchitecture))
     }

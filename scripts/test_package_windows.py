@@ -2,9 +2,12 @@
 """Portable package and bootstrap contract tests; not a PowerShell runtime test."""
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -34,6 +37,49 @@ class PackageTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 package.validate_version(version)
 
+    def test_explicit_release_candidate_policy(self):
+        for version in ("v0.0.0-rc.0", "v0.0.0-rc.1", "v12.34.56-rc.789"):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(ValueError, "--allow-prerelease"):
+                    package.validate_version(version)
+                self.assertEqual(package.validate_version(version, allow_prerelease=True), version)
+        self.assertEqual(package.validate_version("v1.2.3", allow_prerelease=True), "v1.2.3")
+        for version in ("latest", "", "v1.2.3-rc", "v1.2.3-rc.01", "v1.2.3-rc.-1",
+                        "v01.2.3-rc.1", "v1.02.3-rc.1", "v1.2.03-rc.1", "v1.2.3-rc.1.2",
+                        "v1.2.3-beta.1", "v1.2.3-rc.1+build", "v1.2.3+build", "v1.2.3-rc.1\n",
+                        "V1.2.3", "v1.2.3-RC.1", "../v1.2.3-rc.1", "v1.2.3-rc.١"):
+            for allow in (False, True):
+                with self.subTest(version=version, allow=allow), self.assertRaises(ValueError):
+                    package.validate_version(version, allow_prerelease=allow)
+
+    def test_rejected_version_never_builds_or_changes_output(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(package.subprocess, "run") as build:
+            root = Path(temporary)
+            for version, allow in (("v0.0.0-rc.1", False), ("v0.0.0-rc.01", True), ("v0.0.0-beta.1", True)):
+                for output in (root / "missing", root):
+                    with self.subTest(version=version, output=output), self.assertRaises(ValueError):
+                        package.build_assets(version, output, "test-go", allow_prerelease=allow)
+                    self.assertEqual(list(root.iterdir()), [])
+                path = root / "rejected.zip"
+                with self.assertRaises(ValueError):
+                    package.write_archive(path, version, "amd64",
+                                          {name: fake_pe("amd64") for name in ("awf.exe", "awf-node.exe")},
+                                          allow_prerelease=allow)
+                self.assertFalse(path.exists())
+            build.assert_not_called()
+
+    def test_command_line_rejects_unapproved_or_invalid_rc_before_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "missing"
+            for version, flags in (("v0.0.0-rc.1", []), ("v0.0.0-rc.01", ["--allow-prerelease"])):
+                result = subprocess.run([sys.executable, str(SCRIPTS / "package_windows.py"),
+                                         "--version", version, "--output", str(output),
+                                         "--go", "compiler-must-not-run", *flags], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Packaging failed:", result.stderr)
+                self.assertNotIn("compiler-must-not-run", result.stderr)
+                self.assertFalse(output.exists())
+
     def test_native_pe_architecture(self):
         for arch in package.ARCHITECTURES:
             package.validate_pe(fake_pe(arch), arch)
@@ -44,6 +90,15 @@ class PackageTests(unittest.TestCase):
         broken[0x3C:0x40] = (0xFFFFFFFF).to_bytes(4, "little")
         with self.assertRaises(ValueError):
             package.validate_pe(broken, "amd64")
+
+    def test_command_line_passes_explicit_opt_in_only(self):
+        for version, flags, allow in (("v1.2.3", [], False),
+                                      ("v0.0.0-rc.1", ["--allow-prerelease"], True)):
+            argv = ["package_windows.py", "--version", version, "--output", "local-fixture", *flags]
+            with self.subTest(version=version), patch.object(sys, "argv", argv), \
+                    patch.object(sys, "stdout", io.StringIO()), patch.object(package, "build_assets", return_value=[]) as build:
+                package.main()
+                build.assert_called_once_with(version, Path("local-fixture"), "go", allow_prerelease=allow)
 
     def test_reproducible_archive_contract(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -106,6 +161,36 @@ class PackageTests(unittest.TestCase):
                 package.build_assets("v1.2.3", output, "test-go")
             self.assertEqual(len(calls), 4)
 
+    def test_opted_in_rc_package_preserves_exact_version_and_checksums(self):
+        version = "v0.0.0-rc.1"
+
+        def build(command, **kwargs):
+            self.assertIn("-X github.com/atongrun/agent-workflow/internal/lifecycle.Version=" + version,
+                          command[command.index("-ldflags") + 1])
+            Path(command[command.index("-o") + 1]).write_bytes(fake_pe(kwargs["env"]["GOARCH"]))
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(package.subprocess, "run", side_effect=build) as build_mock:
+            output = Path(temporary)
+            paths = package.build_assets(version, output, "test-go", allow_prerelease=True)
+            self.assertEqual(build_mock.call_count, 4)
+            self.assertEqual({path.name for path in paths},
+                             {f"awf_{version}_windows_amd64.zip", f"awf_{version}_windows_arm64.zip",
+                              "install.ps1", "SHA256SUMS"})
+            self.assertEqual((output / "install.ps1").read_bytes(), (SCRIPTS / "install.ps1").read_bytes())
+            for arch in package.ARCHITECTURES:
+                with zipfile.ZipFile(output / f"awf_{version}_windows_{arch}.zip") as archive:
+                    self.assertEqual(tuple(archive.namelist()), package.MEMBERS)
+                    self.assertEqual(json.loads(archive.read("manifest.json")),
+                                     {"version": version, "os": "windows", "arch": arch})
+                    for name in ("awf.exe", "awf-node.exe"):
+                        package.validate_pe(archive.read(name), arch)
+            for line in (output / "SHA256SUMS").read_text().splitlines():
+                digest, filename = line.split("  ")
+                self.assertEqual(digest, hashlib.sha256((output / filename).read_bytes()).hexdigest())
+            with self.assertRaises(ValueError):
+                package.build_assets(version, output, "test-go", allow_prerelease=True)
+            self.assertEqual(build_mock.call_count, 4)
+
     def test_failed_build_leaves_no_release_assets(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(package.subprocess, "run", side_effect=OSError("failed")):
             with self.assertRaises(OSError):
@@ -115,7 +200,7 @@ class PackageTests(unittest.TestCase):
     def test_bootstrap_static_trust_boundary(self):
         script = (SCRIPTS / "install.ps1").read_text()
         main = script[script.index("function Invoke-AwfBootstrap"):]
-        stages = ["Get-AwfNativeArchitecture", "releases/tags/$Version", "Get-AwfReleaseUrls",
+        stages = ["Assert-AwfReleaseVersion", "Get-AwfNativeArchitecture", "releases/tags/$Version", "Get-AwfReleaseUrls",
                   "Get-AwfChecksum", "Get-FileHash", "Expand-AwfVerifiedArchive", "& $executable", "Add-AwfUserPath"]
         positions = [main.index(stage) for stage in stages]
         self.assertEqual(positions, sorted(positions))
@@ -124,8 +209,26 @@ class PackageTests(unittest.TestCase):
         self.assertIn("IsWow64Process2", script)
         self.assertIn("return nativeMachine;", script)
         self.assertIn("$Sha256 -and $digest -ine $Sha256", script)
-        self.assertIn("'--archive' $archive '--version' $Version '--sha256' $digest", script)
+        self.assertIn("@('_install', '--archive', $archive, '--version', $Version, '--sha256', $digest)", script)
+        self.assertIn("if ($AllowPrerelease) { $installArguments += '--allow-prerelease' }", script)
+        self.assertIn("Get-AwfReleaseUrls $release $Version $asset -AllowPrerelease:$AllowPrerelease", script)
+        self.assertIn("$Release.prerelease -ne $isPrerelease", script)
+        self.assertIn("$Release.prerelease -isnot [bool] -or $Release.draft", script)
         self.assertIn("$LASTEXITCODE -ne 0", script)
+
+    def test_documented_preview_one_liner_preserves_script_pin(self):
+        document = (SCRIPTS.parent / "docs" / "windows-cli.md").read_text()
+        lines = [line for line in document.splitlines() if line.startswith("& { $v=")]
+        self.assertEqual(len(lines), 2)
+        stable, preview = lines
+        self.assertIn("-Version $v -AllowPrerelease", preview)
+        self.assertIn("-rc\\.(?:0|[1-9][0-9]*)", preview)
+        normalized = preview.replace("<EXACT_PUBLISHED_RC_TAG>", "<EXACT_PUBLISHED_TAG>")
+        normalized = normalized.replace("-rc\\.(?:0|[1-9][0-9]*)", "")
+        normalized = normalized.replace("Replace the exact RC tag", "Replace the exact tag")
+        normalized = normalized.replace("-Version $v -AllowPrerelease", "-Version $v")
+        self.assertEqual(normalized, stable)
+        self.assertLess(preview.index("$sha.ComputeHash($b)"), preview.index("[ScriptBlock]::Create"))
 
 
 if __name__ == "__main__":
