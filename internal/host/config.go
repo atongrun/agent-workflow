@@ -38,6 +38,7 @@ type Server struct {
 	mu                    sync.Mutex
 	clients               map[string]*pi.Client
 	starts                map[string]*sync.Mutex
+	dispatches            map[string]*sync.Mutex
 	monitors              map[string]bool
 	http                  *http.Client
 	stop                  chan struct{}
@@ -72,6 +73,11 @@ func New(c Config) (*Server, error) {
 	if c.DataDir == "" {
 		return nil, errors.New("dataDir required")
 	}
+	absoluteDataDir, err := filepath.Abs(c.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	c.DataDir = absoluteDataDir
 	for id, dir := range c.Projects {
 		if id == "" || !filepath.IsAbs(dir) {
 			return nil, errors.New("project directories must be explicit absolute paths")

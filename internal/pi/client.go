@@ -19,6 +19,7 @@ import (
 )
 
 type Config struct {
+	Restricted                                                                                           bool
 	Binary, Directory, SessionDirectory, SessionID, SessionFile, Extension, HostURL, Token, TaskID, Role string
 	OnEvent                                                                                              func(json.RawMessage)
 	ExcludeEnv                                                                                           []string
@@ -45,6 +46,9 @@ type response struct {
 }
 
 func Start(cfg Config) (*Client, error) {
+	if cfg.Restricted && (cfg.Directory == "" || cfg.Extension == "") {
+		return nil, errors.New("restricted Pi requires a managed directory and explicit trusted extension")
+	}
 	if cfg.Binary == "" {
 		return nil, errors.New("Pi binary is not configured")
 	}
@@ -59,6 +63,14 @@ func Start(cfg Config) (*Client, error) {
 	}
 	if cfg.Extension != "" {
 		args = append(args, "--extension", cfg.Extension)
+	}
+	if cfg.Restricted {
+		tools := "awf_task,awf_plan,awf_execution,awf_finish"
+		if cfg.Role == "reviewer" {
+			tools = "awf_task,awf_review"
+		}
+		args = append(args, "--system-prompt", "You are Pi, the planning and result-reporting assistant for one AWF task. Use the available AWF tools and the current task conversation to help the user clarify scope, propose a concrete plan, and assess actual execution evidence. State uncertainty honestly and do not invent repository knowledge or authorization.", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--tools", tools,
+			"--append-system-prompt", "This task uses restricted model-only planning. The managed planning directory is not a repository workspace. Repository selection is metadata, not tool access or permission to execute. You cannot inspect repository or arbitrary filesystem contents in this session; use only the task context and evidence returned by explicitly authorized execution. Missing goal or acceptance criteria remain unset until clarified in the proposed plan.")
 	}
 	cmd := exec.Command(cfg.Binary, args...)
 	cmd.Dir = cfg.Directory
@@ -154,25 +166,43 @@ func (c *Client) send(v any) error {
 	_, err = c.stdin.Write(append(b, '\n'))
 	return err
 }
-func (c *Client) Call(ctx context.Context, typ string, fields map[string]any) (json.RawMessage, error) {
-	if fields == nil {
-		fields = map[string]any{}
+
+// PendingCall separates the ordered JSONL write from waiting for its reply.
+// Host dispatch fencing must not hold a lock while compact waits for a model.
+type PendingCall struct {
+	client   *Client
+	id       string
+	typ      string
+	response chan response
+}
+
+func (c *Client) BeginCall(typ string, fields map[string]any) (*PendingCall, error) {
+	input := map[string]any{}
+	for key, value := range fields {
+		input[key] = value
 	}
 	id := core.ID()
-	fields["type"] = typ
-	fields["id"] = id
-	ch := make(chan response, 1)
+	input["type"] = typ
+	input["id"] = id
+	pending := &PendingCall{client: c, id: id, typ: typ, response: make(chan response, 1)}
 	c.mu.Lock()
-	c.pending[id] = ch
+	c.pending[id] = pending.response
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.pending, id); c.mu.Unlock() }()
-	if err := c.send(fields); err != nil {
+	if err := c.send(input); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
 		return nil, err
 	}
+	return pending, nil
+}
+func (p *PendingCall) Wait(ctx context.Context) (json.RawMessage, error) {
+	c := p.client
+	defer func() { c.mu.Lock(); delete(c.pending, p.id); c.mu.Unlock() }()
 	select {
-	case r := <-ch:
+	case r := <-p.response:
 		if !r.Success {
-			return nil, fmt.Errorf("Pi %s: %s", typ, r.Error)
+			return nil, fmt.Errorf("Pi %s: %s", p.typ, r.Error)
 		}
 		return r.Data, nil
 	case <-ctx.Done():
@@ -183,6 +213,13 @@ func (c *Client) Call(ctx context.Context, typ string, fields map[string]any) (j
 		c.mu.Unlock()
 		return nil, fmt.Errorf("Pi exited: %w", err)
 	}
+}
+func (c *Client) Call(ctx context.Context, typ string, fields map[string]any) (json.RawMessage, error) {
+	pending, err := c.BeginCall(typ, fields)
+	if err != nil {
+		return nil, err
+	}
+	return pending.Wait(ctx)
 }
 func (c *Client) Respond(id string, v map[string]any) error {
 	c.mu.Lock()

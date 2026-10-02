@@ -1,9 +1,11 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -108,5 +110,45 @@ func TestEventProjectionBoundedAndPlanBudgetShared(t *testing.T) {
 	st = s.Snapshot()
 	if st.Tasks["a"].Budget.PlanSeconds != 200 || st.Tasks["b"].Budget.PlanSeconds != 200 {
 		t.Fatal("plan budget reset across tasks")
+	}
+}
+
+func TestOptionalPlanningAndTargetFieldsPreserveLegacyState(t *testing.T) {
+	// A version-1 fixture intentionally predates planningProfile/targetRevision.
+	raw := `{"version":1,"settings":{},"tasks":{"legacy":{"id":"legacy","planId":"plan","title":"Existing task","repository":"legacy repository metadata","branch":"work/existing","sessions":{"architect":{"id":"native-id","file":"native-history.jsonl","persisted":true}},"execution":{"requestId":"old-job","jobId":"durable-job","sessionId":"native-executor","status":"completed"},"executionHistory":[{"requestId":"previous","status":"completed"}],"budget":{"taskSeconds":17,"planSeconds":17,"reworks":1}}},"requests":{"original":{"id":"original","taskId":"legacy","operation":"create","hash":"keep-exact-hash","status":"completed"}},"events":[],"sequence":0}`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var before State
+	if err := json.Unmarshal([]byte(raw), &before); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := s.Snapshot().Tasks["legacy"]
+	if legacy.PlanningProfile != "" || legacy.TargetRevision != 0 || legacy.Execution.Target != nil {
+		t.Fatal("legacy authority/identity was inferred")
+	}
+	if err := s.Update(func(st *State) error {
+		st.Tasks["draft"] = &Task{ID: "draft", PlanID: "new-plan", PlanningProfile: RestrictedPlanning, TargetRevision: 1, RepositoryID: "123", Sessions: map[string]*Session{"architect": {ID: "new-native"}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	after := s.Snapshot()
+	if !reflect.DeepEqual(before.Tasks["legacy"], after.Tasks["legacy"]) || !reflect.DeepEqual(before.Requests["original"], after.Requests["original"]) {
+		t.Fatal("saving new fields rewrote old sessions, execution, budgets, or request hashes")
+	}
+	if after.Version != 1 || after.Tasks["draft"].PlanningProfile != RestrictedPlanning || after.Tasks["draft"].RepositoryID != "123" {
+		t.Fatal("new profile/identity fields did not persist")
 	}
 }

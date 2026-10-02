@@ -49,7 +49,21 @@ func (s *Server) nodeCall(ctx context.Context, nodeID, method, path string, payl
 	}
 	return res.StatusCode, nil
 }
+func executionNodeID(t *core.Task) string {
+	if t.Execution != nil && t.Execution.Target != nil {
+		return t.Execution.Target.NodeID
+	}
+	return t.NodeID
+}
 func (s *Server) jobRequest(t *core.Task) node.JobRequest {
+	// Existing executions have no target snapshot and retain their original
+	// serialization. Never add new fields to the node's durable job fingerprint.
+	if t.Execution.Target != nil {
+		copy := *t
+		copy.ProjectID = t.Execution.Target.ProjectID
+		copy.Repository = t.Execution.Target.Repository
+		t = &copy
+	}
 	reviewContext := ""
 	if t.Settings.Reviewer != "pi" && t.Completion != nil {
 		reviewContext = "\n\nPrior Pi execution findings for this explicitly authorized rework:\n" + string(mustJSON(t.Completion))
@@ -87,7 +101,7 @@ func (s *Server) monitor(id string) {
 			}
 			var job node.Job
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			status, err := s.nodeCall(ctx, t.NodeID, "GET", "/v1/jobs/"+t.Execution.JobID, nil, &job)
+			status, err := s.nodeCall(ctx, executionNodeID(t), "GET", "/v1/jobs/"+t.Execution.JobID, nil, &job)
 			cancel()
 			if status == 404 {
 				if t.Execution.CancelRequested && !t.Execution.DispatchAttempted {
@@ -111,6 +125,17 @@ func (s *Server) monitor(id string) {
 						if cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.DispatchAttempted || cur.Execution.CancelRequested {
 							return nil
 						}
+						// Newly reserved runs must revalidate after queueing/restart,
+						// immediately before the first durable dispatch attempt. Never
+						// retrofit old jobs or modify an already-dispatched fingerprint.
+						if target := cur.Execution.Target; target != nil {
+							bound := *cur
+							bound.ProjectID, bound.NodeID = target.ProjectID, target.NodeID
+							bound.Repository, bound.RepositoryID = target.Repository, target.RepositoryID
+							if err := s.validateTarget(&bound); err != nil {
+								return err
+							}
+						}
 						cur.Execution.DispatchAttempted = true
 						cur.Execution.Status = "dispatching"
 						marked = true
@@ -118,14 +143,14 @@ func (s *Server) monitor(id string) {
 						return nil
 					})
 					if markErr != nil {
-						return
-					}
-					if !marked {
+						err = markErr
+					} else if !marked {
 						continue
+					} else {
+						ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+						_, err = s.nodeCall(ctx, executionNodeID(t), "POST", "/v1/jobs", s.jobRequest(t), &job)
+						cancel()
 					}
-					ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
-					_, err = s.nodeCall(ctx, t.NodeID, "POST", "/v1/jobs", s.jobRequest(t), &job)
-					cancel()
 				}
 			}
 			if err != nil {
@@ -297,7 +322,7 @@ func (s *Server) cancelExecution(requestID, id, targetID string) {
 	var job node.Job
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_, err = s.nodeCall(ctx, t.NodeID, "POST", "/v1/jobs/"+t.Execution.JobID+"/cancel", map[string]string{"requestId": requestID}, &job)
+	_, err = s.nodeCall(ctx, executionNodeID(t), "POST", "/v1/jobs/"+t.Execution.JobID+"/cancel", map[string]string{"requestId": requestID}, &job)
 	if err != nil {
 		s.requestDone(requestID, "needs_verification", err)
 		return

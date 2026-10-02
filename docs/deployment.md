@@ -53,6 +53,25 @@ Optional server-side `openCodeModel: {"providerID":"verified-provider","modelID"
 
 Set `AWF_NODE_TOKEN` in a protected process/service environment. Optional native server authentication uses `OPENCODE_SERVER_USERNAME` and `OPENCODE_SERVER_PASSWORD`. Run `awf-node.exe -config node.json`. When allowing the Host over a private network, bind only the necessary private interface and limit inbound access to the control machine. Never expose unauthenticated native OpenCode to the public Internet.
 
+### Node source restriction
+
+With `allowedSourceIPs` omitted or empty, every node route accepts only loopback TCP peers. The default listener remains `127.0.0.1:8788`; the example above explicitly chooses port 7071. A non-loopback `listenAddress` (including a wildcard address or `-listen` override) requires a nonempty source list before startup. Listen addresses must use a literal IP and numeric port, with IPv6 in brackets; hostnames and an omitted IP such as `:7071` are rejected.
+
+For a remote control Host over Tailscale, replace these placeholders with the verified Windows node and control Host Tailscale IPs in the local configuration:
+
+```json
+{
+  "listenAddress": "<WINDOWS_TAILSCALE_IP>:7071",
+  "allowedSourceIPs": ["<CONTROL_HOST_TAILSCALE_IP>"]
+}
+```
+
+These are fields to add to the complete node configuration, not a standalone config. Use only the control Host's exact address; add its exact IPv6 address only if that transport is used. Entries must be unicast IP literals without a port, CIDR, zone or whitespace. No DNS lookup or subnet expansion is performed. IPv4-mapped IPv6 addresses match the corresponding IPv4 address.
+
+A configured list replaces the loopback default: loopback is not implicitly allowed. The node checks the connection's actual `RemoteAddr`, never `X-Forwarded-For`, `Forwarded` or other proxy headers. Missing, malformed or unlisted peers receive HTTP 403 (`source_denied`) before any route runs, including health and job writes. An allowed peer still needs the separate bearer token. If a proxy is inserted, its socket address is the peer; do not put the node behind a shared proxy that could admit other machines.
+
+Keep the Windows firewall/Tailscale ACL restricted to the verified private interface and control Host source as well. The application check is an additional restriction and does not depend on the global Windows firewall default. Verify both permitted control-Host access and rejection from another peer on the actual target before treating deployment as accepted.
+
 Project IDs must map to explicit existing absolute directories on both machines. These paths can differ between machines. The node sends directory scope on native instance routes and keeps one active job per project. A directory allowlist is routing control, not an OS sandbox. Native OpenCode permissions/questions may still require action in its interface.
 
 The Host supplies repository/branch/plan instructions to the agent; it never creates directories as a substitute for Git setup, and does not perform Git itself. Initially use a dedicated user-approved acceptance workspace, not an arbitrary existing business repository.

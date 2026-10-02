@@ -13,12 +13,15 @@ import (
 )
 
 type actionInput struct {
-	ExecutionRequestID string         `json:"executionRequestId,omitempty"`
-	RequestID          string         `json:"requestId"`
-	Role               string         `json:"role,omitempty"`
-	Text               string         `json:"text,omitempty"`
-	Revision           int            `json:"revision,omitempty"`
-	Response           map[string]any `json:"response,omitempty"`
+	ExpectedTargetRevision *int           `json:"expectedTargetRevision,omitempty"`
+	ExecutionRequestID     string         `json:"executionRequestId,omitempty"`
+	RequestID              string         `json:"requestId"`
+	Role                   string         `json:"role,omitempty"`
+	Text                   string         `json:"text,omitempty"`
+	Revision               int            `json:"revision,omitempty"`
+	Response               map[string]any `json:"response,omitempty"`
+	ExpectedSessionID      string         `json:"expectedSessionId,omitempty"`
+	ExpectedProcessID      string         `json:"expectedProcessId,omitempty"`
 }
 
 func (s *Server) action(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +39,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail("invalid_role", "role must be architect or reviewer", 400))
 		return
 	}
-	duplicate, err := s.reserve(in.RequestID, id, op, in, func(st *core.State) error {
+	duplicate, err := s.reserveRequest(in.RequestID, id, op, in, func(st *core.State, req *core.Request) error {
 		t := st.Tasks[id]
 		if t == nil {
 			return fail("not_found", "task not found", 404)
@@ -54,13 +57,27 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			if t.Sessions[in.Role] == nil {
 				return fail("session_unavailable", "role session does not exist", 409)
 			}
+			ref := t.Sessions[in.Role]
+			if pendingPiControl(st, ref) {
+				return fail("pi_control_pending", "wait for the Pi control receipt before sending another message", 409)
+			}
+			if in.ExpectedSessionID != "" || in.ExpectedProcessID != "" {
+				if in.ExpectedSessionID == "" || in.ExpectedProcessID == "" || !ref.Available || !bindingMatches(ref, piBinding{in.Role, in.ExpectedSessionID, in.ExpectedProcessID}) {
+					return fail("stale_pi_session", "Pi session changed; refresh and select the command again", 409)
+				}
+				req.SessionID = ref.ID
+				req.ProcessID = ref.ProcessID
+			}
+			req.Role = in.Role
 			for role, ref := range t.Sessions {
 				if role != in.Role && (ref.Busy || ref.Pending) {
 					return fail("role_busy", "another Pi role is generating for this task", 409)
 				}
 			}
-			if err := projectAvailable(st, t); err != nil {
-				return err
+			if t.PlanningProfile != core.RestrictedPlanning {
+				if err := projectAvailable(st, t); err != nil {
+					return err
+				}
 			}
 			if remainingSeconds(t) <= 0 {
 				return fail("budget_exhausted", "task budget exhausted", 409)
@@ -106,7 +123,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				t.Status = "needs_changes"
 			}
 		case "start", "rework":
-			if err := s.prepareExecution(st, t, in.RequestID, in.Revision, op == "rework"); err != nil {
+			if err := s.prepareExecution(st, t, in.RequestID, in.Revision, op == "rework", in.ExpectedTargetRevision); err != nil {
 				return err
 			}
 		case "execution/cancel":
@@ -179,7 +196,7 @@ func executionActive(t *core.Task) bool {
 	}
 	return true
 }
-func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string, revision int, rework bool) error {
+func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string, revision int, rework bool, expectedTargetRevision *int) error {
 	if err := projectAvailable(st, t); err != nil {
 		return err
 	}
@@ -189,6 +206,19 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 	if executionActive(t) {
 		return fail("execution_active", "execution already active", 409)
 	}
+	if (t.PlanningProfile == core.RestrictedPlanning && t.TargetRevision == 0) || ((t.PlanningProfile == core.RestrictedPlanning || t.TargetRevision > 0) && expectedTargetRevision == nil) {
+		return fail("target_required", "bind an execution target and explicitly start its current revision", 409)
+	}
+	if expectedTargetRevision != nil && *expectedTargetRevision != t.TargetRevision {
+		return fail("target_changed", "start must match the current execution target revision", 409)
+	}
+	if !taskPiIdle(t) {
+		return fail("role_busy", "wait for Pi and its pending dialogs to settle before starting execution", 409)
+	}
+	if err := s.validateTarget(t); err != nil {
+		return err
+	}
+
 	if rework {
 		if !needsRework(t) {
 			return fail("rework_unavailable", "Pi must report changes needed before rework", 409)
@@ -215,7 +245,7 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 		t.ExecutionHistory = append(t.ExecutionHistory, *t.Execution)
 		t.Budget.Reworks++
 	}
-	t.Execution = &core.Execution{RequestID: requestID, JobID: node.JobID(requestID), SessionID: previousSession, OriginalSessionID: previousSession, TimeoutSeconds: remainingSeconds(t), Status: "queued", Evidence: []core.Evidence{}}
+	t.Execution = &core.Execution{Target: &core.ExecutionTarget{Revision: t.TargetRevision, ProjectID: t.ProjectID, NodeID: t.NodeID, Repository: t.Repository, RepositoryID: t.RepositoryID}, RequestID: requestID, JobID: node.JobID(requestID), SessionID: previousSession, OriginalSessionID: previousSession, TimeoutSeconds: remainingSeconds(t), Status: "queued", Evidence: []core.Evidence{}}
 	t.Status = "queued"
 	t.Phase = "execution"
 	return nil
@@ -378,6 +408,9 @@ func projectAvailable(st *core.State, t *core.Task) error {
 		}
 		if executionActive(other) || (other.Status == "review" || other.Status == "reporting") {
 			return fail("project_busy", "another task owns this project", 409)
+		}
+		if other.PlanningProfile == core.RestrictedPlanning {
+			continue
 		}
 		for _, ref := range other.Sessions {
 			if ref.Busy || ref.Pending {

@@ -36,6 +36,10 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	directory, err := s.planningDirectory(t)
+	if err != nil {
+		return nil, err
+	}
 	ref := t.Sessions[role]
 	if ref == nil {
 		return nil, fail("session_unavailable", "native role session does not exist", 409)
@@ -101,10 +105,19 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 		_ = evict.Close()
 	}
 	processID := core.ID()
-	if err = s.store.Update(func(st *core.State) error { st.Tasks[taskID].Sessions[role].ProcessID = processID; return nil }); err != nil {
+	if err = s.store.Update(func(st *core.State) error {
+		current := st.Tasks[taskID]
+		// A legacy cwd was selected before acquiring the durable lock. Fence
+		// target changes both before and after this first process reservation.
+		if t.PlanningProfile == "" && (current.ProjectID != t.ProjectID || current.TargetRevision != t.TargetRevision) {
+			return fail("target_changed", "legacy target changed while Pi was starting; retry the session read", 409)
+		}
+		current.Sessions[role].ProcessID = processID
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	c, err = pi.Start(pi.Config{Binary: s.cfg.PiBinary, Directory: s.cfg.Projects[t.ProjectID], SessionDirectory: filepath.Join(s.cfg.DataDir, "sessions", taskID, role), SessionID: ref.ID, SessionFile: sessionFile, Extension: s.cfg.PiExtension, HostURL: s.cfg.InternalURL, Token: s.scopedToken(taskID, role), TaskID: taskID, Role: role, ExcludeEnv: s.controlEnv(), OnEvent: func(raw json.RawMessage) { s.piEvent(taskID, role, processID, raw) }})
+	c, err = pi.Start(pi.Config{Binary: s.cfg.PiBinary, Directory: directory, Restricted: t.PlanningProfile == core.RestrictedPlanning, SessionDirectory: filepath.Join(s.cfg.DataDir, "sessions", taskID, role), SessionID: ref.ID, SessionFile: sessionFile, Extension: s.cfg.PiExtension, HostURL: s.cfg.InternalURL, Token: s.scopedToken(taskID, role), TaskID: taskID, Role: role, ExcludeEnv: s.controlEnv(), OnEvent: func(raw json.RawMessage) { s.piEvent(taskID, role, processID, raw) }})
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +173,8 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 func (s *Server) piEvent(taskID, role, processID string, raw json.RawMessage) {
 	var event struct {
 		Type     string   `json:"type"`
+		Reason   string   `json:"reason"`
+		Aborted  bool     `json:"aborted"`
 		ID       string   `json:"id"`
 		Method   string   `json:"method"`
 		Steering []string `json:"steering"`
@@ -224,6 +239,16 @@ func (s *Server) piEvent(taskID, role, processID string, raw json.RawMessage) {
 				t.Budget.ActiveSince = &now
 			}
 		case "compaction_end":
+			if event.Reason == "manual" && event.Aborted {
+				for _, requestID := range append([]string(nil), ref.PendingCommands...) {
+					request := st.Requests[requestID]
+					if request != nil && request.Operation == "pi/compact" && request.ProcessID == processID && (request.Status == "accepted" || request.Status == "needs_verification") {
+						request.Status = "cancelled"
+						request.Error = "Pi compaction was stopped"
+						settleCommand(ref, requestID)
+					}
+				}
+			}
 			ref.Compacting = false
 			ref.Busy = ref.Streaming
 			if !ref.Busy {
@@ -325,32 +350,75 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"messages": messages, "session": t.Sessions[role], "history": entries})
 }
 func (s *Server) prompt(requestID, taskID, role, text string) {
-	c, err := s.client(taskID, role)
+	lock := s.piDispatchLock(taskID, role)
+	lock.Lock()
+	if s.restoreCancelledPrompt(requestID, taskID, role, text) {
+		lock.Unlock()
+		return
+	}
+	saved := s.store.Snapshot().Requests[requestID]
+	var c *pi.Client
+	var err error
+	if saved != nil && saved.SessionID != "" {
+		c, err = s.boundPiClient(taskID, piBinding{role, saved.SessionID, saved.ProcessID})
+	} else {
+		c, err = s.client(taskID, role)
+	}
+	var binding piBinding
+	var startSettled int64
+	var pending *pi.PendingCall
+	if err == nil {
+		err = s.store.Update(func(st *core.State) error {
+			t := st.Tasks[taskID]
+			ref := t.Sessions[role]
+			req := st.Requests[requestID]
+			if req == nil || req.Status != "accepted" {
+				return fail("prompt_cancelled", "prompt is no longer pending", 409)
+			}
+			if pendingPiControl(st, ref) {
+				return fail("pi_control_pending", "Pi control has fenced this prompt", 409)
+			}
+			if req.SessionID != "" && !bindingMatches(ref, piBinding{role, req.SessionID, req.ProcessID}) {
+				return fail("stale_pi_session", "Pi session changed before message dispatch", 409)
+			}
+			binding = piBinding{role, ref.ID, ref.ProcessID}
+			startSettled = ref.Settled
+			req.Role = role
+			req.SessionID = ref.ID
+			req.ProcessID = ref.ProcessID
+			req.Dispatched = true
+			return nil
+		})
+	}
+	if err == nil {
+		pending, err = c.BeginCall("prompt", map[string]any{"message": text, "streamingBehavior": "followUp"})
+	}
+	lock.Unlock()
 	if err != nil {
 		_ = s.store.Update(func(st *core.State) error {
-			if t := st.Tasks[taskID]; t != nil {
-				t.Sessions[role].Busy = false
+			t := st.Tasks[taskID]
+			req := st.Requests[requestID]
+			if req == nil || req.Status == "cancelled" {
+				return nil
+			}
+			req.Status = "failed"
+			if req.Dispatched {
+				req.Status = "needs_verification"
+			}
+			req.Error = "Pi did not confirm this message; its original request identity is retained"
+			if t != nil && t.Sessions[role] != nil {
 				settleCommand(t.Sessions[role], requestID)
 				core.Changed(st, t)
 			}
 			return nil
 		})
-		s.requestDone(requestID, "failed", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	beforePrompt, _ := s.task(taskID)
-	startSettled := beforePrompt.Sessions[role].Settled
-	_ = s.store.Update(func(st *core.State) error {
-		if req := st.Requests[requestID]; req != nil {
-			req.Role = role
-		}
-		return nil
-	})
-	data, err := c.Call(ctx, "prompt", map[string]any{"message": text, "streamingBehavior": "followUp"})
+	data, err := pending.Wait(ctx)
 	if err != nil {
-		s.requestDone(requestID, "needs_verification", err)
+		s.requestDone(requestID, "needs_verification", fmt.Errorf("Pi did not confirm the message; inspect its original receipt"))
 		return
 	}
 	var result struct {
@@ -364,6 +432,9 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 	_ = s.store.Update(func(st *core.State) error {
 		t := st.Tasks[taskID]
 		ref := t.Sessions[role]
+		if !bindingMatches(ref, binding) {
+			return nil
+		}
 		settleCommand(ref, requestID)
 		if stateErr == nil {
 			var native struct {
@@ -507,5 +578,37 @@ func (s *Server) expireDialog(taskID, role, processID, id string, delay time.Dur
 		if c != nil {
 			c.ForgetUI(id)
 		}
+	}
+}
+
+// Legacy tasks retain their explicit project cwd. New tasks never inherit the
+// Host cwd or acquire filesystem tools merely by selecting an execution target.
+func (s *Server) planningDirectory(t *core.Task) (string, error) {
+	switch t.PlanningProfile {
+	case "":
+		dir := s.cfg.Projects[t.ProjectID]
+		if dir == "" {
+			return "", fail("project_unavailable", "legacy planning workspace is not configured", 409)
+		}
+		return dir, nil
+	case core.RestrictedPlanning:
+		if !requestPattern.MatchString(t.ID) || t.ID == "." || t.ID == ".." {
+			return "", fail("invalid_task", "invalid managed task identity", 409)
+		}
+		base, err := filepath.Abs(s.cfg.DataDir)
+		if err != nil {
+			return "", err
+		}
+		dir := filepath.Join(base, "planning", t.ID)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", err
+		}
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fail("planning_unavailable", "managed planning directory is unavailable", 409)
+		}
+		return dir, nil
+	default:
+		return "", fail("planning_unavailable", "unsupported planning profile", 409)
 	}
 }

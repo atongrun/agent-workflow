@@ -20,7 +20,14 @@ func testServer(t *testing.T) *Server {
 	t.Setenv("TEST_HOST_TOKEN", strings.Repeat("h", 32))
 	t.Setenv("TEST_EXTENSION_TOKEN", strings.Repeat("e", 32))
 	t.Setenv("TEST_NODE_TOKEN", strings.Repeat("n", 32))
-	s, err := New(Config{DataDir: t.TempDir(), TokenEnv: "TEST_HOST_TOKEN", ExtensionTokenEnv: "TEST_EXTENSION_TOKEN", InternalURL: "http://127.0.0.1:7070", Projects: map[string]string{"p": t.TempDir()}, Nodes: map[string]NodeConfig{"n": {URL: "http://127.0.0.1:1", TokenEnv: "TEST_NODE_TOKEN"}}})
+	nodeHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestCatalog(w, r) {
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(nodeHTTP.Close)
+	s, err := New(Config{DataDir: t.TempDir(), TokenEnv: "TEST_HOST_TOKEN", ExtensionTokenEnv: "TEST_EXTENSION_TOKEN", InternalURL: "http://127.0.0.1:7070", Projects: map[string]string{"p": t.TempDir()}, Nodes: map[string]NodeConfig{"n": {URL: nodeHTTP.URL, TokenEnv: "TEST_NODE_TOKEN"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +45,7 @@ func call(t *testing.T, s *Server, method, path string, payload any) *httptest.R
 }
 func createTask(t *testing.T, s *Server, request string) *core.Task {
 	t.Helper()
-	w := call(t, s, "POST", "/v1/tasks", createInput{RequestID: request, Title: "Task", ProjectID: "p", NodeID: "n", Repository: "https://example.invalid/repo", Goal: "Make an authorized small change", AcceptanceCriteria: "Run relevant tests"})
+	w := call(t, s, "POST", "/v1/tasks", createInput{RequestID: request, Title: "Task", ProjectID: "p", NodeID: "n", Repository: "example/repo", Goal: "Make an authorized small change", AcceptanceCriteria: "Run relevant tests"})
 	if w.Code != 202 {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
@@ -48,7 +55,23 @@ func createTask(t *testing.T, s *Server, request string) *core.Task {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
+	// The original tests exercise persisted, pre-profile tasks. New restricted
+	// creation/binding is covered separately by targets_test.go.
+	if err := s.store.Update(func(st *core.State) error {
+		st.Tasks[got.Task.ID].PlanningProfile = ""
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got.Task.PlanningProfile = ""
 	return got.Task
+}
+func serveTestCatalog(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/v1/projects" {
+		return false
+	}
+	writeJSON(w, 200, map[string]any{"available": true, "reachable": true, "projects": []map[string]any{{"projectId": "p", "label": "p", "ready": true}}})
+	return true
 }
 func TestConcurrentCreateIdempotency(t *testing.T) {
 	s := testServer(t)
@@ -107,11 +130,11 @@ func TestExplicitPlanAndProjectSerial(t *testing.T) {
 	now := time.Now().UTC()
 	err := s.store.Update(func(st *core.State) error {
 		st.Tasks[first.ID].Plan = &core.Plan{Revision: 1, Content: "Plan", ConfirmedAt: &now}
-		if err := s.prepareExecution(st, st.Tasks[first.ID], "run", 1, false); err != nil {
+		if err := s.prepareExecution(st, st.Tasks[first.ID], "run", 1, false, nil); err != nil {
 			return err
 		}
 		st.Tasks[second.ID].Plan = &core.Plan{Revision: 1, Content: "Other plan", ConfirmedAt: &now}
-		if err := s.prepareExecution(st, st.Tasks[second.ID], "other", 1, false); err == nil {
+		if err := s.prepareExecution(st, st.Tasks[second.ID], "other", 1, false, nil); err == nil {
 			t.Fatal("parallel project execution accepted")
 		}
 		if projectAvailable(st, st.Tasks[second.ID]) == nil {
@@ -135,7 +158,7 @@ func TestReworkRetainsBudgetHistoryAndConfirmation(t *testing.T) {
 		cur.Budget.TaskSeconds = 100
 		cur.Budget.PlanSeconds = 100
 		cur.Status = "needs_changes"
-		if err := s.prepareExecution(st, cur, "new", 2, true); err != nil {
+		if err := s.prepareExecution(st, cur, "new", 2, true, nil); err != nil {
 			return err
 		}
 		if cur.Budget.TaskSeconds != 100 || cur.Budget.Reworks != 1 || cur.Execution.SessionID != "native-session" || len(cur.ExecutionHistory) != 1 {
@@ -151,7 +174,7 @@ func TestReworkRetainsBudgetHistoryAndConfirmation(t *testing.T) {
 		cur.Execution.Status = "completed"
 		cur.Status = "needs_changes"
 		cur.Budget.Reworks = 2
-		if err := s.prepareExecution(st, cur, "too-many", 2, true); err == nil {
+		if err := s.prepareExecution(st, cur, "too-many", 2, true, nil); err == nil {
 			t.Fatal("third rework accepted")
 		}
 		return nil
@@ -211,6 +234,9 @@ func TestAmbiguousDispatchNeverRepostsMissingNodeJob(t *testing.T) {
 	var mu sync.Mutex
 	posts := 0
 	nodeHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestCatalog(w, r) {
+			return
+		}
 		if r.Method == "POST" {
 			mu.Lock()
 			posts++
@@ -227,7 +253,7 @@ func TestAmbiguousDispatchNeverRepostsMissingNodeJob(t *testing.T) {
 	_ = s.store.Update(func(st *core.State) error {
 		cur := st.Tasks[task.ID]
 		cur.Plan = &core.Plan{Revision: 1, Content: "Plan", ConfirmedAt: &now}
-		return s.prepareExecution(st, cur, "dispatch-once", 1, false)
+		return s.prepareExecution(st, cur, "dispatch-once", 1, false, nil)
 	})
 	s.monitor(task.ID)
 	time.Sleep(2300 * time.Millisecond)
@@ -247,6 +273,9 @@ func TestCancelBeforeDispatchDoesNotStartJob(t *testing.T) {
 	var mu sync.Mutex
 	posts := 0
 	nodeHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestCatalog(w, r) {
+			return
+		}
 		if r.Method == "POST" {
 			mu.Lock()
 			posts++
@@ -261,7 +290,7 @@ func TestCancelBeforeDispatchDoesNotStartJob(t *testing.T) {
 	_ = s.store.Update(func(st *core.State) error {
 		cur := st.Tasks[task.ID]
 		cur.Plan = &core.Plan{Revision: 1, Content: "Plan", ConfirmedAt: &now}
-		if err := s.prepareExecution(st, cur, "never-dispatch", 1, false); err != nil {
+		if err := s.prepareExecution(st, cur, "never-dispatch", 1, false, nil); err != nil {
 			return err
 		}
 		cur.Execution.CancelRequested = true
@@ -467,7 +496,7 @@ func TestOldPiFindingsCannotAuthorizeNewRoundRework(t *testing.T) {
 		cur.Execution = &core.Execution{RequestID: "new-round", Status: "completed"}
 		cur.Completion = &core.Completion{Verdict: "needs_changes", ExecutionRequestID: "old-round"}
 		cur.Status = "reporting"
-		if err := s.prepareExecution(st, cur, "premature-rework", 1, true); err == nil {
+		if err := s.prepareExecution(st, cur, "premature-rework", 1, true, nil); err == nil {
 			t.Fatal("old Pi findings authorized a later round")
 		}
 		return nil

@@ -67,6 +67,8 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok", "version": "v1"})
 	})
+	public.HandleFunc("GET /v1/targets", s.targets)
+	public.HandleFunc("PATCH /v1/tasks/{id}/target", s.updateTarget)
 	public.HandleFunc("GET /v1/tasks", s.listTasks)
 	public.HandleFunc("POST /v1/tasks", s.createTask)
 	public.HandleFunc("GET /v1/tasks/{id}", s.getTask)
@@ -76,7 +78,15 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("GET /v1/overview", s.overview)
 	public.HandleFunc("GET /v1/tasks/{id}/messages", s.messages)
 	public.HandleFunc("GET /v1/tasks/{id}/events", s.events)
-	for _, action := range []string{"messages", "pi/abort", "pi/ui-response", "plan/confirm", "start", "execution/cancel", "review", "rework"} {
+	public.HandleFunc("GET /v1/tasks/{id}/requests/{requestId}", s.piRequest)
+	public.HandleFunc("POST /v1/tasks/{id}/requests/{requestId}", s.requestLookup)
+	for _, read := range []string{"commands", "stats", "models"} {
+		public.HandleFunc("GET /v1/tasks/{id}/pi/"+read, s.piRead)
+	}
+	for _, control := range []string{"model", "compact", "abort"} {
+		public.HandleFunc("POST /v1/tasks/{id}/pi/"+control, s.piControl)
+	}
+	for _, action := range []string{"messages", "pi/ui-response", "plan/confirm", "start", "execution/cancel", "review", "rework"} {
 		public.HandleFunc("POST /v1/tasks/{id}/"+action, s.action)
 	}
 	mux.Handle("/v1/", auth(s.token, public))
@@ -115,6 +125,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 func (s *Server) reserve(id, taskID, op string, payload any, fn func(*core.State) error) (bool, error) {
+	return s.reserveRequest(id, taskID, op, payload, func(st *core.State, _ *core.Request) error { return fn(st) })
+}
+func (s *Server) reserveRequest(id, taskID, op string, payload any, fn func(*core.State, *core.Request) error) (bool, error) {
 	if !requestPattern.MatchString(id) {
 		return false, fail("invalid_request_id", "requestId must be 1–128 safe characters", 400)
 	}
@@ -130,10 +143,11 @@ func (s *Server) reserve(id, taskID, op string, payload any, fn func(*core.State
 			duplicate = true
 			return nil
 		}
-		if err := fn(st); err != nil {
+		request := &core.Request{ID: id, TaskID: taskID, Operation: op, Hash: hash, Status: "accepted", CreatedAt: time.Now().UTC()}
+		if err := fn(st, request); err != nil {
 			return err
 		}
-		st.Requests[id] = &core.Request{ID: id, TaskID: taskID, Operation: op, Hash: hash, Status: "accepted", CreatedAt: time.Now().UTC()}
+		st.Requests[id] = request
 		return nil
 	})
 	return duplicate, err
@@ -176,14 +190,6 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Goal) == "" || s.cfg.Projects[in.ProjectID] == "" {
-		writeError(w, fail("invalid_task", "title, goal and a configured projectId are required", 400))
-		return
-	}
-	if _, ok := s.cfg.Nodes[in.NodeID]; !ok {
-		writeError(w, fail("unknown_node", "nodeId is not configured", 400))
-		return
-	}
 	sum := sha256.Sum256([]byte("awf-task:" + in.RequestID))
 	rawID := hex.EncodeToString(sum[:16])
 	taskID := rawID[:8] + "-" + rawID[8:12] + "-" + rawID[12:16] + "-" + rawID[16:20] + "-" + rawID[20:]
@@ -191,6 +197,19 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		taskID = prev.TaskID
 	}
 	_, err := s.reserve(in.RequestID, taskID, "create", in, func(st *core.State) error {
+		// Keep validation inside the reservation: exact historical retries must
+		// remain readable even after mutable configuration is removed.
+		if strings.TrimSpace(in.Title) == "" {
+			return fail("invalid_task", "title is required", 400)
+		}
+		if in.ProjectID != "" && s.cfg.Projects[in.ProjectID] == "" {
+			return fail("unknown_project", "projectId is not configured", 400)
+		}
+		if in.NodeID != "" {
+			if _, ok := s.cfg.Nodes[in.NodeID]; !ok {
+				return fail("unknown_node", "nodeId is not configured", 400)
+			}
+		}
 		now := time.Now().UTC()
 		planID := in.PlanID
 		if planID == "" {
@@ -199,7 +218,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		if !requestPattern.MatchString(planID) {
 			return fail("invalid_plan_id", "planId must be a stable safe identifier", 400)
 		}
-		t := &core.Task{PlanID: planID, ID: taskID, Title: in.Title, ProjectID: in.ProjectID, Repository: in.Repository, Goal: in.Goal, AcceptanceCriteria: in.AcceptanceCriteria, NodeID: in.NodeID, Branch: st.Settings.BranchPrefix + taskID, Status: "created", Phase: "architecture", CreatedAt: now, UpdatedAt: now, Settings: st.Settings, ReviewHistory: []core.Review{}, Sessions: map[string]*core.Session{"architect": {ID: core.ID()}}, Budget: core.Budget{}}
+		t := &core.Task{PlanningProfile: core.RestrictedPlanning, PlanID: planID, ID: taskID, Title: in.Title, ProjectID: in.ProjectID, Repository: in.Repository, Goal: in.Goal, AcceptanceCriteria: in.AcceptanceCriteria, NodeID: in.NodeID, Branch: st.Settings.BranchPrefix + taskID, Status: "created", Phase: "architecture", CreatedAt: now, UpdatedAt: now, Settings: st.Settings, ReviewHistory: []core.Review{}, Sessions: map[string]*core.Session{"architect": {ID: core.ID()}}, Budget: core.Budget{}}
 		st.Tasks[t.ID] = t
 		core.Changed(st, t)
 		return nil

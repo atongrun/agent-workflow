@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,6 +42,8 @@ type Server struct {
 	faultMu      sync.Mutex
 	storageError error
 	closeOnce    sync.Once
+
+	allowedSources map[netip.Addr]struct{}
 }
 
 // JobID lets callers persist the recovery address before sending their POST.
@@ -67,6 +70,10 @@ func messageID() (string, error) {
 }
 
 func New(cfg Config) (http.Handler, error) {
+	allowedSources, err := parseAllowedSources(cfg)
+	if err != nil {
+		return nil, err
+	}
 	if err := cfg.OpenCodeModel.Validate(); err != nil {
 		return nil, err
 	}
@@ -90,7 +97,7 @@ func New(cfg Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, native: native, projects: map[string]*project{}, jobs: map[string]*record{}}
+	s := &Server{cfg: cfg, native: native, projects: map[string]*project{}, jobs: map[string]*record{}, allowedSources: allowedSources}
 	for id, path := range cfg.Projects {
 		if strings.TrimSpace(id) == "" || !filepath.IsAbs(path) {
 			return nil, errors.New("project IDs must be nonempty and workspaces must be absolute existing directories")
@@ -204,6 +211,10 @@ func (s *Server) next(p *project) *record {
 }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if !s.sourceAllowed(r.RemoteAddr) {
+		writeError(w, http.StatusForbidden, "source_denied", "source address is not allowed")
+		return
+	}
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.cfg.Token)) != 1 {
 		w.Header().Set("WWW-Authenticate", "Bearer")
 		writeError(w, 401, "unauthorized", "valid bearer authorization is required")
@@ -211,6 +222,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/v1/health" && r.Method == "GET" {
 		s.health(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/projects" && r.Method == "GET" {
+		s.projectCatalog(w, r)
 		return
 	}
 	if r.URL.Path == "/v1/jobs" && r.Method == "POST" {
@@ -431,4 +446,26 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	writeJSON(w, 200, rec.Job)
 	s.wake(p)
+}
+
+// Only configured identities are advertised; workspaces and native credentials
+// remain local to the node. Source and bearer guards apply before this handler.
+func (s *Server) projectCatalog(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	h, err := s.native.Health(ctx)
+	available := s.fault() == nil
+	reachable := err == nil && h.Healthy
+	type projectView struct {
+		ProjectID string `json:"projectId"`
+		Label     string `json:"label"`
+		Ready     bool   `json:"ready"`
+	}
+	projects := []projectView{}
+	for id, p := range s.projects {
+		info, err := os.Stat(p.workspace)
+		projects = append(projects, projectView{id, id, available && reachable && err == nil && info.IsDir()})
+	}
+	sort.Slice(projects, func(i, j int) bool { return projects[i].ProjectID < projects[j].ProjectID })
+	writeJSON(w, 200, map[string]any{"available": available, "reachable": reachable, "projects": projects})
 }

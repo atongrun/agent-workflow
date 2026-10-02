@@ -235,6 +235,7 @@ func call(t *testing.T, s *Server, method, path string, body any) (int, Job) {
 	t.Helper()
 	b, _ := json.Marshal(body)
 	r := httptest.NewRequest(method, path, bytes.NewReader(b))
+	r.RemoteAddr = "127.0.0.1:1234"
 	r.Header.Set("Authorization", "Bearer test-bearer-32-characters-long-key")
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -432,7 +433,9 @@ func TestAuthenticationAllowlistLockAndCorruption(t *testing.T) {
 	cfg := configFor(t, f)
 	s := startNode(t, cfg)
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "/v1/health", nil))
+	r := httptest.NewRequest("GET", "/v1/health", nil)
+	r.RemoteAddr = "127.0.0.1:1234"
+	s.ServeHTTP(w, r)
 	if w.Code != 401 {
 		t.Fatal("unauthenticated health access")
 	}
@@ -595,5 +598,32 @@ func TestConfiguredModelSnapshotAndInvalidShape(t *testing.T) {
 		if json.Unmarshal([]byte(raw), &invalid) == nil {
 			t.Fatal("invalid model JSON shape accepted")
 		}
+	}
+}
+
+func TestProjectCatalogIsReadOnlyAndPathFree(t *testing.T) {
+	f := newNative(t, t.TempDir())
+	cfg := configFor(t, f)
+	s := startNode(t, cfg)
+	read := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/v1/projects", nil)
+		r.RemoteAddr = "127.0.0.1:1234"
+		r.Header.Set("Authorization", "Bearer "+cfg.Token)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w
+	}
+	w := read()
+	if w.Code != 200 || strings.Contains(w.Body.String(), f.workspace) || strings.Contains(w.Body.String(), cfg.Token) || !strings.Contains(w.Body.String(), `"projectId":"example"`) || !strings.Contains(w.Body.String(), `"ready":true`) {
+		t.Fatalf("catalog: %s", w.Body.String())
+	}
+	if creates, prompts, aborts := f.counts(); creates != 0 || prompts != 0 || aborts != 0 {
+		t.Fatal("catalog mutated native state")
+	}
+	if err := os.Remove(f.workspace); err != nil {
+		t.Fatal(err)
+	}
+	if w = read(); w.Code != 200 || strings.Contains(w.Body.String(), `"ready":true`) {
+		t.Fatal("missing workspace advertised ready")
 	}
 }

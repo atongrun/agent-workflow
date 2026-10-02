@@ -53,7 +53,16 @@ type Evidence struct {
 	Source   string `json:"source"`
 	Verified bool   `json:"verified"`
 }
+type ExecutionTarget struct {
+	Revision     int    `json:"revision"`
+	ProjectID    string `json:"projectId"`
+	NodeID       string `json:"nodeId"`
+	Repository   string `json:"repository"`
+	RepositoryID string `json:"repositoryId,omitempty"`
+}
+
 type Execution struct {
+	Target             *ExecutionTarget  `json:"target,omitempty"`
 	PendingPermissions []json.RawMessage `json:"pendingPermissions,omitempty"`
 	PendingQuestions   []json.RawMessage `json:"pendingQuestions,omitempty"`
 	DispatchAttempted  bool              `json:"dispatchAttempted"`
@@ -89,7 +98,13 @@ type Completion struct {
 	ExecutionRequestID string    `json:"executionRequestId"`
 }
 
+// RestrictedPlanning keeps model-only planning separate from execution workspaces.
+const RestrictedPlanning = "restricted"
+
 type Task struct {
+	PlanningProfile    string              `json:"planningProfile,omitempty"`
+	TargetRevision     int                 `json:"targetRevision"`
+	RepositoryID       string              `json:"repositoryId,omitempty"`
 	Completion         *Completion         `json:"completion,omitempty"`
 	CompletionHistory  []Completion        `json:"completionHistory"`
 	PlanID             string              `json:"planId"`
@@ -116,14 +131,18 @@ type Task struct {
 	GitMerged          *bool               `json:"gitMerged"`
 }
 type Request struct {
-	Role      string    `json:"role,omitempty"`
-	ID        string    `json:"id"`
-	TaskID    string    `json:"taskId"`
-	Operation string    `json:"operation"`
-	Hash      string    `json:"hash"`
-	Status    string    `json:"status"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	SessionID  string          `json:"sessionId,omitempty"`
+	ProcessID  string          `json:"processId,omitempty"`
+	Dispatched bool            `json:"dispatched,omitempty"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Role       string          `json:"role,omitempty"`
+	ID         string          `json:"id"`
+	TaskID     string          `json:"taskId"`
+	Operation  string          `json:"operation"`
+	Hash       string          `json:"hash"`
+	Status     string          `json:"status"`
+	Error      string          `json:"error,omitempty"`
+	CreatedAt  time.Time       `json:"createdAt"`
 }
 type Event struct {
 	ID     int64           `json:"id"`

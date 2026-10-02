@@ -21,7 +21,7 @@ go build -o bin/awf-node ./cmd/awf-node
 GOOS=windows GOARCH=amd64 go build -o bin/awf-node.exe ./cmd/awf-node
 ```
 
-The optional native Pi test uses `AWF_PI_BINARY=/absolute/path/to/pi go test ./internal/host -run NativePiHostIntegration -v`. Without that variable it explicitly skips. It proves the native transport/session contract, not a model-backed coding result. Pi 0.99.2 is the initial supported baseline; the OpenCode API adapter was checked against the v1.18.34 native contract.
+The optional native Pi test uses `AWF_PI_BINARY=/absolute/path/to/pi go test ./internal/host -run NativePiHostIntegration -v`. Without that variable it explicitly skips. It proves the native transport/session contract, not a model-backed coding result. Pi 0.99.2 is the initial supported baseline; the restricted draft/session contract is also verified with official Pi 1.0.0; the OpenCode API adapter was checked against the v1.18.34 native contract.
 
 ## Run
 
@@ -29,7 +29,7 @@ The optional native Pi test uses `AWF_PI_BINARY=/absolute/path/to/pi go test ./i
 2. Configure existing, dedicated project workspaces and separate Host, extension and node secrets. See [deployment](docs/deployment.md). The workspace allowlist routes jobs; native tool permissions and OS access still govern what each agent can do.
 3. Run `awf host --config host.json` on the control machine. Run native `opencode serve` and `awf-node -config node.json` on the execution machine. Windows does not require WSL.
 4. Put the Host behind the existing authenticated application server and protected tunnel. Browser clients never receive Host/node tokens. See the [API contract](docs/api.md).
-5. Create a task, converse with its Pi, and ask Pi to propose the plan using `awf_plan`. Confirm that exact revision, then explicitly start. Completion of a native OpenCode turn returns real evidence to that same Pi session. Pi explains the result and submits a structured Done or Needs Changes conclusion. There is no separate reviewer in the default initial flow; Git merge remains independently unknown unless verified by an agent.
+5. Create a task with a title, converse with its restricted planning Pi, and ask Pi to propose the plan using `awf_plan`. Explicitly save an existing repository/configured execution target, confirm the current plan revision, then explicitly start that target revision. Completion of a native OpenCode turn returns real evidence to that same Pi session. Pi explains the result and submits a structured Done or Needs Changes conclusion. There is no separate reviewer in the default initial flow; Git merge remains independently unknown unless verified by an agent.
 
 Only agents perform Git operations. The Host and node do not clone, branch, commit, push or merge repositories.
 

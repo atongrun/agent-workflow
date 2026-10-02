@@ -2,13 +2,14 @@
 
 Development checkpoint: 2026-10-02, Go 1.27.1 on Linux amd64.
 
-- 44 top-level Go tests pass with race detection when the opt-in native Pi test is enabled
+- 50 top-level Go tests pass with race detection when the opt-in native Pi test is enabled
 - `go vet ./...` passes
 - Linux amd64 Host/node, Windows amd64 Host/node and Windows arm64 node cross-builds pass
 - Native Pi 0.99.2 integration uses the actual Go Host adapter and bundled extension, not a transport mock
 - Native integration checks role-specific tool discovery, exact native session arguments, filtered control credentials, RPC state/history/commands/abort, default single-Pi completion and optional role identities, persisted synthetic history, bounded idle eviction/reopen and Host restart
 - Native Pi checks do not call a model or demonstrate real coding; the persistence fixture is explicitly synthetic
 - Node/client tests use an HTTP/SSE contract fixture to exercise idempotency, lost acknowledgements, recovery, terminal matching, errors, cancellation, workspace boundaries, same-task session reuse, permission/question waits and timeouts
+- Six source-policy tests cover exact IPv4/IPv6 and mapped addresses, malformed peers, ignored forwarding headers, all-route source/token enforcement, invalid configuration, immutable source policy and real loopback HTTP compatibility
 - These automated checks do not by themselves demonstrate a model-backed workflow, production deployment, Git artifact or real acceptance task; separate native Windows evidence is recorded below
 
 The checked OpenCode source contract is v1.18.34. An installed target version must be inspected and exercised natively; do not upgrade it silently merely to match this source reference.
@@ -32,6 +33,6 @@ A separate model-backed acceptance run on 2026-10-02 exercised the Go node from 
 - Node status `completed` denotes observed execution, not independently established correctness: the node evidence retained `verified: false`, and the independent test rerun was external validation
 - Both temporary processes were stopped and their listening ports were confirmed closed
 
-This establishes native Windows Go-node execution and same-job idempotency for this acceptance task. The seven-test result is separate from the earlier direct native OpenCode nine-test run and from the 44 Go tests above. It does not establish model-backed Pi operation, Host deployment, browser/mobile UI, Access/tunnel configuration or a complete web end-to-end workflow; those acceptance gates remain open.
+This establishes native Windows Go-node execution and same-job idempotency for this acceptance task. The seven-test result is separate from the earlier direct native OpenCode nine-test run and from the Go tests above. It does not establish model-backed Pi operation, Host deployment, browser/mobile UI, Access/tunnel configuration or a complete web end-to-end workflow; those acceptance gates remain open.
 
-This is a documentation-only evidence update. The tested source code is unchanged, so no release rebuild is implied.
+That Windows evidence update was documentation-only. Subsequent source-IP guard changes have passed Linux tests and live CLI/HTTP smoke checks plus Windows amd64/arm64 cross-builds; actual Windows/Tailscale source-policy validation remains a deployment gate.

@@ -22,7 +22,7 @@ import (
 // TestNativePiHostIntegration is an opt-in, credential-free integration test of
 // the real Pi RPC process. It does not mock Pi, submit a model prompt, or claim
 // model/remote-execution E2E coverage. AWF_PI_BINARY must point at an installed
-// official Pi CLI (tested with @earendil-works/pi-coding-agent 0.99.2).
+// official Pi CLI (tested with @earendil-works/pi-coding-agent 0.99.2 and 1.0.0).
 func TestNativePiHostIntegration(t *testing.T) {
 	binary := os.Getenv("AWF_PI_BINARY")
 	if binary == "" {
@@ -91,6 +91,152 @@ func TestNativePiHostIntegration(t *testing.T) {
 		s.cfg.PiExtension = extension
 		return s
 	}
+
+	t.Run("restricted_draft_tools_resources_and_binding_resume", func(t *testing.T) {
+		s := newServer(t)
+		// Observe public extension APIs through an explicitly trusted test wrapper.
+		// Ambient extensions remain disabled; the production extension is unchanged.
+		wrapper := filepath.Join(t.TempDir(), "restricted-diagnostics.ts")
+		importPath, _ := json.Marshal(extension)
+		observational := strings.Replace(nativePiDiagnosticsExtension, "export default function (pi) {", "export default function (pi) { awf(pi);", 1)
+		if err := os.WriteFile(wrapper, []byte("import awf from "+string(importPath)+";\n"+observational), 0600); err != nil {
+			t.Fatal(err)
+		}
+		s.cfg.PiExtension = wrapper
+		canary := `export default function(pi) { pi.registerCommand("discovered-canary", {description:"must not load",handler:async()=>{}}); }`
+		if err := os.WriteFile(filepath.Join(agentDir, "extensions", "ambient-canary.ts"), []byte(canary), 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range []string{"AGENTS.md", "SYSTEM.md", "APPEND_SYSTEM.md", "prompts/ambient-canary.md", "skills/ambient-canary/SKILL.md"} {
+			path := filepath.Join(agentDir, file)
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("---\nname: ambient-canary\ndescription: ambient-canary-resource-marker\n---\nambient-canary-resource-marker"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		task := draftTask(t, s, "native-restricted-draft")
+		directory, err := s.planningDirectory(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "AGENTS.md"), []byte("local-canary-context-marker"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		client, err := s.client(task.ID, "architect")
+		if err != nil {
+			t.Fatal(err)
+		}
+		initial := nativePiState(t, client)
+		check := func(s *Server, c *pi.Client) {
+			t.Helper()
+			data, err := os.ReadFile(filepath.Join(diagnosticsDir, task.ID+"-architect.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var diagnostic struct {
+				Args, ActiveTools, LeakedControlEnv []string
+				Cwd, SystemPrompt                   string
+			}
+			nativePiDecode(t, data, &diagnostic)
+			sort.Strings(diagnostic.ActiveTools)
+			want := []string{"awf_execution", "awf_finish", "awf_plan", "awf_task"}
+			if !reflect.DeepEqual(diagnostic.ActiveTools, want) {
+				t.Fatalf("restricted native active tools: got %v want %v", diagnostic.ActiveTools, want)
+			}
+			if diagnostic.Cwd != directory || len(diagnostic.LeakedControlEnv) != 0 {
+				t.Fatal("restricted cwd/environment mismatch")
+			}
+			for _, flag := range []string{"--system-prompt", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--tools"} {
+				found := false
+				for _, arg := range diagnostic.Args {
+					if arg == flag {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("missing native restriction %s", flag)
+				}
+			}
+			if strings.Contains(diagnostic.SystemPrompt, "canary-context-marker") || strings.Contains(diagnostic.SystemPrompt, "canary-resource-marker") {
+				t.Fatal("ambient native resources loaded")
+			}
+			var commands struct {
+				Commands []struct{ Name string } `json:"commands"`
+			}
+			nativePiDecode(t, nativePiCall(t, c, "get_commands", nil), &commands)
+			if len(commands.Commands) != 1 || commands.Commands[0].Name != "awf-native-diagnostics" {
+				t.Fatalf("discovered command escaped restrictions: %+v", commands.Commands)
+			}
+			// Real credential-free capability projections. No model prompt or compaction.
+			for _, kind := range []string{"commands", "models", "stats"} {
+				response := call(t, s, "GET", "/v1/tasks/"+task.ID+"/pi/"+kind+"?role=architect", nil)
+				if response.Code != 200 {
+					t.Fatalf("native Pi %s projection: %d %s", kind, response.Code, response.Body.String())
+				}
+				for _, forbidden := range []string{"sourceInfo", "sessionFile", "baseUrl", "headers"} {
+					if strings.Contains(response.Body.String(), `"`+forbidden+`"`) {
+						t.Fatalf("native %s leaked %s", kind, forbidden)
+					}
+				}
+			}
+			currentTask, _ := s.task(task.ID)
+			binding := currentTask.Sessions["architect"]
+			input := piControlInput{RequestID: core.ID(), Role: "architect", ExpectedSessionID: binding.ID, ExpectedProcessID: binding.ProcessID}
+			response := call(t, s, "POST", "/v1/tasks/"+task.ID+"/pi/abort", input)
+			if response.Code != 202 {
+				t.Fatalf("native idle stop: %s", response.Body.String())
+			}
+			awaitPiRequest(t, s, input.RequestID, "completed")
+
+		}
+		check(s, client)
+		task = bindTask(t, s, task, "native-bind")
+		same, err := s.client(task.ID, "architect")
+		if err != nil || same != client {
+			t.Fatal("target binding restarted native Pi")
+		}
+		if after := nativePiState(t, same); after.SessionID != initial.SessionID || after.SessionFile != initial.SessionFile {
+			t.Fatal("binding changed native session identity")
+		}
+		check(s, same)
+		// Restricted sessions still obey the native process cap.
+		other := draftTask(t, s, "native-restricted-other")
+		if err := s.store.Update(func(st *core.State) error { st.Tasks[task.ID].Sessions["architect"].Busy = true; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.client(other.ID, "architect"); err == nil {
+			t.Fatal("restricted drafts bypassed native process cap")
+		}
+		if err := s.store.Update(func(st *core.State) error { st.Tasks[task.ID].Sessions["architect"].Busy = false; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		// Persist synthetic history only after the native process has closed.
+		s.Close()
+		writeNativePiHistoryFixture(t, initial.SessionFile, initial.SessionID, directory)
+		reopened, err := New(s.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(reopened.Close)
+		if err := reopened.store.Update(func(st *core.State) error { st.Tasks[task.ID].Sessions["architect"].Persisted = true; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		resumed, err := reopened.client(task.ID, "architect")
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := nativePiState(t, resumed)
+		if state.SessionID != initial.SessionID || state.SessionFile != initial.SessionFile || state.MessageCount != 1 {
+			t.Fatalf("restricted resume lost native history: %+v", state)
+		}
+		check(reopened, resumed)
+		current, _ := reopened.task(task.ID)
+		if current.Execution != nil || current.PlanningProfile != core.RestrictedPlanning || current.TargetRevision != 1 {
+			t.Fatal("binding/restart caused execution or profile migration")
+		}
+	})
 
 	t.Run("role_tools_arguments_and_control_environment", func(t *testing.T) {
 		s := newServer(t)
@@ -395,11 +541,13 @@ export default function (pi) {
     description: "Credential-free native integration diagnostic fixture",
     handler: async () => {},
   });
-  pi.on("session_start", async () => {
+  pi.on("session_start", async (_event, ctx) => {
     const taskID = process.env.AWF_TASK_ID;
     const role = process.env.AWF_ROLE;
     const record = {
       args: process.argv.slice(2),
+      activeTools: pi.getActiveTools(),
+      systemPrompt: ctx.getSystemPrompt(),
       cwd: process.cwd(),
       hostURL: process.env.AWF_HOST_URL,
       taskID, role,

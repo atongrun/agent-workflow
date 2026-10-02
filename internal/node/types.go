@@ -12,6 +12,7 @@ import (
 type Config struct {
 	OpenCodeModel    *opencode.ModelSelection `json:"openCodeModel,omitempty"`
 	ListenAddress    string                   `json:"listenAddress"`
+	AllowedSourceIPs []string                 `json:"allowedSourceIPs,omitempty"` // Empty permits loopback only; a list replaces that default.
 	Token            string                   `json:"token"`
 	StateDir         string                   `json:"stateDir"`
 	Projects         map[string]string        `json:"projects"`
