@@ -250,15 +250,48 @@ func cleanEnvironment(env []string) []string {
 	}
 	return out
 }
+
+// nativeStateError deliberately projects only a fixed failure class. Native
+// response bodies and transport/decode error text can contain credentials,
+// workspace paths, or session content and must not reach the control response.
+func nativeStateError(state string, err error) error {
+	reason := "request failed"
+	var status *opencode.HTTPError
+	var syntax *json.SyntaxError
+	var shape *json.UnmarshalTypeError
+	var network net.Error
+	switch {
+	case errors.As(err, &status):
+		reason = fmt.Sprintf("HTTP %d", status.StatusCode)
+	case errors.Is(err, context.DeadlineExceeded):
+		reason = "request timed out"
+	case errors.Is(err, context.Canceled):
+		reason = "request canceled"
+	case errors.As(err, &network) && network.Timeout():
+		reason = "request timed out"
+	case errors.As(err, &syntax):
+		reason = "malformed JSON response"
+	case errors.As(err, &shape):
+		reason = "unexpected JSON shape"
+	}
+	return fmt.Errorf("native %s is unknown (%s); stop/update is blocked", state, reason)
+}
+
 func nativeIdle(ctx context.Context, n *opencode.Client, c Config) error {
 	h, e := n.Health(ctx)
-	if e != nil || !h.Healthy {
+	if e != nil {
+		return nativeStateError("OpenCode health", e)
+	}
+	if !h.Healthy {
 		return errors.New("native OpenCode health is unknown; stop/update is blocked")
 	}
 	for _, workspace := range c.Node.Projects {
 		statuses, e := n.Statuses(ctx, workspace)
-		if e != nil || statuses == nil {
-			return errors.New("native session status is unknown; stop/update is blocked")
+		if e != nil {
+			return nativeStateError("session status", e)
+		}
+		if statuses == nil {
+			return errors.New("native session status is unknown (null response); stop/update is blocked")
 		}
 		for _, s := range statuses {
 			if s.Type != "idle" {
@@ -266,12 +299,24 @@ func nativeIdle(ctx context.Context, n *opencode.Client, c Config) error {
 			}
 		}
 		p, e := n.PendingPermissions(ctx, workspace)
-		if e != nil || p == nil || len(p) != 0 {
-			return errors.New("native permission state is pending or unknown; stop/update is blocked")
+		if e != nil {
+			return nativeStateError("permission state", e)
+		}
+		if p == nil {
+			return errors.New("native permission state is unknown (null response); stop/update is blocked")
+		}
+		if len(p) != 0 {
+			return errors.New("native permission state is pending; stop/update is blocked")
 		}
 		q, e := n.PendingQuestions(ctx, workspace)
-		if e != nil || q == nil || len(q) != 0 {
-			return errors.New("native question state is pending or unknown; stop/update is blocked")
+		if e != nil {
+			return nativeStateError("question state", e)
+		}
+		if q == nil {
+			return errors.New("native question state is unknown (null response); stop/update is blocked")
+		}
+		if len(q) != 0 {
+			return errors.New("native question state is pending; stop/update is blocked")
 		}
 	}
 	return nil

@@ -202,14 +202,91 @@ It then prints the exact paths, network endpoints, source list, project mapping,
 credential-file location, and autostart choice and asks whether to save that
 exact configuration. Declining leaves the configuration unsaved. An explicitly
 accepted autostart choice uses a per-user login entry; bootstrap never enables
-it. Initialization saves settings but does not start the runtime or pair a token.
+it. Initialization saves settings and does not start the runtime. It then offers
+native pairing with a default **no**; EOF also skips pairing. Existing local
+credentials are preserved without another pairing offer (their presence alone
+does not prove that the remote credential matches). A pairing failure leaves the
+reviewed configuration saved; use `awf pair` to continue.
 
-### Pairing helper contract
+### Native pairing and verification
 
-Run an operator-approved pairing helper yourself. No public hosted helper is
-provided or implied by this document. The helper must prepare the Host side and
-Windows node side of the same pairing through the operator's approved secure
-process. Never paste the token into chat, CLI arguments, source control, or logs.
+New Windows machines can pair directly from the optional `init` offer or later:
+
+```powershell
+awf pair --ssh-host 'control-host' --remote-env '/home/operator/.config/awf/windows-node.env'
+# Inspect without creating or transmitting a credential:
+awf pair --status --ssh-host 'control-host' --remote-env '/home/operator/.config/awf/windows-node.env'
+```
+
+Omit the two destination flags to enter them interactively. The local destination
+is the exact credential path already reviewed in `init`. The SSH host must be an
+existing alias in your SSH configuration, using only letters, digits, dot,
+underscore and hyphen (no `user@host` or extra SSH options). Configure its HostName,
+User, identity, and independently verified known-host key beforehand. Pairing
+uses the native Windows system OpenSSH client, with strict existing-host-key
+checking and public-key-only BatchMode. It disables agent/X11/tunnel/port
+forwarding, host-key updates, DNS-based host-key acceptance, local commands,
+configured remote commands and connection multiplexing. Unknown/changed keys or
+missing SSH keys fail closed; pairing never enrolls a key, prompts for a password,
+or bypasses trust checks. The existing SSH configuration, including any explicitly
+configured proxy route, remains a trust input.
+
+The Linux control Host must already have Python 3 and the remote parent directory
+owned by the SSH user with mode `0700` (or stricter). AWF does not install tools,
+create remote directories, change Host configuration, or restart services. The
+remote destination must be a clean absolute Linux path up to 1024 characters,
+using only letters, digits, dot, underscore, hyphen and slash. No spaces, traversal,
+symlink ancestors, linked destination, or existing-file replacement is allowed.
+An explicit external local credential destination requires an already-private
+parent; pairing does not rewrite external ACLs. UNC paths and alternate data
+streams are rejected. Standard managed credential directories are created only
+after confirmation.
+
+Before creating or sending anything, `pair` shows the exact local path, SSH alias,
+remote path and trust assumptions. Type `PAIR` to authorize that specific
+credential creation/access and transfer. It generates 32 random bytes, encodes
+them as 64 uppercase hexadecimal bytes, and protects the local identity directly
+with CurrentUser DPAPI. No PowerShell or WSL is needed. The token travels only
+through SSH stdin to a fixed, bounded receiver, which creates a new mode-0600
+file containing exactly `AWF_WINDOWS_TOKEN=<token>` and a newline. It never appears
+in CLI arguments, terminal output, logs, configuration JSON, or OpenCode's
+environment. Do not paste a token into chat or source control.
+
+Status meanings are deliberately limited:
+
+- **paired**: a fresh challenge/HMAC verified that the two protected files contain
+  the same identity. This does not prove Host service configuration, running
+  processes, network reachability to the node, or end-to-end job success
+- **local-only**: a valid local identity exists and inspection proved the remote
+  env-file absent
+- **unpaired**: both selected credential files are absent
+- **remote-unknown**: reachability, authentication, remote privacy/format, or a
+  matching local identity could not be established; existence is never enough
+
+A repeat run with matching files only verifies them. It does not resend or
+rotate the token. Existing mismatched or malformed files are never overwritten.
+If transfer fails after local creation, the encrypted local identity is retained:
+
+```powershell
+awf pair --status --ssh-host 'control-host' --remote-env '/home/operator/.config/awf/windows-node.env'
+# Only if status proves the remote file absent, explicitly reuse the local identity:
+awf pair --retry --ssh-host 'control-host' --remote-env '/home/operator/.config/awf/windows-node.env'
+```
+
+`--retry` requires an existing valid local credential, displays the destinations
+again, and requires `PAIR` before resending the same identity. It cannot generate
+a new identity or overwrite a remote file. An interrupted partial remote write
+requires explicit operator recovery; deleting files or rerunning `init` is not a
+safe automatic recovery procedure. Rotation is intentionally not implemented
+by these commands and must be a separately reviewed operation. Pairing never
+implicitly enables autostart, changes firewall rules, provisions arbitrary Hosts,
+or changes native provider authentication.
+
+### Credential compatibility
+
+Existing operator-approved PowerShell helper pairings remain compatible and do
+not need to be recreated. The native CLI uses the same on-disk and Host env-file
+contract. The old helper is optional; no hosted helper is implied.
 
 The Windows credential file consumed by managed AWF has this contract:
 
@@ -226,7 +303,8 @@ The Windows credential file consumed by managed AWF has this contract:
 The paired control Host presents this token to authenticate requests to the AWF
 node. It is separate from OpenCode's native provider login. An explicit `--credential-file` can select
 an already approved absolute credential-file location at initialization; it does
-not import or generate credentials. The selected file and its immediate parent
+not import or generate credentials while saving configuration; the separate
+pairing confirmation can create a missing identity at that location. The selected file and its immediate parent
 must have the same private owner/ACL protections and contain no reparse points,
 even when they are outside the AWF installation; AWF only checks, and does not
 rewrite, those external ACLs. `awf start` fails clearly when pairing is
@@ -256,6 +334,20 @@ jobs requiring recovery. They do not terminate jobs just to make an operation
 succeed. Investigate status and resolve/cancel the specific job through its normal
 workflow before retrying. Do not delete locks, job state, credential files, or
 runtime records to force a lifecycle transition.
+
+Native state-read failures report the affected check and a bounded failure class
+(HTTP status, timeout, cancellation, malformed JSON, unexpected JSON shape, or
+other request failure). They do not include native response bodies, raw error
+text, workspace paths, or credentials. A successful empty session-status object
+(`{}`) and empty permission/question arrays (`[]`) are valid idle state; JSON
+`null`, malformed responses, authentication failures, and unavailable state
+remain unknown and block stop/update. This is an idle safety check, not evidence
+that an execution task completed successfully.
+
+An unknown-state refusal leaves the runtime running. A later normal `awf stop`
+may succeed if the native condition has resolved; that alone does not identify
+the original cause. A new CLI cannot change the checks inside an already-running
+supervisor, and no force-stop or installation-overwrite recovery is provided.
 
 A durable `starting.json` launch intent is written before the owned child is
 spawned. If startup times out before its process lock or ready record is observed,
@@ -380,6 +472,28 @@ from the tag. The script validates the binaries' PE machine type and package
 limits before finishing. No release is created, uploaded, tagged, or pushed.
 
 ## Tests and native acceptance limits
+
+Pairing portable checks run as part of `go test ./...` (and `go test -race ./...`).
+They exercise the exact embedded Linux receiver with synthetic temporary files:
+mode-0600 creation, strict format, proof verification, exclusive no-overwrite,
+symlink/hardlink/FIFO/directory rejection, private preexisting parents, and safe
+retries. CLI tests cover cancellation, missing confirmation, existing matching
+identities, unknown/mismatched remote state, interruption after local save, no
+secret output, and default-off init. They do not contact SSH or a real Host.
+
+Native Windows fixtures use only `t.TempDir` and synthetic identities. Run:
+
+```text
+go test ./internal/lifecycle -run "TestWindows.*Pair|TestWindowsExternalCredential|TestInit|TestPair" -count=1
+```
+
+The native writer tests cover direct CurrentUser DPAPI round-trip, compatibility
+with the historical helper entropy/format, inherited private DACLs, no overwrite,
+external broad-parent refusal, and UNC/alternate-stream rejection. They do not
+access installed credentials, use SSH, register startup, or change Host settings.
+Native Windows execution and real known-host SSH acceptance remain separate
+release gates; cross-compilation is not evidence that those gates passed.
+
 
 Portable package and static bootstrap checks:
 

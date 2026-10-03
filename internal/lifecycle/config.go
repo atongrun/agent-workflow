@@ -97,7 +97,7 @@ func initialize(root string, args []string, in io.Reader, out io.Writer) error {
 	opencode := f.String("opencode", "", "absolute native OpenCode .exe path")
 	listen := f.String("listen", "127.0.0.1:7071", "exact node interface IP:port")
 	sources := f.String("allow-source", "", "comma-separated exact control Host source IPs")
-	credential := f.String("credential-file", filepath.Join(root, "credentials", "windows-node", "node-token.dpapi"), "existing user-paired CurrentUser DPAPI credential")
+	credential := f.String("credential-file", filepath.Join(root, "credentials", "windows-node", "node-token.dpapi"), "CurrentUser DPAPI credential location; optional pairing follows configuration review")
 	if e := f.Parse(args); e != nil {
 		return e
 	}
@@ -123,7 +123,7 @@ func initialize(root string, args []string, in io.Reader, out io.Writer) error {
 		return errors.New("init requires an explicit interactive answer; configuration was not saved")
 	}
 	c.Autostart = strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
-	fmt.Fprintf(out, "\nInstallation: %s\nOpenCode executable: %s\nNative OpenCode: %s (separate process-only authentication)\nNode listener: %s\nAllowed Host sources: %v (empty means loopback only)\nProject: %s = %s\nState: %s\nCredential file: %s\nLogin autostart: %t\nDirectory protection: current Windows user and SYSTEM only\nNo firewall rule or credential pairing is performed.\n", root, c.OpenCodeBinary, c.Node.OpenCodeURL, c.Node.ListenAddress, c.Node.AllowedSourceIPs, *project, *workspace, c.Node.StateDir, c.CredentialFile, c.Autostart)
+	fmt.Fprintf(out, "\nInstallation: %s\nOpenCode executable: %s\nNative OpenCode: %s (separate process-only authentication)\nNode listener: %s\nAllowed Host sources: %v (empty means loopback only)\nProject: %s = %s\nState: %s\nCredential file: %s\nLogin autostart: %t\nDirectory protection: current Windows user and SYSTEM only\nSaving configuration does not change firewall rules or pair credentials.\n", root, c.OpenCodeBinary, c.Node.OpenCodeURL, c.Node.ListenAddress, c.Node.AllowedSourceIPs, *project, *workspace, c.Node.StateDir, c.CredentialFile, c.Autostart)
 	fmt.Fprint(out, "Save this exact configuration? [y/N]: ")
 	answer, e = reader.ReadString('\n')
 	if e != nil || !(strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")) {
@@ -146,6 +146,22 @@ func initialize(root string, args []string, in io.Reader, out io.Writer) error {
 			return fmt.Errorf("configuration saved, but login autostart was not enabled: %w", e)
 		}
 	}
-	fmt.Fprintln(out, "Configuration saved. Pair the node credential yourself if needed, then run awf start. Provider authentication stays in native OpenCode.")
+	fmt.Fprintln(out, "Configuration saved. Provider authentication stays in native OpenCode.")
+	if _, err := os.Lstat(c.CredentialFile); err == nil {
+		fmt.Fprintln(out, "Existing local credential preserved. Remote pairing was not checked. Use awf pair --status to verify if needed, then awf start.")
+		return nil
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintln(out, "Local credential status is unknown; nothing was changed. Use awf pair --status after resolving access, then awf start.")
+		return nil
+	}
+	fmt.Fprint(out, "Pair this node with an existing control Host now? [y/N]: ")
+	answer, e = reader.ReadString('\n')
+	if e != nil || !(strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")) {
+		fmt.Fprintln(out, "Pairing skipped. Run awf pair when ready, then awf start.")
+		return nil
+	}
+	if e = pairWith(root, c, pairOptions{}, reader, out, nativePairOperations()); e != nil {
+		return fmt.Errorf("configuration remains saved; pairing did not complete: %w", e)
+	}
 	return nil
 }

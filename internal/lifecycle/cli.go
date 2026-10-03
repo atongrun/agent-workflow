@@ -63,7 +63,7 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 		}
 	}
 	if runtime.GOOS != "windows" {
-		return errors.New("managed init/start/stop/update require native Windows; host and request remain available here")
+		return errors.New("managed init/pair/start/stop/update require native Windows; host and request remain available here")
 	}
 	root, e := DefaultRoot()
 	if e != nil {
@@ -98,6 +98,8 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 			return errors.New("the installed native launcher is missing")
 		}
 		return initialize(root, args[1:], in, out)
+	case "pair":
+		return pair(root, args[1:], in, out)
 	case "start":
 		if len(args) != 1 {
 			return errors.New("usage: awf start")

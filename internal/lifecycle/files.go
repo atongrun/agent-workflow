@@ -1,5 +1,5 @@
 // Package lifecycle implements the opt-in, per-user native Windows CLI lifecycle.
-// It does not pair credentials, install OpenCode, change firewall policy, or run Git.
+// Credential pairing is separately confirmed. It does not install OpenCode, change firewall policy, or run Git.
 package lifecycle
 
 import (

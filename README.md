@@ -40,11 +40,13 @@ The initial path uses one Pi process/session for planning, dispatch coordination
 
 ## Native Windows CLI installation
 
-The per-user native CLI source now includes `awf init`, `awf start`, `awf stop`,
+The per-user native CLI source now includes `awf init`, `awf pair`, `awf start`, `awf stop`,
 and AWF-only `awf update`. The installer uses pinned official GitHub releases,
 SHA-256 verification, versioned executables, atomic selection and guarded rollback.
-Initialization reviews exact configuration and optional login autostart; it does
-not pair credentials or change firewall rules. Updates refuse busy or unknown jobs.
+Initialization reviews exact configuration and optional login autostart, then
+offers separately confirmed native credential pairing (default no). `awf pair`
+also pairs an initialized machine or verifies an existing pair. It never changes
+firewall rules or overwrites an identity. Updates refuse busy or unknown jobs.
 `awf update --all` remains explicitly unimplemented.
 
 See [the Windows CLI contract](docs/windows-cli.md) for packaging, review,

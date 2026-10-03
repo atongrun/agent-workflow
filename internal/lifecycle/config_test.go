@@ -115,3 +115,42 @@ func TestValidateConfigRejectsUnsafeConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestInitOptionalPairingDefaultsOffAndPreservesExisting(t *testing.T) {
+	for _, answer := range []string{"", "n\n", "no\n"} {
+		root, c, args := lifecycleConfigFixture(t)
+		var out bytes.Buffer
+		if e := initialize(root, args, strings.NewReader("n\ny\n"+answer), &out); e != nil {
+			t.Fatal(e)
+		}
+		if !strings.Contains(out.String(), "Pair this node") || !strings.Contains(out.String(), "Pairing skipped") {
+			t.Fatal("missing optional default-off pairing offer")
+		}
+		if _, e := os.Stat(c.CredentialFile); !os.IsNotExist(e) {
+			t.Fatal("default init created credentials")
+		}
+	}
+	root, c, args := lifecycleConfigFixture(t)
+	if e := privateRoot(root); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := managedDirectory(root, "credentials", "windows-node"); e != nil {
+		t.Fatal(e)
+	}
+	original := []byte("opaque synthetic existing credential; init must not read or replace")
+	mustWriteFixture(t, c.CredentialFile, original)
+	var out bytes.Buffer
+	if e := initialize(root, args, strings.NewReader("n\ny\ny\n"), &out); e != nil {
+		t.Fatal(e)
+	}
+	if strings.Contains(out.String(), "Pair this node") || !strings.Contains(out.String(), "Existing local credential preserved") {
+		t.Fatal("existing credential was offered re-pairing")
+	}
+	got, e := os.ReadFile(c.CredentialFile)
+	if e != nil || !bytes.Equal(got, original) {
+		t.Fatal("init changed existing credential")
+	}
+	if strings.Contains(out.String(), "Pairing status: paired") {
+		t.Fatal("existence was falsely claimed as pairing proof")
+	}
+}

@@ -121,7 +121,7 @@ func readNodeToken(path string) (string, error) {
 	}
 	b, e := readBounded(path, 64<<10)
 	if e != nil {
-		return "", errors.New("paired node credential is missing or unreadable; run your user-approved pairing helper first")
+		return "", errors.New("paired node credential is missing or unreadable; run awf pair first")
 	}
 	if len(b) == 0 || len(b) > 64<<10 {
 		return "", errors.New("invalid DPAPI credential size")

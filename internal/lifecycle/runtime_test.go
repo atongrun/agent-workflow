@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -30,6 +31,8 @@ func TestNativeIdleFailsClosedOnBusyOrUnknownResponses(t *testing.T) {
 		{name: "busy session", path: "/session/status", body: `{"ses_fixture":{"type":"busy"}}`},
 		{name: "retrying session", path: "/session/status", body: `{"ses_fixture":{"type":"retry"}}`},
 		{name: "unknown session", path: "/session/status", body: `{"ses_fixture":{}}`},
+		{name: "null session", path: "/session/status", body: `{"ses_fixture":null}`},
+		{name: "null session type", path: "/session/status", body: `{"ses_fixture":{"type":null}}`},
 		{name: "status unavailable", path: "/session/status", status: 503},
 		{name: "status malformed", path: "/session/status", body: `[]`},
 		{name: "status null", path: "/session/status", body: `null`},
@@ -82,6 +85,150 @@ func TestNativeIdleFailsClosedOnBusyOrUnknownResponses(t *testing.T) {
 			}
 			if tc.wantOK && len(paths) != 4 {
 				t.Fatalf("idle omitted a native state check: %v", paths)
+			}
+		})
+	}
+}
+
+type nativeFailureReader struct{}
+
+func (nativeFailureReader) Read([]byte) (int, error) {
+	return 0, errors.New("private-native-fixture")
+}
+func (nativeFailureReader) Close() error { return nil }
+
+type nativeTimeoutFailure struct{}
+
+func (nativeTimeoutFailure) Error() string   { return "private-native-fixture" }
+func (nativeTimeoutFailure) Timeout() bool   { return true }
+func (nativeTimeoutFailure) Temporary() bool { return true }
+
+func TestNativeIdleFailureDiagnosticsAreSanitized(t *testing.T) {
+	const secret = "private-native-fixture"
+	const workspace = `C:\Users\private-native-fixture\workspace`
+	for _, endpoint := range []struct{ path, state string }{
+		{"/global/health", "OpenCode health"},
+		{"/session/status", "session status"},
+		{"/permission", "permission state"},
+		{"/question", "question state"},
+	} {
+		for _, failure := range []struct {
+			name, body, reason string
+			status             int
+			err                error
+			readFailure        bool
+		}{
+			{name: "unauthorized", status: 401, body: secret, reason: "HTTP 401"},
+			{name: "forbidden", status: 403, body: secret, reason: "HTTP 403"},
+			{name: "missing route", status: 404, body: secret, reason: "HTTP 404"},
+			{name: "native failure", status: 500, body: secret, reason: "HTTP 500"},
+			{name: "redirect", status: 307, body: secret, reason: "HTTP 307"},
+			{name: "transport", err: errors.New(secret), reason: "request failed"},
+			{name: "deadline", err: fmt.Errorf("%s: %w", secret, context.DeadlineExceeded), reason: "request timed out"},
+			{name: "canceled", err: fmt.Errorf("%s: %w", secret, context.Canceled), reason: "request canceled"},
+			{name: "network timeout", err: nativeTimeoutFailure{}, reason: "request timed out"},
+			{name: "read failure", readFailure: true, reason: "request failed"},
+			{name: "malformed JSON", body: `{"private-native-fixture":`, reason: "malformed JSON response"},
+			{name: "trailing JSON", body: `{} {"private-native-fixture":true}`, reason: "malformed JSON response"},
+			{name: "wrong shape", body: `"private-native-fixture"`, reason: "unexpected JSON shape"},
+		} {
+			t.Run(endpoint.state+"/"+failure.name, func(t *testing.T) {
+				calls := 0
+				failedCalls := 0
+				client := &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
+					calls++
+					if req.Method != "GET" {
+						t.Fatal("diagnosis attempted a native mutation")
+					}
+					if req.URL.Path != "/global/health" && req.URL.Query().Get("directory") != workspace {
+						t.Fatal("native state read lost the exact workspace")
+					}
+					u, p, ok := req.BasicAuth()
+					if !ok || u != "opencode" || p != secret {
+						t.Fatal("native state read lost scoped authentication")
+					}
+					body := map[string]string{"/global/health": `{"healthy":true,"version":"1.18.32"}`, "/session/status": `{}`, "/permission": `[]`, "/question": `[]`}[req.URL.Path]
+					if body == "" {
+						t.Fatal("diagnosis made an unexpected request")
+					}
+					status := 200
+					if req.URL.Path == endpoint.path {
+						failedCalls++
+						if failure.err != nil {
+							return nil, failure.err
+						}
+						if failure.readFailure {
+							return &http.Response{StatusCode: status, Body: nativeFailureReader{}, Header: make(http.Header)}, nil
+						}
+						body = failure.body
+						if failure.status != 0 {
+							status = failure.status
+						}
+					}
+					return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+				})}
+				n, err := opencode.New(opencode.Config{URL: "http://127.0.0.1:4096", Password: secret, HTTPClient: client})
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = nativeIdle(context.Background(), n, Config{Node: node.Config{Projects: map[string]string{"fixture": workspace}}})
+				want := "native " + endpoint.state + " is unknown (" + failure.reason + "); stop/update is blocked"
+				if err == nil || err.Error() != want {
+					t.Fatalf("failure projection = %v; want %s", err, want)
+				}
+				if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), workspace) || strings.Contains(err.Error(), "127.0.0.1") {
+					t.Fatal("native diagnostic disclosed private request/response details")
+				}
+				if calls > 4 || failedCalls != 1 {
+					t.Fatal("diagnosis retried a failed state read")
+				}
+			})
+		}
+	}
+}
+
+func TestNativeIdleChecksEveryConfiguredWorkspace(t *testing.T) {
+	projects := map[string]string{"first": `C:\fixture one`, "second": `C:\fixture two`}
+	for _, failingPath := range []string{"", "/session/status", "/permission", "/question"} {
+		t.Run("second workspace "+failingPath, func(t *testing.T) {
+			seen := map[string]map[string]bool{}
+			client := &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
+				body := `{"healthy":true}`
+				if req.URL.Path != "/global/health" {
+					workspace := req.URL.Query().Get("directory")
+					if workspace != projects["first"] && workspace != projects["second"] {
+						t.Fatal("unexpected workspace scope")
+					}
+					if seen[workspace] == nil {
+						seen[workspace] = map[string]bool{}
+					}
+					seen[workspace][req.URL.Path] = true
+					body = map[string]string{"/session/status": `{}`, "/permission": `[]`, "/question": `[]`}[req.URL.Path]
+					// Fail only after the first workspace was fully checked. Map
+					// iteration order must not mask a later workspace's unknown state.
+					if len(seen) == 2 && req.URL.Path == failingPath {
+						body = `null`
+					}
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})}
+			n, err := opencode.New(opencode.Config{URL: "http://127.0.0.1:4096", HTTPClient: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = nativeIdle(context.Background(), n, Config{Node: node.Config{Projects: projects}})
+			if (err == nil) != (failingPath == "") {
+				t.Fatalf("later workspace failure = %v", err)
+			}
+			if len(seen) != len(projects) {
+				t.Fatalf("not every workspace was checked: %v", seen)
+			}
+			if failingPath == "" {
+				for _, paths := range seen {
+					if len(paths) != 3 {
+						t.Fatal("idle result omitted a workspace state check")
+					}
+				}
 			}
 		})
 	}
