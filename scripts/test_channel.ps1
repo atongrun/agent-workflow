@@ -18,8 +18,27 @@ foreach ($pin in @(' ', 'bad', ('a' * 63), ('g' * 64), (('a' * 64) + "`n"))) {
 }
 $manifestPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'distribution\go-v1.json'
 $text = [IO.File]::ReadAllText($manifestPath)
+$published = Read-AwfChannelManifest $text
+Assert-True ($published.version -ceq 'v1.0.0-rc.3') 'distribution selects published RC3'
+Assert-True ($published.cliProtocol -ceq '2') 'RC3 supports guided init and channel updates'
+Assert-True ($published.sourceCommit -ceq 'c251c9de639352b529f4705fcd1d2b4881cd20bf') 'distribution pins exact RC3 source'
+Assert-True ($published.windowsAMD64SHA256 -ceq 'e8610c429dfdfb791ac647a56d7992eda82e4cdbe13bdc866e646e024f49ea22') 'distribution pins published AMD64 bytes'
+Assert-True ($published.windowsARM64SHA256 -ceq '767eaff26618d2a5c8d86a7aa5bc04e27925537f62eb67575eff51fd06a370f4') 'distribution pins published ARM64 bytes'
+
+# Retain protocol-1 RC2 parser/compatibility coverage independently of promotion.
+$text = @'
+{
+  "schema": "1",
+  "channel": "go-v1",
+  "version": "v1.0.0-rc.2",
+  "sourceCommit": "5e7e85df0891888c21d8a4a7af4d2329f7b2b9a5",
+  "cliProtocol": "1",
+  "windowsAMD64SHA256": "165c6290b83d6ec12c5b1dece198c661963c3ad9ab6cddf8f813e7a7edd7432a",
+  "windowsARM64SHA256": "7c6b07e9b1fb3ff2f9bfa60151d94e25da0e91ac96af4ae5a5a7a481f80dd951"
+}
+'@
 $channel = Read-AwfChannelManifest $text
-Assert-True ($channel.version -ceq 'v1.0.0-rc.2') 'fixture references the actual published RC2'
+Assert-True ($channel.version -ceq 'v1.0.0-rc.2') 'fixture retains actual published RC2'
 Assert-True ($channel.cliProtocol -ceq '1') 'RC2 must not claim new CLI capabilities'
 foreach ($bad in @(
     $text.Replace('"schema": "1"', '"schema": 1'),
