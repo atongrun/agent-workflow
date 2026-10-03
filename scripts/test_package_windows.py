@@ -357,10 +357,10 @@ class PackageTests(unittest.TestCase):
     def test_distribution_manifest_names_only_verified_existing_release(self):
         manifest = json.loads((SCRIPTS.parent / "distribution" / "go-v1.json").read_text())
         self.assertEqual(manifest, {
-            "schema": "1", "channel": "go-v1", "version": "v1.0.0-rc.5",
-            "sourceCommit": "31bb172cffe0992e527f4a6ff39a0c0359bfdf8a", "cliProtocol": "3",
-            "windowsAMD64SHA256": "c08d1e4d124aa7bbb2e2b732c6b370365671ae7ed8c80692587a4e29c1d28d18",
-            "windowsARM64SHA256": "2530bea50059591772eb93e7d519e7f84fa2caf4a6bc419e91411754dc8f5e5d",
+            "schema": "1", "channel": "go-v1", "version": "v1.0.0-rc.6",
+            "sourceCommit": "53f4906f453dbe5cb178ea18bcb5239d5d605427", "cliProtocol": "3",
+            "windowsAMD64SHA256": "0d590b6616096bb16b5ca404810059d19687e5d5415bcef9a2696e9fd82ea174",
+            "windowsARM64SHA256": "5472a4930bb2c9bc889da92ad4c070241c55737d57f63612ce4a8df78db23bcc",
         })
 
     def test_bootstrap_channel_contract(self):
