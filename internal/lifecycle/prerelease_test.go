@@ -16,7 +16,7 @@ import (
 )
 
 func TestCanonicalRCVersionAndExplicitPolicy(t *testing.T) {
-	for _, v := range []string{"v0.0.0", "v1.2.3", "v1.2.3-rc.0", "v1.2.3-rc.1", "v12.345.678-rc.999"} {
+	for _, v := range []string{"v1.2.3", "v1.2.3-rc.0", "v1.2.3-rc.1", "v12.345.678-rc.999"} {
 		if e := validVersion(v); e != nil {
 			t.Fatalf("canonical version %q: %v", v, e)
 		}
@@ -33,10 +33,10 @@ func TestCanonicalRCVersionAndExplicitPolicy(t *testing.T) {
 		}
 	}
 	if e := validateReleaseRequest("", false); e != nil {
-		t.Fatal("default latest stable was rejected")
+		t.Fatal("default channel was rejected")
 	}
-	if e := validateReleaseRequest("", true); e == nil {
-		t.Fatal("prerelease opt-in accepted without exact version")
+	if e := validateReleaseRequest("", true); e != nil {
+		t.Fatal("explicit channel preview opt-in was rejected")
 	}
 }
 
@@ -110,30 +110,31 @@ func TestUnapprovedRCCommandsFailBeforeInstallationOrNetwork(t *testing.T) {
 	}
 }
 
-func TestReleaseRCMetadataAndStableLatestSafety(t *testing.T) {
+func TestReleaseRCMetadataAndChannelSafety(t *testing.T) {
 	cases := []struct {
 		name, requested, tag, current string
 		allow, pre, draft, wantOK     bool
 		calls                         int
 	}{
-		{name: "explicit RC with opt-in", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.1", allow: true, pre: true, wantOK: true, calls: 3},
+		{name: "explicit RC with opt-in", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.1", allow: true, pre: true, wantOK: true, calls: 4},
 		{name: "RC missing opt-in", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.1", pre: true, calls: 0},
-		{name: "opt-in without pin", tag: "v1.0.0-rc.1", allow: true, pre: true, calls: 0},
+		{name: "channel opt-in without pin", tag: "v1.0.0-rc.1", allow: true, pre: true, wantOK: true, calls: 5},
 		{name: "RC tag mislabeled stable", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.1", allow: true, calls: 1},
 		{name: "stable tag mislabeled preview", requested: "v1.0.0", tag: "v1.0.0", allow: true, pre: true, calls: 1},
 		{name: "RC draft", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.1", allow: true, pre: true, draft: true, calls: 1},
 		{name: "wrong pinned RC", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.2", allow: true, pre: true, calls: 1},
-		{name: "latest unexpectedly returns RC", tag: "v1.0.0-rc.1", pre: true, calls: 1},
-		{name: "latest RC hidden as stable", tag: "v1.0.0-rc.1", calls: 1},
-		{name: "latest stable below installed RC", tag: "v0.9.9", current: "v1.0.0-rc.1", calls: 1},
-		{name: "latest stable below installed stable", tag: "v1.0.0", current: "v1.0.1", calls: 1},
+		{name: "channel RC requires consent", tag: "v1.0.0-rc.1", pre: true, calls: 1},
+		{name: "channel RC hidden as stable", tag: "v1.0.0-rc.1", allow: true, calls: 2},
+		{name: "legacy pre-Go channel rejected", tag: "v0.9.9", current: "v1.0.0-rc.1", calls: 1},
+		{name: "channel stable below installed stable", tag: "v1.0.0", current: "v1.0.1", calls: 1},
 		{name: "unknown installed identity", tag: "v1.0.0", current: "unknown", calls: 1},
-		{name: "RC promotes to final stable", tag: "v1.0.0", current: "v1.0.0-rc.99", wantOK: true, calls: 3},
-		{name: "stable latest advances", tag: "v1.1.0", current: "v1.0.0", wantOK: true, calls: 3},
-		{name: "stable latest same version", tag: "v1.0.0", current: "v1.0.0", wantOK: true, calls: 3},
-		{name: "manual older stable pin", requested: "v0.9.9", tag: "v0.9.9", current: "v1.0.0-rc.1", wantOK: true, calls: 3},
-		{name: "manual older RC pin", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.1", current: "v1.0.0-rc.2", allow: true, pre: true, wantOK: true, calls: 3},
-		{name: "stable pin with explicit opt-in remains stable", requested: "v1.0.0", tag: "v1.0.0", allow: true, wantOK: true, calls: 3},
+		{name: "RC promotes to final stable", tag: "v1.0.0", current: "v1.0.0-rc.99", wantOK: true, calls: 5},
+		{name: "stable channel advances", tag: "v1.1.0", current: "v1.0.0", wantOK: true, calls: 5},
+		{name: "stable channel same version", tag: "v1.0.0", current: "v1.0.0", wantOK: true, calls: 5},
+		{name: "manual older pre-Go pin rejected", requested: "v0.9.9", tag: "v0.9.9", current: "v1.0.0-rc.1", calls: 0},
+		{name: "manual older stable pin rejected", requested: "v1.0.0", tag: "v1.0.0", current: "v1.0.1", calls: 0},
+		{name: "manual older RC pin rejected", requested: "v1.0.0-rc.1", tag: "v1.0.0-rc.1", current: "v1.0.0-rc.2", allow: true, pre: true, calls: 0},
+		{name: "stable pin with explicit opt-in remains stable", requested: "v1.0.0", tag: "v1.0.0", allow: true, wantOK: true, calls: 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,7 +143,7 @@ func TestReleaseRCMetadataAndStableLatestSafety(t *testing.T) {
 			payload := archiveFixture(t, releaseEntries(tc.tag, "amd64"))
 			sum := sha256.Sum256(payload)
 			digest := hex.EncodeToString(sum[:])
-			release := releaseInfo{Tag: tc.tag, Prerelease: tc.pre, Draft: tc.draft, Assets: []releaseAsset{{name, officialAsset(tc.tag, name)}, {"SHA256SUMS", officialAsset(tc.tag, "SHA256SUMS")}}}
+			release := releaseInfo{Tag: tc.tag, TargetCommitish: fixtureSourceCommit, Prerelease: tc.pre, Draft: tc.draft, Assets: []releaseAsset{{name, officialAsset(tc.tag, name)}, {"SHA256SUMS", officialAsset(tc.tag, "SHA256SUMS")}}}
 			metadata, e := json.Marshal(release)
 			if e != nil {
 				t.Fatal(e)
@@ -151,11 +152,15 @@ func TestReleaseRCMetadataAndStableLatestSafety(t *testing.T) {
 			client := &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
 				calls++
 				var b []byte
-				expectedAPI := "https://api.github.com/repos/" + Repository + "/releases/latest"
+				expectedAPI := releaseMetadataURL(tc.tag)
 				if tc.requested != "" {
 					expectedAPI = "https://api.github.com/repos/" + Repository + "/releases/tags/" + tc.requested
 				}
 				switch req.URL.String() {
+				case channelManifestURL:
+					b = fixtureChannelManifest(tc.tag, digest)
+				case releaseRefURL(tc.tag):
+					b = fixtureReleaseRef(tc.tag, fixtureSourceCommit)
 				case expectedAPI:
 					b = metadata
 				case officialAsset(tc.tag, "SHA256SUMS"):
@@ -203,7 +208,7 @@ func TestReleaseMetadataRequiresKnownBooleanFlags(t *testing.T) {
 		for _, field := range []string{"draft", "prerelease"} {
 			for _, kind := range []string{"missing", "null", "string"} {
 				t.Run(tag+"/"+field+"/"+kind, func(t *testing.T) {
-					metadata := map[string]any{"tag_name": tag, "draft": false, "prerelease": prereleaseVersion(tag), "assets": []any{}}
+					metadata := map[string]any{"tag_name": tag, "target_commitish": fixtureSourceCommit, "draft": false, "prerelease": prereleaseVersion(tag), "assets": []any{}}
 					switch kind {
 					case "missing":
 						delete(metadata, field)

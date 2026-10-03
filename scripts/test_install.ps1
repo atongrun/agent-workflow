@@ -106,10 +106,10 @@ try {
         Assert-Rejected { Assert-AwfReleaseVersion $tag } 'noncanonical tag' 'Version must be an exact tag*'
         Assert-Rejected { Assert-AwfReleaseVersion $tag -AllowPrerelease } 'opt-in does not relax tag grammar' 'Version must be an exact tag*'
     }
-    # The real entrypoint must reject an unapproved RC before staging, downloads,
-    # architecture detection, PATH writes, or any executable is reached.
-    Assert-Rejected { & (Join-Path $PSScriptRoot 'install.ps1') -Version 'v0.0.0-rc.1' } `
-        'entrypoint RC without opt-in' 'Release candidate tags require*'
+    # Explicit pins and channel previews both require consent. The helper is
+    # called before release assets or downloaded code are reached.
+    Assert-Rejected { Confirm-AwfPreview 'v0.0.0-rc.1' $false $false } `
+        'noninteractive RC without opt-in' 'The Go channel currently selects a preview*'
 
     $asset = 'awf_v1.2.3_windows_amd64.zip'
     $digest = 'a' * 64
@@ -137,6 +137,18 @@ try {
     }
     [void] (Get-AwfReleaseUrls $release 'v1.2.3' $asset)
     [void] (Get-AwfReleaseUrls $release 'v1.2.3' $asset -AllowPrerelease)
+    foreach ($field in @('tag_name', 'assets')) {
+        $original = $release.$field
+        $release.$field = [pscustomobject] @{}
+        Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset } 'malformed release field shape'
+        $release.$field = $original
+    }
+    foreach ($field in @('name', 'browser_download_url')) {
+        $original = $release.assets[0].$field
+        $release.assets[0].$field = @($original)
+        Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset } 'asset values cannot be arrays'
+        $release.assets[0].$field = $original
+    }
     $release.prerelease = $true
     Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset } 'stable tag rejects prerelease metadata'
     Assert-Rejected { Get-AwfReleaseUrls $release 'v1.2.3' $asset -AllowPrerelease } 'stable tag still rejects prerelease metadata with opt-in'

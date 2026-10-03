@@ -1,31 +1,33 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-Installs an exact published AWF release for the current Windows user.
+Installs the compatible published Go AWF release for the current Windows user.
 .DESCRIPTION
 Downloads only official GitHub release assets. The release ZIP is verified and
-validated before its awf.exe is executed. This script does not configure or start
-AWF, edit the firewall, pair credentials, or change execution policy.
+validated before its awf.exe is executed. This script does not start the runtime,
+edit the firewall, pair credentials, or change execution policy. After a
+new-protocol install it starts the separately reviewed interactive init wizard.
 .PARAMETER Version
-An exact stable tag vX.Y.Z, or vX.Y.Z-rc.N with -AllowPrerelease. No aliases.
+Optional exact stable or RC tag. Omit to use the official go-v1 channel.
 .PARAMETER AllowPrerelease
-Explicitly allow the exact release candidate tag named by -Version.
+Explicitly approve preview use for unattended installs; otherwise asks once.
 .PARAMETER Sha256
 Optional independently obtained SHA-256 for this architecture's release ZIP.
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string] $Version,
     [ValidatePattern('\A[0-9A-Fa-f]{64}\z')]
     [string] $Sha256,
-    [switch] $AllowPrerelease
+    [switch] $AllowPrerelease,
+    [switch] $SkipInit
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Repository = 'atongrun/agent-workflow'
 $script:MaxReleaseBytes = 100MB
+$script:ChannelUrl = 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/distribution/go-v1.json'
 
 function Assert-AwfReleaseVersion([string] $Tag, [switch] $AllowPrerelease) {
     if ($Tag -cmatch '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z') { return }
@@ -34,6 +36,111 @@ function Assert-AwfReleaseVersion([string] $Tag, [switch] $AllowPrerelease) {
         return
     }
     throw 'Version must be an exact tag vX.Y.Z or vX.Y.Z-rc.N without leading zeros.'
+}
+
+function Read-AwfChannelManifest([string] $Text) {
+    # Flat, deliberately tiny JSON contract shared with the native updater.
+    # Reject duplicate/unknown/escaped keys and coercions before JSON parsing.
+    $keys = 'schema|channel|version|sourceCommit|cliProtocol|windowsAMD64SHA256|windowsARM64SHA256'
+    $pair = '"(?:' + $keys + ')"[ \t\r\n]*:[ \t\r\n]*"[^"\\\x00-\x1F]*"'
+    if ($Text.Length -gt 4096 -or
+        $Text -cnotmatch ('\A[ \t\r\n]*\{[ \t\r\n]*' + $pair + '(?:[ \t\r\n]*,[ \t\r\n]*' + $pair + '){6}[ \t\r\n]*\}[ \t\r\n]*\z')) {
+        throw 'Invalid Go channel manifest schema.'
+    }
+    $values = @{}
+    foreach ($match in [regex]::Matches($Text, '"(' + $keys + ')"[ \t\r\n]*:[ \t\r\n]*"([^"\\\x00-\x1F]*)"')) {
+        $key = $match.Groups[1].Value
+        if ($values.ContainsKey($key)) { throw 'Duplicate Go channel manifest field.' }
+        $values[$key] = $match.Groups[2].Value
+    }
+    if ($values.schema -cne '1' -or $values.channel -cne 'go-v1' -or
+        $values.cliProtocol -cnotin @('1', '2') -or
+        $values.version -cnotmatch '\Av1\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-rc\.(?:0|[1-9][0-9]*))?\z' -or
+        $values.sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or
+        $values.windowsAMD64SHA256 -cnotmatch '\A[0-9a-f]{64}\z' -or
+        $values.windowsARM64SHA256 -cnotmatch '\A[0-9a-f]{64}\z') {
+        throw 'Unsupported or invalid Go v1 channel metadata.'
+    }
+    return $values
+}
+
+function Test-AwfInteractive {
+    if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) { return $false }
+    foreach ($argument in [Environment]::GetCommandLineArgs()) {
+        if ($argument -like '-NonI*') { return $false }
+    }
+    return $true
+}
+
+function Confirm-AwfPreview([string] $Tag, [bool] $Approved, [bool] $Interactive, [bool] $UseChannel = $true) {
+    Assert-AwfReleaseVersion $Tag -AllowPrerelease
+    if (-not $Tag.Contains('-rc.')) { return $Approved }
+    if ($Approved) { return $true }
+    if (-not $Interactive) {
+        throw 'The Go channel currently selects a preview. Run interactively to review it, or explicitly pass -AllowPrerelease for unattended installation.'
+    }
+    $question = "AWF $Tag is a preview release. Install this preview? [y/N]"
+    if ($UseChannel) { $question = "AWF $Tag is a preview release. Install it and allow preview updates in the Go v1 channel? [y/N]" }
+    $answer = Read-Host $question
+    if ($answer -notmatch '\A(?i:y|yes)\z') { throw 'Preview installation cancelled. Nothing was installed.' }
+    return $true
+}
+
+function Assert-AwfReleaseSource($Release, $TagRef, [string] $Tag, [string] $ExpectedCommit) {
+    if ($Release -isnot [pscustomobject] -or $TagRef -isnot [pscustomobject] -or
+        $TagRef.object -isnot [pscustomobject] -or $TagRef.ref -isnot [string] -or
+        $TagRef.object.type -isnot [string] -or $TagRef.object.sha -isnot [string]) {
+        throw 'Release source and tag metadata require scalar objects and strings.'
+    }
+    $commit = $Release.target_commitish
+    if ($commit -isnot [string] -or $commit -cnotmatch '\A[0-9a-f]{40}\z' -or
+        ($ExpectedCommit -and $commit -cne $ExpectedCommit) -or
+        $TagRef.ref -cne ('refs/tags/' + $Tag) -or
+        $TagRef.object.type -cne 'commit' -or $TagRef.object.sha -cne $commit) {
+        throw 'Go channel, release source, and pinned tag commit do not agree.'
+    }
+}
+
+function Assert-AwfChannelRelease($Channel, $Release, $TagRef) {
+    Assert-AwfReleaseSource $Release $TagRef $Channel.version $Channel.sourceCommit
+}
+
+function Save-AwfLegacyChannel([string] $Root, [bool] $PreviewApproved) {
+    # RC2 predates the native --channel option. Preserve its current.json shape;
+    # a future compatible updater consumes this separate, private marker.
+    Assert-AwfDirectoryPath $Root
+    $acl = Get-Acl -LiteralPath $Root
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($owner -cnotin @($user, 'S-1-5-18')) { throw 'Installation owner is not private.' }
+    $seen = @{}
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        $sid = $rule.IdentityReference.Value
+        if ($sid -cnotin @($user, 'S-1-5-18') -or
+            $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+            $rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly -or
+            $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl) {
+            throw 'Installation channel requires existing private full-control ACLs.'
+        }
+        $seen[$sid] = $true
+    }
+    if (-not $seen.ContainsKey($user) -or -not $seen.ContainsKey('S-1-5-18')) {
+        throw 'Installation channel requires current-user and SYSTEM access.'
+    }
+    $approved = 'false'
+    if ($PreviewApproved) { $approved = 'true' }
+    $bytes = [Text.Encoding]::UTF8.GetBytes('{"schema":"1","channel":"go-v1","previewApproved":' + $approved + '}')
+    $path = Join-Path $Root 'channel.json'
+    $temporary = Join-Path $Root ('.awf-channel-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush() }
+        finally { $stream.Dispose() }
+        # Move is atomic and does not overwrite an existing channel marker.
+        [IO.File]::Move($temporary, $path)
+    } finally {
+        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+    }
 }
 
 function Get-AwfNativeArchitecture {
@@ -111,8 +218,10 @@ function New-AwfPrivateStage([string] $Parent) {
 }
 
 function Save-AwfOfficialDownload {
-    param([string] $Url, [string] $Destination, [long] $Limit, [switch] $Metadata)
+    param([string] $Url, [string] $Destination, [long] $Limit, [switch] $Metadata, [switch] $Channel)
     $uri = [Uri] $Url
+    if ($Channel -and $Url -cne $script:ChannelUrl) { throw 'Unexpected Go channel URL.' }
+    if ($Metadata -and $Channel) { throw 'Ambiguous metadata request.' }
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
     for ($redirects = 0; $redirects -le 5; $redirects++) {
         if ($uri.Scheme -cne 'https' -or $uri.Port -ne 443 -or
@@ -121,6 +230,7 @@ function Save-AwfOfficialDownload {
         }
         $hosts = @('github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com')
         if ($Metadata) { $hosts = @('api.github.com') }
+        if ($Channel) { $hosts = @('raw.githubusercontent.com') }
         if ($uri.DnsSafeHost -cnotin $hosts) { throw 'Unofficial release download host.' }
         if ($elapsed.Elapsed.TotalSeconds -gt 120) { throw 'Release download timed out.' }
         $request = [Net.HttpWebRequest]::Create($uri)
@@ -135,7 +245,7 @@ function Save-AwfOfficialDownload {
             $response = $request.GetResponse()
             $status = [int] $response.StatusCode
             if ($status -in @(301, 302, 303, 307, 308)) {
-                if ($Metadata -or $redirects -eq 5) { throw 'Unexpected release redirect.' }
+                if ($Metadata -or $Channel -or $redirects -eq 5) { throw 'Unexpected release redirect.' }
                 $location = $response.Headers['Location']
                 if (-not $location) { throw 'Release redirect has no destination.' }
                 $uri = New-Object Uri($uri, $location)
@@ -171,10 +281,16 @@ function Save-AwfOfficialDownload {
 function Get-AwfReleaseUrls($Release, [string] $Tag, [string] $Asset, [switch] $AllowPrerelease) {
     Assert-AwfReleaseVersion $Tag -AllowPrerelease:$AllowPrerelease
     $isPrerelease = $Tag.Contains('-rc.')
+    if ($Release -isnot [pscustomobject] -or $Release.tag_name -isnot [string] -or
+        $Release.assets -isnot [Array]) { throw 'Invalid official release metadata shape.' }
     if ($Release.tag_name -cne $Tag -or $Release.draft -isnot [bool] -or
         $Release.prerelease -isnot [bool] -or $Release.draft -or
         $Release.prerelease -ne $isPrerelease) {
         throw 'Official release must be the requested non-draft pinned tag with matching prerelease status.'
+    }
+    foreach ($item in $Release.assets) {
+        if ($item -isnot [pscustomobject] -or $item.name -isnot [string] -or
+            $item.browser_download_url -isnot [string]) { throw 'Invalid official release asset shape.' }
     }
     $wanted = @{}
     foreach ($name in @($Asset, 'SHA256SUMS')) {
@@ -331,7 +447,7 @@ function Add-AwfUserPath([string] $Bin) {
 }
 
 function Invoke-AwfBootstrap {
-    Assert-AwfReleaseVersion $Version -AllowPrerelease:$AllowPrerelease
+    if ($Version) { Assert-AwfReleaseVersion $Version -AllowPrerelease }
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         throw 'This bootstrap requires native Windows PowerShell 5.1 or PowerShell 7 on Windows.'
     }
@@ -343,7 +459,7 @@ function Invoke-AwfBootstrap {
         throw 'LOCALAPPDATA must match the current Windows user profile directory.'
     }
     $root = Join-Path $local 'AWF'
-    foreach ($marker in @('current.json', 'config.json', 'bin\awf.exe')) {
+    foreach ($marker in @('current.json', 'config.json', 'channel.json', 'bin\awf.exe')) {
         if (Test-Path -LiteralPath (Join-Path $root $marker)) {
             throw 'AWF already exists. Use awf update; an incomplete install requires explicit recovery.'
         }
@@ -353,15 +469,35 @@ function Invoke-AwfBootstrap {
     try {
         # Session-only TLS minimum. Certificate validation remains enabled.
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $channel = $null
+        if (-not $Version) {
+            $channelPath = Join-Path $stage 'go-channel.json'
+            Save-AwfOfficialDownload -Url $script:ChannelUrl -Destination $channelPath -Limit 4096 -Channel
+            $utf8 = New-Object Text.UTF8Encoding($false, $true)
+            $channel = Read-AwfChannelManifest ($utf8.GetString([IO.File]::ReadAllBytes($channelPath)))
+            $Version = $channel.version
+        }
+        $AllowPrerelease = Confirm-AwfPreview $Version ([bool] $AllowPrerelease) (Test-AwfInteractive) ($null -ne $channel)
         $asset = "awf_${Version}_windows_${architecture}.zip"
         $metadataPath = Join-Path $stage 'release.json'
         Save-AwfOfficialDownload -Url "https://api.github.com/repos/$script:Repository/releases/tags/$Version" `
             -Destination $metadataPath -Limit 2MB -Metadata
         $release = [IO.File]::ReadAllText($metadataPath) | ConvertFrom-Json
         $urls = Get-AwfReleaseUrls $release $Version $asset -AllowPrerelease:$AllowPrerelease
+        $tagPath = Join-Path $stage 'tag.json'
+        Save-AwfOfficialDownload -Url "https://api.github.com/repos/$script:Repository/git/ref/tags/$Version" `
+            -Destination $tagPath -Limit 64KB -Metadata
+        $tagRef = [IO.File]::ReadAllText($tagPath) | ConvertFrom-Json
+        $channelDigest = ''
+        if ($null -ne $channel) {
+            Assert-AwfChannelRelease $channel $release $tagRef
+            $channelDigest = $channel.windowsAMD64SHA256
+            if ($architecture -ceq 'arm64') { $channelDigest = $channel.windowsARM64SHA256 }
+        } else { Assert-AwfReleaseSource $release $tagRef $Version '' }
         $sumsPath = Join-Path $stage 'SHA256SUMS'
         Save-AwfOfficialDownload -Url $urls['SHA256SUMS'] -Destination $sumsPath -Limit 1MB
         $digest = Get-AwfChecksum ([IO.File]::ReadAllText($sumsPath)) $asset
+        if ($channelDigest -and $digest -cne $channelDigest) { throw 'Release checksum differs from the Go channel SHA-256.' }
         if ($Sha256 -and $digest -ine $Sha256) { throw 'Release checksum differs from the independently pinned SHA-256.' }
         $archive = Join-Path $stage $asset
         Save-AwfOfficialDownload -Url $urls[$asset] -Destination $archive -Limit $script:MaxReleaseBytes
@@ -372,13 +508,29 @@ function Invoke-AwfBootstrap {
         $executable = Join-Path $expanded 'awf.exe'
         $installArguments = @('_install', '--archive', $archive, '--version', $Version, '--sha256', $digest)
         if ($AllowPrerelease) { $installArguments += '--allow-prerelease' }
+        if ($null -ne $channel -and $channel.cliProtocol -ceq '2') { $installArguments += @('--channel', 'go-v1') }
         & $executable @installArguments
         if ($LASTEXITCODE -ne 0) { throw "Verified AWF installer failed (exit $LASTEXITCODE). User PATH was not changed." }
+        if ($null -ne $channel -and $channel.cliProtocol -ceq '1') {
+            try { Save-AwfLegacyChannel $root ([bool] $AllowPrerelease) }
+            catch { throw "AWF was installed, but Go channel registration failed. Do not rerun bootstrap; review the protected installation. $($_.Exception.Message)" }
+        }
         try { Add-AwfUserPath (Join-Path $root 'bin') }
         catch {
             throw "AWF was installed, but user PATH could not be updated. Run '$root\bin\awf.exe' directly; do not rerun bootstrap. $($_.Exception.Message)"
         }
-        Write-Host "Installed AWF $Version ($architecture). Run awf init to review configuration."
+        Write-Host "Installed AWF $Version ($architecture)."
+        $launcher = Join-Path $root 'bin\awf.exe'
+        if ($null -ne $channel -and $channel.cliProtocol -ceq '2') {
+            Write-Host 'Update later with awf update.'
+            if (-not $SkipInit -and (Test-AwfInteractive)) {
+                & $launcher init
+                if ($LASTEXITCODE -ne 0) { throw 'AWF is installed. Setup did not finish; run awf init to continue. Do not rerun bootstrap.' }
+            } else { Write-Host 'Run awf init to review configuration and optional pairing.' }
+        } elseif ($null -ne $channel) {
+            Write-Host 'This published release predates guided init and channel-aware update.'
+            Write-Host 'Installation succeeded. Follow its version-specific setup instructions; guided setup requires a newer reviewed release.'
+        } else { Write-Host 'Run awf init to review configuration.' }
     } finally {
         [Net.ServicePointManager]::SecurityProtocol = $oldTls
         Remove-Item -LiteralPath $stage -Recurse -Force

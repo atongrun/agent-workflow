@@ -244,7 +244,7 @@ func TestStageReleaseRequiresPinnedOfficialMetadata(t *testing.T) {
 		wantOK                     bool
 	}{
 		{name: "exact release", requested: v, arch: "amd64", wantOK: true},
-		{name: "latest resolves exact tag", arch: "amd64", wantOK: true},
+		{name: "channel resolves exact tag", arch: "amd64", wantOK: true},
 		{name: "matching independent pin", requested: v, arch: "amd64", pin: strings.ToUpper(digest), wantOK: true},
 		{name: "invalid requested tag", requested: "../latest", arch: "amd64"},
 		{name: "unsupported architecture", requested: v, arch: "386"},
@@ -272,7 +272,7 @@ func TestStageReleaseRequiresPinnedOfficialMetadata(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := privateReleaseRoot(t)
-			r := releaseInfo{Tag: v, Assets: []releaseAsset{{name, officialAsset(v, name)}, {"SHA256SUMS", officialAsset(v, "SHA256SUMS")}}}
+			r := releaseInfo{Tag: v, TargetCommitish: fixtureSourceCommit, Assets: []releaseAsset{{name, officialAsset(v, name)}, {"SHA256SUMS", officialAsset(v, "SHA256SUMS")}}}
 			if tc.mutate != nil {
 				tc.mutate(&r)
 			}
@@ -296,7 +296,11 @@ func TestStageReleaseRequiresPinnedOfficialMetadata(t *testing.T) {
 				}
 				var b []byte
 				switch req.URL.String() {
-				case "https://api.github.com/repos/" + Repository + "/releases/tags/" + v, "https://api.github.com/repos/" + Repository + "/releases/latest":
+				case channelManifestURL:
+					b = fixtureChannelManifest(v, digest)
+				case releaseRefURL(v):
+					b = fixtureReleaseRef(v, fixtureSourceCommit)
+				case releaseMetadataURL(v):
 					b = metadata
 				case officialAsset(v, "SHA256SUMS"):
 					b = []byte(sums)
@@ -312,8 +316,12 @@ func TestStageReleaseRequiresPinnedOfficialMetadata(t *testing.T) {
 				if err != nil || got != v {
 					t.Fatalf("stage = %q, %v", got, err)
 				}
-				if requests != 3 {
-					t.Fatalf("wanted exactly metadata, checksum, payload requests, got %d", requests)
+				wantRequests := 4
+				if tc.requested == "" {
+					wantRequests++
+				}
+				if requests != wantRequests {
+					t.Fatalf("wanted exactly channel (when unpinned), metadata, tag ref, checksum, payload requests; got %d", requests)
 				}
 			} else {
 				if err == nil {

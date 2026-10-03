@@ -111,15 +111,18 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 		}
 		return stop(root, out)
 	case "update":
-		return update(root, args[1:], out)
+		return updateWithInput(root, args[1:], in, out)
 	}
 	return errors.New("unknown lifecycle command")
 }
 func update(root string, args []string, out io.Writer) error {
+	return updateWithInput(root, args, nil, out)
+}
+func updateWithInput(root string, args []string, in io.Reader, out io.Writer) error {
 	f := flag.NewFlagSet("update", flag.ContinueOnError)
 	f.SetOutput(out)
-	version := f.String("version", "", "exact release tag; default resolves latest stable without downgrading")
-	allowPrerelease := f.Bool("allow-prerelease", false, "allow only an explicitly pinned vX.Y.Z-rc.N release")
+	version := f.String("version", "", "exact Go release tag; default follows the saved go-v1 channel without downgrading")
+	allowPrerelease := f.Bool("allow-prerelease", false, "approve channel previews durably, or permit an explicitly pinned RC")
 	pin := f.String("sha256", "", "optional independently verified archive SHA-256")
 	if e := f.Parse(args); e != nil {
 		return e
@@ -134,6 +137,10 @@ func update(root string, args []string, out io.Writer) error {
 		return e
 	}
 	old, e := current(root)
+	if e != nil {
+		return e
+	}
+	selection, e := loadChannel(root)
 	if e != nil {
 		return e
 	}
@@ -172,11 +179,32 @@ func update(root string, args []string, out io.Writer) error {
 		}
 		l.Close()
 	}
-	v, e := stageRelease(context.Background(), releaseClient(), root, *version, runtime.GOARCH, *pin, *allowPrerelease, old.Version)
+	ctx, client := context.Background(), releaseClient()
+	target, e := resolveReleaseTarget(ctx, client, *version, runtime.GOARCH)
+	if e != nil {
+		return e
+	}
+	if order, err := compareReleaseVersions(target.Version, old.Version); err != nil {
+		return err
+	} else if order < 0 {
+		return errors.New("selected release is older than the installed version; downgrade is blocked")
+	}
+	approved := *allowPrerelease
+	if *version == "" {
+		selection, e = approveChannelPreview(selection, target.Version, *allowPrerelease, in, out, interactiveUpdateInput(in))
+		if e != nil {
+			return e
+		}
+		approved = selection.PreviewApproved
+	}
+	v, e := stageSelectedRelease(ctx, client, root, target, runtime.GOARCH, *pin, approved, old.Version)
 	if e != nil {
 		return e
 	}
 	if v == old.Version {
+		if e = writeJSON(filepath.Join(root, "channel.json"), selection); e != nil {
+			return e
+		}
 		fmt.Fprintln(out, "AWF is already at", v)
 		return nil
 	}
@@ -244,6 +272,9 @@ func update(root string, args []string, out io.Writer) error {
 	}); e != nil {
 		return e
 	}
+	if e = writeJSON(filepath.Join(root, "channel.json"), selection); e != nil {
+		return fmt.Errorf("AWF updated, but saving the update channel failed: %w", e)
+	}
 	fmt.Fprintf(out, "AWF updated to %s. Configuration, credentials, native authentication, and job state were preserved.\n", v)
 	return nil
 }
@@ -288,6 +319,7 @@ func install(root string, args []string, out io.Writer) error {
 	f := flag.NewFlagSet("_install", flag.ContinueOnError)
 	f.SetOutput(out)
 	archive := f.String("archive", "", "verified downloaded ZIP")
+	channel := f.String("channel", "", "publisher update channel (go-v1); explicit selection enables durable preview consent")
 	version := f.String("version", "", "exact release tag")
 	allowPrerelease := f.Bool("allow-prerelease", false, "explicitly allow a pinned RC bootstrap")
 	digest := f.String("sha256", "", "verified archive SHA-256")
@@ -296,6 +328,10 @@ func install(root string, args []string, out io.Writer) error {
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected installer arguments")
+	}
+	selection, e := installChannelSelection(*channel, *allowPrerelease)
+	if e != nil {
+		return e
 	}
 	if *version == "" {
 		return errors.New("bootstrap requires an exact --version")
@@ -327,6 +363,9 @@ func install(root string, args []string, out io.Writer) error {
 		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
 			return errors.New("existing runtime or job state requires explicit recovery, not bootstrap overwrite")
 		}
+	}
+	if _, e = loadChannel(root); e != nil {
+		return e
 	}
 	b, e := readBounded(*archive, maxReleaseBytes)
 	if e != nil {
@@ -363,6 +402,9 @@ func install(root string, args []string, out io.Writer) error {
 		}
 	} else {
 		return err
+	}
+	if e = writeJSON(filepath.Join(root, "channel.json"), selection); e != nil {
+		return e
 	}
 	if e = writeJSON(filepath.Join(root, "current.json"), Pointer{Version: *version}); e != nil {
 		return e

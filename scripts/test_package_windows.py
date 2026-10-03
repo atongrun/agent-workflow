@@ -216,19 +216,42 @@ class PackageTests(unittest.TestCase):
         self.assertIn("$Release.prerelease -isnot [bool] -or $Release.draft", script)
         self.assertIn("$LASTEXITCODE -ne 0", script)
 
-    def test_documented_preview_one_liner_preserves_script_pin(self):
+    def test_documented_simple_entry_and_trust_boundary(self):
         document = (SCRIPTS.parent / "docs" / "windows-cli.md").read_text()
-        lines = [line for line in document.splitlines() if line.startswith("& { $v=")]
-        self.assertEqual(len(lines), 2)
-        stable, preview = lines
-        self.assertIn("-Version $v -AllowPrerelease", preview)
-        self.assertIn("-rc\\.(?:0|[1-9][0-9]*)", preview)
-        normalized = preview.replace("<EXACT_PUBLISHED_RC_TAG>", "<EXACT_PUBLISHED_TAG>")
-        normalized = normalized.replace("-rc\\.(?:0|[1-9][0-9]*)", "")
-        normalized = normalized.replace("Replace the exact RC tag", "Replace the exact tag")
-        normalized = normalized.replace("-Version $v -AllowPrerelease", "-Version $v")
-        self.assertEqual(normalized, stable)
-        self.assertLess(preview.index("$sha.ComputeHash($b)"), preview.index("[ScriptBlock]::Create"))
+        self.assertIn('powershell -NoProfile -Command "irm https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/scripts/install.ps1 | iex"', document)
+        self.assertIn("mutable official branch", document)
+        self.assertIn("not independently authenticate", document)
+        self.assertIn("full simplified flow is not live", document)
+        self.assertIn("predates guided init", document)
+        self.assertNotIn("<INDEPENDENT_INSTALL_PS1_SHA256>", document)
+
+    def test_distribution_fixture_names_only_verified_existing_release(self):
+        manifest = json.loads((SCRIPTS.parent / "distribution" / "go-v1.json").read_text())
+        self.assertEqual(manifest, {
+            "schema": "1", "channel": "go-v1", "version": "v1.0.0-rc.2",
+            "sourceCommit": "5e7e85df0891888c21d8a4a7af4d2329f7b2b9a5", "cliProtocol": "1",
+            "windowsAMD64SHA256": "165c6290b83d6ec12c5b1dece198c661963c3ad9ab6cddf8f813e7a7edd7432a",
+            "windowsARM64SHA256": "7c6b07e9b1fb3ff2f9bfa60151d94e25da0e91ac96af4ae5a5a7a481f80dd951",
+        })
+
+    def test_bootstrap_channel_contract(self):
+        script = (SCRIPTS / "install.ps1").read_text()
+        main = script[script.index("function Invoke-AwfBootstrap"):]
+        self.assertNotIn("Mandatory = $true", script)
+        self.assertIn("https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/distribution/go-v1.json", script)
+        stages = ["Read-AwfChannelManifest", "Confirm-AwfPreview", "Get-AwfReleaseUrls",
+                  "Assert-AwfChannelRelease", "$channelDigest -and $digest -cne $channelDigest",
+                  "Get-FileHash", "Expand-AwfVerifiedArchive", "& $executable",
+                  "Save-AwfLegacyChannel", "Add-AwfUserPath", "& $launcher init"]
+        positions = [main.index(stage) for stage in stages]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("$Metadata -or $Channel -or $redirects -eq 5", script)
+        self.assertIn("$Url -cne $script:ChannelUrl", script)
+        self.assertIn("$channel.cliProtocol -ceq '2'", script)
+        self.assertIn("This published release predates guided init and channel-aware update", script)
+        self.assertIn("if (-not $Interactive)", script)
+        self.assertIn("[IO.File]::Move($temporary, $path)", script)
+        self.assertNotIn("[IO.File]::WriteAllText($path", script)
 
 
 if __name__ == "__main__":

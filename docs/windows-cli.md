@@ -2,171 +2,161 @@
 
 ## Availability and scope
 
-This document describes the native Windows lifecycle implementation and its
-local release tooling. The examples below are templates and do not assert that
-any tag or public download is available for `atongrun/agent-workflow`. Verify the
-actual published release and assets before use. Publishing a release is a
-separate authorized step; building locally does not create a tag, GitHub release,
-or upload.
+This source adds a one-command Windows bootstrap, guided `awf init`, and a
+Go-only update channel. **The full simplified flow is not live until its reviewed
+script, channel metadata, and a compatible CLI release have been published and
+native Windows acceptance passes.** Source changes and local packages are not a
+release or installation acceptance result.
+
+The checked-in `distribution/go-v1.json` deliberately names the existing
+[v1.0.0-rc.2 release](https://github.com/atongrun/agent-workflow/releases/tag/v1.0.0-rc.2),
+its actual source commit, and its published architecture hashes. That CLI has
+`cliProtocol: "1"`: it predates guided init and channel-aware updates. The new
+source implements protocol 2, but the manifest must not claim new binaries exist.
+Do not change a historical release or use GitHub's repository-wide `latest`:
+that endpoint still refers to the retired Python release line.
 
 Supported targets are native Windows AMD64 and ARM64 on Windows 10/Server
-version 1709 or newer. The bootstrap requires Windows PowerShell 5.1 or PowerShell 7 on Windows and detects the **native OS
-architecture**, including when invoked from 32-bit PowerShell. It does not install
-OpenCode, start processes after installation, configure login startup, modify
-firewall/Tailscale rules, pair credentials, perform Git operations, request admin
-rights, or change execution policy. Run as the intended ordinary Windows user.
+version 1709 or newer, using Windows PowerShell 5.1 or PowerShell 7. The installer
+uses the current user's `%LOCALAPPDATA%\AWF` directory and user PATH. It does not
+require a directory, version, or hash argument for ordinary interactive use.
+It does not install Go, Python, Node, npm, Pi, OpenCode, or Git, request admin
+rights, change execution policy, configure firewall rules, or start the runtime.
+Run it as the intended ordinary Windows user.
 
-## Future public installation template
+## One-command installation
 
-After an operator has authorized publication and verified the actual release
-assets, replace `<EXACT_PUBLISHED_TAG>` with an exact stable tag such as `v1.2.3`.
-Stable releases are the default. A release candidate is accepted only with an
-exact `vX.Y.Z-rc.N` tag **and** explicit `-AllowPrerelease`; `N` is a nonnegative
-integer with no leading zeros (except `0` itself). All numeric tag components
-must be canonical. Other prerelease formats, build suffixes, uppercase variants,
-and `latest` are rejected. Do not run a placeholder or assume an example tag exists.
-
-The intended release locations are:
-
-- Metadata: `https://api.github.com/repos/atongrun/agent-workflow/releases/tags/<EXACT_PUBLISHED_TAG>`
-- Reviewed bootstrap: `https://github.com/atongrun/agent-workflow/releases/download/<EXACT_PUBLISHED_TAG>/install.ps1`
-- Native archive: `https://github.com/atongrun/agent-workflow/releases/download/<EXACT_PUBLISHED_TAG>/awf_<EXACT_PUBLISHED_TAG>_windows_<amd64|arm64>.zip`
-- Checksums: `https://github.com/atongrun/agent-workflow/releases/download/<EXACT_PUBLISHED_TAG>/SHA256SUMS`
-
-Download and inspect the bootstrap from the verified release before executing it.
-Do not pipe a network response into `Invoke-Expression`. The bootstrap is itself
-code and is part of the trust boundary; its own checksum should be verified
-against an independently obtained value before execution. `SHA256SUMS` also
-includes `install.ps1`, but downloading a script and its checksum from one
-compromised source would not independently authenticate the script.
-
-Run the reviewed local copy using the existing permitted script-execution policy:
+**Planned command, gated on the publication and acceptance checks above.** This
+uses the existing official GitHub repository; no new domain or hosting is needed.
+The old script currently at that URL does not implement the new no-flags flow.
 
 ```powershell
-.\install.ps1 -Version '<EXACT_PUBLISHED_TAG>'
+powershell -NoProfile -Command "irm https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/scripts/install.ps1 | iex"
 ```
 
-For an independently pinned **native-architecture ZIP** digest:
+With the reviewed rollout in place, the command:
+
+1. Detects native Windows architecture, including 32-bit PowerShell on a 64-bit OS
+2. Resolves the publisher's Go v1 channel to an exact release, source commit, and
+   architecture-specific SHA-256; it never guesses a tag or uses `releases/latest`
+3. If the selected release is a preview, asks once whether to install it and
+   allow preview updates in that Go channel; the default is **no**
+4. Verifies release/tag metadata, checksums, archive contents and PE architecture,
+   then installs in the protected per-user directory and adds its launcher to PATH
+5. For protocol 2 releases, opens `awf init` in that same interactive terminal;
+   workspace, native OpenCode path and network choices are questions, followed by
+   an exact configuration review. Login autostart and credential pairing remain
+   separately confirmed and default **no**
+
+Later, use `awf update`. Use `awf init` to resume incomplete setup and `awf pair`
+to resume optional pairing. Installing or saving configuration never starts
+AWF automatically; run `awf start` when ready. A completed install is preserved
+if setup is cancelled or fails; do not rerun bootstrap to repair configuration.
+
+The protocol 1 fixture can install actual RC2, but the installer clearly reports
+that its setup and updater predate the new workflow. It saves a private channel
+marker for future compatibility. An already-installed RC2 needs a separately
+reviewed, exact-version update to the first protocol 2 release; its existing
+updater cannot acquire these changes merely by reading the new manifest.
+
+### Trust choice and advanced use
+
+The convenient command executes publisher-controlled PowerShell delivered over
+HTTPS from a mutable official branch. It trusts that GitHub repository, branch,
+and transport before any script-internal checks run. The manifest and checksums
+protect the selection and downloaded bytes; they do not independently authenticate
+a compromised publisher or bootstrap. This is the explicit convenience tradeoff
+of the one-command flow, not a signature-verification claim.
+
+For independently pinned review, download `scripts/install.ps1` from a verified
+40-character commit URL, inspect it, verify its SHA-256 against an independently
+trusted value, and run that local copy using the machine's approved script policy.
+Managed environments can use their approved signing/distribution process.
+No execution-policy bypass or alternate repository/server override is provided.
 
 ```powershell
-.\install.ps1 -Version '<EXACT_PUBLISHED_TAG>' -Sha256 '<64_HEX_DIGITS_FROM_AN_INDEPENDENT_TRUSTED_SOURCE>'
+.\install.ps1                         # interactive Go-channel installation
+.\install.ps1 -AllowPrerelease -SkipInit # explicit unattended preview consent
+.\install.ps1 -Version '<EXACT_PUBLISHED_TAG>' -Sha256 '<INDEPENDENT_ZIP_SHA256>'
 ```
 
-### Future one-line installation template
+Exact pins are advanced options. Tags must be canonical `vX.Y.Z` or `vX.Y.Z-rc.N`,
+with no aliases, leading zeros, other prerelease labels or build suffixes. An
+interactive preview pin asks for consent; unattended preview pins require
+`-AllowPrerelease`. `-SkipInit` suppresses the setup wizard. Without explicit
+preview consent, redirected/noninteractive input fails closed. Never run the
+angle-bracket placeholders literally.
 
-This alternative is one PowerShell line. It downloads the exact release's
-bootstrap into memory, verifies an **independently trusted bootstrap-script
-SHA-256** before parsing or invoking the code, and does not write executable
-script bytes to a swappable temporary file. Replace both placeholders only after
-publication is authorized and the tag and script digest are verified. The digest
-here is for `install.ps1`, **not** a binary ZIP. No tag/hash shown here is real.
-
-```powershell
-& { $v='<EXACT_PUBLISHED_TAG>'; $pin='<INDEPENDENT_INSTALL_PS1_SHA256>'; if ($v -cnotmatch '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z' -or $pin -notmatch '\A[0-9A-Fa-f]{64}\z') { throw 'Replace the exact tag and independently verified script hash first' }; $tls=[Net.ServicePointManager]::SecurityProtocol; $wc=New-Object Net.WebClient; $sha=[Security.Cryptography.SHA256]::Create(); try { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $b=$wc.DownloadData("https://github.com/atongrun/agent-workflow/releases/download/$v/install.ps1"); if ($b.Length -gt 1MB -or ([BitConverter]::ToString($sha.ComputeHash($b))).Replace('-','') -ine $pin) { throw 'Bootstrap SHA-256 verification failed' }; & ([ScriptBlock]::Create((New-Object Text.UTF8Encoding($false,$true)).GetString($b))) -Version $v } finally { $wc.Dispose(); $sha.Dispose(); [Net.ServicePointManager]::SecurityProtocol=$tls } }
-```
-
-The script bytes are never executed on a digest mismatch. This uses the existing
-session and does not change persisted execution policy. In managed environments,
-follow the administrator's approved script-signing and execution process; use the
-reviewed local script flow instead if interactive script evaluation is prohibited.
-
-### Explicit preview installation template
-
-Only after verifying an actual published **GitHub prerelease**, replace
-`<EXACT_PUBLISHED_RC_TAG>` with its exact `vX.Y.Z-rc.N` tag. For a reviewed local
-bootstrap, opt in explicitly:
-
-```powershell
-.\install.ps1 -Version '<EXACT_PUBLISHED_RC_TAG>' -AllowPrerelease
-# Optional independently verified native-architecture ZIP digest:
-.\install.ps1 -Version '<EXACT_PUBLISHED_RC_TAG>' -AllowPrerelease -Sha256 '<64_HEX_DIGITS_FROM_AN_INDEPENDENT_TRUSTED_SOURCE>'
-```
-
-The preview one-line template retains the same independently verified **script**
-hash check before parsing or execution; it additionally requires an exact RC tag
-and supplies `-AllowPrerelease`. It never discovers or selects a latest preview:
-
-```powershell
-& { $v='<EXACT_PUBLISHED_RC_TAG>'; $pin='<INDEPENDENT_INSTALL_PS1_SHA256>'; if ($v -cnotmatch '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-rc\.(?:0|[1-9][0-9]*)\z' -or $pin -notmatch '\A[0-9A-Fa-f]{64}\z') { throw 'Replace the exact RC tag and independently verified script hash first' }; $tls=[Net.ServicePointManager]::SecurityProtocol; $wc=New-Object Net.WebClient; $sha=[Security.Cryptography.SHA256]::Create(); try { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $b=$wc.DownloadData("https://github.com/atongrun/agent-workflow/releases/download/$v/install.ps1"); if ($b.Length -gt 1MB -or ([BitConverter]::ToString($sha.ComputeHash($b))).Replace('-','') -ine $pin) { throw 'Bootstrap SHA-256 verification failed' }; & ([ScriptBlock]::Create((New-Object Text.UTF8Encoding($false,$true)).GetString($b))) -Version $v -AllowPrerelease } finally { $wc.Dispose(); $sha.Dispose(); [Net.ServicePointManager]::SecurityProtocol=$tls } }
-```
-
-Without explicit opt-in, an RC is rejected before bootstrap staging or network
-requests. Draft releases are always rejected. RC tags require GitHub metadata
-with `prerelease: true`; stable tags require `prerelease: false`, even when
-`-AllowPrerelease` is supplied. Preview opt-in does not persist and does not
-weaken the checksum, official-origin, archive, native-PE, or ACL checks below.
-
-No source/repository override, execution-policy bypass, credential argument, or
-administrator step is supported. If policy blocks the reviewed script, follow
-that machine's approved signing/execution process; do not loosen machine or
-user policy as an installation workaround.
-
-The bootstrap refuses an existing installation and directs the operator to
-`awf update`. A launcher-only interrupted install also triggers this conservative
-bootstrap check; do not remove the launcher to bypass it. Native `_install` may
-reuse an identical orphan launcher under its own integrity checks, but that
-recovery requires explicit operator review rather than a bootstrap retry.
-
-Bootstrap only adds `%LOCALAPPDATA%\AWF\bin` to the current user's PATH
-**after** the native installer succeeds, without rewriting machine PATH or
-clobbering existing entries. It also appends the launcher to the current PowerShell
-process PATH, so `awf init` is available immediately there. If PATH registration
-fails after a successful install, use the full launcher path below and repair
-user PATH explicitly rather than rerunning bootstrap:
-
-```powershell
-& "$env:LOCALAPPDATA\AWF\bin\awf.exe" version
-```
+Bootstrap refuses any existing install/configuration/channel/launcher marker and
+directs the operator to `awf update` or explicit recovery. It does not overwrite
+an existing install to bypass active-job checks. PATH is changed only after the
+native installer and channel registration succeed, without replacing other PATH
+entries. The current PowerShell process is also updated. A command launched in a
+child PowerShell cannot rewrite its parent shell environment; open a new terminal
+for `awf`, or use `%LOCALAPPDATA%\AWF\bin\awf.exe` immediately.
 
 ### Trust and archive checks
 
-Before running any downloaded executable, bootstrap:
+Before running a downloaded executable, bootstrap:
 
-1. Resolves native host architecture with `IsWow64Process2`, not the PowerShell
-   process architecture or a caller-selected architecture. `GetNativeSystemInfo`
-   is deliberately avoided because it may report an emulated CPU on ARM64; see
-   [Microsoft’s architecture-detection guidance](https://learn.microsoft.com/en-us/windows/win32/api/wow64apiset/nf-wow64apiset-iswow64process2)
-2. Fetches only the requested tag's official GitHub release metadata; rejects
-   drafts, unapproved RCs, a mismatched tag or prerelease status, missing assets,
-   duplicate selected assets, or assets whose URL differs from the exact official
-   release URL
-3. Downloads bounded content over HTTPS with normal certificate validation;
-   redirects are limited to GitHub's release/CDN hosts, while metadata redirects
-   are rejected; no bearer token or alternate source is accepted
-4. Requires a valid `SHA256SUMS` entry for the selected ZIP, checks any independent
-   `-Sha256` pin against it, and verifies the actual archive SHA-256
-5. Requires exactly `awf.exe`, `awf-node.exe`, and `manifest.json` as root entries;
-   rejects duplicate/case-variant names, traversal, folders, alternate data
-   streams, symlinks, reparse entries, and non-regular Unix entry types
-6. Limits metadata to 2 MiB, checksums to 1 MiB, the archive and total expanded
-   payload to 100 MiB, and the manifest to 4 KiB; streams are bounded while read
-7. Checks the manifest's exact three string fields and values, rejects duplicate
-   or extra fields, and checks both executable PE headers against native AMD64
-   or ARM64 before invoking `awf.exe`
+1. Resolves native host architecture using `IsWow64Process2`, not process
+   architecture or a caller-selected override
+2. Fetches the one fixed Go-channel URL (4 KiB limit, no redirects), validates its
+   exact seven string fields, rejects unknown/duplicate/escaped/coerced values,
+   and accepts only Go major 1 and known CLI protocols
+3. Fetches exact-tag official GitHub release metadata and the lightweight tag ref;
+   requires the source commit to agree, boolean non-draft status, tag/prerelease
+   agreement, and exactly one selected archive and checksum asset at exact URLs
+4. Downloads bounded HTTPS content with normal certificate validation; release
+   asset redirects are restricted to GitHub release/CDN hosts and all metadata
+   redirects are rejected. No credentials or alternate source are accepted
+5. Requires the architecture ZIP digest in `SHA256SUMS` to match the channel pin
+   and any independent `-Sha256`, then verifies the actual downloaded bytes
+6. Requires exactly `awf.exe`, `awf-node.exe`, and `manifest.json` as root entries;
+   rejects duplicates/case variants, traversal, folders, alternate data streams,
+   symlinks, reparse entries, and non-regular Unix types. Metadata is limited to
+   2 MiB, checksums to 1 MiB, archive and expanded payload to 100 MiB, and archive
+   manifest to 4 KiB
+7. Checks the archive manifest's exact three string fields and both executable
+   PE headers before invoking native `_install`, which independently rechecks
+   the bytes, archive, version, and protected installation tree
 
-Staging is a random directory in the current user's LocalAppData with inheritance
-removed and access restricted to that user and SYSTEM. Bootstrap rejects reparse
-points in its staging ancestor chain. Temporary files are removed on exit. This
-boundary does not isolate other processes running as the same Windows user.
+Staging is random under the current user's LocalAppData, restricted to that user
+and SYSTEM before payload writes. Reparse ancestors are rejected. Temporary
+files are cleaned up. Other processes of the same Windows user remain outside
+this isolation boundary. Native `_install` is a private bootstrap interface;
+preview selection passes explicit `--allow-prerelease`. Protocol 2 additionally
+passes `--channel go-v1`, persisting only the disclosed preview consent. Protocol
+1 compatibility creates the same separate channel marker only after verifying
+the installed directory's existing private ACLs. The original `current.json`
+shape stays compatible with immutable older launchers.
 
-The verified staged executable is invoked using native arguments, with an
-absolute archive path:
+## Publisher-controlled Go channel
 
-```text
-awf.exe _install --archive <absolute-verified-zip> --version <exact-tag> --sha256 <verified-digest>
-```
+`distribution/go-v1.json` is data, not executable code. Its schema consists of
+exactly these seven strings: `schema` (`"1"`), `channel` (`"go-v1"`), `version`,
+`sourceCommit` (40 lowercase hex), `cliProtocol` (`"1"` or `"2"`),
+`windowsAMD64SHA256`, and `windowsARM64SHA256` (64 lowercase hex each). The channel
+cannot select major 0/Python or unknown future major versions. Version tags and
+GitHub metadata must agree on preview status. Publisher metadata is still a
+publisher trust input, not an independent cryptographic signature.
 
-The bootstrap appends `--allow-prerelease` only when the operator supplied
-`-AllowPrerelease`. Native `_install` independently requires that flag for an RC;
-using the private interface directly does not bypass preview policy.
+A channel change is a separate release/publication action. Before authorizing it:
 
-`_install` is a private bootstrap interface, not a separate public installer or
-an unsafe-update workaround. It rechecks the archive and rejects an existing
-installation. It establishes the protected per-user installation root, stages
-versioned executables, creates the initial immutable launcher, and atomically
-writes the current-version pointer. SHA-256 from the same release protects
-integrity; an independent pin adds a separate trust anchor. Neither mechanism
-establishes that the publisher or compiled code is benign.
+- Build/review/test the exact source, including native PowerShell 5.1 x64/x86,
+  PowerShell 7, native Go lifecycle fixtures and ARM64 where available
+- Publish the exact source commit, lightweight tag and non-draft release with
+  architecture ZIPs, the reviewed script and `SHA256SUMS`; set `target_commitish`
+  to that exact commit and set prerelease status consistently
+- Download/verify all public assets and their hashes, then propose a manifest
+  selecting only those already-published bytes. Set protocol 2 only for a release
+  that actually supports guided init and channel-aware update
+- Independently review and publish that manifest and bootstrap, then verify the
+  no-flags install, consent/decline, new-terminal PATH, init/pair prompts, update,
+  guarded busy/unknown state, and recovery against the published artifacts
+
+The packager does not mutate or publish the distribution channel. Local fixture
+builds and future version placeholders must never be promoted as real releases.
 
 ## Reviewable initialization
 
@@ -176,7 +166,19 @@ OpenCode and is not copied into AWF config or another machine. Create/select a
 dedicated, already-existing workspace yourself; AWF does not clone repositories
 or create a workspace as a substitute for Git setup.
 
-Replace all example paths, project IDs, and IPs with verified values:
+Start guided setup without path flags:
+
+```powershell
+awf init
+```
+
+It asks for missing required values and shows a detected native OpenCode `.exe`
+path only as a reviewable default. It never silently selects a workspace or
+remote address. EOF before required answers or save approval changes nothing.
+Explicit flags remain available; when both required paths are supplied, the
+existing review/confirmation sequence is preserved.
+
+For advanced setup, replace all example paths, project IDs, and IPs with verified values:
 
 ```powershell
 awf init --workspace 'C:\Work\acceptance' --project 'acceptance' --opencode 'C:\Tools\OpenCode\opencode.exe' --listen '<WINDOWS_NODE_EXACT_IP>:7071' --allow-source '<CONTROL_HOST_EXACT_IP>'
@@ -318,7 +320,7 @@ awf stop
 awf update --version '<EXACT_PUBLISHED_TAG>'
 # Optional independent archive pin:
 awf update --version '<EXACT_PUBLISHED_TAG>' --sha256 '<64_HEX_DIGITS>'
-# Explicit preview update (exact RC tag and opt-in are both required):
+# Advanced explicit preview pin:
 awf update --version '<EXACT_PUBLISHED_RC_TAG>' --allow-prerelease
 ```
 
@@ -356,22 +358,24 @@ runtime or observed exit of that exact child clears the intent. An older child
 cannot clear a newer launch intent. A CLI that exits before observing the result
 leaves the outcome explicitly unresolved for operator diagnosis.
 
-`update` defaults to official stable release packages and switches the version
-pointer only after the job-safety checks. It preserves configuration, credentials,
-native provider authentication, and durable job state. If a running runtime was
-stopped for an update, activation is checked and failure restores the prior
-version pointer and attempts to restart that version when shutdown is confirmed
-safe. If the new runtime state is unknown, automatic rollback is blocked and the
-new pointer is retained for explicit recovery; unverified work is never killed to
-force a rollback. A rollback/restart error requires operator attention; it is not reported as a successful update. The
-explicit pinned-tag form above is recommended; an omitted `--version` resolves
-the official latest stable release once and then pins that result for the run.
-An RC update requires both an exact `--version vX.Y.Z-rc.N` and
-`--allow-prerelease`; the flag alone cannot select a preview. Drafts and
-tag/metadata prerelease mismatches are always rejected. An unpinned update also
-refuses an older stable release when a newer version or RC is already installed;
-it never silently downgrades a preview to an older stable version. A stable
-release with the same core version sorts after its RCs.
+`awf update` resolves the installed `go-v1` channel, revalidates its exact
+release/source/architecture digest, and switches the pointer only after job-safety
+checks. It never calls GitHub's repository-wide latest endpoint. Saved channel
+metadata must have the known schema and channel and an explicit boolean preview
+consent. A missing legacy marker is not proof of preview consent: an interactive
+update asks before adopting a preview, and unattended use must explicitly pass
+`--allow-prerelease`. Having an RC installed alone is not consent to future RCs.
+
+All updates, including advanced `--version` pins, refuse downgrades and unknown
+source/tag metadata. Channel updates also reject protocol 1, even at a higher
+version, so they cannot silently replace the new updater with a legacy one. Unknown channels/protocols and manifest/hash disagreement
+fail closed. A stable release with the same core version sorts after its RCs.
+The updater preserves configuration, credentials, provider authentication and job
+state. It retains saved channel/consent across version changes. If a running
+runtime is stopped for an update, activation is checked; a confirmed-safe
+activation failure restores the exact prior version pointer and attempts to
+restart it. Unknown new runtime state blocks rollback, leaving the new pointer
+for explicit recovery. Unverified work is never killed to force rollback.
 
 `awf update --all` is **reserved for later and currently rejected**. This command
 does not update Pi, OpenCode, or unrelated tools. A bootstrap rerun is not an
@@ -386,6 +390,7 @@ alternative update path.
   versions\vX.Y.Z\awf-node.exe
   versions\vX.Y.Z\manifest.json
   current.json                      atomically replaced active-version pointer
+  channel.json                      protected Go channel and explicit preview consent
   starting.json                     unresolved launch identity, present only during startup
   runtime.json                      private managed runtime/control identity
   config.json                       reviewed non-secret lifecycle configuration
@@ -506,13 +511,15 @@ credential changes):
 
 ```powershell
 .\scripts\test_install.ps1
+.\scripts\test_channel.ps1
 ```
 
 The portable suite covers stable/RC tag grammar, explicit packaging opt-in,
 pre-build rejection without output changes, deterministic archives, checksums,
 and static bootstrap ordering. The native suite covers stable/RC opt-in and
 metadata-flag policy, checksum parsing, official metadata URLs, manifest
-schema, executable machine type, and malicious ZIP cases including traversal,
+schema, preview consent and legacy marker ACLs, executable machine type, and
+malicious ZIP cases including traversal,
 duplicates, links/reparse entries, extra members, wrong manifests, and size limits.
 Fixture executables are not run. Run it under both Windows PowerShell 5.1 and
 PowerShell 7, and separately verify architecture detection from 32-bit PowerShell

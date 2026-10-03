@@ -40,15 +40,15 @@ The initial path uses one Pi process/session for planning, dispatch coordination
 
 ## Native Windows CLI installation
 
-The per-user native CLI source now includes `awf init`, `awf pair`, `awf start`, `awf stop`,
-and AWF-only `awf update`. The installer uses pinned official GitHub releases,
-SHA-256 verification, versioned executables, atomic selection and guarded rollback.
-Initialization reviews exact configuration and optional login autostart, then
-offers separately confirmed native credential pairing (default no). `awf pair`
-also pairs an initialized machine or verifies an existing pair. It never changes
-firewall rules or overwrites an identity. Updates refuse busy or unknown jobs.
-`awf update --all` remains explicitly unimplemented.
+The simplified Windows source provides one-command per-user installation, guided
+`awf init`, optional separately confirmed `awf pair`, and `awf update` on a
+publisher-controlled Go v1 channel. Ordinary interactive use needs no version,
+SHA-256 or directory flags. A preview is clearly disclosed and requires consent;
+login autostart and pairing default to no. Checksums, exact source/tag metadata,
+native architecture, protected ACLs, and busy/unknown job guards remain enforced.
 
-See [the Windows CLI contract](docs/windows-cli.md) for packaging, review,
-installation and recovery. **Public installer/release assets and native Windows
-acceptance are separate gates; this source change does not establish either.**
+**Rollout is not yet established by this source change.** The checked-in channel
+references actual RC2 assets, which predate guided init and channel-aware update;
+a reviewed compatible release and native Windows acceptance are still required.
+See [the installation command, rollout gate and Windows CLI contract](docs/windows-cli.md).
+`awf update --all` remains unimplemented. No new runtime or hosting is required.

@@ -37,16 +37,13 @@ func validVersion(v string) error {
 func prereleaseVersion(v string) bool { return strings.Contains(v, "-rc.") }
 func validateReleaseRequest(v string, allowPrerelease bool) error {
 	if v == "" {
-		if allowPrerelease {
-			return errors.New("--allow-prerelease requires an explicit --version vX.Y.Z-rc.N")
-		}
 		return nil
 	}
-	if e := validVersion(v); e != nil {
+	if e := validGoReleaseVersion(v); e != nil {
 		return e
 	}
 	if prereleaseVersion(v) && !allowPrerelease {
-		return errors.New("a pinned RC requires explicit --allow-prerelease opt-in")
+		return errors.New("preview releases require explicit --allow-prerelease opt-in or saved channel approval")
 	}
 	return nil
 }

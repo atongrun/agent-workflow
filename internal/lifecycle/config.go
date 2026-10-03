@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -42,17 +43,11 @@ func validateConfig(root string, c Config) error {
 	if c.Node.OpenCodeURL != "http://127.0.0.1:4096" {
 		return errors.New("managed native OpenCode must use http://127.0.0.1:4096")
 	}
-	for _, p := range []string{c.OpenCodeBinary, c.CredentialFile} {
-		if !filepath.IsAbs(p) || !printable(p) {
-			return errors.New("binary and credential paths must be absolute without control characters")
-		}
+	if !filepath.IsAbs(c.CredentialFile) || !printable(c.CredentialFile) {
+		return errors.New("binary and credential paths must be absolute without control characters")
 	}
-	if strings.ToLower(filepath.Ext(c.OpenCodeBinary)) != ".exe" {
-		return errors.New("select the native OpenCode .exe, not a shell wrapper")
-	}
-	s, e := os.Stat(c.OpenCodeBinary)
-	if e != nil || s.IsDir() {
-		return errors.New("native OpenCode executable does not exist")
+	if e := validateNativeOpenCode(c.OpenCodeBinary); e != nil {
+		return e
 	}
 	if len(c.Node.Projects) == 0 {
 		return errors.New("at least one existing project workspace is required")
@@ -81,6 +76,31 @@ func validateConfig(root string, c Config) error {
 	}
 	return c.Node.OpenCodeModel.Validate()
 }
+
+func validateNativeOpenCode(p string) error {
+	if !filepath.IsAbs(p) || strings.IndexFunc(p, unicode.IsControl) >= 0 {
+		return errors.New("binary and credential paths must be absolute without control characters")
+	}
+	if !strings.EqualFold(filepath.Ext(p), ".exe") {
+		return errors.New("select the native OpenCode .exe, not a shell wrapper")
+	}
+	s, e := os.Stat(p)
+	if e != nil || !s.Mode().IsRegular() {
+		return errors.New("native OpenCode executable must be an existing regular file")
+	}
+	return nil
+}
+
+func detectedNativeOpenCode() string {
+	// Looking on PATH never runs OpenCode or accepts a shell/package wrapper.
+	for _, name := range []string{"opencode.exe", "opencode"} {
+		if p, e := exec.LookPath(name); e == nil && validateNativeOpenCode(p) == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func loadConfig(root string) (Config, error) {
 	var c Config
 	e := readJSON(filepath.Join(root, "config.json"), &c)
@@ -109,6 +129,48 @@ func initialize(root string, args []string, in io.Reader, out io.Writer) error {
 	} else if !os.IsNotExist(e) {
 		return e
 	}
+	provided := make(map[string]bool)
+	f.Visit(func(v *flag.Flag) { provided[v.Name] = true })
+	reader := bufio.NewReader(in)
+	// Keep the established answer sequence when both required flags are given.
+	// Otherwise guide setup, leaving every explicitly supplied value untouched.
+	if !provided["workspace"] || !provided["opencode"] {
+		if !provided["opencode"] {
+			*opencode = detectedNativeOpenCode()
+		}
+		for _, field := range []struct {
+			name, label string
+			value       *string
+			required    bool
+		}{
+			{"project", "Project ID shared with the control Host", project, true},
+			{"workspace", "Existing dedicated workspace (absolute path)", workspace, true},
+			{"opencode", "Native OpenCode .exe (absolute path)", opencode, true},
+			{"listen", "Exact node listen IP:port", listen, true},
+			{"allow-source", "Exact control Host source IPs (comma-separated; blank permits loopback only)", sources, false},
+		} {
+			if provided[field.name] {
+				continue
+			}
+			fmt.Fprint(out, field.label)
+			if *field.value != "" {
+				fmt.Fprintf(out, " [%s]", *field.value)
+			} else if field.required {
+				fmt.Fprint(out, " (required)")
+			}
+			fmt.Fprint(out, ": ")
+			answer, e := reader.ReadString('\n')
+			if e != nil {
+				return errors.New("init requires an explicit interactive answer; configuration was not saved")
+			}
+			if value := strings.TrimSpace(answer); value != "" {
+				*field.value = value
+			}
+			if field.required && *field.value == "" {
+				return fmt.Errorf("%s is required; configuration was not saved", field.label)
+			}
+		}
+	}
 	c := Config{Schema: 1, OpenCodeBinary: *opencode, CredentialFile: *credential, Node: node.Config{StateDir: filepath.Join(root, "state"), ListenAddress: *listen, OpenCodeURL: "http://127.0.0.1:4096", Projects: map[string]string{*project: *workspace}}}
 	if *sources != "" {
 		c.Node.AllowedSourceIPs = strings.Split(*sources, ",")
@@ -116,7 +178,6 @@ func initialize(root string, args []string, in io.Reader, out io.Writer) error {
 	if e := validateConfig(root, c); e != nil {
 		return e
 	}
-	reader := bufio.NewReader(in)
 	fmt.Fprint(out, "Start AWF automatically when you sign in as this Windows user? [y/N]: ")
 	answer, e := reader.ReadString('\n')
 	if e != nil {

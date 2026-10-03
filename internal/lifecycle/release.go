@@ -26,10 +26,11 @@ type releaseAsset struct {
 	URL  string `json:"browser_download_url"`
 }
 type releaseInfo struct {
-	Tag        string         `json:"tag_name"`
-	Draft      bool           `json:"draft"`
-	Prerelease bool           `json:"prerelease"`
-	Assets     []releaseAsset `json:"assets"`
+	Tag             string         `json:"tag_name"`
+	TargetCommitish string         `json:"target_commitish"`
+	Draft           bool           `json:"draft"`
+	Prerelease      bool           `json:"prerelease"`
+	Assets          []releaseAsset `json:"assets"`
 }
 
 func assetName(v, arch string) string { return "awf_" + v + "_windows_" + arch + ".zip" }
@@ -103,32 +104,86 @@ func checksum(data []byte, name string) (string, error) {
 	return found, nil
 }
 
-// stageRelease never executes downloaded code. An authorized exact tag, expected
-// official asset URL, digest, archive allowlist, and manifest must all agree.
+type releaseTarget struct {
+	Version      string
+	SourceCommit string
+	Digest       string
+}
+
+func resolveReleaseTarget(ctx context.Context, c *http.Client, requested, arch string) (releaseTarget, error) {
+	if arch != "amd64" && arch != "arm64" {
+		return releaseTarget{}, errors.New("supported native Windows architectures are amd64 and arm64")
+	}
+	if requested != "" {
+		if err := validGoReleaseVersion(requested); err != nil {
+			return releaseTarget{}, err
+		}
+		return releaseTarget{Version: requested}, nil
+	}
+	data, err := fetchMetadata(ctx, c, channelManifestURL, 4096)
+	if err != nil {
+		return releaseTarget{}, err
+	}
+	manifest, err := parseChannelManifest(data)
+	if err != nil {
+		return releaseTarget{}, err
+	}
+	if manifest.CLIProtocol != "2" {
+		return releaseTarget{}, errors.New("the go-v1 channel selects legacy CLI protocol 1; wait for a channel-aware release (protocol 2)")
+	}
+	digest := manifest.WindowsAMD64SHA256
+	if arch == "arm64" {
+		digest = manifest.WindowsARM64SHA256
+	}
+	return releaseTarget{Version: manifest.Version, SourceCommit: manifest.SourceCommit, Digest: digest}, nil
+}
+
+// stageRelease never executes downloaded code. Default selection is exclusively
+// the publisher's Go channel, never GitHub's repository-wide latest endpoint.
 func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pin string, allowPrerelease bool, currentVersion string) (string, error) {
 	if e := validateReleaseRequest(requested, allowPrerelease); e != nil {
 		return "", e
 	}
-	if arch != "amd64" && arch != "arm64" {
-		return "", errors.New("supported native Windows architectures are amd64 and arm64")
-	}
-	endpoint := "https://api.github.com/repos/" + Repository + "/releases/latest"
-	if requested != "" {
-		if e := validVersion(requested); e != nil {
-			return "", e
-		}
-		endpoint = "https://api.github.com/repos/" + Repository + "/releases/tags/" + requested
-	}
-	metadata, e := fetch(ctx, c, endpoint, 2<<20)
+	target, e := resolveReleaseTarget(ctx, c, requested, arch)
 	if e != nil {
+		return "", e
+	}
+	return stageSelectedRelease(ctx, c, root, target, arch, pin, allowPrerelease, currentVersion)
+}
+
+func stageSelectedRelease(ctx context.Context, c *http.Client, root string, target releaseTarget, arch, pin string, allowPrerelease bool, currentVersion string) (string, error) {
+	if err := validateReleaseRequest(target.Version, allowPrerelease); err != nil {
+		return "", err
+	}
+	if target.Version == "" {
+		return "", errors.New("release selection requires an exact Go CLI version")
+	}
+	if arch != "amd64" && arch != "arm64" {
+		return "", errors.New("unsupported release architecture")
+	}
+	if currentVersion != "" {
+		order, err := compareReleaseVersions(target.Version, currentVersion)
+		if err != nil {
+			return "", err
+		}
+		if order < 0 {
+			return "", errors.New("selected release is older than the installed version; downgrade is blocked")
+		}
+	}
+	metadata, e := fetchMetadata(ctx, c, releaseMetadataURL(target.Version), 2<<20)
+	if e != nil {
+		return "", e
+	}
+	if e = validateUniqueJSON(metadata); e != nil {
+		return "", errors.New("invalid or duplicate official release metadata")
+	}
+	if e = requireMetadataFields(metadata, "tag_name", "target_commitish", "draft", "prerelease", "assets"); e != nil {
 		return "", e
 	}
 	var release releaseInfo
 	if e = json.Unmarshal(metadata, &release); e != nil {
 		return "", errors.New("invalid official release metadata")
 	}
-	// Missing/null flags are unknown, never evidence of a non-draft stable or
-	// preview release. Keep Go's metadata boundary aligned with the bootstrap.
 	var flags struct {
 		Draft      *bool `json:"draft"`
 		Prerelease *bool `json:"prerelease"`
@@ -136,25 +191,17 @@ func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pi
 	if e = json.Unmarshal(metadata, &flags); e != nil || flags.Draft == nil || flags.Prerelease == nil {
 		return "", errors.New("release metadata requires explicit boolean draft and prerelease fields")
 	}
-
-	if validVersion(release.Tag) != nil || release.Draft || requested != "" && release.Tag != requested {
+	if validGoReleaseVersion(release.Tag) != nil || release.Draft || release.Tag != target.Version {
 		return "", errors.New("release is not the requested pinned tag")
 	}
-	isRC := prereleaseVersion(release.Tag)
-	if release.Prerelease != isRC {
+	if release.Prerelease != prereleaseVersion(release.Tag) {
 		return "", errors.New("release tag and GitHub prerelease status disagree")
 	}
-	if isRC && (!allowPrerelease || requested == "") {
-		return "", errors.New("prereleases require an exact pinned version and explicit opt-in")
+	if !sourceCommitRE.MatchString(release.TargetCommitish) || (target.SourceCommit != "" && release.TargetCommitish != target.SourceCommit) {
+		return "", errors.New("release source commit does not match the publisher channel or is unknown")
 	}
-	if requested == "" && currentVersion != "" {
-		order, e := compareReleaseVersions(release.Tag, currentVersion)
-		if e != nil {
-			return "", e
-		}
-		if order < 0 {
-			return "", errors.New("latest stable release is older than the installed version; automatic downgrade is blocked")
-		}
+	if e = verifyReleaseRef(ctx, c, release.Tag, release.TargetCommitish); e != nil {
+		return "", e
 	}
 	name := assetName(release.Tag, arch)
 	wanted := map[string]string{name: "", "SHA256SUMS": ""}
@@ -176,6 +223,9 @@ func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pi
 	digest, e := checksum(sums, name)
 	if e != nil {
 		return "", e
+	}
+	if target.Digest != "" && target.Digest != digest {
+		return "", errors.New("release checksum differs from the publisher channel SHA-256")
 	}
 	if pin != "" && (!strings.EqualFold(pin, digest) || len(pin) != 64) {
 		return "", errors.New("release checksum differs from the explicitly pinned SHA-256")
