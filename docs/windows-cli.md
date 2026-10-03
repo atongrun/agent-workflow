@@ -582,3 +582,38 @@ lifecycle, or live update rollback. A published release also needs a controlled
 Windows acceptance run for these behaviors and failure cases, using dedicated
 operator-approved credentials and a nonproduction workspace. Do not claim a
 production deployment or working public install URL based only on local tests.
+
+## Read-only diagnosis (source; not in existing RC3 assets)
+
+`awf doctor` prints a metadata-only snapshot; `awf doctor --json` emits schema 1
+with a `findings` array (`check`, `status`, `detail`). A successfully emitted
+report exits zero even for missing, mismatched or unknown findings; this is not
+a readiness/health success code. Argument/output failures still fail.
+
+The command runs before launcher forwarding and installation validation. It
+reports process package context and architecture, Windows known-folder agreement,
+executable search results, and a fixed installation/configuration/runtime/default
+credential marker inventory. Existing paths are checked for reparse boundaries,
+physical-path agreement and the existing current-user/SYSTEM-only ownership/DACL
+policy. ACL policy failure or unavailable inspection is explicitly unknown, with
+its metadata validation reason. Missing and malformed roots remain reportable.
+
+Doctor never reads file contents (including configuration, pointers, runtime
+secrets or DPAPI credentials), decrypts credentials, creates directories/locks,
+walks arbitrary trees, makes HTTP requests, changes ACLs/PATH, or starts/stops
+processes. OS metadata and executable lookup use the configured filesystem view.
+Configured external credential paths, file validity, selected version,
+job idleness, runtime health and shell aliases/functions remain unassessed.
+This snapshot observes this process's view; it does not authorize or prove that
+installation/recovery can proceed. Native facts are unknown on non-Windows.
+Human-readable paths are quoted to prevent terminal-control injection.
+
+An older installed launcher may reject a broken root before forwarding: invoke
+the explicit path of a separately verified executable containing doctor instead.
+Do not overwrite a launcher as a diagnostic step.
+
+Acceptance requires `TestDoctorNativeMetadataReadOnly` on native Windows and
+separately identified ordinary/packaged host observations. Missing, redirected,
+broad-ACL and inaccessible disposable roots must remain unchanged. Native
+junction/reparse fixtures remain required. Portable seams and cross-compilation
+are not native acceptance. No install, ACL repair or recovery apply is provided.

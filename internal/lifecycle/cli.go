@@ -20,6 +20,11 @@ import (
 // Forward keeps the installed launcher immutable while versioned implementations
 // evolve. Windows never has to overwrite its own running executable.
 func Forward(args []string) (bool, error) {
+	// Diagnosis must remain available when the installed launcher cannot trust
+	// its root or pointer. Never execute the selected version for this command.
+	if len(args) > 0 && args[0] == "doctor" {
+		return false, nil
+	}
 	if runtime.GOOS != "windows" {
 		return false, nil
 	}
@@ -50,6 +55,9 @@ func Forward(args []string) (bool, error) {
 func Run(args []string, in io.Reader, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("missing lifecycle command")
+	}
+	if args[0] == "doctor" {
+		return runDoctor(args[1:], out)
 	}
 	if args[0] == "version" {
 		fmt.Fprintln(out, Version)
