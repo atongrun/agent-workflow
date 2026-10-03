@@ -302,6 +302,20 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn("function Read-Host", native)
         self.assertNotIn("Set-ExecutionPolicy", native)
 
+    def test_channel_persistence_fixture_uses_private_temporary_stage(self):
+        native = (SCRIPTS / "test_channel.ps1").read_text()
+        fixture = native[native.index("if ([Environment]::OSVersion.Platform"):]
+        self.assertIn("$temporary = [IO.Path]::GetTempPath()", fixture)
+        self.assertIn("$root = New-AwfPrivateStage $temporary", fixture)
+        self.assertNotIn("LocalApplicationData", fixture)
+        self.assertNotIn("GetFolderPath", fixture)
+        for override in ("function New-AwfPrivateStage", "function Assert-AwfNativePath", "function Assert-AwfDirectoryPath"):
+            self.assertNotIn(override, native)
+        for check in ("Save-AwfLegacyChannel $root $true", "Save-AwfLegacyChannel $root $false",
+                      "failed write preserves old marker", "failed write cleans temporary marker",
+                      "Protected channel persistence fixture passed", "finally { Remove-Item -LiteralPath $root -Recurse -Force }"):
+            self.assertIn(check, fixture)
+
     def test_distribution_manifest_names_only_verified_existing_release(self):
         manifest = json.loads((SCRIPTS.parent / "distribution" / "go-v1.json").read_text())
         self.assertEqual(manifest, {

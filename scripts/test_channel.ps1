@@ -132,8 +132,12 @@ Assert-Rejected { Save-AwfOfficialDownload -Url 'https://example.invalid/go-v1.j
 Assert-Rejected { Save-AwfOfficialDownload -Url ($script:ChannelUrl + '?other=1') -Destination 'must-not-exist' -Limit 4096 -Channel } 'channel query cannot be overridden'
 
 if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-    $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
-    $root = New-AwfPrivateStage $local
+    # Marker persistence needs a disposable sandbox, not the real installation
+    # target. LocalAppData may correctly fail the production redirection guard.
+    # Use the same temporary parent as the other native filesystem fixtures;
+    # New-AwfPrivateStage still enforces real ACL, reparse and final-path checks.
+    $temporary = [IO.Path]::GetTempPath()
+    $root = New-AwfPrivateStage $temporary
     try {
         Save-AwfLegacyChannel $root $true
         $saved = [IO.File]::ReadAllText((Join-Path $root 'channel.json')) | ConvertFrom-Json
@@ -143,5 +147,6 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         Assert-True ($saved.previewApproved -eq $true) 'failed write preserves old marker'
         Assert-True (@(Get-ChildItem -LiteralPath $root -Filter '.awf-channel-*').Count -eq 0) 'failed write cleans temporary marker'
     } finally { Remove-Item -LiteralPath $root -Recurse -Force }
+    Write-Host 'Protected channel persistence fixture passed in a private temporary stage.'
 }
 Write-Host 'Go channel schema, exact source, preview consent and marker tests passed.'
