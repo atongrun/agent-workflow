@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func doctorFixture(local string) doctorPlatform {
@@ -36,7 +37,7 @@ func doctorSnapshot(t *testing.T, root string) map[string]string {
 		if err != nil {
 			return err
 		}
-		st, err := d.Info()
+		st, err := os.Lstat(p)
 		if err != nil {
 			return err
 		}
@@ -178,5 +179,68 @@ func TestDoctorOutputFailure(t *testing.T) {
 		if err := Run(args, nil, doctorBrokenWriter{}); err == nil {
 			t.Fatal("output failure hidden", args)
 		}
+	}
+}
+
+// Preserve inventory, mode, mtime and byte comparisons. Windows DirEntry.Info
+// may be cached from enumeration; doctorSnapshot now stats each current path.
+func TestDoctorSnapshotDetectsChanges(t *testing.T) {
+	for _, kind := range []string{"same-size-content", "file-mtime", "directory-mtime", "create", "delete"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			file := filepath.Join(root, "record")
+			dir := filepath.Join(root, "directory")
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte("old"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before := doctorSnapshot(t, root)
+			stat := func(p string) os.FileInfo {
+				info, err := os.Lstat(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return info
+			}
+			fst, rst, dst := stat(file), stat(root), stat(dir)
+			switch kind {
+			case "same-size-content":
+				if err := os.WriteFile(file, []byte("new"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(file, fst.ModTime(), fst.ModTime()); err != nil {
+					t.Fatal(err)
+				}
+			case "file-mtime":
+				when := fst.ModTime().Add(-2 * time.Hour)
+				if err := os.Chtimes(file, when, when); err != nil {
+					t.Fatal(err)
+				}
+			case "directory-mtime":
+				when := dst.ModTime().Add(-2 * time.Hour)
+				if err := os.Chtimes(dir, when, when); err != nil {
+					t.Fatal(err)
+				}
+			case "create":
+				if err := os.WriteFile(filepath.Join(root, "added"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(root, rst.ModTime(), rst.ModTime()); err != nil {
+					t.Fatal(err)
+				}
+			case "delete":
+				if err := os.Remove(file); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(root, rst.ModTime(), rst.ModTime()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if reflect.DeepEqual(before, doctorSnapshot(t, root)) {
+				t.Fatal("snapshot failed to detect", kind)
+			}
+		})
 	}
 }

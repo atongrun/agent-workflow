@@ -16,9 +16,10 @@ import (
 // Doctor intentionally uses metadata only. It does not call lifecycle locks,
 // configuration loaders, DPAPI, runtime control, or any mutating helper.
 type doctorFinding struct {
-	Check  string `json:"check"`
-	Status string `json:"status"`
-	Detail string `json:"detail"`
+	Check  string             `json:"check"`
+	Status string             `json:"status"`
+	Detail string             `json:"detail"`
+	ACL    *doctorACLMetadata `json:"acl,omitempty"`
 }
 type doctorReport struct {
 	Schema   int             `json:"schema"`
@@ -29,6 +30,7 @@ type doctorPlatform struct {
 	localAppData func() (string, error)
 	physical     func(string) (string, error)
 	acl          func(string) (string, error)
+	aclDetails   func(string) doctorACLMetadata
 	reparse      func(string) error
 }
 
@@ -51,6 +53,9 @@ func runDoctor(args []string, out io.Writer) error {
 	for _, finding := range report.Findings {
 		// Quote OS-supplied text: paths cannot inject terminal controls or lines.
 		fmt.Fprintf(&text, "%s: %s %q\n", finding.Check, finding.Status, finding.Detail)
+		if finding.ACL != nil {
+			renderDoctorACL(&text, finding.ACL)
+		}
 	}
 	fmt.Fprintln(&text, "This snapshot does not establish job idleness, credential validity, or permission to repair. No install, update, or recovery was performed.")
 	_, err := io.Copy(out, &text)
@@ -60,7 +65,7 @@ func runDoctor(args []string, out io.Writer) error {
 func inspectDoctor(local string, platform doctorPlatform, lookPath func(string) (string, error)) doctorReport {
 	r := doctorReport{Schema: 1}
 	add := func(check, status, detail string) {
-		r.Findings = append(r.Findings, doctorFinding{check, status, detail})
+		r.Findings = append(r.Findings, doctorFinding{Check: check, Status: status, Detail: detail})
 	}
 	add("process", "observed", runtime.GOOS+"/"+runtime.GOARCH+"; process architecture only")
 	status, detail := platform.context()
@@ -139,11 +144,17 @@ func inspectDoctor(local string, platform doctorPlatform, lookPath func(string) 
 		} else {
 			add(label+".physical", "observed", actual)
 		}
-		metadata, err := platform.acl(path)
-		if err != nil {
-			add(label+".acl", "unknown", metadata)
+		if platform.aclDetails != nil {
+			metadata := platform.aclDetails(path)
+			status, detail := summarizeDoctorACL(&metadata)
+			r.Findings = append(r.Findings, doctorFinding{Check: label + ".acl", Status: status, Detail: detail, ACL: &metadata})
 		} else {
-			add(label+".acl", "private", metadata)
+			metadata, err := platform.acl(path)
+			if err != nil {
+				add(label+".acl", "unknown", metadata)
+			} else {
+				add(label+".acl", "private", metadata)
+			}
 		}
 	}
 	add("configuration-and-runtime", "unknown", "file contents, configured external credential paths, runtime health and job states are not inspected")

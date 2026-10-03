@@ -31,3 +31,22 @@ func TestDoctorNativeMetadataReadOnly(t *testing.T) {
 	}
 	t.Logf("native metadata observations: %+v", report.Findings)
 }
+
+// ACL/control equality complements, rather than replaces, the existing
+// filesystem inventory/mode/mtime/content assertion.
+func TestDoctorNativeACLMetadataReadOnly(t *testing.T) {
+	local := t.TempDir()
+	root := filepath.Join(local, "AWF")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	before := inspectDoctorACL(root)
+	if !before.Complete {
+		t.Fatalf("native ACL metadata incomplete: %+v", before)
+	}
+	inspectDoctor(local, nativeDoctorPlatform(), doctorNoCommand)
+	after := inspectDoctorACL(root)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("native descriptor metadata changed: before=%+v after=%+v", before, after)
+	}
+}

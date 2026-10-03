@@ -25,16 +25,8 @@ func nativeDoctorPlatform() doctorPlatform {
 		},
 		localAppData: doctorKnownLocalAppData,
 		physical:     finalInstallerPath,
-		acl: func(path string) (string, error) {
-			if err := checkPrivatePath(path); err != nil {
-				// The validator inspects ownership and ACE metadata only. Do not
-				// The errors below contain only metadata validation reasons/API
-				// error codes, never credential bytes or parsed file contents.
-				return "private ACL policy not established: " + err.Error(), err
-			}
-			return "owner and full-control DACL satisfy current-user/SYSTEM-only policy", nil
-		},
-		reparse: rejectReparsePath,
+		aclDetails:   inspectDoctorACL,
+		reparse:      rejectReparsePath,
 	}
 }
 

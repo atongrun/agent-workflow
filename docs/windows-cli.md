@@ -595,8 +595,8 @@ reports process package context and architecture, Windows known-folder agreement
 executable search results, and a fixed installation/configuration/runtime/default
 credential marker inventory. Existing paths are checked for reparse boundaries,
 physical-path agreement and the existing current-user/SYSTEM-only ownership/DACL
-policy. ACL policy failure or unavailable inspection is explicitly unknown, with
-its metadata validation reason. Missing and malformed roots remain reportable.
+policy. Fully observed policy failures are mismatches; unavailable or incomplete
+inspection is explicitly unknown, with the observed metadata reasons. Missing and malformed roots remain reportable.
 
 Doctor never reads file contents (including configuration, pointers, runtime
 secrets or DPAPI credentials), decrypts credentials, creates directories/locks,
@@ -617,3 +617,36 @@ separately identified ordinary/packaged host observations. Missing, redirected,
 broad-ACL and inaccessible disposable roots must remain unchanged. Native
 junction/reparse fixtures remain required. Portable seams and cross-compilation
 are not native acceptance. No install, ACL repair or recovery apply is provided.
+
+### Complete read-only ACL metadata (local source extension)
+
+The doctor ACL finding includes an optional structured `acl` object in schema 1
+and matching human-readable details. It reports owner/current-process-user SIDs,
+DACL absence/null/presence, protection/defaulting/control flags, declared ACE count
+and each bounded entry's index, type, size, raw flags, inheritance/type-specific
+flag names, mask and SID when that layout is understood. Account names are not
+resolved. Unknown layouts or incomplete reads stay explicit and do not discard
+later entries with valid boundaries; a corrupt boundary stops enumeration rather
+than guessing. Callback/resource payloads are neither interpreted nor displayed.
+
+`complete` means the requested metadata was observed and understood, not effective
+access, trustworthy installation identity, job idleness or repair authorization.
+The existing current-user/SYSTEM-only policy is summarized with every observed
+issue. A complete mismatch uses `mismatch`; unavailable/incomplete metadata uses
+`unknown`. Inherited ordinary ALLOW rules remain evaluated by the existing policy;
+protection is reported, not introduced as a new requirement. Lifecycle permission
+enforcement is unchanged.
+
+The Windows collector reads one OWNER|DACL security-descriptor allocation per
+path and uses its control/DACL metadata before freeing it. The current-user SID
+comes from query-only process-token access, without account-name/profile lookup
+or changing thread impersonation. Physical-path and ACL observations are still
+separate advisory snapshots; concurrent replacement can change what a name refers
+to, and this report must not authorize filesystem mutations.
+
+The zero-write fixture uses a fresh `os.Lstat` for every enumerated path instead
+of Windows `DirEntry.Info`'s cached enumeration metadata. It retains exact
+inventory, mode, mtime and content comparisons with no tolerance. Regression cases
+must still detect same-size content edits, file/directory mtime changes, creation
+and deletion. Native ACL/control before/after equality is a separate additional
+assertion. This extension requires its own native Windows fixture acceptance.
