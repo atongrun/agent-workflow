@@ -19,15 +19,15 @@ foreach ($pin in @(' ', 'bad', ('a' * 63), ('g' * 64), (('a' * 64) + "`n"))) {
 $manifestPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'distribution\go-v1.json'
 $text = [IO.File]::ReadAllText($manifestPath)
 $published = Read-AwfChannelManifest $text
-Assert-True ($published.version -ceq 'v1.0.0-rc.3') 'distribution selects published RC3'
-Assert-True ($published.cliProtocol -ceq '2') 'published metadata remains unchanged; it is not a fresh-install release'
-Assert-True ($published.sourceCommit -ceq 'c251c9de639352b529f4705fcd1d2b4881cd20bf') 'distribution pins exact RC3 source'
-Assert-True ($published.windowsAMD64SHA256 -ceq 'e8610c429dfdfb791ac647a56d7992eda82e4cdbe13bdc866e646e024f49ea22') 'distribution pins published AMD64 bytes'
-Assert-True ($published.windowsARM64SHA256 -ceq '767eaff26618d2a5c8d86a7aa5bc04e27925537f62eb67575eff51fd06a370f4') 'distribution pins published ARM64 bytes'
+Assert-True ($published.version -ceq 'v1.0.0-rc.4') 'distribution selects published RC4'
+Assert-True ($published.cliProtocol -ceq '3') 'published fresh installer requires protocol 3'
+Assert-True ($published.sourceCommit -ceq '678b36134fed4209ac22c86e5646f0b003dc5395') 'distribution pins exact RC4 source'
+Assert-True ($published.windowsAMD64SHA256 -ceq 'a2702ba60b9b70ff1617a7ff2728548c50447db24cdbe90f322f90d9f351fe01') 'distribution pins published AMD64 bytes'
+Assert-True ($published.windowsARM64SHA256 -ceq 'f6c0be700035ebe7fe0503cf0a1754e481b233738c8bbcabad9bebbf0c335815') 'distribution pins published ARM64 bytes'
 
-# Fresh install must refuse the existing published channel rather than execute
-# an incompatible historical binary. This fixture does not promote a release.
-Assert-Rejected { Assert-AwfFreshChannel $published } 'unpublished fresh installer fails closed'
+# The published RC4 channel declares the reviewed fresh-install capability.
+# Historical protocol refusal remains covered by the synthetic fixtures below.
+Assert-AwfFreshChannel $published
 # Synthetic protocol-3 metadata for parser/source fixtures only.
 $text = @'
 {
