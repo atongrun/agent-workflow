@@ -19,13 +19,13 @@ foreach ($pin in @(' ', 'bad', ('a' * 63), ('g' * 64), (('a' * 64) + "`n"))) {
 $manifestPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'distribution\go-v1.json'
 $text = [IO.File]::ReadAllText($manifestPath)
 $published = Read-AwfChannelManifest $text
-Assert-True ($published.version -ceq 'v1.0.0-rc.6') 'distribution selects published RC6'
+Assert-True ($published.version -ceq 'v1.0.0-rc.7') 'distribution selects published RC7'
 Assert-True ($published.cliProtocol -ceq '3') 'published fresh installer requires protocol 3'
-Assert-True ($published.sourceCommit -ceq '53f4906f453dbe5cb178ea18bcb5239d5d605427') 'distribution pins exact RC6 source'
-Assert-True ($published.windowsAMD64SHA256 -ceq '0d590b6616096bb16b5ca404810059d19687e5d5415bcef9a2696e9fd82ea174') 'distribution pins published AMD64 bytes'
-Assert-True ($published.windowsARM64SHA256 -ceq '5472a4930bb2c9bc889da92ad4c070241c55737d57f63612ce4a8df78db23bcc') 'distribution pins published ARM64 bytes'
+Assert-True ($published.sourceCommit -ceq 'c26c350ffa02614dd66cd106ae49884352c1f05b') 'distribution pins exact RC7 source'
+Assert-True ($published.windowsAMD64SHA256 -ceq 'ef5763a45a3f3eafc0bb26864d44acf7014fa91baeafd79fef26a784b7f70fd6') 'distribution pins published AMD64 bytes'
+Assert-True ($published.windowsARM64SHA256 -ceq 'eb66d8d9c65b65036c8edf3326588e98575c02d7ae5c3ae9f22f125f554a944b') 'distribution pins published ARM64 bytes'
 
-# The published RC6 channel declares the reviewed fresh-install capability.
+# The published RC7 channel declares the reviewed fresh-install capability.
 # Historical protocol refusal remains covered by the synthetic fixtures below.
 Assert-AwfFreshChannel $published
 # Synthetic protocol-3 metadata for parser/source fixtures only.
