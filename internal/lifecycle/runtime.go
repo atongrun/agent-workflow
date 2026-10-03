@@ -165,7 +165,8 @@ func startWith(root string, out io.Writer, command func(string) *exec.Cmd, wait 
 	if e := noPendingStartup(root); e != nil {
 		return e
 	}
-	if _, e := loadConfig(root); e != nil {
+	config, e := loadConfig(root)
+	if e != nil {
 		return e
 	}
 	p, e := current(root)
@@ -184,6 +185,12 @@ func startWith(root string, out io.Writer, command func(string) *exec.Cmd, wait 
 	} else if !os.IsNotExist(e) {
 		return e
 	}
+	// Metadata only: do not decrypt credentials in the parent or change ACLs.
+	if st, err := os.Lstat(config.CredentialFile); os.IsNotExist(err) {
+		return errors.New("paired node credential is missing; run awf pair before awf start")
+	} else if err != nil || !st.Mode().IsRegular() {
+		return errors.New("paired node credential cannot be inspected safely; check the configured credential path without replacing an existing identity")
+	}
 	guard, e := lockFile(filepath.Join(root, "runtime.lock"))
 	if e != nil {
 		return errors.New("managed runtime is starting or unverified; do not retry until its state is resolved")
@@ -197,6 +204,8 @@ func startWith(root string, out io.Writer, command func(string) *exec.Cmd, wait 
 		return e
 	}
 	c := command(binary(root, p.Version))
+	var diagnostic startupDiagnostic
+	c.Stderr = &diagnostic
 	detach(c)
 	// No credentials or shell expressions appear in child arguments.
 	c.Env = append(cleanEnvironment(os.Environ()), "AWF_LAUNCH_ID="+id)
@@ -210,7 +219,7 @@ func startWith(root string, out io.Writer, command func(string) *exec.Cmd, wait 
 	for time.Now().Before(deadline) {
 		select {
 		case <-done:
-			return errors.New("AWF runtime failed to start; verify native OpenCode, paired credential, configured interfaces, and exclusive state access")
+			return diagnostic.failure()
 		default:
 		}
 		if r, e := readRuntime(root); e == nil && r.Version == p.Version && r.LaunchID == id && control(r, "GET", "/health") == nil && noPendingStartup(root) == nil {
@@ -220,6 +229,46 @@ func startWith(root string, out io.Writer, command func(string) *exec.Cmd, wait 
 		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("startup outcome is unknown; inspect awf start before retrying or updating")
+}
+
+// Capture bounded child diagnostics, but never echo arbitrary stderr, paths,
+// provider output, or credentials. Only exact known AWF errors are mapped.
+type startupDiagnostic struct {
+	text     string
+	overflow bool
+}
+
+func (d *startupDiagnostic) Write(p []byte) (int, error) {
+	n := len(p)
+	left := 4096 - len(d.text)
+	if len(p) > left {
+		d.overflow = true
+		p = p[:left]
+	}
+	d.text += string(p)
+	return n, nil
+}
+
+func (d *startupDiagnostic) failure() error {
+	if !d.overflow {
+		switch strings.TrimSpace(d.text) {
+		case "native OpenCode port is in use; refusing to adopt or stop another process":
+			return errors.New("native OpenCode port 127.0.0.1:4096 is unavailable; resolve the conflicting listener before retrying awf start; no existing process was adopted or stopped")
+		case "paired node credential is missing or unreadable; run awf pair first":
+			return errors.New("paired node credential is missing or unreadable; check the configured path and run awf pair if no identity exists")
+		case "paired credential directory must be private to the current user and SYSTEM, with no reparse point", "paired credential file must be private to the current user and SYSTEM, with no reparse point":
+			return errors.New("paired credential privacy checks failed; inspect the configured credential path and permissions; existing credentials were not replaced")
+		case "cannot decrypt paired node credential as this Windows user":
+			return errors.New("cannot decrypt paired node credential as this Windows user; use the Windows account that paired this node; existing identity was preserved")
+		case "invalid DPAPI credential size", "paired credential has invalid format":
+			return errors.New("paired credential is invalid; preserve the existing identity and use explicit recovery rather than retrying pairing blindly")
+		case "cannot start the configured native OpenCode executable", "native OpenCode exited during startup", "native OpenCode did not become healthy":
+			return errors.New("native OpenCode failed to start or become healthy; verify the configured native .exe and its provider setup before retrying awf start")
+		case "cannot bind configured node interface":
+			return errors.New("cannot bind configured node interface; verify that the configured IP belongs to this Windows machine and its port is available")
+		}
+	}
+	return errors.New("AWF runtime failed to start; verify native OpenCode, paired credential, configured interfaces, and exclusive state access")
 }
 func stop(root string, out io.Writer) error {
 	if e := noPendingStartup(root); e != nil {

@@ -26,6 +26,10 @@ func TestUnobservedChildBlocksStopUpdateAndDuplicateStart(t *testing.T) {
 	if e := writeJSON(filepath.Join(root, "current.json"), Pointer{Version: "v1.2.3"}); e != nil {
 		t.Fatal(e)
 	}
+	if _, e := managedDirectory(root, "credentials", "windows-node"); e != nil {
+		t.Fatal(e)
+	}
+	mustWriteFixture(t, c.CredentialFile, []byte("inert credential fixture, never decrypted"))
 	t.Setenv("LIFECYCLE_DELAY_FIXTURE", "1")
 	e := startWith(root, io.Discard, func(string) *exec.Cmd { return exec.Command(os.Args[0], "-test.run=^TestStartupDelayFixture$") }, 10*time.Millisecond)
 	if e == nil || !strings.Contains(e.Error(), "unknown") {

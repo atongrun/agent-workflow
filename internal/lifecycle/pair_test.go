@@ -64,7 +64,12 @@ func TestPairReviewRecoveryAndStatus(t *testing.T) {
 			writes, sends := 0, 0
 			saved := ""
 			ops := pairOperations{
-				read: func(string) (string, error) { return existing, nil },
+				read: func(string) (string, error) {
+					if !strings.Contains(out.String(), "Before any PAIR confirmation") || !strings.Contains(out.String(), "including --status") {
+						t.Fatal("credential access was not explained before reading")
+					}
+					return existing, nil
+				},
 				write: func(_, p, token string) error {
 					writes++
 					saved = token
@@ -86,6 +91,9 @@ func TestPairReviewRecoveryAndStatus(t *testing.T) {
 					return e
 				},
 				remote: func(_ context.Context, host string, req pairRequest) (pairResponse, error) {
+					if !strings.Contains(out.String(), "Inspection does not send the node token") {
+						t.Fatal("inspection boundary was not explained before SSH")
+					}
 					if host != "fixture-host" || req.Path != "/private/node.env" || !pairProofRE.MatchString(req.Challenge) {
 						t.Fatal("wrong target/challenge")
 					}
@@ -146,6 +154,9 @@ func TestPairReviewRecoveryAndStatus(t *testing.T) {
 				}
 			}
 			if tc.wantSend {
+				if strings.Contains(text, "creation/access") || !strings.Contains(text, "credential creation or reuse and transfer") {
+					t.Fatal("PAIR confirmation misrepresents prior credential access")
+				}
 				for _, s := range []string{c.CredentialFile, "fixture-host:/private/node.env", "Type PAIR", "known-host key"} {
 					if !strings.Contains(text, s) {
 						t.Errorf("confirmation omitted %s", s)

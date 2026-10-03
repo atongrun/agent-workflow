@@ -110,6 +110,7 @@ func pairWith(root string, c Config, o pairOptions, r *bufio.Reader, out io.Writ
 	if e = validatePairLocalPath(root, c.CredentialFile); e != nil {
 		return e
 	}
+	fmt.Fprintln(out, "Before any PAIR confirmation, this command (including --status) reads an existing local DPAPI credential and checks the remote env-file over SSH using a random challenge. Inspection does not send the node token or change either credential file. PAIR authorizes only the reviewed credential creation or reuse and token delivery.")
 	var token string
 	_, e = os.Lstat(c.CredentialFile)
 	local := e == nil
@@ -166,7 +167,7 @@ func pairWith(root string, c Config, o pairOptions, r *bufio.Reader, out io.Writ
 		action = "Reuse the existing CurrentUser DPAPI identity without changing it"
 	}
 	fmt.Fprintf(out, "\n%s.\nLocal credential: %s\nRemote destination: %s:%s\nThe node token will be sent only over SSH stdin and saved as AWF_WINDOWS_TOKEN in a new mode-0600 file.\nThe SSH alias uses your existing SSH configuration and trusted known-host key. Verify that alias identifies your intended control Host and account.\nNo overwrite, rotation, Host config change, service start, firewall change, or OpenCode credential sharing is performed.\n", action, c.CredentialFile, o.host, o.remote)
-	answer, e := pairInput(r, out, "Authorize this exact credential creation/access and transfer? Type PAIR to continue: ")
+	answer, e := pairInput(r, out, "Authorize this exact credential creation or reuse and transfer? Type PAIR to continue: ")
 	if e != nil {
 		return e
 	}
