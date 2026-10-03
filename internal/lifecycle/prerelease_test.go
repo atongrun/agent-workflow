@@ -189,13 +189,14 @@ func TestReleaseRCMetadataAndChannelSafety(t *testing.T) {
 	}
 }
 
-func TestWindowsUnapprovedRCBootstrapLeavesNoRoot(t *testing.T) {
+func TestWindowsLegacyBootstrapLeavesFixtureRootAbsent(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("native CLI dispatch requires Windows")
 	}
 	base := t.TempDir()
-	t.Setenv("LOCALAPPDATA", base)
-	if e := Run([]string{"_install", "--version", "v1.0.0-rc.1"}, strings.NewReader(""), io.Discard); e == nil {
+	// Exercise the disabled internal entry against an explicit disposable path.
+	// LOCALAPPDATA no longer selects the production installation root.
+	if e := install(filepath.Join(base, "AWF"), []string{"--version", "v1.0.0-rc.1"}, io.Discard); e == nil {
 		t.Fatal("native bootstrap accepted RC without opt-in")
 	}
 	if _, e := os.Stat(filepath.Join(base, "AWF")); !os.IsNotExist(e) {

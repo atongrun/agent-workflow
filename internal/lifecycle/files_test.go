@@ -183,16 +183,20 @@ func TestReadBoundedAndStrictPointerJSON(t *testing.T) {
 	}
 }
 
-func TestDefaultRootRejectsRelativeOrMissingEnvironment(t *testing.T) {
+func TestDefaultRootUsesProgramsKnownFolder(t *testing.T) {
 	for _, value := range []string{"", "relative"} {
-		t.Setenv("LOCALAPPDATA", value)
-		if _, err := DefaultRoot(); err == nil {
-			t.Fatalf("unsafe root accepted: %q", value)
+		if _, err := rootFromProgramsFolder(value, nil); err == nil {
+			t.Fatalf("unsafe known folder accepted: %q", value)
 		}
 	}
-	root := t.TempDir()
-	t.Setenv("LOCALAPPDATA", root)
-	if got, err := DefaultRoot(); err != nil || got != filepath.Join(root, "AWF") {
-		t.Fatalf("default root = %q, %v", got, err)
+	programs := filepath.Join(t.TempDir(), "Programs")
+	if got, err := rootFromProgramsFolder(programs, nil); err != nil || got != filepath.Join(programs, "AWF") {
+		t.Fatalf("default root=%q, %v", got, err)
+	}
+	if _, err := rootFromProgramsFolder(programs, os.ErrPermission); err == nil {
+		t.Fatal("known folder failure ignored")
+	}
+	if _, err := os.Stat(programs); !os.IsNotExist(err) {
+		t.Fatal("planning created Programs")
 	}
 }

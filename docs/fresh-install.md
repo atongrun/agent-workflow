@@ -4,6 +4,8 @@
 
 This is a source implementation and acceptance plan, not a published product.
 No live installation or real Windows ACL/PATH acceptance is claimed.
+This Programs-root correction requires its own native acceptance; any earlier
+layout's acceptance does not establish that this destination works on Windows.
 The unchanged Go channel selects protocol-2 RC3; the fresh bootstrap requires
 protocol 3 and stops before executing that historical installer.
 Publication, channel promotion and native Windows acceptance remain separate.
@@ -41,11 +43,26 @@ advanced pins, verification rules, initialization, and runtime behavior.
 
 ## Fresh means absent
 
-Both entry points require `%LOCALAPPDATA%\AWF` to be completely absent. They
+Both entry points resolve the actual Windows `FOLDERID_UserProgramFiles` known
+folder with `SHGetKnownFolderPath` and install its `AWF` child. This standard
+per-user program location is normally `%LOCALAPPDATA%\Programs\AWF`; the API's
+actual result is authoritative, with no LocalAppData fallback or path override.
+See Microsoft's [known-folder reference](https://learn.microsoft.com/en-us/windows/win32/shell/knownfolderid).
+Planning uses `KF_FLAG_DONT_VERIFY`, never `KF_FLAG_CREATE`, so an absent Programs
+directory can be resolved without creating it. Bootstrap validates Programs, or
+its existing direct parent when Programs is absent, and leaves creation to Go.
+Only after consent and payload verification may native installation create the
+missing Programs directory with ordinary inherited permissions. It rechecks the
+parent's physical location and safety and never assigns or repairs Programs ACLs.
+
+Both entry points require that resolved `Programs\AWF` root to be completely absent. They
 refuse a healthy existing install, empty directory, credentials-only root,
 partial install, file, junction, symlink, redirected or unreadable root.
 No existing root is adopted, migrated, overwritten, repaired, or recursively
 repermissioned. There is no force flag or historical-installer fallback.
+The historical `%LOCALAPPDATA%\AWF` tree is outside this product's scope. It is
+neither detected nor migrated, adopted, modified, or used as a fallback; its
+presence does not block a fresh install at the resolved Programs root.
 
 A healthy installation uses `awf update`. A partial or unknown installation
 requires explicit diagnosis outside this fresh-install operation. Do not delete
@@ -112,8 +129,9 @@ packaged-app shell as an acceptance shortcut.
 2. Independently identify ordinary and packaged hosts and run the read-only
    `test_install_identity.ps1 -ExpectedIdentity NoPackage` or `Packaged` gate.
    NO_PACKAGE alone is not evidence of an unredirected installation
-3. Run native Go fresh-root/ACL/path fixtures, including an ordinary LocalAppData
-   parent with its real inherited ACL. Observe the created root's actual owner,
+3. Run native Go fresh-root/ACL/path fixtures with both existing and absent
+   Programs folders and their real inherited ACLs. Confirm read-only planning and
+   declined consent create neither Programs nor AWF. Observe the root's actual owner,
    DACL, inheritance, and descendants. Cross-compilation cannot prove these facts
 4. Verify absent-root installation, exact launcher/version identity, final physical
    paths, protected program permissions, current-user/SYSTEM-only private data,
@@ -121,7 +139,9 @@ packaged-app shell as an acceptance shortcut.
    and new-terminal command resolution on AMD64 and ARM64 where available
 5. Verify refusal with unchanged existing empty, partial, credentials-only, file,
    linked, redirected, and unreadable roots; race a competing root creation and
-   check that no existing tree's data or ACL is changed
+   check that no existing tree's data or ACL is changed. Confirm an unrelated
+   historical `%LOCALAPPDATA%\AWF` tree is ignored and untouched; fail closed for
+   an unavailable known folder, unsafe Programs, or missing direct parent
 6. Verify mismatched/unknown channel protocol, historical binary capability,
    source/tag/hash disagreement, malicious archive, preview decline/EOF, native
    failure, and PATH failure. No false success or fallback installation may occur

@@ -23,22 +23,23 @@ func nativeDoctorPlatform() doctorPlatform {
 				return "unknown", fmt.Sprintf("package identity API status %d", status)
 			}
 		},
-		localAppData: doctorKnownLocalAppData,
-		physical:     finalInstallerPath,
-		aclDetails:   inspectDoctorACL,
-		reparse:      rejectReparsePath,
+		programsFolder: knownProgramsFolder,
+		physical:       finalInstallerPath,
+		aclDetails:     inspectDoctorACL,
+		reparse:        rejectReparsePath,
 	}
 }
 
-func doctorKnownLocalAppData() (string, error) {
-	// SHGetKnownFolderPath without KF_FLAG_CREATE never creates the directory.
-	id := syscall.GUID{Data1: 0xF1B32785, Data2: 0x6FBA, Data3: 0x4FCF, Data4: [8]byte{0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91}}
+func knownProgramsFolder() (string, error) {
+	// FOLDERID_UserProgramFiles; DONT_VERIFY resolves an absent Programs folder
+	// without creating it. Install creates it only after consent.
+	id := syscall.GUID{Data1: 0x5CD7AEE2, Data2: 0x2219, Data3: 0x4A67, Data4: [8]byte{0xB8, 0x5D, 0x6C, 0x9C, 0xE1, 0x56, 0x60, 0xCB}}
 	var path *uint16
 	proc := syscall.NewLazyDLL("shell32.dll").NewProc("SHGetKnownFolderPath")
 	if err := proc.Find(); err != nil {
 		return "", err
 	}
-	r, _, _ := proc.Call(uintptr(unsafe.Pointer(&id)), 0, 0, uintptr(unsafe.Pointer(&path)))
+	r, _, _ := proc.Call(uintptr(unsafe.Pointer(&id)), 0x4000, 0, uintptr(unsafe.Pointer(&path)))
 	if r != 0 || path == nil {
 		return "", errors.New("known folder unavailable")
 	}

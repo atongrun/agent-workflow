@@ -44,7 +44,11 @@ The fresh Windows product uses a one-line ordinary-terminal bootstrap, followed
 by `awf init`, `awf start`, `awf stop`, and `awf update`. Pairing and login
 autostart remain separately confirmed. Installation preserves ordinary per-user
 program ACLs; credentials, runtime tokens, and job state remain private.
-Existing roots are never migrated or repaired.
+The sole root is the Windows `FOLDERID_UserProgramFiles` known folder's `AWF`
+child, normally `%LOCALAPPDATA%\Programs\AWF`. Planning never creates Programs;
+native installation may create it with inherited permissions after consent.
+Existing destination roots are never migrated or repaired. The historical
+`%LOCALAPPDATA%\AWF` tree is ignored and untouched, with no fallback to it.
 
 **Local source only, not yet published or natively accepted.** The unchanged
 Go channel selects protocol-2 RC3, while this fresh product requires protocol 3.

@@ -7,7 +7,7 @@ import (
 )
 
 func nativeFreshInstallOps() freshInstallOps {
-	return freshInstallOps{context: checkInstallerContext, knownFolder: doctorKnownLocalAppData, architecture: nativeInstallArchitecture, path: checkInstallerPath, reparse: rejectReparsePath, checkRoot: validateInstallRoot, finish: finishInstall, registerPath: registerInstallPath, previewPath: installPathPreview}
+	return freshInstallOps{context: checkInstallerContext, knownFolder: knownProgramsFolder, architecture: nativeInstallArchitecture, path: checkInstallerPath, reparse: rejectReparsePath, checkParent: checkProgramPath, checkRoot: validateInstallRoot, finish: finishInstall, registerPath: registerInstallPath, previewPath: installPathPreview}
 }
 func nativeInstallArchitecture() (string, error) {
 	var processMachine, nativeMachine uint16

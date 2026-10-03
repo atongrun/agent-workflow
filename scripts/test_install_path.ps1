@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 function Assert-PathText([string] $Actual, [string] $Expected, [string] $Label) {
     if ($Actual -cne $Expected) { throw "TEST FAILED: $Label`nExpected: $Expected`nActual: $Actual" }
 }
-$bin = 'C:\Users\Example\AppData\Local\AWF\bin'
+$bin = 'C:\Users\Example\AppData\Local\Programs\AWF\bin'
 $other = 'C:\Python\Scripts;C:\Windows\System32'
 foreach ($case in @(
     @{ Label = 'missing'; Before = $other; After = "$bin;$other" },
@@ -31,9 +31,9 @@ foreach ($case in @(
 
 # Read an existing environment variable only. No fixture changes environment.
 if ($env:LOCALAPPDATA) {
-    $environmentBin = [Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%\AWF\bin')
+    $environmentBin = [Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%\Programs\AWF\bin')
     $expectedBin = ConvertTo-AwfCanonicalWindowsPath $environmentBin
-    $withVariable = 'C:\Python\Scripts;"%LOCALAPPDATA%\AWF\bin\";C:\Windows\System32'
+    $withVariable = 'C:\Python\Scripts;"%LOCALAPPDATA%\Programs\AWF\bin\";C:\Windows\System32'
     Assert-PathText (Move-AwfPathEntryFirst $withVariable $environmentBin) ($expectedBin + ';' + $other) 'quoted environment equivalent'
 }
 

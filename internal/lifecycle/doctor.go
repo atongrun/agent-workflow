@@ -26,12 +26,12 @@ type doctorReport struct {
 	Findings []doctorFinding `json:"findings"`
 }
 type doctorPlatform struct {
-	context      func() (string, string)
-	localAppData func() (string, error)
-	physical     func(string) (string, error)
-	acl          func(string) (string, error)
-	aclDetails   func(string) doctorACLMetadata
-	reparse      func(string) error
+	context        func() (string, string)
+	programsFolder func() (string, error)
+	physical       func(string) (string, error)
+	acl            func(string) (string, error)
+	aclDetails     func(string) doctorACLMetadata
+	reparse        func(string) error
 }
 
 func runDoctor(args []string, out io.Writer) error {
@@ -44,7 +44,9 @@ func runDoctor(args []string, out io.Writer) error {
 	if f.NArg() != 0 {
 		return errors.New("usage: awf doctor [--json]")
 	}
-	report := inspectDoctor(os.Getenv("LOCALAPPDATA"), nativeDoctorPlatform(), exec.LookPath)
+	platform := nativeDoctorPlatform()
+	programs, _ := platform.programsFolder()
+	report := inspectDoctor(programs, platform, exec.LookPath)
 	if *asJSON {
 		return json.NewEncoder(out).Encode(report)
 	}
@@ -70,11 +72,11 @@ func inspectDoctor(local string, platform doctorPlatform, lookPath func(string) 
 	add("process", "observed", runtime.GOOS+"/"+runtime.GOARCH+"; process architecture only")
 	status, detail := platform.context()
 	add("package-context", status, detail)
-	known, err := platform.localAppData()
+	known, err := platform.programsFolder()
 	if err != nil {
 		add("profile", "unknown", "Windows known-folder lookup unavailable")
 	} else if local == "" || !filepath.IsAbs(local) || validateInstallerPath(filepath.Clean(known), filepath.Clean(local), nil) != nil {
-		add("profile", "mismatch", "LOCALAPPDATA differs from the Windows known folder")
+		add("profile", "mismatch", "Programs location differs from the Windows per-user Programs known folder")
 	} else {
 		add("profile", "observed", known)
 	}
@@ -90,7 +92,7 @@ func inspectDoctor(local string, platform doctorPlatform, lookPath func(string) 
 	}
 	add("shell-resolution", "unknown", "parent shell aliases, functions and future-shell PATH are not inspected")
 	if local == "" || !filepath.IsAbs(local) {
-		add("root", "unknown", "LOCALAPPDATA is missing or not absolute")
+		add("root", "unknown", "Windows per-user Programs known folder is missing or not absolute")
 		return r
 	}
 	root := filepath.Join(local, "AWF")

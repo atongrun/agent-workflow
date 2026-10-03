@@ -25,6 +25,7 @@ type freshInstallOps struct {
 	architecture func() (string, error)
 	path         func(string, bool) error
 	reparse      func(string) error
+	checkParent  func(string) error
 	checkRoot    func(string) error
 	finish       func(string, string, ChannelSelection, io.Writer) error
 	registerPath func(string) error
@@ -36,7 +37,11 @@ func publicInstall(args []string, in io.Reader, out io.Writer) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("awf install requires native Windows")
 	}
-	return publicInstallWith(args, in, out, os.Getenv("LOCALAPPDATA"), interactiveUpdateInput(in), releaseClient(), nativeFreshInstallOps())
+	programs, err := knownProgramsFolder()
+	if err != nil {
+		return err
+	}
+	return publicInstallWith(args, in, out, programs, interactiveUpdateInput(in), releaseClient(), nativeFreshInstallOps())
 }
 
 func publicInstallWith(args []string, in io.Reader, out io.Writer, local string, interactive bool, client *http.Client, ops freshInstallOps) (retErr error) {
@@ -69,10 +74,10 @@ func publicInstallWith(args []string, in io.Reader, out io.Writer, local string,
 	}
 	known, err := ops.knownFolder()
 	if err != nil {
-		return errors.New("cannot establish the Windows LocalAppData known folder")
+		return errors.New("cannot establish the Windows per-user Programs known folder")
 	}
 	if local == "" || strings.IndexFunc(local, unicode.IsControl) >= 0 || !filepath.IsAbs(local) || validateInstallerPath(known, filepath.Clean(local), nil) != nil {
-		return errors.New("LOCALAPPDATA must match the current user's Windows known folder; no changes made")
+		return errors.New("installation parent must match the current user's Programs known folder; no changes made")
 	}
 	arch, err := ops.architecture()
 	if err != nil {
@@ -109,6 +114,11 @@ func publicInstallWith(args []string, in io.Reader, out io.Writer, local string,
 	}
 	if _, err = fmt.Fprintf(out, "Install AWF %s (%s), publisher channel go-v1, at %q.\n", target.Version, arch, root); err != nil {
 		return err
+	}
+	if _, statErr := os.Lstat(filepath.Dir(root)); os.IsNotExist(statErr) {
+		if _, err = fmt.Fprintln(out, "The standard per-user Programs directory will be created with inherited permissions."); err != nil {
+			return err
+		}
 	}
 	if !*noPath {
 		if _, err = fmt.Fprintln(out, "This adds the verified AWF bin directory first in your user PATH; other entries are preserved. New terminals receive the change."); err != nil {
@@ -147,6 +157,16 @@ func publicInstallWith(args []string, in io.Reader, out io.Writer, local string,
 		return err
 	}
 	if err := freshInstallPreflight(root, ops); err != nil {
+		return err
+	}
+	// Only the standard known-folder parent may be newly created, never repaired.
+	programs := filepath.Dir(root)
+	if _, statErr := os.Lstat(programs); os.IsNotExist(statErr) {
+		if err := os.Mkdir(programs, 0700); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("cannot create per-user Programs directory: %w", err)
+		}
+	}
+	if err := inspectProgramsParent(programs, ops, false); err != nil {
 		return err
 	}
 	// Mkdir (never MkdirAll) atomically refuses an existing root, including one
@@ -204,16 +224,37 @@ func freshInstallPreflight(root string, ops freshInstallOps) error {
 	if err := ops.context(); err != nil {
 		return err
 	}
-	if err := doctorAncestors(filepath.Dir(root), ops.reparse); err != nil {
-		return errors.New("installation parent is missing, unreadable or linked; no changes made")
-	}
-	if err := ops.path(filepath.Dir(root), false); err != nil {
+	if err := inspectProgramsParent(filepath.Dir(root), ops, true); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(root); err == nil {
 		return errors.New("AWF root already exists, including a partial or credentials-only installation; use awf doctor or awf update for a healthy fresh-product install; migration and repair are unsupported, and no files or ACLs changed")
 	} else if !os.IsNotExist(err) {
 		return errors.New("AWF root state is unknown; no changes made")
+	}
+	return nil
+}
+
+// A missing standard Programs directory is planned without creating it. Its
+// existing parent must be a real, unredirected, integrity-protected directory.
+func inspectProgramsParent(programs string, ops freshInstallOps, allowMissing bool) error {
+	inspect := programs
+	st, err := os.Lstat(programs)
+	if os.IsNotExist(err) && allowMissing {
+		inspect = filepath.Dir(programs)
+	} else if err != nil {
+		return err
+	} else if !st.IsDir() {
+		return errors.New("per-user Programs location is not a directory")
+	}
+	if err := doctorAncestors(inspect, ops.reparse); err != nil {
+		return errors.New("Programs parent is missing, unreadable or linked; no ACLs changed")
+	}
+	if err := ops.path(inspect, false); err != nil {
+		return err
+	}
+	if err := ops.checkParent(inspect); err != nil {
+		return fmt.Errorf("Programs parent permissions are unsafe; no ACLs changed: %w", err)
 	}
 	return nil
 }

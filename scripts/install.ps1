@@ -162,6 +162,9 @@ using System.Text;
 using Microsoft.Win32.SafeHandles;
 namespace AwfBootstrap {
     public static class InstallContext {
+        [DllImport("shell32.dll", ExactSpelling = true)]
+        private static extern int SHGetKnownFolderPath(ref Guid folder, uint flags,
+            IntPtr token, out IntPtr path);
         [DllImport("kernel32.dll", ExactSpelling = true)]
         private static extern int GetCurrentPackageFullName(ref uint length, IntPtr name);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
@@ -174,6 +177,20 @@ namespace AwfBootstrap {
             uint length = 0;
             // Query only: no package-name buffer or caller-controlled identity.
             return GetCurrentPackageFullName(ref length, IntPtr.Zero);
+        }
+        public static string UserProgramFiles() {
+            Guid folder = new Guid("5CD7AEE2-2219-4A67-B85D-6C9CE15660CB");
+            IntPtr path = IntPtr.Zero;
+            try {
+                // FOLDERID_UserProgramFiles, current user. KF_FLAG_DONT_VERIFY
+                // permits an absent Programs directory; never use KF_FLAG_CREATE.
+                int result = SHGetKnownFolderPath(ref folder, 0x00004000,
+                    IntPtr.Zero, out path);
+                if (result < 0) Marshal.ThrowExceptionForHR(result);
+                return Marshal.PtrToStringUni(path);
+            } finally {
+                if (path != IntPtr.Zero) Marshal.FreeCoTaskMem(path);
+            }
         }
         public static string FinalPath(string path) {
             // OPEN_EXISTING and zero access: never creates or changes a file.
@@ -203,6 +220,16 @@ namespace AwfBootstrap {
 function Get-AwfPackageIdentityStatus {
     Initialize-AwfInstallContextNative
     return [AwfBootstrap.InstallContext]::PackageIdentityStatus()
+}
+
+function Get-AwfUserProgramFiles {
+    Initialize-AwfInstallContextNative
+    try {
+        $path = [AwfBootstrap.InstallContext]::UserProgramFiles()
+        return ConvertTo-AwfCanonicalWindowsPath $path
+    } catch {
+        throw 'Current-user Programs known folder is unavailable or invalid. No fallback installation path is supported.'
+    }
 }
 
 function Assert-AwfUnpackagedProcess {
@@ -292,6 +319,26 @@ function Assert-AwfDirectoryPath([string] $Path) {
         }
         $item = $item.Parent
     }
+}
+
+function Assert-AwfProgramsPath([string] $Programs) {
+    # Read-only planning, even on a profile where Programs has never existed.
+    # Check Programs or its existing direct parent without changing anything.
+    # Native installation revalidates and owns creation after install consent.
+    $current = ConvertTo-AwfCanonicalWindowsPath $Programs
+    try { $null = Get-Item -LiteralPath $current -Force -ErrorAction Stop }
+    catch [Management.Automation.ItemNotFoundException] {
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if (-not $parent -or $parent -ceq $current) {
+            throw 'Current-user Programs has no accessible existing parent.'
+        }
+        $current = $parent
+        try { $null = Get-Item -LiteralPath $current -Force -ErrorAction Stop }
+        catch { throw 'Current-user Programs requires an accessible existing direct parent.' }
+    }
+    catch { throw 'Current-user Programs path state could not be verified.' }
+    Assert-AwfDirectoryPath $current
+    Assert-AwfNativePath $current
 }
 
 function New-AwfPrivateStage([string] $Parent) {
@@ -609,7 +656,11 @@ function Invoke-AwfBootstrap {
         throw 'LOCALAPPDATA must match the current Windows user profile directory.'
     }
     Assert-AwfUnpackagedProcess
-    $root = Join-Path $local 'AWF'
+    # LocalAppData above is only the private download-stage parent. The sole
+    # installation destination is the actual Windows per-user Programs folder.
+    $programs = Get-AwfUserProgramFiles
+    Assert-AwfProgramsPath $programs
+    $root = Join-Path $programs 'AWF'
     Assert-AwfFreshRoot $root
     $stage = New-AwfPrivateStage $local
     $oldTls = [Net.ServicePointManager]::SecurityProtocol

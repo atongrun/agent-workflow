@@ -81,12 +81,17 @@ func compareReleaseVersions(a, b string) (int, error) {
 	return compare(x[4], y[4]), nil
 }
 
-func DefaultRoot() (string, error) {
-	p := os.Getenv("LOCALAPPDATA")
-	if p == "" || !filepath.IsAbs(p) {
-		return "", errors.New("LOCALAPPDATA must be an absolute per-user directory")
+// DefaultRoot is the uniform Windows per-user Programs known-folder layout.
+// Environment variables and historical roots never select another destination.
+func DefaultRoot() (string, error) { return rootFromProgramsFolder(knownProgramsFolder()) }
+func rootFromProgramsFolder(programs string, err error) (string, error) {
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(p, "AWF"), nil
+	if programs == "" || !filepath.IsAbs(programs) || strings.ContainsAny(programs, "\x00\r\n") {
+		return "", errors.New("Windows per-user Programs known folder must be an absolute directory")
+	}
+	return filepath.Join(programs, "AWF"), nil
 }
 func readJSON(path string, v any) error {
 	b, e := readBounded(path, 2<<20)

@@ -39,11 +39,13 @@ foreach ($case in @(
 )) {
     & {
         # Mutable counter object avoids function-local scalar assignment scope.
-        $counts = @{ Stage = 0; Roots = 0; Download = 0; Path = 0; Expand = 0 }
+        $counts = @{ Stage = 0; Roots = 0; Programs = 0; Download = 0; Path = 0; Expand = 0 }
         function Get-AwfPackageIdentityStatus {
             if ($case.Status -is [string] -and $case.Status -ceq 'throw') { throw 'fixture API failure' }
             return $case.Status
         }
+        function Get-AwfUserProgramFiles { $counts.Programs++; return 'C:\Users\Example\AppData\Local\Programs' }
+        function Assert-AwfProgramsPath { }
         function Assert-AwfFreshRoot { $counts.Roots++ }
         function New-AwfPrivateStage { $counts.Stage++; throw 'TEST_STAGE_BOUNDARY' }
         function Save-AwfOfficialDownload { $counts.Download++; throw 'TEST_DOWNLOAD_REACHED' }
@@ -51,14 +53,15 @@ foreach ($case in @(
         function Expand-AwfVerifiedArchive { $counts.Expand++; throw 'TEST_EXPAND_REACHED' }
         Assert-ContextRejected { Invoke-AwfBootstrap } $case.Expected
         Assert-ContextTrue ($counts.Stage -eq $case.Stages -and $counts.Roots -eq $case.Roots) 'identity gate precedes staging and existing-root inspection'
+        Assert-ContextTrue ($counts.Programs -eq $case.Roots) 'identity gate precedes Programs known-folder planning'
         Assert-ContextTrue ($counts.Download -eq 0 -and $counts.Path -eq 0 -and $counts.Expand -eq 0) 'identity fixture has no network, extraction, or PATH effects'
     }
 }
 
 foreach ($case in @(
-    @('C:\Users\Example\AppData\Local\AWF\', 'C:\Users\Example\AppData\Local\AWF'),
-    @('\\?\C:\Users\Example\AppData\Local\AWF', 'C:\Users\Example\AppData\Local\AWF'),
-    @('c:/Users/Example/AppData/Local/./AWF/../AWF', 'c:\Users\Example\AppData\Local\AWF'),
+    @('C:\Users\Example\AppData\Local\Programs\AWF\', 'C:\Users\Example\AppData\Local\Programs\AWF'),
+    @('\\?\C:\Users\Example\AppData\Local\Programs\AWF', 'C:\Users\Example\AppData\Local\Programs\AWF'),
+    @('c:/Users/Example/AppData/Local/Programs/./AWF/../AWF', 'c:\Users\Example\AppData\Local\Programs\AWF'),
     @('\\?\UNC\server.example\share\dir\', '\\server.example\share\dir'),
     @('\\server.example\share\dir\..\next', '\\server.example\share\next'),
     @('C:\', 'C:\'),
@@ -73,16 +76,16 @@ foreach ($path in @('', 'relative\AWF', 'C:AWF', '\AWF', '\\server', '\\.\C:\AWF
     Assert-ContextRejected { ConvertTo-AwfCanonicalWindowsPath $path } 'Installation path*'
 }
 & {
-    function Get-AwfFinalPath { return '\\?\c:\users\example\appdata\local\AWF\' }
-    Assert-AwfNativePath 'C:\Users\Example\AppData\Local\AWF'
+    function Get-AwfFinalPath { return '\\?\c:\users\example\appdata\local\Programs\AWF\' }
+    Assert-AwfNativePath 'C:\Users\Example\AppData\Local\Programs\AWF'
 }
 & {
-    function Get-AwfFinalPath { return '\\?\C:\Users\Example\AppData\Local\Packages\Example\LocalCache\Local\AWF\bin\awf.exe' }
-    Assert-ContextRejected { Assert-AwfNativePath 'C:\Users\Example\AppData\Local\AWF\bin\awf.exe' } 'Windows redirected an installation path*'
+    function Get-AwfFinalPath { return '\\?\C:\Users\Example\AppData\Local\Packages\Example\LocalCache\Local\Programs\AWF\bin\awf.exe' }
+    Assert-ContextRejected { Assert-AwfNativePath 'C:\Users\Example\AppData\Local\Programs\AWF\bin\awf.exe' } 'Windows redirected an installation path*'
 }
 & {
     function Get-AwfFinalPath { throw 'fixture handle query failure' }
-    Assert-ContextRejected { Assert-AwfNativePath 'C:\Users\Example\AppData\Local\AWF\bin\awf.exe' } 'Unable to verify the physical installation path*'
+    Assert-ContextRejected { Assert-AwfNativePath 'C:\Users\Example\AppData\Local\Programs\AWF\bin\awf.exe' } 'Unable to verify the physical installation path*'
 }
 
 # Real disposable directories, real private ACL creation, and real handles. This
@@ -100,6 +103,8 @@ try {
         # Actual NO_PACKAGE can coexist with redirected filesystem writes.
         # This explicit case proves the physical gate runs independently.
         function Get-AwfPackageIdentityStatus { return 15700 }
+        function Get-AwfUserProgramFiles { return (Join-Path $temporary 'Programs') }
+        function Assert-AwfProgramsPath { }
         function Assert-AwfFreshRoot { }
         $realStage = (Get-Item Function:\New-AwfPrivateStage).ScriptBlock
         function New-AwfPrivateStage { $counts.Stage++; return & $realStage $temporary }

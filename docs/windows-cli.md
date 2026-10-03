@@ -9,19 +9,24 @@ with CLI protocol 2. That release does not provide the public fresh installer.
 This bootstrap requires protocol 3 and refuses the current channel without
 installing AWF. A reviewed release, separate publication approval, and real
 Windows acceptance are required before advertising the command as live.
+Prior acceptance of a different root does not validate this Programs-root change.
 
 The supported product flow is a fresh, per-user installation followed by
 explicit `awf init`, `awf start`, `awf stop`, and `awf update`. See
 [fresh-install.md](fresh-install.md) for the contract and acceptance checklist.
 There is no migration, existing-tree adoption, ACL repair, historical release
-installation, or bootstrap-based update path. Any existing `%LOCALAPPDATA%\AWF`
+installation, or bootstrap-based update path. Any existing resolved Programs `AWF`
 entry, including an empty directory, credentials-only root, file, linked entry,
 or partial installation, is refused without changing that entry.
 
 Targets are native Windows AMD64 and ARM64 on Windows 10/Server version 1709 or
 newer, using Windows PowerShell 5.1 or PowerShell 7. Run as the intended ordinary
 Windows user in a normal terminal opened directly from Windows. Installation
-needs no administrator rights and uses `%LOCALAPPDATA%\AWF` and user PATH.
+needs no administrator rights and uses the Windows `FOLDERID_UserProgramFiles`
+known folder's `AWF` child, normally `%LOCALAPPDATA%\Programs\AWF`, and user PATH.
+The actual known-folder result is authoritative; there is no LocalAppData fallback
+or installation-directory override. The historical `%LOCALAPPDATA%\AWF` tree is
+ignored and untouched, whether present or absent.
 It does not install Go, Python, Node, npm, Pi, OpenCode, or Git, change execution
 policy, configure firewall rules, run initialization, pair credentials, enable
 login startup, or start the runtime.
@@ -48,7 +53,8 @@ The flow needs no manually supplied directory, release version, or digest:
 4. Verify the official release/tag metadata, checksums, ZIP contents, PE machine
    type, and downloaded CLI's `install-protocol` capability
 5. Invoke public native `awf install` with the verified local archive, exact
-   version, and digest. The native installer creates its protected program root, writes
+   version, and digest. The native installer creates a missing Programs parent
+   with inherited permissions after consent and verification, creates its protected program root, writes
    release/channel state and launcher, and registers user PATH
 6. Verify the installed launcher's physical location, refresh this PowerShell
    process's PATH, and print the next commands. Initialization is never automatic
@@ -88,8 +94,19 @@ activating the install. These advanced flags are not needed for normal use.
 
 ### Installation context and ownership
 
-Bootstrap and native installation require an unpackaged process and matching
-Windows known-folder/environment paths. Only `APPMODEL_ERROR_NO_PACKAGE` permits
+Bootstrap and native installation require an unpackaged process and resolve
+`FOLDERID_UserProgramFiles` through `SHGetKnownFolderPath` for the current user.
+Microsoft documents its normal path as `%LOCALAPPDATA%\Programs` in the
+[known-folder reference](https://learn.microsoft.com/en-us/windows/win32/shell/knownfolderid).
+Resolution uses `KF_FLAG_DONT_VERIFY` without `KF_FLAG_CREATE`: planning must not
+create Programs. An existing Programs directory, or its existing direct parent
+when absent, must pass physical-path and reparse checks. Only the native installer
+creates missing Programs after consent and payload verification, preserves ordinary
+inherited permissions, and revalidates before creating AWF. It never assigns or
+repairs Programs ACLs. A missing direct parent or unsafe path is refused.
+Bootstrap additionally checks that the LocalAppData environment and known folder
+agree solely for private temporary staging; neither selects the installation root.
+Only `APPMODEL_ERROR_NO_PACKAGE` permits
 installation; an identified package or unknown API result fails closed. There
 is no bypass flag, environment rewrite, or subprocess escape.
 
@@ -113,7 +130,8 @@ of that exact normalized bin entry and preserves unrelated entries and order.
 It never changes machine PATH or removes another executable, alias, or function.
 The bootstrap warns if command resolution still selects something else.
 A child PowerShell cannot update its parent terminal's environment, so reopen
-that terminal or invoke `%LOCALAPPDATA%\AWF\bin\awf.exe` directly.
+that terminal or invoke the verified launcher's printed path directly, normally
+`%LOCALAPPDATA%\Programs\AWF\bin\awf.exe`.
 
 ### Trust choice and advanced use
 
@@ -309,7 +327,8 @@ or changes native provider authentication.
 
 The Windows credential file consumed by managed AWF has this contract:
 
-- Default location: `%LOCALAPPDATA%\AWF\credentials\windows-node\node-token.dpapi`
+- Default location: `credentials\windows-node\node-token.dpapi` beneath the
+  resolved Programs `AWF` root, normally `%LOCALAPPDATA%\Programs\AWF\credentials\windows-node\node-token.dpapi`
 - Plaintext before protection: exactly **64 uppercase hexadecimal ASCII bytes**,
   generated with a cryptographically secure random source
 - Protection: Windows DPAPI **CurrentUser** scope, under the same Windows user
@@ -400,8 +419,11 @@ alternative update path.
 
 ### Installation layout
 
+The normal layout below is relative to the actual `FOLDERID_UserProgramFiles`
+result; no environment-derived or historical root is searched or selected.
+
 ```text
-%LOCALAPPDATA%\AWF\
+%LOCALAPPDATA%\Programs\AWF\
   bin\awf.exe                       immutable initial launcher, on user PATH
   versions\vX.Y.Z\awf.exe           versioned implementation
   versions\vX.Y.Z\awf-node.exe

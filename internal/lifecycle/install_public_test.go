@@ -19,7 +19,7 @@ import (
 func freshFixtureOps(local string) freshInstallOps {
 	return freshInstallOps{
 		context: func() error { return nil }, knownFolder: func() (string, error) { return local, nil }, architecture: func() (string, error) { return "amd64", nil },
-		path: func(string, bool) error { return nil }, reparse: func(string) error { return nil }, checkRoot: validateInstallRoot,
+		path: func(string, bool) error { return nil }, reparse: func(string) error { return nil }, checkParent: checkProgramPath, checkRoot: validateInstallRoot,
 		finish: func(root, v string, s ChannelSelection, out io.Writer) error {
 			return finishInstallChecked(root, v, s, out, func(string, string) error { return nil })
 		},
@@ -327,5 +327,70 @@ func TestFreshLayoutMarkerRefusesHistoryWithoutWrites(t *testing.T) {
 	}
 	if err := requireFreshLayout(root); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFreshProgramsParentCreationAndOldRootIsolation(t *testing.T) {
+	for _, accept := range []bool{false, true} {
+		t.Run(fmt.Sprint(accept), func(t *testing.T) {
+			local := t.TempDir()
+			old := filepath.Join(local, "AWF")
+			if err := os.Mkdir(old, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(old, "credentials.txt"), []byte("synthetic old data stays unchanged"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before := doctorSnapshot(t, old)
+			programs := filepath.Join(local, "Programs")
+			ops := freshFixtureOps(programs)
+			origPath := ops.path
+			ops.path = func(path string, missing bool) error {
+				if path == old || strings.HasPrefix(path, old+string(filepath.Separator)) {
+					t.Fatal("old root inspected")
+				}
+				return origPath(path, missing)
+			}
+			requests := 0
+			args := []string{"--yes", "--no-path"}
+			if !accept {
+				args = []string{"--no-path"}
+			}
+			err := publicInstallWith(args, nil, io.Discard, programs, false, freshFixtureClient(t, "v1.0.0", false, &requests), ops)
+			if accept {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := requireFreshLayout(filepath.Join(programs, "AWF")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("missing consent accepted")
+				}
+				if _, err := os.Stat(programs); !os.IsNotExist(err) {
+					t.Fatal("Programs created before consent")
+				}
+			}
+			if !reflect.DeepEqual(before, doctorSnapshot(t, old)) {
+				t.Fatal("old root changed")
+			}
+		})
+	}
+}
+
+func TestFreshProgramsParentPermissionsFailWithoutRepair(t *testing.T) {
+	programs := filepath.Join(t.TempDir(), "Programs")
+	ops := freshFixtureOps(programs)
+	ops.checkParent = func(string) error { return errors.New("untrusted write access") }
+	requests := 0
+	if err := publicInstallWith([]string{"--yes", "--no-path"}, nil, io.Discard, programs, false, freshFixtureClient(t, "v1.0.0", false, &requests), ops); err == nil || !strings.Contains(err.Error(), "permissions are unsafe") {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatal("unsafe parent triggered download")
+	}
+	if _, err := os.Stat(programs); !os.IsNotExist(err) {
+		t.Fatal("unsafe parent was modified")
 	}
 }

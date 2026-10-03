@@ -50,3 +50,15 @@ func TestDoctorNativeACLMetadataReadOnly(t *testing.T) {
 		t.Fatalf("native descriptor metadata changed: before=%+v after=%+v", before, after)
 	}
 }
+
+func TestDefaultRootUsesNativeProgramsKnownFolder(t *testing.T) {
+	programs, err := knownProgramsFolder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "unrelated-environment"))
+	root, err := DefaultRoot()
+	if err != nil || root != filepath.Join(programs, "AWF") {
+		t.Fatalf("known folder root=%q err=%v", root, err)
+	}
+}

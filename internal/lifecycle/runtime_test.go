@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -321,14 +320,9 @@ func TestCleanEnvironmentRemovesInheritedRuntimeCredentials(t *testing.T) {
 }
 
 func TestUpdateAllFailsBeforeCreatingInstallation(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("LOCALAPPDATA", root)
 	for _, flag := range []string{"--all", "-all", "--all=true", "--all=false"} {
 		if err := Run([]string{"update", flag}, strings.NewReader(""), io.Discard); err == nil || !strings.Contains(err.Error(), "not implemented") {
 			t.Fatalf("%s: %v", flag, err)
 		}
-	}
-	if _, err := os.Stat(filepath.Join(root, "AWF")); !os.IsNotExist(err) {
-		t.Fatalf("unsupported update changed installation: %v", err)
 	}
 }

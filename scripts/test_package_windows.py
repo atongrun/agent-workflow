@@ -222,7 +222,8 @@ class PackageTests(unittest.TestCase):
     def test_install_context_gates_before_effects(self):
         script = (SCRIPTS / "install.ps1").read_text()
         main = script[script.index("function Invoke-AwfBootstrap"):]
-        stages = ["LOCALAPPDATA must match", "Assert-AwfUnpackagedProcess", "$root = Join-Path",
+        stages = ["LOCALAPPDATA must match", "Assert-AwfUnpackagedProcess", "$programs = Get-AwfUserProgramFiles",
+                  "Assert-AwfProgramsPath $programs", "$root = Join-Path $programs 'AWF'",
                   "New-AwfPrivateStage", "Save-AwfOfficialDownload", "& $executable",
                   "Confirm-AwfInstalledLauncher", "Write-Host \"Installed AWF"]
         positions = [main.index(stage) for stage in stages]
@@ -243,6 +244,22 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn("[IO.Path]::GetFullPath", canonical)
 
         self.assertNotIn("$env:LOCALAPPDATA =", script)
+        self.assertNotIn("$root = Join-Path $local", main)
+        self.assertNotIn("--install-dir", script)
+        self.assertIn('new Guid("5CD7AEE2-2219-4A67-B85D-6C9CE15660CB")', script)
+        self.assertIn("SHGetKnownFolderPath(ref folder, 0x00004000,", script)
+        self.assertIn("Marshal.FreeCoTaskMem(path)", script)
+        self.assertIn("if (result < 0) Marshal.ThrowExceptionForHR(result)", script)
+        resolver = script[script.index("function Get-AwfUserProgramFiles"):script.index("function Assert-AwfUnpackagedProcess")]
+        self.assertIn("ConvertTo-AwfCanonicalWindowsPath $path", resolver)
+        self.assertIn("No fallback installation path is supported", resolver)
+        self.assertNotIn("LOCALAPPDATA", resolver)
+        planning = script[script.index("function Assert-AwfProgramsPath"):script.index("function New-AwfPrivateStage")]
+        for required in ("catch [Management.Automation.ItemNotFoundException]", "[IO.Path]::GetDirectoryName($current)",
+                         "Assert-AwfDirectoryPath $current", "Assert-AwfNativePath $current"):
+            self.assertIn(required, planning)
+        for prohibited in ("CreateDirectory", "Set-Acl", "SetEnvironmentVariable"):
+            self.assertNotIn(prohibited, planning)
         self.assertNotIn("SkipContext", script)
         native = (SCRIPTS / "test_install_context.ps1").read_text()
         for required in ("Status = 15700", "Status = 122", "Status = 0", "Status = 5", "Status = 'throw'",
@@ -285,6 +302,9 @@ class PackageTests(unittest.TestCase):
         self.assertIn("not independently authenticate", document)
         self.assertIn("not published or accepted on native Windows", document)
         self.assertIn("protocol 3", document)
+        self.assertIn("FOLDERID_UserProgramFiles", document)
+        self.assertIn(r"%LOCALAPPDATA%\Programs\AWF", document)
+        self.assertIn("no LocalAppData fallback", document)
         self.assertNotIn("-SkipInit", document)
         self.assertNotIn("<INDEPENDENT_INSTALL_PS1_SHA256>", document)
 
@@ -327,7 +347,11 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn("$UseChannel", script)
         native = (SCRIPTS / "test_fresh_install.ps1").read_text()
         for label in ("empty root", "credentials-only root", "root file", "unknown root state",
-                      "existing root precedes staging", "historical protocol", "fresh protocol"):
+                      "existing root precedes staging", "historical protocol", "fresh protocol",
+                      "missing Programs planning does not create it", "missing parent is not recursively created",
+                      "Programs file is refused", "redirected Programs ancestor is refused",
+                      "historical sibling root is ignored", "existing Programs AWF root refused",
+                      "historical sibling preserved on refusal", "unavailable known folder has no fallback"):
             self.assertIn(label, native)
 
     def test_distribution_manifest_names_only_verified_existing_release(self):
