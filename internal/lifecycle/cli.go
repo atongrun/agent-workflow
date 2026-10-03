@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,6 +144,19 @@ func update(root string, args []string, out io.Writer) error {
 	return updateWithInput(root, args, nil, out)
 }
 func updateWithInput(root string, args []string, in io.Reader, out io.Writer) error {
+	var progress *installProgress
+	if interactiveUpdateInput(os.Stderr) {
+		progress = &installProgress{out: os.Stderr}
+	}
+	return updateWithProgress(root, args, in, out, releaseClient(), progress)
+}
+
+func updateWithProgress(root string, args []string, in io.Reader, out io.Writer, client *http.Client, progress *installProgress) (retErr error) {
+	defer func() {
+		if retErr != nil {
+			progress.failed()
+		}
+	}()
 	f := flag.NewFlagSet("update", flag.ContinueOnError)
 	f.SetOutput(out)
 	version := f.String("version", "", "exact Go release tag; default follows the saved go-v1 channel without downgrading")
@@ -203,7 +217,8 @@ func updateWithInput(root string, args []string, in io.Reader, out io.Writer) er
 		}
 		l.Close()
 	}
-	ctx, client := context.Background(), releaseClient()
+	ctx := context.Background()
+	progress.stage("Resolve update release")
 	target, e := resolveReleaseTarget(ctx, client, *version, runtime.GOARCH)
 	if e != nil {
 		return e
@@ -224,7 +239,7 @@ func updateWithInput(root string, args []string, in io.Reader, out io.Writer) er
 		}
 		approved = selection.PreviewApproved
 	}
-	v, e := stageSelectedRelease(ctx, client, root, target, runtime.GOARCH, *pin, approved, old.Version)
+	v, e := stageSelectedReleaseProgress(ctx, client, root, target, runtime.GOARCH, *pin, approved, old.Version, progress)
 	if e != nil {
 		return e
 	}
@@ -233,11 +248,14 @@ func updateWithInput(root string, args []string, in io.Reader, out io.Writer) er
 			return e
 		}
 		fmt.Fprintln(out, "AWF is already at", v)
+		progress.stage("Done")
 		return nil
 	}
+	progress.stage("Check downloaded executable")
 	if e = verifyFreshExecutable(binary(root, v), v); e != nil {
 		return e
 	}
+	progress.stage("Activate update")
 	if wasRunning {
 		if e = stop(root, out); e != nil {
 			return e
@@ -303,6 +321,7 @@ func updateWithInput(root string, args []string, in io.Reader, out io.Writer) er
 		return fmt.Errorf("AWF updated, but saving the update channel failed: %w", e)
 	}
 	fmt.Fprintf(out, "AWF updated to %s. Configuration, credentials, native authentication, and job state were preserved.\n", v)
+	progress.stage("Done")
 	return nil
 }
 func verifyExecutable(path, v string) error {

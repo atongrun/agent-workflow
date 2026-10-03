@@ -163,10 +163,16 @@ func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pi
 }
 
 func stageSelectedRelease(ctx context.Context, c *http.Client, root string, target releaseTarget, arch, pin string, allowPrerelease bool, currentVersion string) (string, error) {
-	payload, err := downloadSelectedRelease(ctx, c, target, arch, pin, allowPrerelease, currentVersion)
+	return stageSelectedReleaseProgress(ctx, c, root, target, arch, pin, allowPrerelease, currentVersion, nil)
+}
+
+func stageSelectedReleaseProgress(ctx context.Context, c *http.Client, root string, target releaseTarget, arch, pin string, allowPrerelease bool, currentVersion string, progress *installProgress) (string, error) {
+	progress.stage("Download release")
+	payload, err := downloadSelectedReleaseProgress(ctx, c, target, arch, pin, allowPrerelease, currentVersion, progress)
 	if err != nil {
 		return "", err
 	}
+	progress.stage("Extract verified release")
 	if err := stageArchive(root, target.Version, arch, payload); err != nil {
 		return "", err
 	}

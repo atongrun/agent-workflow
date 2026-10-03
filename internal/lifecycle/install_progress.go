@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Only fresh installation opts in, with a console stderr. No URLs, paths,
+// Fresh installation and update opt in with a console stderr. No URLs, paths,
 // server text or credentials enter this display. Nil is completely quiet.
 type installProgress struct {
 	out     io.Writer
