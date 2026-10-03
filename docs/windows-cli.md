@@ -2,17 +2,22 @@
 
 ## Availability and scope
 
-This source adds a one-command Windows bootstrap, guided `awf init`, and a
-Go-only update channel. **The full simplified flow is not live until its reviewed
-script, channel metadata, and a compatible CLI release have been published and
-native Windows acceptance passes.** Source changes and local packages are not a
-release or installation acceptance result.
+The published Go v1 channel provides a one-command Windows bootstrap, guided
+`awf init`, and channel-aware `awf update`. The checked-in
+`distribution/go-v1.json` selects the published
+[v1.0.0-rc.3 prerelease](https://github.com/atongrun/agent-workflow/releases/tag/v1.0.0-rc.3),
+`cliProtocol: "2"`, source commit
+`c251c9de639352b529f4705fcd1d2b4881cd20bf`, and the verified architecture ZIP hashes.
 
-The checked-in `distribution/go-v1.json` deliberately names the existing
-[v1.0.0-rc.2 release](https://github.com/atongrun/agent-workflow/releases/tag/v1.0.0-rc.2),
-its actual source commit, and its published architecture hashes. That CLI has
-`cliProtocol: "1"`: it predates guided init and channel-aware updates. The new
-source implements protocol 2, but the manifest must not claim new binaries exist.
+The current branch's installer and native `_install` source additionally contain
+the package/physical-path safeguards and PATH-ordering fixes described below.
+These later source changes are **not in the unchanged RC3 release assets**:
+the branch installation command uses the newer bootstrap but still downloads
+the channel's RC3 executables. It does not repair or migrate an existing install.
+The full simplified flow is not live-tested end to end on a fresh Windows
+profile; publication and verified downloads do not establish that acceptance.
+Native acceptance of the later safeguards remains a separate gate.
+
 Do not change a historical release or use GitHub's repository-wide `latest`:
 that endpoint still refers to the retired Python release line.
 
@@ -53,15 +58,17 @@ fixtures; it never calls a PATH setter or changes the registry. Native PowerShel
 
 ## One-command installation
 
-**Planned command, gated on the publication and acceptance checks above.** This
-uses the existing official GitHub repository; no new domain or hosting is needed.
-The old script currently at that URL does not implement the new no-flags flow.
+The published branch URL below implements the no-flags flow and selects the
+current RC3 channel. It uses the newer source bootstrap described above, not
+RC3's unchanged `install.ps1` release asset. Full fresh-profile installation
+acceptance remains unverified; run only in the intended ordinary Windows user
+context after reviewing the trust and installation-context requirements.
 
 ```powershell
 powershell -NoProfile -Command "irm https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/scripts/install.ps1 | iex"
 ```
 
-With the reviewed rollout in place, the command:
+The command's intended flow is:
 
 1. Detects native Windows architecture, including 32-bit PowerShell on a 64-bit OS
 2. Resolves the publisher's Go v1 channel to an exact release, source commit, and
@@ -80,11 +87,12 @@ to resume optional pairing. Installing or saving configuration never starts
 AWF automatically; run `awf start` when ready. A completed install is preserved
 if setup is cancelled or fails; do not rerun bootstrap to repair configuration.
 
-The protocol 1 fixture can install actual RC2, but the installer clearly reports
-that its setup and updater predate the new workflow. It saves a private channel
-marker for future compatibility. An already-installed RC2 needs a separately
-reviewed, exact-version update to the first protocol 2 release; its existing
-updater cannot acquire these changes merely by reading the new manifest.
+Protocol 1/RC2 compatibility remains covered by fixtures; it is no longer the
+channel selection. RC2 predates guided init and channel-aware updates. An
+already-installed RC2 needs a separately reviewed, exact-version update to RC3
+or a later compatible protocol 2 release. Its old updater cannot acquire
+channel-aware behavior merely by reading the new manifest.
+That update is separate from recovery of any redirected or partial installation.
 
 ### Trust choice and advanced use
 
