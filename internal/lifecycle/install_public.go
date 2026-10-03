@@ -20,6 +20,7 @@ import (
 // These narrow seams keep fresh-install refusal and consent ordering portable.
 // Production supplies only native Windows operations and the fixed publisher.
 type freshInstallOps struct {
+	progress     *installProgress
 	context      func() error
 	knownFolder  func() (string, error)
 	architecture func() (string, error)
@@ -41,10 +42,20 @@ func publicInstall(args []string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return publicInstallWith(args, in, out, programs, interactiveUpdateInput(in), releaseClient(), nativeFreshInstallOps())
+	ops := nativeFreshInstallOps()
+	if interactiveUpdateInput(os.Stderr) {
+		ops.progress = &installProgress{out: os.Stderr}
+	}
+	return publicInstallWith(args, in, out, programs, interactiveUpdateInput(in), releaseClient(), ops)
 }
 
 func publicInstallWith(args []string, in io.Reader, out io.Writer, local string, interactive bool, client *http.Client, ops freshInstallOps) (retErr error) {
+	progress := ops.progress
+	defer func() {
+		if retErr != nil {
+			progress.failed()
+		}
+	}()
 	f := flag.NewFlagSet("install", flag.ContinueOnError)
 	f.SetOutput(out)
 	version := f.String("version", "", "exact Go release tag; defaults to publisher go-v1 channel")
@@ -101,6 +112,7 @@ func publicInstallWith(args []string, in io.Reader, out io.Writer, local string,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	progress.stage("Resolve release metadata")
 	target, err := resolveReleaseTarget(ctx, client, *version, arch)
 	if err != nil {
 		return err
@@ -146,16 +158,19 @@ func publicInstallWith(args []string, in io.Reader, out io.Writer, local string,
 	// Hash/source validation precedes even creating an empty AWF directory.
 	var payload []byte
 	if *archive != "" {
+		progress.stage("Verify release archive")
 		payload, err = readBounded(*archive, maxReleaseBytes)
 		if err == nil {
 			err = verifyDigest(payload, *digest)
 		}
 	} else {
-		payload, err = downloadSelectedRelease(ctx, client, target, arch, *digest, selection.PreviewApproved, "")
+		progress.stage("Download release")
+		payload, err = downloadSelectedReleaseProgress(ctx, client, target, arch, *digest, selection.PreviewApproved, "", progress)
 	}
 	if err != nil {
 		return err
 	}
+	progress.stage("Prepare installation directory")
 	if err := freshInstallPreflight(root, ops); err != nil {
 		return err
 	}
@@ -195,9 +210,11 @@ func publicInstallWith(args []string, in io.Reader, out io.Writer, local string,
 		return err
 	}
 	defer lock.Close()
+	progress.stage("Extract verified release")
 	if err := stageArchive(root, target.Version, arch, payload); err != nil {
 		return err
 	}
+	progress.stage("Install and verify launcher")
 	// Suppress subordinate success until launcher identity and PATH are verified.
 	if err := ops.finish(root, target.Version, selection, io.Discard); err != nil {
 		return err
@@ -207,17 +224,23 @@ func publicInstallWith(args []string, in io.Reader, out io.Writer, local string,
 		return err
 	}
 	if !*noPath {
+		progress.stage("Register user PATH")
 		if err := ops.registerPath(filepath.Dir(launcher)); err != nil {
 			return fmt.Errorf("AWF is installed, but PATH registration failed; do not rerun install. Continue configuration in PowerShell with: %s. PATH error: %w", installInitCommand(launcher), err)
 		}
 	}
+	progress.stage("Check command lookup")
 	if resolved, err := exec.LookPath("awf"); err != nil || validateInstallerPath(launcher, resolved, nil) != nil {
 		if _, err := fmt.Fprintf(out, "Command lookup does not resolve the installed launcher in this process. Review shell aliases/functions or earlier machine PATH entries. Direct configuration command (PowerShell): %s\n", installInitCommand(launcher)); err != nil {
 			return err
 		}
 	}
 	_, err = fmt.Fprintf(out, "AWF %s installed. Review configuration explicitly (PowerShell):\n%s\nInstallation does not pair credentials, enable autostart or start AWF.\n", target.Version, installInitCommand(launcher))
-	return err
+	if err != nil {
+		return err
+	}
+	progress.stage("Done")
+	return nil
 }
 
 func freshInstallPreflight(root string, ops freshInstallOps) error {

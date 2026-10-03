@@ -85,6 +85,78 @@ function Test-AwfInteractive {
     return $true
 }
 
+function New-AwfBootstrapProgress {
+    # Progress is an observer only. Never use Write-Progress/Write-Host here:
+    # their host streams can contaminate redirected output in PowerShell 5.1.
+    $interactive = $false
+    try {
+        $interactive = $Host.Name -eq 'ConsoleHost' -and
+            -not [Console]::IsErrorRedirected -and (Test-AwfInteractive)
+    } catch { }
+    return @{
+        Interactive = $interactive; Disabled = $false; Stage = ''
+        LineLength = 0; LastUpdateMs = -250
+        Clock = [Diagnostics.Stopwatch]::StartNew()
+    }
+}
+
+function Close-AwfBootstrapProgress($Progress) {
+    if ($null -eq $Progress -or $Progress.Disabled) { return }
+    try {
+        if ($Progress.LineLength -gt 0) { [Console]::Error.WriteLine() }
+        $Progress.LineLength = 0
+    } catch { $Progress.Disabled = $true }
+}
+
+function Write-AwfBootstrapProgressLine($Progress, [string] $Text) {
+    if ($null -eq $Progress -or $Progress.Disabled -or -not $Progress.Interactive) { return }
+    try {
+        # Plain CR works in both native Windows PowerShell 5.1 and PS7;
+        # no ANSI support, console color, or additional module is required.
+        $padding = [Math]::Max(0, $Progress.LineLength - $Text.Length)
+        [Console]::Error.Write("`r" + $Text + (' ' * $padding))
+        $Progress.LineLength = $Text.Length
+    } catch {
+        # A closed progress stream must not change install/security behavior.
+        $Progress.Disabled = $true
+    }
+}
+
+function Set-AwfBootstrapStage($Progress, [string] $Stage) {
+    Close-AwfBootstrapProgress $Progress
+    $Progress.Stage = $Stage
+    $Progress.LastUpdateMs = -250
+    Write-AwfBootstrapProgressLine $Progress ('AWF: ' + $Stage + '...')
+}
+
+function Write-AwfDownloadProgress($Progress, [long] $Received, [long] $Length, [switch] $Complete) {
+    if ($null -eq $Progress -or $Progress.Disabled -or -not $Progress.Interactive) { return }
+    $now = $Progress.Clock.ElapsedMilliseconds
+    if (-not $Complete -and ($now - $Progress.LastUpdateMs) -lt 250) { return }
+    $Progress.LastUpdateMs = $now
+    $text = 'AWF: Downloading ' + $Received + ' bytes (total unknown)'
+    if ($Length -gt 0) {
+        # A final full-sized read is not EOF and may still fail on the next read
+        # or file close. Reserve 100% for a successfully closed download.
+        $ceiling = 99
+        if ($Complete) { $ceiling = 100 }
+        $percent = [Math]::Min($ceiling, [Math]::Floor(100.0 * $Received / $Length))
+        $filled = [int] [Math]::Floor($percent / 5)
+        $bar = '[' + ('#' * $filled) + ('-' * (20 - $filled)) + ']'
+        $text = 'AWF: Downloading ' + $bar + ' ' + $Received + '/' + $Length + ' bytes (' + $percent + '%)'
+    }
+    Write-AwfBootstrapProgressLine $Progress $text
+}
+
+function Stop-AwfBootstrapProgress($Progress) {
+    Close-AwfBootstrapProgress $Progress
+    if ($null -eq $Progress -or $Progress.Disabled -or -not $Progress.Interactive -or -not $Progress.Stage) { return }
+    # Report only a caller-owned stage label, never request URLs, redirect
+    # tokens, exception details, or an unverified success/completion marker.
+    try { [Console]::Error.WriteLine('AWF: Failed during ' + $Progress.Stage.ToLowerInvariant() + '.') }
+    catch { $Progress.Disabled = $true }
+}
+
 function Confirm-AwfPreview([string] $Tag, [bool] $Approved, [bool] $Interactive) {
     Assert-AwfReleaseVersion $Tag -AllowPrerelease
     if (-not $Tag.Contains('-rc.')) { return $Approved }
@@ -369,7 +441,8 @@ function New-AwfPrivateStage([string] $Parent) {
 }
 
 function Save-AwfOfficialDownload {
-    param([string] $Url, [string] $Destination, [long] $Limit, [switch] $Metadata, [switch] $Channel)
+    param([string] $Url, [string] $Destination, [long] $Limit, [switch] $Metadata, [switch] $Channel,
+        $Progress = $null)
     $uri = [Uri] $Url
     if ($Channel -and $Url -cne $script:ChannelUrl) { throw 'Unexpected Go channel URL.' }
     if ($Metadata -and $Channel) { throw 'Ambiguous metadata request.' }
@@ -404,6 +477,7 @@ function Save-AwfOfficialDownload {
             }
             if ($status -ne 200) { throw "Official release returned HTTP $status." }
             if ($response.ContentLength -gt $Limit) { throw 'Release download exceeds allowed size.' }
+            [long] $length = $response.ContentLength
             $input = $response.GetResponseStream()
             $output = $null
             try {
@@ -411,20 +485,23 @@ function Save-AwfOfficialDownload {
                     [IO.FileAccess]::Write, [IO.FileShare]::None)
                 $buffer = New-Object byte[] 65536
                 [long] $total = 0
+                Write-AwfDownloadProgress $Progress $total $length
                 while (($count = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
                     if ($elapsed.Elapsed.TotalSeconds -gt 120) { throw 'Release download timed out.' }
                     $total += $count
                     if ($total -gt $Limit) { throw 'Release download exceeds allowed size.' }
                     $output.Write($buffer, 0, $count)
+                    Write-AwfDownloadProgress $Progress $total $length
                 }
             } finally {
                 if ($null -ne $output) { $output.Dispose() }
                 $input.Dispose()
             }
-            return
         } finally {
             if ($null -ne $response) { $response.Dispose() }
         }
+        Write-AwfDownloadProgress $Progress $total $length -Complete
+        return
     }
     throw 'Too many release redirects.'
 }
@@ -664,7 +741,9 @@ function Invoke-AwfBootstrap {
     Assert-AwfFreshRoot $root
     $stage = New-AwfPrivateStage $local
     $oldTls = [Net.ServicePointManager]::SecurityProtocol
+    $progress = New-AwfBootstrapProgress
     try {
+        Set-AwfBootstrapStage $progress 'Downloading release metadata'
         # Session-only TLS minimum. Certificate validation remains enabled.
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $channel = $null
@@ -676,6 +755,9 @@ function Invoke-AwfBootstrap {
             Assert-AwfFreshChannel $channel
             $Version = $channel.version
         }
+        # A preview prompt may write to the same console. Do not leave an
+        # unfinished redraw line in front of it.
+        Close-AwfBootstrapProgress $progress
         $AllowPrerelease = Confirm-AwfPreview $Version ([bool] $AllowPrerelease) (Test-AwfInteractive)
         $asset = "awf_${Version}_windows_${architecture}.zip"
         $metadataPath = Join-Path $stage 'release.json'
@@ -699,12 +781,19 @@ function Invoke-AwfBootstrap {
         if ($channelDigest -and $digest -cne $channelDigest) { throw 'Release checksum differs from the Go channel SHA-256.' }
         if ($Sha256 -and $digest -ine $Sha256) { throw 'Release checksum differs from the independently pinned SHA-256.' }
         $archive = Join-Path $stage $asset
-        Save-AwfOfficialDownload -Url $urls[$asset] -Destination $archive -Limit $script:MaxReleaseBytes
+        Set-AwfBootstrapStage $progress 'Downloading release archive'
+        Save-AwfOfficialDownload -Url $urls[$asset] -Destination $archive -Limit $script:MaxReleaseBytes -Progress $progress
+        Set-AwfBootstrapStage $progress 'Verifying release archive'
         $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -cne $digest) { throw 'Release SHA-256 verification failed. No downloaded executable was run.' }
         $expanded = Join-Path $stage 'verified'
+        Set-AwfBootstrapStage $progress 'Extracting bootstrap'
         Expand-AwfVerifiedArchive -Archive $archive -Destination $expanded -Tag $Version -Architecture $architecture
         $executable = Join-Path $expanded 'awf.exe'
+        Set-AwfBootstrapStage $progress 'Launching installer'
+        # Finish the bootstrap line before native stderr writes. The native
+        # installer owns all subsequent verify/extract/install/PATH progress.
+        Close-AwfBootstrapProgress $progress
         # Exact-version pins bypass channel selection, so verify the public
         # fresh-install capability on every downloaded executable as well.
         $protocol = @(& $executable install-protocol)
@@ -719,13 +808,19 @@ function Invoke-AwfBootstrap {
         $null = & $executable @installArguments
         if ($LASTEXITCODE -ne 0) { throw "Verified AWF fresh installer failed (exit $LASTEXITCODE). If an AWF root was created, inspect it; do not rerun bootstrap or change its ACLs." }
         $launcher = Join-Path $root 'bin\awf.exe'
+        Set-AwfBootstrapStage $progress 'Checking installed launcher and refreshing shell PATH'
         Confirm-AwfInstalledLauncher $root
+        Close-AwfBootstrapProgress $progress
         Warn-AwfCommandShadowing $launcher
         Write-Host "Installed AWF $Version ($architecture)."
         Write-Host 'Next, run awf init to review configuration and optional pairing.'
         Write-Host 'Use awf start and awf stop when ready; use awf update for future releases.'
         Write-Host 'A child PowerShell cannot refresh its parent terminal. Open a new terminal if awf is not found.'
+    } catch {
+        Stop-AwfBootstrapProgress $progress
+        throw
     } finally {
+        Close-AwfBootstrapProgress $progress
         [Net.ServicePointManager]::SecurityProtocol = $oldTls
         Remove-Item -LiteralPath $stage -Recurse -Force
     }

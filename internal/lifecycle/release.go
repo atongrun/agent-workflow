@@ -50,6 +50,10 @@ func releaseClient() *http.Client {
 	}}
 }
 func fetch(ctx context.Context, c *http.Client, address string, limit int64) ([]byte, error) {
+	return fetchProgress(ctx, c, address, limit, nil)
+}
+
+func fetchProgress(ctx context.Context, c *http.Client, address string, limit int64, progress *installProgress) ([]byte, error) {
 	u, e := url.Parse(address)
 	if e != nil || u.Scheme != "https" || u.User != nil {
 		return nil, errors.New("release download must use HTTPS")
@@ -68,13 +72,19 @@ func fetch(ctx context.Context, c *http.Client, address string, limit int64) ([]
 	if res.StatusCode != 200 {
 		return nil, fmt.Errorf("official GitHub release returned HTTP %d; no installed version was changed", res.StatusCode)
 	}
-	b, e := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	reader := io.Reader(res.Body)
+	if progress != nil {
+		progress.download(0, res.ContentLength, false)
+		reader = &installProgressReader{reader: reader, progress: progress, total: res.ContentLength}
+	}
+	b, e := io.ReadAll(io.LimitReader(reader, limit+1))
 	if e != nil {
 		return nil, e
 	}
 	if int64(len(b)) > limit {
 		return nil, errors.New("release download exceeds allowed size")
 	}
+	progress.download(int64(len(b)), res.ContentLength, true)
 	return b, nil
 }
 func checksum(data []byte, name string) (string, error) {
@@ -166,6 +176,10 @@ func stageSelectedRelease(ctx context.Context, c *http.Client, root string, targ
 // downloadSelectedRelease verifies the official source and bytes without
 // creating an installation or staging directory.
 func downloadSelectedRelease(ctx context.Context, c *http.Client, target releaseTarget, arch, pin string, allowPrerelease bool, currentVersion string) ([]byte, error) {
+	return downloadSelectedReleaseProgress(ctx, c, target, arch, pin, allowPrerelease, currentVersion, nil)
+}
+
+func downloadSelectedReleaseProgress(ctx context.Context, c *http.Client, target releaseTarget, arch, pin string, allowPrerelease bool, currentVersion string, progress *installProgress) ([]byte, error) {
 	if err := validateReleaseRequest(target.Version, allowPrerelease); err != nil {
 		return nil, err
 	}
@@ -244,10 +258,11 @@ func downloadSelectedRelease(ctx context.Context, c *http.Client, target release
 	if pin != "" && (!strings.EqualFold(pin, digest) || len(pin) != 64) {
 		return nil, errors.New("release checksum differs from the explicitly pinned SHA-256")
 	}
-	payload, e := fetch(ctx, c, wanted[name], maxReleaseBytes)
+	payload, e := fetchProgress(ctx, c, wanted[name], maxReleaseBytes, progress)
 	if e != nil {
 		return nil, e
 	}
+	progress.stage("Verify release archive")
 	sum := sha256.Sum256(payload)
 	if hex.EncodeToString(sum[:]) != digest {
 		return nil, errors.New("release SHA-256 verification failed")

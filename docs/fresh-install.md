@@ -41,6 +41,26 @@ permits unattended installation, `--allow-prerelease` separately approves previe
 and `--no-path` skips PATH registration. See [windows-cli.md](windows-cli.md) for
 advanced pins, verification rules, initialization, and runtime behavior.
 
+## Console progress (local UX candidate)
+
+The bootstrap reports metadata, archive download, verification, bootstrap
+extraction and launch stages on console stderr. The native installer owns its
+verification, directory preparation, extraction, launcher installation and PATH
+stages. After it returns, bootstrap verifies the installed launcher before
+reporting overall success.
+
+Archive downloads show received bytes and a percentage when the server provides
+Content-Length; otherwise they show received bytes with an unknown total. The
+percentage describes only the download, not overall installation. Updates are
+limited to four per second and never reach 100% before the transfer has finished.
+Progress is quiet when stderr is redirected and does not enter stdout or machine
+output. Display failures disable feedback without changing installation results.
+No URLs, response bodies, credentials or paths are included in progress messages.
+
+Native Windows PowerShell 5.1 console acceptance of this progress candidate is
+still required; portable tests and cross-compilation do not establish rendering
+or parent-shell PATH behavior. This local candidate is not a published release.
+
 ## Fresh means absent
 
 Both entry points resolve the actual Windows `FOLDERID_UserProgramFiles` known
@@ -125,7 +145,8 @@ packaged-app shell as an acceptance shortcut.
 
 1. Run PowerShell fixtures in Windows PowerShell 5.1 and PowerShell 7:
    `test_install.ps1`, `test_channel.ps1`, `test_entry.ps1`,
-   `test_install_context.ps1`, `test_install_path.ps1`, and `test_fresh_install.ps1`
+   `test_install_context.ps1`, `test_install_path.ps1`, `test_fresh_install.ps1`,
+   and `test_install_progress.ps1`
 2. Independently identify ordinary and packaged hosts and run the read-only
    `test_install_identity.ps1 -ExpectedIdentity NoPackage` or `Packaged` gate.
    NO_PACKAGE alone is not evidence of an unredirected installation
