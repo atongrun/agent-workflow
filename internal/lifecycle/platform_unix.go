@@ -9,6 +9,10 @@ import (
 	"syscall"
 )
 
+// Native lifecycle dispatch remains Windows-only; allow portable install tests.
+func checkInstallerContext() error          { return nil }
+func checkInstallerPath(string, bool) error { return nil }
+
 func replaceFile(a, b string) error   { return os.Rename(a, b) }
 func protectDirectory(p string) error { return os.Chmod(p, 0700) }
 func lockFile(p string) (*os.File, error) {

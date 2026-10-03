@@ -316,6 +316,11 @@ func switchVersion(root, v string, old Pointer, activate, rollback func() error)
 	return nil
 }
 func install(root string, args []string, out io.Writer) error {
+	// A packaged process can redirect even an ordinary LocalAppData path into
+	// package storage. Reject that context before creating or securing the root.
+	if e := checkInstallerContext(); e != nil {
+		return e
+	}
 	f := flag.NewFlagSet("_install", flag.ContinueOnError)
 	f.SetOutput(out)
 	archive := f.String("archive", "", "verified downloaded ZIP")
@@ -340,7 +345,17 @@ func install(root string, args []string, out io.Writer) error {
 		return e
 	}
 	// Reject an unapproved RC before creating or changing the per-user root.
+	// Package identity alone does not establish an unredirected filesystem view.
+	// Check an existing root before its ACL can be changed, and a newly created
+	// root before any lock, archive, executable or configuration is written.
+	// A newly created private empty root may remain if this check rejects it.
+	if e := checkInstallerPath(root, true); e != nil {
+		return e
+	}
 	if e := privateRoot(root); e != nil {
+		return e
+	}
+	if e := checkInstallerPath(root, false); e != nil {
 		return e
 	}
 	lock, e := exclusive(root)
@@ -402,6 +417,12 @@ func install(root string, args []string, out io.Writer) error {
 		}
 	} else {
 		return err
+	}
+	// Confirm the launcher actually landed at the intended path before making
+	// this installation active or reporting success. A late refusal may leave
+	// partial version/launcher files, but must not create an active pointer.
+	if e = checkInstallerPath(launcher, false); e != nil {
+		return e
 	}
 	if e = writeJSON(filepath.Join(root, "channel.json"), selection); e != nil {
 		return e

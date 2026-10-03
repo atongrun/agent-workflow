@@ -186,6 +186,135 @@ namespace AwfBootstrap {
     }
 }
 
+function Initialize-AwfInstallContextNative {
+    if (-not ('AwfBootstrap.InstallContext' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+namespace AwfBootstrap {
+    public static class InstallContext {
+        [DllImport("kernel32.dll", ExactSpelling = true)]
+        private static extern int GetCurrentPackageFullName(ref uint length, IntPtr name);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access,
+            uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle,
+            StringBuilder path, uint capacity, uint flags);
+        public static int PackageIdentityStatus() {
+            uint length = 0;
+            // Query only: no package-name buffer or caller-controlled identity.
+            return GetCurrentPackageFullName(ref length, IntPtr.Zero);
+        }
+        public static string FinalPath(string path) {
+            // OPEN_EXISTING and zero access: never creates or changes a file.
+            // BACKUP_SEMANTICS permits directory handles; no backup privilege is enabled.
+            using (SafeFileHandle handle = CreateFileW(path, 0, 7, IntPtr.Zero,
+                    3, 0x02000000, IntPtr.Zero)) {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                uint capacity = 512;
+                while (capacity <= 32768) {
+                    StringBuilder result = new StringBuilder((int)capacity);
+                    // FILE_NAME_NORMALIZED | VOLUME_NAME_DOS, not FILE_NAME_OPENED.
+                    uint length = GetFinalPathNameByHandleW(handle, result, capacity, 0);
+                    if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                    if (length < capacity) return result.ToString();
+                    if (length >= 32768) break;
+                    capacity = length + 1;
+                }
+                throw new InvalidOperationException("Resolved installation path is too long.");
+            }
+        }
+    }
+}
+'@
+    }
+}
+
+function Get-AwfPackageIdentityStatus {
+    Initialize-AwfInstallContextNative
+    return [AwfBootstrap.InstallContext]::PackageIdentityStatus()
+}
+
+function Assert-AwfUnpackagedProcess {
+    try { $status = Get-AwfPackageIdentityStatus }
+    catch { throw 'Unable to verify the Windows installation context. Open a normal Windows PowerShell directly from Windows and run the installer there.' }
+    # Only APPMODEL_ERROR_NO_PACKAGE permits installation. Success or a required
+    # name-buffer size identifies a package; every other result fails closed.
+    if ($status -eq 15700) { return }
+    if ($status -eq 0 -or $status -eq 122) {
+        throw 'This terminal is running inside a packaged app that may redirect installation files. Open a normal Windows PowerShell directly from Windows and run the installer there.'
+    }
+    throw "Unable to verify the Windows installation context (Windows error $status). Open a normal Windows PowerShell directly from Windows and run the installer there."
+}
+
+function ConvertTo-AwfCanonicalWindowsPath([string] $Path) {
+    # Compare lexical intended paths with handle-resolved paths. Resolving both
+    # through the filesystem would hide the redirection being detected.
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw 'Installation path is empty.' }
+    $pathValue = $Path.Replace('/', '\')
+    if ($pathValue.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) {
+        $pathValue = '\\' + $pathValue.Substring(8)
+    } elseif ($pathValue.StartsWith('\\?\', [StringComparison]::Ordinal)) {
+        $pathValue = $pathValue.Substring(4)
+    }
+    $drive = $pathValue -cmatch '\A[A-Za-z]:\\'
+    if ($drive) {
+        $rootPart = $pathValue.Substring(0, 3)
+        $parts = @($pathValue.Substring(3) -split '\\')
+        $toValidate = $parts
+    } else {
+        if (-not $pathValue.StartsWith('\\', [StringComparison]::Ordinal)) {
+            throw 'Installation path must be an absolute Windows drive or UNC path.'
+        }
+        $unc = @($pathValue.Substring(2) -split '\\')
+        if ($unc.Count -lt 2 -or -not $unc[0] -or -not $unc[1] -or
+            $unc[0] -cin @('.', '..') -or $unc[1] -cin @('.', '..')) {
+            throw 'Installation path must have an explicit UNC server and share.'
+        }
+        $rootPart = '\\' + $unc[0] + '\' + $unc[1] + '\'
+        $toValidate = $unc
+        $parts = @()
+        if ($unc.Count -gt 2) { $parts = @($unc[2..($unc.Count - 1)]) }
+    }
+    foreach ($part in $toValidate) {
+        if ($part -and $part -cnotin @('.', '..') -and
+            ($part.EndsWith('.') -or $part.EndsWith(' ') -or
+                $part.IndexOfAny([char[]] '\"<>|:*?') -ge 0 -or $part -match '[\x00-\x1f]')) {
+            throw 'Installation path contains an ambiguous Windows component.'
+        }
+    }
+    # Deliberately lexical: .NET Framework GetFullPath may expand short names
+    # through filesystem queries. Never resolve the intended path that way.
+    $segments = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($part in $parts) {
+        if (-not $part -or $part -ceq '.') { continue }
+        if ($part -ceq '..') {
+            if ($segments.Count -gt 0) { $segments.RemoveAt($segments.Count - 1) }
+        } else { $segments.Add($part) }
+    }
+    $full = $rootPart + [string]::Join('\', $segments.ToArray())
+    if ($segments.Count -eq 0 -and $drive) { return $full }
+    return $full.TrimEnd('\')
+}
+
+function Get-AwfFinalPath([string] $Path) {
+    Initialize-AwfInstallContextNative
+    return [AwfBootstrap.InstallContext]::FinalPath($Path)
+}
+
+function Assert-AwfNativePath([string] $Path) {
+    $expected = ConvertTo-AwfCanonicalWindowsPath $Path
+    try { $actual = ConvertTo-AwfCanonicalWindowsPath (Get-AwfFinalPath $Path) }
+    catch { throw 'Unable to verify the physical installation path. Installation stopped; user PATH was not changed.' }
+    if (-not [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Windows redirected an installation path away from the intended user profile. Installation stopped; user PATH was not changed. Open a normal Windows PowerShell directly from Windows. Do not rerun bootstrap over a partial installation; review it first.'
+    }
+}
+
 function Assert-AwfDirectoryPath([string] $Path) {
     $item = Get-Item -LiteralPath $Path -Force
     while ($null -ne $item) {
@@ -218,6 +347,7 @@ function New-AwfPrivateStage([string] $Parent) {
         }
         Set-Acl -LiteralPath $directory.FullName -AclObject $acl
         Assert-AwfDirectoryPath $directory.FullName
+        Assert-AwfNativePath $path
         return $directory.FullName
     } catch {
         [IO.Directory]::Delete($directory.FullName)
@@ -428,29 +558,74 @@ function Expand-AwfVerifiedArchive {
     Assert-AwfNativeExecutable (Join-Path $Destination 'awf-node.exe') $Architecture
 }
 
+function Move-AwfPathEntryFirst([string] $Path, [string] $Bin) {
+    # Text transformation only. Remove only entries that normalize to this exact
+    # AWF bin; preserve every other entry (including its spelling) and its order.
+    $wanted = ConvertTo-AwfCanonicalWindowsPath $Bin
+    if (-not $Path) { return $wanted }
+    $remaining = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($part in ($Path -split ';')) {
+        $entry = $part.Trim()
+        if ($entry.Length -ge 2 -and $entry.StartsWith('"') -and $entry.EndsWith('"')) {
+            $entry = $entry.Substring(1, $entry.Length - 2)
+        }
+        $matches = $false
+        try {
+            $normalized = ConvertTo-AwfCanonicalWindowsPath ([Environment]::ExpandEnvironmentVariables($entry))
+            $matches = [string]::Equals($wanted, $normalized, [StringComparison]::OrdinalIgnoreCase)
+        } catch {
+            # Empty, relative, or unusual existing entries are retained verbatim.
+            # This installer is not a general PATH repair or cleanup tool.
+        }
+        if (-not $matches) { $remaining.Add($part) }
+    }
+    if ($remaining.Count -eq 0) { return $wanted }
+    return $wanted + ';' + [string]::Join(';', $remaining.ToArray())
+}
+
 function Add-AwfUserPath([string] $Bin) {
     $old = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $present = $false
-    foreach ($part in ($old -split ';')) {
-        $expanded = [Environment]::ExpandEnvironmentVariables($part.Trim().Trim('"')).TrimEnd('\', '/')
-        if ($expanded -ieq $Bin.TrimEnd('\', '/')) { $present = $true }
-    }
-    if (-not $present) {
-        $new = $Bin
-        if (-not [string]::IsNullOrWhiteSpace($old)) { $new = $old.TrimEnd(';') + ';' + $Bin }
-        [Environment]::SetEnvironmentVariable('Path', $new, 'User')
-    }
-    # Make the same verified launcher usable immediately in this PowerShell
-    # process; persistent user PATH above covers future shells.
+    $new = Move-AwfPathEntryFirst $old $Bin
+    if ($new -cne $old) { [Environment]::SetEnvironmentVariable('Path', $new, 'User') }
+    # Promote the verified launcher in this process too. A child PowerShell
+    # cannot change its parent shell; the user PATH applies to future shells.
     $process = [Environment]::GetEnvironmentVariable('Path', 'Process')
-    $inProcess = $false
-    foreach ($part in ($process -split ';')) {
-        if ([Environment]::ExpandEnvironmentVariables($part.Trim().Trim('"')).TrimEnd('\', '/') -ieq $Bin.TrimEnd('\', '/')) { $inProcess = $true }
+    $updated = Move-AwfPathEntryFirst $process $Bin
+    if ($updated -cne $process) { [Environment]::SetEnvironmentVariable('Path', $updated, 'Process') }
+}
+
+function Warn-AwfCommandShadowing([string] $Launcher) {
+    # Function-local preference: exact-name command lookup must not auto-import
+    # a module and execute its initialization merely to produce a warning.
+    $PSModuleAutoLoadingPreference = 'None'
+    $command = Get-Command -Name 'awf' -ErrorAction SilentlyContinue
+    if ($null -ne $command -and $command.CommandType -eq [Management.Automation.CommandTypes]::Application) {
+        try {
+            $actual = ConvertTo-AwfCanonicalWindowsPath $command.Path
+            $expected = ConvertTo-AwfCanonicalWindowsPath $Launcher
+            if ([string]::Equals($actual, $expected, [StringComparison]::OrdinalIgnoreCase)) { return }
+        } catch { }
     }
-    if (-not $inProcess) {
-        $updated = $Bin
-        if (-not [string]::IsNullOrWhiteSpace($process)) { $updated = $process.TrimEnd(';') + ';' + $Bin }
-        [Environment]::SetEnvironmentVariable('Path', $updated, 'Process')
+    # Read command resolution only. Never remove or overwrite aliases/functions
+    # or other executables, and never rewrite machine PATH to win precedence.
+    Write-Warning "This shell still does not resolve 'awf' to the installed launcher. Run '$Launcher' directly and review any alias, function, or earlier machine PATH entry."
+}
+
+function Register-AwfInstalledLauncher([string] $Root, $Channel, [bool] $PreviewApproved) {
+    $launcher = Join-Path $Root 'bin\awf.exe'
+    Assert-AwfDirectoryPath (Join-Path $Root 'bin')
+    $installed = Get-Item -LiteralPath $launcher -Force
+    if ($installed -isnot [IO.FileInfo] -or ($installed.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Installed launcher must be a regular file, not a reparse point. User PATH was not changed.'
+    }
+    Assert-AwfNativePath $launcher
+    if ($null -ne $Channel -and $Channel.cliProtocol -ceq '1') {
+        try { Save-AwfLegacyChannel $Root ([bool] $PreviewApproved) }
+        catch { throw "AWF was installed, but Go channel registration failed. Do not rerun bootstrap; review the protected installation. $($_.Exception.Message)" }
+    }
+    try { Add-AwfUserPath (Join-Path $Root 'bin') }
+    catch {
+        throw "AWF was installed, but user PATH could not be updated. Run '$Root\bin\awf.exe' directly; do not rerun bootstrap. $($_.Exception.Message)"
     }
 }
 
@@ -467,6 +642,7 @@ function Invoke-AwfBootstrap {
         [IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\') -ine $local.TrimEnd('\')) {
         throw 'LOCALAPPDATA must match the current Windows user profile directory.'
     }
+    Assert-AwfUnpackagedProcess
     $root = Join-Path $local 'AWF'
     foreach ($marker in @('current.json', 'config.json', 'channel.json', 'bin\awf.exe')) {
         if (Test-Path -LiteralPath (Join-Path $root $marker)) {
@@ -518,18 +694,15 @@ function Invoke-AwfBootstrap {
         $installArguments = @('_install', '--archive', $archive, '--version', $Version, '--sha256', $digest)
         if ($AllowPrerelease) { $installArguments += '--allow-prerelease' }
         if ($null -ne $channel -and $channel.cliProtocol -ceq '2') { $installArguments += @('--channel', 'go-v1') }
-        & $executable @installArguments
+        # Older verified releases print success before this bootstrap can check
+        # their launcher location. Suppress that subordinate stdout; stderr and
+        # the exit code remain visible, and verified success is reported below.
+        $null = & $executable @installArguments
         if ($LASTEXITCODE -ne 0) { throw "Verified AWF installer failed (exit $LASTEXITCODE). User PATH was not changed." }
-        if ($null -ne $channel -and $channel.cliProtocol -ceq '1') {
-            try { Save-AwfLegacyChannel $root ([bool] $AllowPrerelease) }
-            catch { throw "AWF was installed, but Go channel registration failed. Do not rerun bootstrap; review the protected installation. $($_.Exception.Message)" }
-        }
-        try { Add-AwfUserPath (Join-Path $root 'bin') }
-        catch {
-            throw "AWF was installed, but user PATH could not be updated. Run '$root\bin\awf.exe' directly; do not rerun bootstrap. $($_.Exception.Message)"
-        }
-        Write-Host "Installed AWF $Version ($architecture)."
         $launcher = Join-Path $root 'bin\awf.exe'
+        Register-AwfInstalledLauncher $root $channel ([bool] $AllowPrerelease)
+        Warn-AwfCommandShadowing $launcher
+        Write-Host "Installed AWF $Version ($architecture)."
         if ($null -ne $channel -and $channel.cliProtocol -ceq '2') {
             Write-Host 'Update later with awf update.'
             if (-not $SkipInit -and (Test-AwfInteractive)) {

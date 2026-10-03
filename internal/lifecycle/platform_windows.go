@@ -11,6 +11,55 @@ import (
 	"unsafe"
 )
 
+func checkInstallerContext() error {
+	return validateInstallerPackage(currentPackageIdentity())
+}
+
+func currentPackageIdentity() (uint32, error) {
+	proc := syscall.NewLazyDLL("kernel32.dll").NewProc("GetCurrentPackageFullName")
+	if e := proc.Find(); e != nil {
+		return 0, e
+	}
+	var length uint32
+	status, _, _ := proc.Call(uintptr(unsafe.Pointer(&length)), 0)
+	return uint32(status), nil
+}
+
+func checkInstallerPath(path string, allowMissing bool) error {
+	actual, e := finalInstallerPath(path)
+	if allowMissing && os.IsNotExist(e) {
+		return nil
+	}
+	return validateInstallerPath(filepath.Clean(path), actual, e)
+}
+
+func finalInstallerPath(path string) (string, error) {
+	proc := syscall.NewLazyDLL("kernel32.dll").NewProc("GetFinalPathNameByHandleW")
+	if e := proc.Find(); e != nil {
+		return "", e
+	}
+	p, e := syscall.UTF16PtrFromString(path)
+	if e != nil {
+		return "", e
+	}
+	h, e := syscall.CreateFile(p, 0, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE, nil, syscall.OPEN_EXISTING, syscall.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if e != nil {
+		return "", e
+	}
+	defer syscall.CloseHandle(h)
+	// Windows paths are bounded to 32,767 UTF-16 code units. Request the
+	// normalized DOS path (flags=0), including a slot for the terminator.
+	b := make([]uint16, 32768)
+	n, _, callErr := proc.Call(uintptr(h), uintptr(unsafe.Pointer(&b[0])), uintptr(len(b)), 0)
+	if n == 0 {
+		return "", fmt.Errorf("GetFinalPathNameByHandleW: %w", callErr)
+	}
+	if n >= uintptr(len(b)) {
+		return "", errors.New("GetFinalPathNameByHandleW returned an oversized path")
+	}
+	return syscall.UTF16ToString(b[:n]), nil
+}
+
 func replaceFile(a, b string) error {
 	ap, e := syscall.UTF16PtrFromString(a)
 	if e != nil {

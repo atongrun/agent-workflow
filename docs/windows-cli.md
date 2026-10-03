@@ -24,6 +24,33 @@ It does not install Go, Python, Node, npm, Pi, OpenCode, or Git, request admin
 rights, change execution policy, configure firewall rules, or start the runtime.
 Run it as the intended ordinary Windows user.
 
+### Installation context safeguard (source acceptance pending)
+
+Run the installer in a normal Windows PowerShell opened directly from Windows.
+The bootstrap checks `GetCurrentPackageFullName` after the existing known-folder
+and environment check. Only `APPMODEL_ERROR_NO_PACKAGE` can continue; an identified
+package or an unknown/API failure refuses installation before staging or network.
+There is no bypass flag, environment rewrite, or automatic subprocess escape.
+
+`NO_PACKAGE` alone does not prove that filesystem writes are unredirected. The
+bootstrap also checks the handle-final path of its newly created private stage
+against the intended path before downloading anything, then checks the installed
+launcher before channel registration, PATH changes, or success output. A mismatch
+or query failure stops. The empty failed stage is removed; a partial installation
+is not automatically deleted or migrated. These checks do not relax ACLs or change
+existing installations' start/stop behavior. Existing redirected installations
+need a separately reviewed recovery; this installer does not migrate them.
+
+Native gates for this source change include `scripts/test_install_context.ps1`
+(mocked identity/error/redirection plus real disposable file handles), the unchanged
+entry/EOF and archive/ACL suites, and `scripts/test_install_identity.ps1
+-ExpectedIdentity NoPackage` or `Packaged` in independently identified real hosts.
+The latter is read-only and reports the actual API status; a mocked result, a
+cross-compile, or `NO_PACKAGE` is not proof of a real nonredirected installation.
+Run `scripts/test_install_path.ps1` for the PATH-text and command-shadowing helper
+fixtures; it never calls a PATH setter or changes the registry. Native PowerShell
+5.1 x64/x86 and PowerShell 7 execution remains an explicit acceptance gate.
+
 ## One-command installation
 
 **Planned command, gated on the publication and acceptance checks above.** This
@@ -90,8 +117,13 @@ angle-bracket placeholders literally.
 Bootstrap refuses any existing install/configuration/channel/launcher marker and
 directs the operator to `awf update` or explicit recovery. It does not overwrite
 an existing install to bypass active-job checks. PATH is changed only after the
-native installer and channel registration succeed, without replacing other PATH
-entries. The current PowerShell process is also updated. A command launched in a
+native installer, physical launcher verification, and channel registration succeed.
+The installer moves only its exact normalized AWF bin entry to the front of user
+and current-process PATH, removing duplicates of that same entry. Every other
+entry and its relative order is preserved, including existing Python entries;
+no executable, alias, function, or machine PATH is changed. A command-resolution
+warning is shown if an alias, function, or another command still takes precedence.
+The current PowerShell process is also updated. A command launched in a
 child PowerShell cannot rewrite its parent shell environment; open a new terminal
 for `awf`, or use `%LOCALAPPDATA%\AWF\bin\awf.exe` immediately.
 
