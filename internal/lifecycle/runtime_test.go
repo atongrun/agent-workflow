@@ -238,6 +238,9 @@ func TestReadRuntimeRejectsUnsafeTargets(t *testing.T) {
 	for _, address := range []string{"https://127.0.0.1:1234", "http://localhost:1234", "http://192.0.2.1:1234", "http://0.0.0.0:1234", "http://[::1]:1234", "http://127.0.0.1:1234/path", "http://127.0.0.1:1234?x=1", "http://127.0.0.1:1234#fragment", "http://127.0.0.1:1234@evil.invalid", "http://127.0.0.1:notaport", "http://127.0.0.1:65536"} {
 		t.Run(address, func(t *testing.T) {
 			root := t.TempDir()
+			if _, err := managedDirectory(root, "private"); err != nil {
+				t.Fatal(err)
+			}
 			if err := writeJSON(runtimePath(root), Runtime{URL: address, Token: strings.Repeat("a", 64), Version: "v1.2.3"}); err != nil {
 				t.Fatal(err)
 			}
@@ -247,6 +250,9 @@ func TestReadRuntimeRejectsUnsafeTargets(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
+	if _, err := managedDirectory(root, "private"); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeJSON(runtimePath(root), Runtime{URL: "http://127.0.0.1:1234", Token: "short", Version: "v1.2.3"}); err != nil {
 		t.Fatal(err)
 	}

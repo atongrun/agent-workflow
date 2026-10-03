@@ -1,12 +1,12 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-Installs the compatible published Go AWF release for the current Windows user.
+Fresh-installs the published Go AWF release for the current Windows user.
 .DESCRIPTION
 Downloads only official GitHub release assets. The release ZIP is verified and
 validated before its awf.exe is executed. This script does not start the runtime,
-edit the firewall, pair credentials, or change execution policy. After a
-new-protocol install it starts the separately reviewed interactive init wizard.
+edit the firewall, pair credentials, run init, or change execution policy.
+An existing AWF root is refused; this bootstrap never repairs or migrates it.
 .PARAMETER Version
 Optional exact stable or RC tag. Omit to use the official go-v1 channel.
 .PARAMETER AllowPrerelease
@@ -18,8 +18,7 @@ Optional independently obtained SHA-256 for this architecture's release ZIP.
 param(
     [string] $Version,
     [string] $Sha256,
-    [switch] $AllowPrerelease,
-    [switch] $SkipInit
+    [switch] $AllowPrerelease
 )
 
 Set-StrictMode -Version Latest
@@ -62,7 +61,7 @@ function Read-AwfChannelManifest([string] $Text) {
         $values[$key] = $match.Groups[2].Value
     }
     if ($values.schema -cne '1' -or $values.channel -cne 'go-v1' -or
-        $values.cliProtocol -cnotin @('1', '2') -or
+        $values.cliProtocol -cnotin @('1', '2', '3') -or
         $values.version -cnotmatch '\Av1\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-rc\.(?:0|[1-9][0-9]*))?\z' -or
         $values.sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or
         $values.windowsAMD64SHA256 -cnotmatch '\A[0-9a-f]{64}\z' -or
@@ -70,6 +69,12 @@ function Read-AwfChannelManifest([string] $Text) {
         throw 'Unsupported or invalid Go v1 channel metadata.'
     }
     return $values
+}
+
+function Assert-AwfFreshChannel($Channel) {
+    if ($Channel.cliProtocol -cne '3') {
+        throw 'The published Go channel does not yet provide the fresh-install CLI (protocol 3). Nothing was installed. Wait for the reviewed fresh-install release; this bootstrap does not install historical releases.'
+    }
 }
 
 function Test-AwfInteractive {
@@ -80,15 +85,14 @@ function Test-AwfInteractive {
     return $true
 }
 
-function Confirm-AwfPreview([string] $Tag, [bool] $Approved, [bool] $Interactive, [bool] $UseChannel = $true) {
+function Confirm-AwfPreview([string] $Tag, [bool] $Approved, [bool] $Interactive) {
     Assert-AwfReleaseVersion $Tag -AllowPrerelease
     if (-not $Tag.Contains('-rc.')) { return $Approved }
     if ($Approved) { return $true }
     if (-not $Interactive) {
         throw 'The Go channel currently selects a preview. Run interactively to review it, or explicitly pass -AllowPrerelease for unattended installation.'
     }
-    $question = "AWF $Tag is a preview release. Install this preview? [y/N]"
-    if ($UseChannel) { $question = "AWF $Tag is a preview release. Install it and allow preview updates in the Go v1 channel? [y/N]" }
+    $question = "AWF $Tag is a preview release. Install it and allow preview updates in the Go v1 channel? [y/N]"
     $answer = Read-Host $question
     if ($answer -isnot [string] -or $answer -cnotmatch '\A(?i:y|yes)\z') { throw 'Preview installation cancelled. Nothing was installed.' }
     return $true
@@ -111,44 +115,6 @@ function Assert-AwfReleaseSource($Release, $TagRef, [string] $Tag, [string] $Exp
 
 function Assert-AwfChannelRelease($Channel, $Release, $TagRef) {
     Assert-AwfReleaseSource $Release $TagRef $Channel.version $Channel.sourceCommit
-}
-
-function Save-AwfLegacyChannel([string] $Root, [bool] $PreviewApproved) {
-    # RC2 predates the native --channel option. Preserve its current.json shape;
-    # a future compatible updater consumes this separate, private marker.
-    Assert-AwfDirectoryPath $Root
-    $acl = Get-Acl -LiteralPath $Root
-    $user = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-    if ($owner -cnotin @($user, 'S-1-5-18')) { throw 'Installation owner is not private.' }
-    $seen = @{}
-    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-        $sid = $rule.IdentityReference.Value
-        if ($sid -cnotin @($user, 'S-1-5-18') -or
-            $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
-            $rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly -or
-            $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl) {
-            throw 'Installation channel requires existing private full-control ACLs.'
-        }
-        $seen[$sid] = $true
-    }
-    if (-not $seen.ContainsKey($user) -or -not $seen.ContainsKey('S-1-5-18')) {
-        throw 'Installation channel requires current-user and SYSTEM access.'
-    }
-    $approved = 'false'
-    if ($PreviewApproved) { $approved = 'true' }
-    $bytes = [Text.Encoding]::UTF8.GetBytes('{"schema":"1","channel":"go-v1","previewApproved":' + $approved + '}')
-    $path = Join-Path $Root 'channel.json'
-    $temporary = Join-Path $Root ('.awf-channel-' + [Guid]::NewGuid().ToString('N'))
-    try {
-        $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-        try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush() }
-        finally { $stream.Dispose() }
-        # Move is atomic and does not overwrite an existing channel marker.
-        [IO.File]::Move($temporary, $path)
-    } finally {
-        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
-    }
 }
 
 function Get-AwfNativeArchitecture {
@@ -309,9 +275,9 @@ function Get-AwfFinalPath([string] $Path) {
 function Assert-AwfNativePath([string] $Path) {
     $expected = ConvertTo-AwfCanonicalWindowsPath $Path
     try { $actual = ConvertTo-AwfCanonicalWindowsPath (Get-AwfFinalPath $Path) }
-    catch { throw 'Unable to verify the physical installation path. Installation stopped; user PATH was not changed.' }
+    catch { throw 'Unable to verify the physical installation path. Installation stopped; this shell PATH was not changed.' }
     if (-not [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Windows redirected an installation path away from the intended user profile. Installation stopped; user PATH was not changed. Open a normal Windows PowerShell directly from Windows. Do not rerun bootstrap over a partial installation; review it first.'
+        throw 'Windows redirected an installation path away from the intended user profile. Installation stopped; this shell PATH was not changed. Open a normal Windows PowerShell directly from Windows. Do not rerun bootstrap over a partial installation; review it first.'
     }
 }
 
@@ -583,12 +549,9 @@ function Move-AwfPathEntryFirst([string] $Path, [string] $Bin) {
     return $wanted + ';' + [string]::Join(';', $remaining.ToArray())
 }
 
-function Add-AwfUserPath([string] $Bin) {
-    $old = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $new = Move-AwfPathEntryFirst $old $Bin
-    if ($new -cne $old) { [Environment]::SetEnvironmentVariable('Path', $new, 'User') }
-    # Promote the verified launcher in this process too. A child PowerShell
-    # cannot change its parent shell; the user PATH applies to future shells.
+function Add-AwfProcessPath([string] $Bin) {
+    # The native installer owns persistent user PATH registration. Refresh only
+    # this PowerShell process after verifying the completed installation.
     $process = [Environment]::GetEnvironmentVariable('Path', 'Process')
     $updated = Move-AwfPathEntryFirst $process $Bin
     if ($updated -cne $process) { [Environment]::SetEnvironmentVariable('Path', $updated, 'Process') }
@@ -611,21 +574,24 @@ function Warn-AwfCommandShadowing([string] $Launcher) {
     Write-Warning "This shell still does not resolve 'awf' to the installed launcher. Run '$Launcher' directly and review any alias, function, or earlier machine PATH entry."
 }
 
-function Register-AwfInstalledLauncher([string] $Root, $Channel, [bool] $PreviewApproved) {
+function Assert-AwfFreshRoot([string] $Root) {
+    try { $null = Get-Item -LiteralPath $Root -Force -ErrorAction Stop }
+    catch [Management.Automation.ItemNotFoundException] { return }
+    catch { throw 'AWF root state could not be verified. No installation was attempted.' }
+    throw 'AWF root already exists, including empty, partial, or credentials-only roots. Fresh install does not migrate, adopt, repair, or overwrite it. Use awf update for a healthy installation; otherwise review it explicitly.'
+}
+
+function Confirm-AwfInstalledLauncher([string] $Root) {
     $launcher = Join-Path $Root 'bin\awf.exe'
     Assert-AwfDirectoryPath (Join-Path $Root 'bin')
     $installed = Get-Item -LiteralPath $launcher -Force
     if ($installed -isnot [IO.FileInfo] -or ($installed.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        throw 'Installed launcher must be a regular file, not a reparse point. User PATH was not changed.'
+        throw 'Installed launcher must be a regular file, not a reparse point. Process PATH was not changed.'
     }
     Assert-AwfNativePath $launcher
-    if ($null -ne $Channel -and $Channel.cliProtocol -ceq '1') {
-        try { Save-AwfLegacyChannel $Root ([bool] $PreviewApproved) }
-        catch { throw "AWF was installed, but Go channel registration failed. Do not rerun bootstrap; review the protected installation. $($_.Exception.Message)" }
-    }
-    try { Add-AwfUserPath (Join-Path $Root 'bin') }
+    try { Add-AwfProcessPath (Join-Path $Root 'bin') }
     catch {
-        throw "AWF was installed, but user PATH could not be updated. Run '$Root\bin\awf.exe' directly; do not rerun bootstrap. $($_.Exception.Message)"
+        throw "AWF was installed, but this shell's PATH could not be refreshed. Run '$launcher' directly; do not rerun bootstrap. $($_.Exception.Message)"
     }
 }
 
@@ -644,11 +610,7 @@ function Invoke-AwfBootstrap {
     }
     Assert-AwfUnpackagedProcess
     $root = Join-Path $local 'AWF'
-    foreach ($marker in @('current.json', 'config.json', 'channel.json', 'bin\awf.exe')) {
-        if (Test-Path -LiteralPath (Join-Path $root $marker)) {
-            throw 'AWF already exists. Use awf update; an incomplete install requires explicit recovery.'
-        }
-    }
+    Assert-AwfFreshRoot $root
     $stage = New-AwfPrivateStage $local
     $oldTls = [Net.ServicePointManager]::SecurityProtocol
     try {
@@ -660,9 +622,10 @@ function Invoke-AwfBootstrap {
             Save-AwfOfficialDownload -Url $script:ChannelUrl -Destination $channelPath -Limit 4096 -Channel
             $utf8 = New-Object Text.UTF8Encoding($false, $true)
             $channel = Read-AwfChannelManifest ($utf8.GetString([IO.File]::ReadAllBytes($channelPath)))
+            Assert-AwfFreshChannel $channel
             $Version = $channel.version
         }
-        $AllowPrerelease = Confirm-AwfPreview $Version ([bool] $AllowPrerelease) (Test-AwfInteractive) ($null -ne $channel)
+        $AllowPrerelease = Confirm-AwfPreview $Version ([bool] $AllowPrerelease) (Test-AwfInteractive)
         $asset = "awf_${Version}_windows_${architecture}.zip"
         $metadataPath = Join-Path $stage 'release.json'
         Save-AwfOfficialDownload -Url "https://api.github.com/repos/$script:Repository/releases/tags/$Version" `
@@ -691,28 +654,26 @@ function Invoke-AwfBootstrap {
         $expanded = Join-Path $stage 'verified'
         Expand-AwfVerifiedArchive -Archive $archive -Destination $expanded -Tag $Version -Architecture $architecture
         $executable = Join-Path $expanded 'awf.exe'
-        $installArguments = @('_install', '--archive', $archive, '--version', $Version, '--sha256', $digest)
+        # Exact-version pins bypass channel selection, so verify the public
+        # fresh-install capability on every downloaded executable as well.
+        $protocol = @(& $executable install-protocol)
+        if ($LASTEXITCODE -ne 0 -or $protocol.Count -ne 1 -or $protocol[0] -cne '3') {
+            throw 'This verified release does not support fresh installation (protocol 3). No AWF installation was attempted; historical installers are not supported.'
+        }
+        $installArguments = @('install', '--yes', '--archive', $archive, '--version', $Version, '--sha256', $digest)
         if ($AllowPrerelease) { $installArguments += '--allow-prerelease' }
-        if ($null -ne $channel -and $channel.cliProtocol -ceq '2') { $installArguments += @('--channel', 'go-v1') }
-        # Older verified releases print success before this bootstrap can check
-        # their launcher location. Suppress that subordinate stdout; stderr and
-        # the exit code remain visible, and verified success is reported below.
+        $installArguments += @('--channel', 'go-v1')
+        # The native installer owns root creation, final ACLs, channel state and
+        # persistent user PATH. Report success only after physical verification.
         $null = & $executable @installArguments
-        if ($LASTEXITCODE -ne 0) { throw "Verified AWF installer failed (exit $LASTEXITCODE). User PATH was not changed." }
+        if ($LASTEXITCODE -ne 0) { throw "Verified AWF fresh installer failed (exit $LASTEXITCODE). If an AWF root was created, inspect it; do not rerun bootstrap or change its ACLs." }
         $launcher = Join-Path $root 'bin\awf.exe'
-        Register-AwfInstalledLauncher $root $channel ([bool] $AllowPrerelease)
+        Confirm-AwfInstalledLauncher $root
         Warn-AwfCommandShadowing $launcher
         Write-Host "Installed AWF $Version ($architecture)."
-        if ($null -ne $channel -and $channel.cliProtocol -ceq '2') {
-            Write-Host 'Update later with awf update.'
-            if (-not $SkipInit -and (Test-AwfInteractive)) {
-                & $launcher init
-                if ($LASTEXITCODE -ne 0) { throw 'AWF is installed. Setup did not finish; run awf init to continue. Do not rerun bootstrap.' }
-            } else { Write-Host 'Run awf init to review configuration and optional pairing.' }
-        } elseif ($null -ne $channel) {
-            Write-Host 'This published release predates guided init and channel-aware update.'
-            Write-Host 'Installation succeeded. Follow its version-specific setup instructions; guided setup requires a newer reviewed release.'
-        } else { Write-Host 'Run awf init to review configuration.' }
+        Write-Host 'Next, run awf init to review configuration and optional pairing.'
+        Write-Host 'Use awf start and awf stop when ready; use awf update for future releases.'
+        Write-Host 'A child PowerShell cannot refresh its parent terminal. Open a new terminal if awf is not found.'
     } finally {
         [Net.ServicePointManager]::SecurityProtocol = $oldTls
         Remove-Item -LiteralPath $stage -Recurse -Force

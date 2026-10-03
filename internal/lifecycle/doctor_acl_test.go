@@ -191,3 +191,17 @@ func TestDoctorACLTypeSpecificFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorProgramAndPrivateRolesDiffer(t *testing.T) {
+	m := parsedDoctorACL(doctorACLFixture(
+		doctorACEFixture(0, 0x13, 0x1f01ff, doctorSIDFixture(21, 1001)),
+		doctorACEFixture(0, 0x13, 0x1f01ff, doctorSIDFixture(18)),
+		doctorACEFixture(0, 0x13, 0x1f01ff, doctorSIDFixture(32, 544)),
+		doctorACEFixture(0, 0x13, 0x1200a9, doctorSIDFixture(32, 545))))
+	if status, _ := summarizeDoctorACLRole(&m, programPermissionRole); status != "protected" {
+		t.Fatal(status, m)
+	}
+	if status, _ := summarizeDoctorACLRole(&m, privatePermissionRole); status != "mismatch" {
+		t.Fatal(status, m)
+	}
+}

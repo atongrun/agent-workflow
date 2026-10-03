@@ -183,50 +183,9 @@ func decodeDoctorSID(b []byte) (string, error) {
 	return sid, nil
 }
 
-// Mirror the existing checkPrivatePath acceptance policy, collecting every
-// issue. This is not an effective-access calculator or a new security policy.
+// Private-data findings share the exact policy used by lifecycle validation.
 func summarizeDoctorACL(m *doctorACLMetadata) (string, string) {
-	m.PolicyIssues = nil
-	issue := func(s string) { m.PolicyIssues = append(m.PolicyIssues, s) }
-	if m.OwnerSID == "" || m.CurrentUserSID == "" {
-		m.Complete = false
-	} else if m.OwnerSID != m.CurrentUserSID && m.OwnerSID != "S-1-5-18" {
-		issue("owner is neither current user nor SYSTEM")
-	}
-	if m.DACLState == "absent" || m.DACLState == "null" {
-		issue("unrestricted DACL is not allowed")
-	}
-	if m.DACLState != "present" && m.DACLState != "absent" && m.DACLState != "null" {
-		m.Complete = false
-	}
-	seen := map[string]bool{}
-	for _, e := range m.Entries {
-		prefix := fmt.Sprintf("ACE %d: ", e.Index)
-		if e.Type != 0 {
-			issue(prefix + "not an ordinary ALLOW rule")
-		}
-		if e.Flags&8 != 0 {
-			issue(prefix + "inherit-only rule is ineffective on this object")
-		}
-		full := e.Mask == "0x001f01ff" || e.Mask == "0x10000000"
-		if e.Mask != "" && !full {
-			issue(prefix + "mask is not required full control")
-		}
-		if e.SID != "" && m.CurrentUserSID != "" && e.SID != m.CurrentUserSID && e.SID != "S-1-5-18" {
-			issue(prefix + "principal is neither current user nor SYSTEM")
-		}
-		if e.Type == 0 && e.Flags&8 == 0 && full && e.SID != "" {
-			seen[e.SID] = true
-		}
-	}
-	if m.DACLState == "present" {
-		if m.CurrentUserSID != "" && !seen[m.CurrentUserSID] {
-			issue("current-user full-control ALLOW rule not observed")
-		}
-		if !seen["S-1-5-18"] {
-			issue("SYSTEM full-control ALLOW rule not observed")
-		}
-	}
+	m.PolicyIssues = permissionPolicyIssues(m, privatePermissionRole)
 	if !m.Complete {
 		return "unknown", "ACL metadata is incomplete; observed rules and policy issues follow"
 	}
@@ -234,6 +193,21 @@ func summarizeDoctorACL(m *doctorACLMetadata) (string, string) {
 		return "mismatch", "ACL metadata observed; current-user/SYSTEM-only policy is not satisfied"
 	}
 	return "private", "ACL metadata observed; current-user/SYSTEM-only policy is satisfied"
+}
+
+// Program ACLs protect code integrity; only secret/state paths require privacy.
+func summarizeDoctorACLRole(m *doctorACLMetadata, role permissionRole) (string, string) {
+	if role == privatePermissionRole {
+		return summarizeDoctorACL(m)
+	}
+	m.PolicyIssues = permissionPolicyIssues(m, role)
+	if !m.Complete {
+		return "unknown", "program ACL metadata is incomplete; observed rules follow"
+	}
+	if len(m.PolicyIssues) != 0 {
+		return "mismatch", "program ACL permits unsafe modification or lacks current-user access"
+	}
+	return "protected", "program ACL permits user/SYSTEM/Administrators writes and inherited read-only access; no ACL was changed"
 }
 
 func renderDoctorACL(out io.Writer, m *doctorACLMetadata) {

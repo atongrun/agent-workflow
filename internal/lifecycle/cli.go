@@ -42,6 +42,9 @@ func Forward(args []string) (bool, error) {
 	if e = validateInstallRoot(root); e != nil {
 		return true, e
 	}
+	if e = requireFreshLayout(root); e != nil {
+		return true, e
+	}
 	p, e := current(root)
 	if e != nil {
 		return true, e
@@ -56,8 +59,15 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("missing lifecycle command")
 	}
+	if args[0] == "install" {
+		return publicInstall(args[1:], in, out)
+	}
 	if args[0] == "doctor" {
 		return runDoctor(args[1:], out)
+	}
+	if args[0] == "install-protocol" {
+		fmt.Fprintln(out, "3")
+		return nil
 	}
 	if args[0] == "version" {
 		fmt.Fprintln(out, Version)
@@ -84,12 +94,18 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 		if e = validateInstallRoot(root); e != nil {
 			return e
 		}
+		if e = requireFreshLayout(root); e != nil {
+			return e
+		}
 		return serve(root)
 	}
 	if args[0] == "_install" {
 		return install(root, args[1:], out)
 	}
 	if e = validateInstallRoot(root); e != nil {
+		return e
+	}
+	if e = requireFreshLayout(root); e != nil {
 		return e
 	}
 	lock, e := exclusive(root)
@@ -192,6 +208,9 @@ func updateWithInput(root string, args []string, in io.Reader, out io.Writer) er
 	if e != nil {
 		return e
 	}
+	if *version == "" && target.CLIProtocol != "3" {
+		return errors.New("update channel does not select fresh-install protocol 3; installed version was not changed")
+	}
 	if order, err := compareReleaseVersions(target.Version, old.Version); err != nil {
 		return err
 	} else if order < 0 {
@@ -216,7 +235,7 @@ func updateWithInput(root string, args []string, in io.Reader, out io.Writer) er
 		fmt.Fprintln(out, "AWF is already at", v)
 		return nil
 	}
-	if e = verifyExecutable(binary(root, v), v); e != nil {
+	if e = verifyFreshExecutable(binary(root, v), v); e != nil {
 		return e
 	}
 	if wasRunning {
@@ -271,7 +290,7 @@ func updateWithInput(root string, args []string, in io.Reader, out io.Writer) er
 			}
 			return nil
 		}
-		return verifyExecutable(binary(root, v), v)
+		return verifyFreshExecutable(binary(root, v), v)
 	}, func() error {
 		if wasRunning {
 			return start(root, out)
@@ -323,94 +342,32 @@ func switchVersion(root, v string, old Pointer, activate, rollback func() error)
 	}
 	return nil
 }
+
+// The old bootstrap entry is intentionally not a migration or repair path.
 func install(root string, args []string, out io.Writer) error {
-	// A packaged process can redirect even an ordinary LocalAppData path into
-	// package storage. Reject that context before creating or securing the root.
 	if e := checkInstallerContext(); e != nil {
 		return e
 	}
-	f := flag.NewFlagSet("_install", flag.ContinueOnError)
-	f.SetOutput(out)
-	archive := f.String("archive", "", "verified downloaded ZIP")
-	channel := f.String("channel", "", "publisher update channel (go-v1); explicit selection enables durable preview consent")
-	version := f.String("version", "", "exact release tag")
-	allowPrerelease := f.Bool("allow-prerelease", false, "explicitly allow a pinned RC bootstrap")
-	digest := f.String("sha256", "", "verified archive SHA-256")
-	if e := f.Parse(args); e != nil {
-		return e
-	}
-	if f.NArg() != 0 {
-		return errors.New("unexpected installer arguments")
-	}
-	selection, e := installChannelSelection(*channel, *allowPrerelease)
-	if e != nil {
-		return e
-	}
-	if *version == "" {
-		return errors.New("bootstrap requires an exact --version")
-	}
-	if e := validateReleaseRequest(*version, *allowPrerelease); e != nil {
-		return e
-	}
-	// Reject an unapproved RC before creating or changing the per-user root.
-	// Package identity alone does not establish an unredirected filesystem view.
-	// Check an existing root before its ACL can be changed, and a newly created
-	// root before any lock, archive, executable or configuration is written.
-	// A newly created private empty root may remain if this check rejects it.
 	if e := checkInstallerPath(root, true); e != nil {
 		return e
 	}
-	if e := privateRoot(root); e != nil {
-		return e
-	}
-	if e := checkInstallerPath(root, false); e != nil {
-		return e
-	}
-	lock, e := exclusive(root)
-	if e != nil {
-		return e
-	}
-	defer lock.Close()
+	return errors.New("legacy bootstrap is unsupported; use the fresh awf install product from a normal Windows terminal; existing files are unchanged")
+}
 
-	if _, e := os.Stat(filepath.Join(root, "current.json")); e == nil {
-		return errors.New("AWF is already installed; use awf update so live-job checks and rollback are enforced")
-	} else if !os.IsNotExist(e) {
-		return e
-	}
-	if _, e := os.Stat(filepath.Join(root, "config.json")); e == nil {
-		return errors.New("existing configuration without an install pointer requires explicit recovery, not bootstrap overwrite")
-	} else if !os.IsNotExist(e) {
-		return e
-	}
-	for _, name := range []string{"runtime.json", "starting.json", "state"} {
-		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
-			return errors.New("existing runtime or job state requires explicit recovery, not bootstrap overwrite")
-		}
-	}
-	if _, e = loadChannel(root); e != nil {
-		return e
-	}
-	b, e := readBounded(*archive, maxReleaseBytes)
-	if e != nil {
-		return e
-	}
-	if len(b) > maxReleaseBytes {
-		return errors.New("release archive is too large")
-	}
-	if e = verifyDigest(b, *digest); e != nil {
-		return e
-	}
-	if e = stageArchive(root, *version, runtime.GOARCH, b); e != nil {
-		return e
-	}
-	if e = verifyExecutable(binary(root, *version), *version); e != nil {
+// finishInstall activates only an already verified, staged release.
+func finishInstall(root, version string, selection ChannelSelection, out io.Writer) error {
+	return finishInstallChecked(root, version, selection, out, verifyFreshExecutable)
+}
+
+func finishInstallChecked(root, version string, selection ChannelSelection, out io.Writer, verify func(string, string) error) error {
+	if e := verify(binary(root, version), version); e != nil {
 		return e
 	}
 	bin, e := managedDirectory(root, "bin")
 	if e != nil {
 		return e
 	}
-	data, e := os.ReadFile(binary(root, *version))
+	data, e := os.ReadFile(binary(root, version))
 	if e != nil {
 		return e
 	}
@@ -435,9 +392,39 @@ func install(root string, args []string, out io.Writer) error {
 	if e = writeJSON(filepath.Join(root, "channel.json"), selection); e != nil {
 		return e
 	}
-	if e = writeJSON(filepath.Join(root, "current.json"), Pointer{Version: *version}); e != nil {
+	if e = writeJSON(filepath.Join(root, "installation.json"), freshLayout{Schema: 1, Layout: "fresh-v1"}); e != nil {
 		return e
 	}
-	fmt.Fprintf(out, "AWF %s installed for this user at %s. Run awf init to review configuration.\n", *version, root)
+	if e = writeJSON(filepath.Join(root, "current.json"), Pointer{Version: version}); e != nil {
+		return e
+	}
+	fmt.Fprintf(out, "AWF %s installed for this user at %s. Run awf init to review configuration.\n", version, root)
+	return nil
+}
+
+// Explicit capability check rejects historical payloads without changing their tags.
+func verifyFreshExecutable(path, version string) error {
+	if err := verifyExecutable(path, version); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	b, err := exec.CommandContext(ctx, path, "install-protocol").Output()
+	if err != nil || strings.TrimSpace(string(b)) != "3" {
+		return errors.New("release does not support the fresh-install product (protocol 3); no active pointer or PATH was written")
+	}
+	return nil
+}
+
+type freshLayout struct {
+	Schema int    `json:"schema"`
+	Layout string `json:"layout"`
+}
+
+func requireFreshLayout(root string) error {
+	var layout freshLayout
+	if err := readJSON(filepath.Join(root, "installation.json"), &layout); err != nil || layout.Schema != 1 || layout.Layout != "fresh-v1" {
+		return errors.New("this is not a fresh-product installation; historical or partial roots are left unchanged. Run awf doctor for read-only diagnosis; migration and repair are unsupported")
+	}
 	return nil
 }

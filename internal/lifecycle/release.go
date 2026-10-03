@@ -108,6 +108,7 @@ type releaseTarget struct {
 	Version      string
 	SourceCommit string
 	Digest       string
+	CLIProtocol  string
 }
 
 func resolveReleaseTarget(ctx context.Context, c *http.Client, requested, arch string) (releaseTarget, error) {
@@ -128,14 +129,14 @@ func resolveReleaseTarget(ctx context.Context, c *http.Client, requested, arch s
 	if err != nil {
 		return releaseTarget{}, err
 	}
-	if manifest.CLIProtocol != "2" {
+	if manifest.CLIProtocol != "2" && manifest.CLIProtocol != "3" {
 		return releaseTarget{}, errors.New("the go-v1 channel selects legacy CLI protocol 1; wait for a channel-aware release (protocol 2)")
 	}
 	digest := manifest.WindowsAMD64SHA256
 	if arch == "arm64" {
 		digest = manifest.WindowsARM64SHA256
 	}
-	return releaseTarget{Version: manifest.Version, SourceCommit: manifest.SourceCommit, Digest: digest}, nil
+	return releaseTarget{Version: manifest.Version, SourceCommit: manifest.SourceCommit, Digest: digest, CLIProtocol: manifest.CLIProtocol}, nil
 }
 
 // stageRelease never executes downloaded code. Default selection is exclusively
@@ -152,96 +153,106 @@ func stageRelease(ctx context.Context, c *http.Client, root, requested, arch, pi
 }
 
 func stageSelectedRelease(ctx context.Context, c *http.Client, root string, target releaseTarget, arch, pin string, allowPrerelease bool, currentVersion string) (string, error) {
-	if err := validateReleaseRequest(target.Version, allowPrerelease); err != nil {
+	payload, err := downloadSelectedRelease(ctx, c, target, arch, pin, allowPrerelease, currentVersion)
+	if err != nil {
 		return "", err
 	}
+	if err := stageArchive(root, target.Version, arch, payload); err != nil {
+		return "", err
+	}
+	return target.Version, nil
+}
+
+// downloadSelectedRelease verifies the official source and bytes without
+// creating an installation or staging directory.
+func downloadSelectedRelease(ctx context.Context, c *http.Client, target releaseTarget, arch, pin string, allowPrerelease bool, currentVersion string) ([]byte, error) {
+	if err := validateReleaseRequest(target.Version, allowPrerelease); err != nil {
+		return nil, err
+	}
 	if target.Version == "" {
-		return "", errors.New("release selection requires an exact Go CLI version")
+		return nil, errors.New("release selection requires an exact Go CLI version")
 	}
 	if arch != "amd64" && arch != "arm64" {
-		return "", errors.New("unsupported release architecture")
+		return nil, errors.New("unsupported release architecture")
 	}
 	if currentVersion != "" {
 		order, err := compareReleaseVersions(target.Version, currentVersion)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if order < 0 {
-			return "", errors.New("selected release is older than the installed version; downgrade is blocked")
+			return nil, errors.New("selected release is older than the installed version; downgrade is blocked")
 		}
 	}
 	metadata, e := fetchMetadata(ctx, c, releaseMetadataURL(target.Version), 2<<20)
 	if e != nil {
-		return "", e
+		return nil, e
 	}
 	if e = validateUniqueJSON(metadata); e != nil {
-		return "", errors.New("invalid or duplicate official release metadata")
+		return nil, errors.New("invalid or duplicate official release metadata")
 	}
 	if e = requireMetadataFields(metadata, "tag_name", "target_commitish", "draft", "prerelease", "assets"); e != nil {
-		return "", e
+		return nil, e
 	}
 	var release releaseInfo
 	if e = json.Unmarshal(metadata, &release); e != nil {
-		return "", errors.New("invalid official release metadata")
+		return nil, errors.New("invalid official release metadata")
 	}
 	var flags struct {
 		Draft      *bool `json:"draft"`
 		Prerelease *bool `json:"prerelease"`
 	}
 	if e = json.Unmarshal(metadata, &flags); e != nil || flags.Draft == nil || flags.Prerelease == nil {
-		return "", errors.New("release metadata requires explicit boolean draft and prerelease fields")
+		return nil, errors.New("release metadata requires explicit boolean draft and prerelease fields")
 	}
 	if validGoReleaseVersion(release.Tag) != nil || release.Draft || release.Tag != target.Version {
-		return "", errors.New("release is not the requested pinned tag")
+		return nil, errors.New("release is not the requested pinned tag")
 	}
 	if release.Prerelease != prereleaseVersion(release.Tag) {
-		return "", errors.New("release tag and GitHub prerelease status disagree")
+		return nil, errors.New("release tag and GitHub prerelease status disagree")
 	}
 	if !sourceCommitRE.MatchString(release.TargetCommitish) || (target.SourceCommit != "" && release.TargetCommitish != target.SourceCommit) {
-		return "", errors.New("release source commit does not match the publisher channel or is unknown")
+		return nil, errors.New("release source commit does not match the publisher channel or is unknown")
 	}
 	if e = verifyReleaseRef(ctx, c, release.Tag, release.TargetCommitish); e != nil {
-		return "", e
+		return nil, e
 	}
 	name := assetName(release.Tag, arch)
 	wanted := map[string]string{name: "", "SHA256SUMS": ""}
 	for _, a := range release.Assets {
 		if _, ok := wanted[a.Name]; ok {
 			if wanted[a.Name] != "" || a.URL != officialAsset(release.Tag, a.Name) {
-				return "", errors.New("ambiguous or unofficial release asset")
+				return nil, errors.New("ambiguous or unofficial release asset")
 			}
 			wanted[a.Name] = a.URL
 		}
 	}
 	if wanted[name] == "" || wanted["SHA256SUMS"] == "" {
-		return "", errors.New("official release does not contain the CLI package and SHA256SUMS for this architecture; no installer asset is assumed to exist")
+		return nil, errors.New("official release does not contain the CLI package and SHA256SUMS for this architecture; no installer asset is assumed to exist")
 	}
 	sums, e := fetch(ctx, c, wanted["SHA256SUMS"], 1<<20)
 	if e != nil {
-		return "", e
+		return nil, e
 	}
 	digest, e := checksum(sums, name)
 	if e != nil {
-		return "", e
+		return nil, e
 	}
 	if target.Digest != "" && target.Digest != digest {
-		return "", errors.New("release checksum differs from the publisher channel SHA-256")
+		return nil, errors.New("release checksum differs from the publisher channel SHA-256")
 	}
 	if pin != "" && (!strings.EqualFold(pin, digest) || len(pin) != 64) {
-		return "", errors.New("release checksum differs from the explicitly pinned SHA-256")
+		return nil, errors.New("release checksum differs from the explicitly pinned SHA-256")
 	}
 	payload, e := fetch(ctx, c, wanted[name], maxReleaseBytes)
 	if e != nil {
-		return "", e
+		return nil, e
 	}
 	sum := sha256.Sum256(payload)
 	if hex.EncodeToString(sum[:]) != digest {
-		return "", errors.New("release SHA-256 verification failed")
+		return nil, errors.New("release SHA-256 verification failed")
 	}
-	if e = stageArchive(root, release.Tag, arch, payload); e != nil {
-		return "", e
-	}
-	return release.Tag, nil
+	return payload, nil
 }
 func stageArchive(root, v, arch string, payload []byte) error {
 	if e := validVersion(v); e != nil {

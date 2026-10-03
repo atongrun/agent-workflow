@@ -184,7 +184,7 @@ func initialize(root string, args []string, in io.Reader, out io.Writer) error {
 		return errors.New("init requires an explicit interactive answer; configuration was not saved")
 	}
 	c.Autostart = strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
-	fmt.Fprintf(out, "\nInstallation: %s\nOpenCode executable: %s\nNative OpenCode: %s (separate process-only authentication)\nNode listener: %s\nAllowed Host sources: %v (empty means loopback only)\nProject: %s = %s\nState: %s\nCredential file: %s\nLogin autostart: %t\nDirectory protection: current Windows user and SYSTEM only\nSaving configuration does not change firewall rules or pair credentials.\n", root, c.OpenCodeBinary, c.Node.OpenCodeURL, c.Node.ListenAddress, c.Node.AllowedSourceIPs, *project, *workspace, c.Node.StateDir, c.CredentialFile, c.Autostart)
+	fmt.Fprintf(out, "\nInstallation: %s\nOpenCode executable: %s\nNative OpenCode: %s (separate process-only authentication)\nNode listener: %s\nAllowed Host sources: %v (empty means loopback only)\nProject: %s = %s\nState: %s\nCredential file: %s\nLogin autostart: %t\nProgram files: supported inherited per-user permissions. Credentials, state and runtime tokens: current Windows user and SYSTEM only\nSaving configuration does not change firewall rules or pair credentials.\n", root, c.OpenCodeBinary, c.Node.OpenCodeURL, c.Node.ListenAddress, c.Node.AllowedSourceIPs, *project, *workspace, c.Node.StateDir, c.CredentialFile, c.Autostart)
 	fmt.Fprint(out, "Save this exact configuration? [y/N]: ")
 	answer, e = reader.ReadString('\n')
 	if e != nil || !(strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")) {

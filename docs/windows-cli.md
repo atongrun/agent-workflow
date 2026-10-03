@@ -2,201 +2,182 @@
 
 ## Availability and scope
 
-The published Go v1 channel provides a one-command Windows bootstrap, guided
-`awf init`, and channel-aware `awf update`. The checked-in
-`distribution/go-v1.json` selects the published
+The fresh-install product in this source is **not published or accepted on native Windows**.
+The checked-in `distribution/go-v1.json` still selects the unchanged
 [v1.0.0-rc.3 prerelease](https://github.com/atongrun/agent-workflow/releases/tag/v1.0.0-rc.3),
-`cliProtocol: "2"`, source commit
-`c251c9de639352b529f4705fcd1d2b4881cd20bf`, and the verified architecture ZIP hashes.
+with CLI protocol 2. That release does not provide the public fresh installer.
+This bootstrap requires protocol 3 and refuses the current channel without
+installing AWF. A reviewed release, separate publication approval, and real
+Windows acceptance are required before advertising the command as live.
 
-The current branch's installer and native `_install` source additionally contain
-the package/physical-path safeguards and PATH-ordering fixes described below.
-These later source changes are **not in the unchanged RC3 release assets**:
-the branch installation command uses the newer bootstrap but still downloads
-the channel's RC3 executables. It does not repair or migrate an existing install.
-The full simplified flow is not live-tested end to end on a fresh Windows
-profile; publication and verified downloads do not establish that acceptance.
-Native acceptance of the later safeguards remains a separate gate.
+The supported product flow is a fresh, per-user installation followed by
+explicit `awf init`, `awf start`, `awf stop`, and `awf update`. See
+[fresh-install.md](fresh-install.md) for the contract and acceptance checklist.
+There is no migration, existing-tree adoption, ACL repair, historical release
+installation, or bootstrap-based update path. Any existing `%LOCALAPPDATA%\AWF`
+entry, including an empty directory, credentials-only root, file, linked entry,
+or partial installation, is refused without changing that entry.
 
-Do not change a historical release or use GitHub's repository-wide `latest`:
-that endpoint still refers to the retired Python release line.
-
-Supported targets are native Windows AMD64 and ARM64 on Windows 10/Server
-version 1709 or newer, using Windows PowerShell 5.1 or PowerShell 7. The installer
-uses the current user's `%LOCALAPPDATA%\AWF` directory and user PATH. It does not
-require a directory, version, or hash argument for ordinary interactive use.
-It does not install Go, Python, Node, npm, Pi, OpenCode, or Git, request admin
-rights, change execution policy, configure firewall rules, or start the runtime.
-Run it as the intended ordinary Windows user.
-
-### Installation context safeguard (source acceptance pending)
-
-Run the installer in a normal Windows PowerShell opened directly from Windows.
-The bootstrap checks `GetCurrentPackageFullName` after the existing known-folder
-and environment check. Only `APPMODEL_ERROR_NO_PACKAGE` can continue; an identified
-package or an unknown/API failure refuses installation before staging or network.
-There is no bypass flag, environment rewrite, or automatic subprocess escape.
-
-`NO_PACKAGE` alone does not prove that filesystem writes are unredirected. The
-bootstrap also checks the handle-final path of its newly created private stage
-against the intended path before downloading anything, then checks the installed
-launcher before channel registration, PATH changes, or success output. A mismatch
-or query failure stops. The empty failed stage is removed; a partial installation
-is not automatically deleted or migrated. These checks do not relax ACLs or change
-existing installations' start/stop behavior. Existing redirected installations
-need a separately reviewed recovery; this installer does not migrate them.
-
-Native gates for this source change include `scripts/test_install_context.ps1`
-(mocked identity/error/redirection plus real disposable file handles), the unchanged
-entry/EOF and archive/ACL suites, and `scripts/test_install_identity.ps1
--ExpectedIdentity NoPackage` or `Packaged` in independently identified real hosts.
-The latter is read-only and reports the actual API status; a mocked result, a
-cross-compile, or `NO_PACKAGE` is not proof of a real nonredirected installation.
-Run `scripts/test_install_path.ps1` for the PATH-text and command-shadowing helper
-fixtures; it never calls a PATH setter or changes the registry. Native PowerShell
-5.1 x64/x86 and PowerShell 7 execution remains an explicit acceptance gate.
+Targets are native Windows AMD64 and ARM64 on Windows 10/Server version 1709 or
+newer, using Windows PowerShell 5.1 or PowerShell 7. Run as the intended ordinary
+Windows user in a normal terminal opened directly from Windows. Installation
+needs no administrator rights and uses `%LOCALAPPDATA%\AWF` and user PATH.
+It does not install Go, Python, Node, npm, Pi, OpenCode, or Git, change execution
+policy, configure firewall rules, run initialization, pair credentials, enable
+login startup, or start the runtime.
 
 ## One-command installation
 
-The published branch URL below implements the no-flags flow and selects the
-current RC3 channel. It uses the newer source bootstrap described above, not
-RC3's unchanged `install.ps1` release asset. Full fresh-profile installation
-acceptance remains unverified; run only in the intended ordinary Windows user
-context after reviewing the trust and installation-context requirements.
+After the fresh-install release and bootstrap have been accepted and published,
+the intended ordinary-terminal entry is:
 
 ```powershell
 powershell -NoProfile -Command "irm https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/scripts/install.ps1 | iex"
 ```
 
-The command's intended flow is:
+This is the intended publication endpoint, not a claim that this local source
+is available there. Do not run it expecting the unpublished implementation.
+The flow needs no manually supplied directory, release version, or digest:
 
-1. Detects native Windows architecture, including 32-bit PowerShell on a 64-bit OS
-2. Resolves the publisher's Go v1 channel to an exact release, source commit, and
-   architecture-specific SHA-256; it never guesses a tag or uses `releases/latest`
-3. If the selected release is a preview, asks once whether to install it and
-   allow preview updates in that Go channel; the default is **no**
-4. Verifies release/tag metadata, checksums, archive contents and PE architecture,
-   then installs in the protected per-user directory and adds its launcher to PATH
-5. For protocol 2 releases, opens `awf init` in that same interactive terminal;
-   workspace, native OpenCode path and network choices are questions, followed by
-   an exact configuration review. Login autostart and credential pairing remain
-   separately confirmed and default **no**
+1. Check native architecture, the actual Windows known folder, package identity,
+   and the absence of the entire AWF root before staging or download
+2. Resolve the fixed Go v1 channel to an exact protocol-3 release, source commit,
+   and architecture-specific SHA-256; never use GitHub's `releases/latest`
+3. Ask once before installing a preview and approving future preview updates in
+   that channel; the default is **no**, and EOF/redirected input is not consent
+4. Verify the official release/tag metadata, checksums, ZIP contents, PE machine
+   type, and downloaded CLI's `install-protocol` capability
+5. Invoke public native `awf install` with the verified local archive, exact
+   version, and digest. The native installer creates its protected program root, writes
+   release/channel state and launcher, and registers user PATH
+6. Verify the installed launcher's physical location, refresh this PowerShell
+   process's PATH, and print the next commands. Initialization is never automatic
 
-Later, use `awf update`. Use `awf init` to resume incomplete setup and `awf pair`
-to resume optional pairing. Installing or saving configuration never starts
-AWF automatically; run `awf start` when ready. A completed install is preserved
-if setup is cancelled or fails; do not rerun bootstrap to repair configuration.
+Open a new terminal, then run:
 
-Protocol 1/RC2 compatibility remains covered by fixtures; it is no longer the
-channel selection. RC2 predates guided init and channel-aware updates. An
-already-installed RC2 needs a separately reviewed, exact-version update to RC3
-or a later compatible protocol 2 release. Its old updater cannot acquire
-channel-aware behavior merely by reading the new manifest.
-That update is separate from recovery of any redirected or partial installation.
+```powershell
+awf init
+awf start
+awf stop
+awf update
+```
+
+`awf init` reviews workspace, native OpenCode path, and network choices. Pairing
+and login startup require their own explicit confirmations. Cancelling setup
+leaves the installed program available; run `awf init` again when ready.
+
+### Public native installer
+
+A separately obtained, verified executable from a fresh-install release exposes:
+
+```powershell
+.\awf.exe install
+```
+
+It resolves the same official channel and asks before the fresh install and user
+PATH registration. `--yes` allows unattended installation, but a preview still
+requires `--allow-prerelease`. `--no-path` leaves PATH registration to the operator.
+All of these routes require an absent AWF root; there is no override.
+
+The bootstrap uses `install --yes --archive <verified-local-zip> --version
+<exact-tag> --sha256 <verified-digest>`, adding `--channel go-v1` and `--allow-prerelease` only after preview consent.
+Exact-version installation also saves the Go-v1 channel for later updates. This local-archive
+path performs no second release download. The native installer independently
+validates the archive, release identity, and fresh-install capability before
+activating the install. These advanced flags are not needed for normal use.
+
+### Installation context and ownership
+
+Bootstrap and native installation require an unpackaged process and matching
+Windows known-folder/environment paths. Only `APPMODEL_ERROR_NO_PACKAGE` permits
+installation; an identified package or unknown API result fails closed. There
+is no bypass flag, environment rewrite, or subprocess escape.
+
+Package identity alone cannot establish an unredirected filesystem view.
+Bootstrap verifies its private temporary stage by handle before downloading and
+the installed launcher before refreshing process PATH or reporting success.
+Native installation independently checks physical paths and owns exclusive
+program-root creation and the role-specific installation ACL policy. The bootstrap's
+only ACL assignment is on its newly created random temporary stage, before any
+payload files are written. It never rewrites installation-root ACLs.
+
+An existing root is rejected before bootstrap staging. Native installation
+rechecks absence and exclusively creates the root, rejecting a root that appears
+while downloads or consent are pending. A late failure can leave a protected
+partial root; it is not automatically deleted, adopted, repaired, or overwritten.
+Inspect it explicitly rather than deleting state or relaxing permissions to retry.
+
+Native Go owns persistent user PATH registration. The PowerShell bootstrap only
+promotes the verified bin in its current process. Promotion removes duplicates
+of that exact normalized bin entry and preserves unrelated entries and order.
+It never changes machine PATH or removes another executable, alias, or function.
+The bootstrap warns if command resolution still selects something else.
+A child PowerShell cannot update its parent terminal's environment, so reopen
+that terminal or invoke `%LOCALAPPDATA%\AWF\bin\awf.exe` directly.
 
 ### Trust choice and advanced use
 
-The convenient command executes publisher-controlled PowerShell delivered over
-HTTPS from a mutable official branch. It trusts that GitHub repository, branch,
-and transport before any script-internal checks run. The manifest and checksums
-protect the selection and downloaded bytes; they do not independently authenticate
-a compromised publisher or bootstrap. This is the explicit convenience tradeoff
-of the one-command flow, not a signature-verification claim.
+The convenient command executes publisher-controlled PowerShell over HTTPS from
+a mutable official branch. It trusts that repository, branch and transport
+before script-internal checks run. Hashes and metadata do not independently authenticate
+a compromised publisher or bootstrap; no signature-verification claim is made.
 
-For independently pinned review, download `scripts/install.ps1` from a verified
-40-character commit URL, inspect it, verify its SHA-256 against an independently
-trusted value, and run that local copy using the machine's approved script policy.
-Managed environments can use their approved signing/distribution process.
-No execution-policy bypass or alternate repository/server override is provided.
+For independently pinned review, obtain `scripts/install.ps1` from a verified
+40-character commit URL, inspect it and verify an independently trusted hash,
+then run that copy under the machine's approved script policy. No execution-policy
+bypass or alternate repository/server override is provided.
 
 ```powershell
-.\install.ps1                         # interactive Go-channel installation
-.\install.ps1 -AllowPrerelease -SkipInit # explicit unattended preview consent
-.\install.ps1 -Version '<EXACT_PUBLISHED_TAG>' -Sha256 '<INDEPENDENT_ZIP_SHA256>'
+.\install.ps1
+.\install.ps1 -AllowPrerelease
+.\install.ps1 -Version '<EXACT_PUBLISHED_FRESH_TAG>' -Sha256 '<INDEPENDENT_ZIP_SHA256>'
 ```
 
-Exact pins are advanced options. Tags must be canonical `vX.Y.Z` or `vX.Y.Z-rc.N`,
-with no aliases, leading zeros, other prerelease labels or build suffixes. An
-interactive preview pin asks for consent; unattended preview pins require
-`-AllowPrerelease`. `-SkipInit` suppresses the setup wizard. Without explicit
-preview consent, redirected/noninteractive input fails closed. Never run the
-angle-bracket placeholders literally.
+Exact pins must name a fresh-install release, with canonical `vX.Y.Z` or
+`vX.Y.Z-rc.N` tags. The downloaded executable must report `install-protocol` 3,
+including when an exact version bypasses channel selection. Historical binaries
+are refused, with no fallback to a private installer. Unattended preview pins
+also require `-AllowPrerelease`. Never run the placeholders literally.
 
-Bootstrap refuses any existing install/configuration/channel/launcher marker and
-directs the operator to `awf update` or explicit recovery. It does not overwrite
-an existing install to bypass active-job checks. PATH is changed only after the
-native installer, physical launcher verification, and channel registration succeed.
-The installer moves only its exact normalized AWF bin entry to the front of user
-and current-process PATH, removing duplicates of that same entry. Every other
-entry and its relative order is preserved, including existing Python entries;
-no executable, alias, function, or machine PATH is changed. A command-resolution
-warning is shown if an alias, function, or another command still takes precedence.
-The current PowerShell process is also updated. A command launched in a
-child PowerShell cannot rewrite its parent shell environment; open a new terminal
-for `awf`, or use `%LOCALAPPDATA%\AWF\bin\awf.exe` immediately.
+### Release and archive verification
 
-### Trust and archive checks
+Before invoking a downloaded executable, bootstrap:
 
-Before running a downloaded executable, bootstrap:
+- Detects native host architecture through `IsWow64Process2`
+- Fetches the one fixed channel URL with a 4 KiB limit and no redirects; validates
+  all seven string fields and rejects duplicate, unknown, escaped or coerced values
+- Requires protocol 3 for fresh installation and Go major 1 for channel selection
+- Fetches exact-tag GitHub release metadata and a lightweight tag ref; requires
+  the same source commit, a non-draft release, matching boolean prerelease status,
+  and exactly one selected archive/checksum asset at its exact official URL
+- Uses bounded HTTPS downloads with normal certificate validation; metadata
+  redirects are forbidden and release redirects are limited to GitHub/CDN hosts
+- Matches `SHA256SUMS` against the channel digest and optional independent pin,
+  then verifies the actual ZIP digest
+- Requires exactly `awf.exe`, `awf-node.exe`, and `manifest.json` as regular root
+  ZIP entries; rejects traversal, streams, duplicates, case variants, linked
+  entries, directories, and oversized or truncated contents
+- Validates the exact three-field archive manifest and both native PE headers
 
-1. Resolves native host architecture using `IsWow64Process2`, not process
-   architecture or a caller-selected override
-2. Fetches the one fixed Go-channel URL (4 KiB limit, no redirects), validates its
-   exact seven string fields, rejects unknown/duplicate/escaped/coerced values,
-   and accepts only Go major 1 and known CLI protocols
-3. Fetches exact-tag official GitHub release metadata and the lightweight tag ref;
-   requires the source commit to agree, boolean non-draft status, tag/prerelease
-   agreement, and exactly one selected archive and checksum asset at exact URLs
-4. Downloads bounded HTTPS content with normal certificate validation; release
-   asset redirects are restricted to GitHub release/CDN hosts and all metadata
-   redirects are rejected. No credentials or alternate source are accepted
-5. Requires the architecture ZIP digest in `SHA256SUMS` to match the channel pin
-   and any independent `-Sha256`, then verifies the actual downloaded bytes
-6. Requires exactly `awf.exe`, `awf-node.exe`, and `manifest.json` as root entries;
-   rejects duplicates/case variants, traversal, folders, alternate data streams,
-   symlinks, reparse entries, and non-regular Unix types. Metadata is limited to
-   2 MiB, checksums to 1 MiB, archive and expanded payload to 100 MiB, and archive
-   manifest to 4 KiB
-7. Checks the archive manifest's exact three string fields and both executable
-   PE headers before invoking native `_install`, which independently rechecks
-   the bytes, archive, version, and protected installation tree
-
-Staging is random under the current user's LocalAppData, restricted to that user
-and SYSTEM before payload writes. Reparse ancestors are rejected. Temporary
-files are cleaned up. Other processes of the same Windows user remain outside
-this isolation boundary. Native `_install` is a private bootstrap interface;
-preview selection passes explicit `--allow-prerelease`. Protocol 2 additionally
-passes `--channel go-v1`, persisting only the disclosed preview consent. Protocol
-1 compatibility creates the same separate channel marker only after verifying
-the installed directory's existing private ACLs. The original `current.json`
-shape stays compatible with immutable older launchers.
+Release metadata is limited to 2 MiB, checksums to 1 MiB, archive and expanded
+payload to 100 MiB, and manifest to 4 KiB. Temporary files are cleaned up.
+Staging is private to the current user and SYSTEM with no reparse ancestors;
+other processes running as that same user remain outside this isolation boundary.
 
 ## Publisher-controlled Go channel
 
-`distribution/go-v1.json` is data, not executable code. Its schema consists of
-exactly these seven strings: `schema` (`"1"`), `channel` (`"go-v1"`), `version`,
-`sourceCommit` (40 lowercase hex), `cliProtocol` (`"1"` or `"2"`),
-`windowsAMD64SHA256`, and `windowsARM64SHA256` (64 lowercase hex each). The channel
-cannot select major 0/Python or unknown future major versions. Version tags and
-GitHub metadata must agree on preview status. Publisher metadata is still a
-publisher trust input, not an independent cryptographic signature.
+The channel retains the existing seven-field schema: `schema` (`"1"`), `channel`
+(`"go-v1"`), `version`, `sourceCommit` (40 lowercase hex), `cliProtocol`, and
+`windowsAMD64SHA256`/`windowsARM64SHA256` (64 lowercase hex each). Protocol 3
+identifies a release supporting public fresh installation. The parser recognizes
+older protocol values only to reject them clearly at the fresh-install boundary.
+The ZIP, tag, checksum-file, asset-name, and archive-manifest formats are unchanged.
 
-A channel change is a separate release/publication action. Before authorizing it:
-
-- Build/review/test the exact source, including native PowerShell 5.1 x64/x86,
-  PowerShell 7, native Go lifecycle fixtures and ARM64 where available
-- Publish the exact source commit, lightweight tag and non-draft release with
-  architecture ZIPs, the reviewed script and `SHA256SUMS`; set `target_commitish`
-  to that exact commit and set prerelease status consistently
-- Download/verify all public assets and their hashes, then propose a manifest
-  selecting only those already-published bytes. Set protocol 2 only for a release
-  that actually supports guided init and channel-aware update
-- Independently review and publish that manifest and bootstrap, then verify the
-  no-flags install, consent/decline, new-terminal PATH, init/pair prompts, update,
-  guarded busy/unknown state, and recovery against the published artifacts
-
-The packager does not mutate or publish the distribution channel. Local fixture
-builds and future version placeholders must never be promoted as real releases.
+Publication is a separate operation: build and review the exact source, complete
+native Windows acceptance, publish matching immutable artifacts, independently
+verify the downloads, then promote the channel with real hashes and protocol 3.
+Do not rewrite historical release assets or substitute fixture hashes/version
+placeholders. No files in this source change publish or promote a release.
 
 ## Reviewable initialization
 
@@ -324,11 +305,7 @@ by these commands and must be a separately reviewed operation. Pairing never
 implicitly enables autostart, changes firewall rules, provisions arbitrary Hosts,
 or changes native provider authentication.
 
-### Credential compatibility
-
-Existing operator-approved PowerShell helper pairings remain compatible and do
-not need to be recreated. The native CLI uses the same on-disk and Host env-file
-contract. The old helper is optional; no hosted helper is implied.
+### Credential file contract
 
 The Windows credential file consumed by managed AWF has this contract:
 
@@ -391,7 +368,7 @@ may succeed if the native condition has resolved; that alone does not identify
 the original cause. A new CLI cannot change the checks inside an already-running
 supervisor, and no force-stop or installation-overwrite recovery is provided.
 
-A durable `starting.json` launch intent is written before the owned child is
+A durable `private\starting.json` launch intent is written before the owned child is
 spawned. If startup times out before its process lock or ready record is observed,
 that intent still blocks another start, stop, or update. Only the matching ready
 runtime or observed exit of that exact child clears the intent. An older child
@@ -402,13 +379,13 @@ leaves the outcome explicitly unresolved for operator diagnosis.
 release/source/architecture digest, and switches the pointer only after job-safety
 checks. It never calls GitHub's repository-wide latest endpoint. Saved channel
 metadata must have the known schema and channel and an explicit boolean preview
-consent. A missing legacy marker is not proof of preview consent: an interactive
+consent. Missing channel consent is not proof of preview approval: an interactive
 update asks before adopting a preview, and unattended use must explicitly pass
 `--allow-prerelease`. Having an RC installed alone is not consent to future RCs.
 
 All updates, including advanced `--version` pins, refuse downgrades and unknown
 source/tag metadata. Channel updates also reject protocol 1, even at a higher
-version, so they cannot silently replace the new updater with a legacy one. Unknown channels/protocols and manifest/hash disagreement
+version, so they cannot silently replace the new updater with an incompatible one. Unknown channels/protocols and manifest/hash disagreement
 fail closed. A stable release with the same core version sorts after its RCs.
 The updater preserves configuration, credentials, provider authentication and job
 state. It retains saved channel/consent across version changes. If a running
@@ -429,10 +406,11 @@ alternative update path.
   versions\vX.Y.Z\awf.exe           versioned implementation
   versions\vX.Y.Z\awf-node.exe
   versions\vX.Y.Z\manifest.json
+  installation.json                 fresh-v1 product identity; no historical adoption
   current.json                      atomically replaced active-version pointer
   channel.json                      protected Go channel and explicit preview consent
-  starting.json                     unresolved launch identity, present only during startup
-  runtime.json                      private managed runtime/control identity
+  private\starting.json             unresolved launch identity during startup
+  private\runtime.json              private managed runtime/control identity
   config.json                       reviewed non-secret lifecycle configuration
   credentials\windows-node\node-token.dpapi
   state\                            preserved durable node/job state
@@ -442,13 +420,19 @@ The launcher dispatches to the version selected by `current.json`, avoiding
 replacement of a running Windows executable during update. Older versions
 remain available for rollback; garbage collection is not part of this slice.
 
-Before forwarding to any versioned executable or performing lifecycle writes,
-AWF validates the installation tree. Reparse points, symlinks, non-regular
-entries, and Windows descendants owned by or permitting identities other than
-the intended user and SYSTEM are rejected. A private root ACL is not treated as
-proof that existing protected child ACLs are safe. Managed directories are also
-checked immediately before staging writes. Unsafe pre-existing trees require
-explicit operator recovery rather than implicit adoption or recursive rewriting.
+Before forwarding or performing lifecycle writes, AWF requires the fresh-v1
+`installation.json` marker and validates the installation tree. Historical or
+unmarked layouts are not adopted. Reparse points, symlinks, non-regular entries,
+and unsafe ownership or access rules are rejected without rewriting ACLs.
+
+Program files keep ordinary per-user inherited permissions. Their supported
+policy permits current-user, SYSTEM and Administrators writes and inherited
+read-only access for other principals. A protected program root does not imply
+that child paths are safe. Credentials, state, private runtime/control records,
+and logs use separate private directories restricted to current-user and SYSTEM
+full control; their private ACLs are set when those new directories are created.
+Managed paths are checked again immediately before writes. Existing trees are
+inspected, never repaired or recursively repermissioned.
 
 ## Build local release assets
 
@@ -553,6 +537,9 @@ credential changes):
 .\scripts\test_install.ps1
 .\scripts\test_channel.ps1
 .\scripts\test_entry.ps1
+.\scripts\test_install_context.ps1
+.\scripts\test_install_path.ps1
+.\scripts\test_fresh_install.ps1
 ```
 
 `test_entry.ps1` launches fresh copies of the current PowerShell executable. Its
@@ -567,7 +554,7 @@ The portable suite covers stable/RC tag grammar, explicit packaging opt-in,
 pre-build rejection without output changes, deterministic archives, checksums,
 and static bootstrap ordering. The native suite covers stable/RC opt-in and
 metadata-flag policy, checksum parsing, official metadata URLs, manifest
-schema, preview consent and legacy marker ACLs, executable machine type, and
+schema, preview consent, fresh-only root/protocol guards, executable machine type, and
 malicious ZIP cases including traversal,
 duplicates, links/reparse entries, extra members, wrong manifests, and size limits.
 Fixture executables are not run. Run it under both Windows PowerShell 5.1 and
@@ -594,8 +581,8 @@ The command runs before launcher forwarding and installation validation. It
 reports process package context and architecture, Windows known-folder agreement,
 executable search results, and a fixed installation/configuration/runtime/default
 credential marker inventory. Existing paths are checked for reparse boundaries,
-physical-path agreement and the existing current-user/SYSTEM-only ownership/DACL
-policy. Fully observed policy failures are mismatches; unavailable or incomplete
+physical-path agreement and the same role-specific ownership/DACL policy
+used by lifecycle commands. Fully observed policy failures are mismatches; unavailable or incomplete
 inspection is explicitly unknown, with the observed metadata reasons. Missing and malformed roots remain reportable.
 
 Doctor never reads file contents (including configuration, pointers, runtime
@@ -616,7 +603,7 @@ Acceptance requires `TestDoctorNativeMetadataReadOnly` on native Windows and
 separately identified ordinary/packaged host observations. Missing, redirected,
 broad-ACL and inaccessible disposable roots must remain unchanged. Native
 junction/reparse fixtures remain required. Portable seams and cross-compilation
-are not native acceptance. No install, ACL repair or recovery apply is provided.
+are not native acceptance. Doctor provides no installation, ACL repair, or recovery apply operation.
 
 ### Complete read-only ACL metadata (local source extension)
 
@@ -631,11 +618,11 @@ than guessing. Callback/resource payloads are neither interpreted nor displayed.
 
 `complete` means the requested metadata was observed and understood, not effective
 access, trustworthy installation identity, job idleness or repair authorization.
-The existing current-user/SYSTEM-only policy is summarized with every observed
+The role-specific program/private policy is summarized with every observed
 issue. A complete mismatch uses `mismatch`; unavailable/incomplete metadata uses
-`unknown`. Inherited ordinary ALLOW rules remain evaluated by the existing policy;
-protection is reported, not introduced as a new requirement. Lifecycle permission
-enforcement is unchanged.
+`unknown`. Program findings distinguish protected code integrity from private
+credential/state access. The doctor shares those policy checks with lifecycle
+validation but never changes a descriptor.
 
 The Windows collector reads one OWNER|DACL security-descriptor allocation per
 path and uses its control/DACL metadata before freeing it. The current-user SID

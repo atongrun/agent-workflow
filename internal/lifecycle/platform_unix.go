@@ -13,8 +13,8 @@ import (
 func checkInstallerContext() error          { return nil }
 func checkInstallerPath(string, bool) error { return nil }
 
-func replaceFile(a, b string) error   { return os.Rename(a, b) }
-func protectDirectory(p string) error { return os.Chmod(p, 0700) }
+func replaceFile(a, b string) error         { return os.Rename(a, b) }
+func createPrivateDirectory(p string) error { return os.Mkdir(p, 0700) }
 func lockFile(p string) (*os.File, error) {
 	f, e := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0600)
 	if e != nil {
@@ -33,12 +33,25 @@ func readNodeToken(string) (string, error) {
 func setAutostart(string, bool) error { return errors.New("login autostart requires native Windows") }
 
 func checkPrivatePath(p string) error {
-	st, e := os.Stat(p)
+	st, e := os.Lstat(p)
 	if e != nil {
 		return e
 	}
-	if st.Mode().Perm()&0077 != 0 {
+	if st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm()&0077 != 0 {
 		return errors.New("path grants permissions to other users")
+	}
+	return nil
+}
+
+// Portable fixtures model integrity (no other-user writes) separately from
+// privacy. Windows uses the full role-aware descriptor inspection above.
+func checkProgramPath(p string) error {
+	st, e := os.Lstat(p)
+	if e != nil {
+		return e
+	}
+	if st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm()&0022 != 0 {
+		return errors.New("program path grants write permissions to other users or is linked")
 	}
 	return nil
 }

@@ -19,7 +19,7 @@ import (
 const fixtureSourceCommit = "0123456789abcdef0123456789abcdef01234567"
 
 func fixtureChannelManifest(version, digest string) []byte {
-	data, _ := json.Marshal(channelManifest{Schema: "1", Channel: channelName, Version: version, SourceCommit: fixtureSourceCommit, CLIProtocol: "2", WindowsAMD64SHA256: digest, WindowsARM64SHA256: digest})
+	data, _ := json.Marshal(channelManifest{Schema: "1", Channel: channelName, Version: version, SourceCommit: fixtureSourceCommit, CLIProtocol: "3", WindowsAMD64SHA256: digest, WindowsARM64SHA256: digest})
 	return data
 }
 func fixtureReleaseRef(version, commit string) []byte {
@@ -28,8 +28,8 @@ func fixtureReleaseRef(version, commit string) []byte {
 
 func TestChannelManifestStrictPublisherContract(t *testing.T) {
 	base := string(fixtureChannelManifest("v1.0.0-rc.2", strings.Repeat("a", 64)))
-	for _, protocol := range []string{"1", "2"} {
-		if _, err := parseChannelManifest([]byte(strings.Replace(base, `"cliProtocol":"2"`, `"cliProtocol":"`+protocol+`"`, 1))); err != nil {
+	for _, protocol := range []string{"1", "2", "3"} {
+		if _, err := parseChannelManifest([]byte(strings.Replace(base, `"cliProtocol":"3"`, `"cliProtocol":"`+protocol+`"`, 1))); err != nil {
 			t.Fatalf("supported CLI protocol %s: %v", protocol, err)
 		}
 	}
@@ -40,7 +40,7 @@ func TestChannelManifestStrictPublisherContract(t *testing.T) {
 	}
 	cases := map[string]string{
 		"missing schema":       strings.Replace(base, `"schema":"1",`, "", 1),
-		"missing protocol":     strings.Replace(base, `"cliProtocol":"2",`, "", 1),
+		"missing protocol":     strings.Replace(base, `"cliProtocol":"3",`, "", 1),
 		"missing commit":       strings.Replace(base, `"sourceCommit":"`+fixtureSourceCommit+`",`, "", 1),
 		"missing architecture": strings.Replace(base, `,"windowsARM64SHA256":"`+strings.Repeat("a", 64)+`"`, "", 1),
 		"unknown field":        strings.Replace(base, "}", `,"url":"https://elsewhere.invalid"}`, 1),
@@ -50,13 +50,13 @@ func TestChannelManifestStrictPublisherContract(t *testing.T) {
 		"escaped key":          strings.Replace(base, `"schema"`, `"schem\u0061"`, 1),
 		"escaped value":        strings.Replace(base, `"go-v1"`, `"go-v\u0031"`, 1),
 		"numeric schema":       strings.Replace(base, `"schema":"1"`, `"schema":1`, 1),
-		"numeric protocol":     strings.Replace(base, `"cliProtocol":"2"`, `"cliProtocol":2`, 1),
+		"numeric protocol":     strings.Replace(base, `"cliProtocol":"3"`, `"cliProtocol":2`, 1),
 		"null schema":          strings.Replace(base, `"schema":"1"`, `"schema":null`, 1),
 		"boolean channel":      strings.Replace(base, `"channel":"go-v1"`, `"channel":true`, 1),
 		"nested value":         strings.Replace(base, `"schema":"1"`, `"schema":{"schema":"1"}`, 1),
 		"unknown schema":       strings.Replace(base, `"schema":"1"`, `"schema":"2"`, 1),
-		"unknown protocol":     strings.Replace(base, `"cliProtocol":"2"`, `"cliProtocol":"3"`, 1),
-		"zero protocol":        strings.Replace(base, `"cliProtocol":"2"`, `"cliProtocol":"0"`, 1),
+		"unknown protocol":     strings.Replace(base, `"cliProtocol":"3"`, `"cliProtocol":"4"`, 1),
+		"zero protocol":        strings.Replace(base, `"cliProtocol":"3"`, `"cliProtocol":"0"`, 1),
 		"unknown channel":      strings.Replace(base, "go-v1", "stable", 1),
 		"uppercase commit":     strings.Replace(base, fixtureSourceCommit, strings.ToUpper(fixtureSourceCommit), 1),
 		"short commit":         strings.Replace(base, fixtureSourceCommit, fixtureSourceCommit[:39], 1),
@@ -398,7 +398,10 @@ func TestUpdateUnknownStateAndBusyGuardsRunBeforeChannelNetwork(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "unknown runtime":
-				if err := os.WriteFile(filepath.Join(root, "runtime.json"), []byte("{}"), 0600); err != nil {
+				if _, err := managedDirectory(root, "private"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(runtimePath(root), []byte("{}"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "orphaned state":
@@ -509,7 +512,7 @@ func TestChannelResolvesArchitectureSpecificDigest(t *testing.T) {
 
 func TestUpdaterRejectsLegacyChannelProtocolBeforeReleaseDownloads(t *testing.T) {
 	calls := 0
-	data := bytes.Replace(fixtureChannelManifest("v1.9.0", strings.Repeat("a", 64)), []byte(`"cliProtocol":"2"`), []byte(`"cliProtocol":"1"`), 1)
+	data := bytes.Replace(fixtureChannelManifest("v1.9.0", strings.Repeat("a", 64)), []byte(`"cliProtocol":"3"`), []byte(`"cliProtocol":"1"`), 1)
 	client := &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
 		calls++
 		if req.URL.String() != channelManifestURL {

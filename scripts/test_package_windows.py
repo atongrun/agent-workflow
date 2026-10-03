@@ -201,7 +201,7 @@ class PackageTests(unittest.TestCase):
         script = (SCRIPTS / "install.ps1").read_text()
         main = script[script.index("function Invoke-AwfBootstrap"):]
         stages = ["Assert-AwfReleaseVersion", "Get-AwfNativeArchitecture", "releases/tags/$Version", "Get-AwfReleaseUrls",
-                  "Get-AwfChecksum", "Get-FileHash", "Expand-AwfVerifiedArchive", "& $executable", "Register-AwfInstalledLauncher"]
+                  "Get-AwfChecksum", "Get-FileHash", "Expand-AwfVerifiedArchive", "& $executable", "Confirm-AwfInstalledLauncher"]
         positions = [main.index(stage) for stage in stages]
         self.assertEqual(positions, sorted(positions))
         for prohibited in ("Invoke-Expression", "Set-ExecutionPolicy", "Start-Process", "New-NetFirewallRule", "releases/latest", "-Verb RunAs"):
@@ -209,26 +209,26 @@ class PackageTests(unittest.TestCase):
         self.assertIn("IsWow64Process2", script)
         self.assertIn("return nativeMachine;", script)
         self.assertIn("$Sha256 -and $digest -ine $Sha256", script)
-        self.assertIn("@('_install', '--archive', $archive, '--version', $Version, '--sha256', $digest)", script)
+        self.assertIn("@('install', '--yes', '--archive', $archive, '--version', $Version, '--sha256', $digest)", script)
         self.assertIn("if ($AllowPrerelease) { $installArguments += '--allow-prerelease' }", script)
         self.assertIn("Get-AwfReleaseUrls $release $Version $asset -AllowPrerelease:$AllowPrerelease", script)
         self.assertIn("$Release.prerelease -ne $isPrerelease", script)
         self.assertIn("$Release.prerelease -isnot [bool] -or $Release.draft", script)
         self.assertIn("$LASTEXITCODE -ne 0", script)
         self.assertIn("$null = & $executable @installArguments", main)
-        self.assertLess(main.index("$null = & $executable"), main.index("$LASTEXITCODE -ne 0"))
-        self.assertLess(main.index("$LASTEXITCODE -ne 0"), main.index("Register-AwfInstalledLauncher"))
+        self.assertLess(main.index("$null = & $executable"), main.index("$LASTEXITCODE -ne 0", main.index("$null = & $executable")))
+        self.assertLess(main.index("$LASTEXITCODE -ne 0", main.index("$null = & $executable")), main.index("Confirm-AwfInstalledLauncher"))
 
     def test_install_context_gates_before_effects(self):
         script = (SCRIPTS / "install.ps1").read_text()
         main = script[script.index("function Invoke-AwfBootstrap"):]
         stages = ["LOCALAPPDATA must match", "Assert-AwfUnpackagedProcess", "$root = Join-Path",
                   "New-AwfPrivateStage", "Save-AwfOfficialDownload", "& $executable",
-                  "Register-AwfInstalledLauncher", "Write-Host \"Installed AWF"]
+                  "Confirm-AwfInstalledLauncher", "Write-Host \"Installed AWF"]
         positions = [main.index(stage) for stage in stages]
         self.assertEqual(positions, sorted(positions))
-        registration = script[script.index("function Register-AwfInstalledLauncher"):script.index("function Invoke-AwfBootstrap")]
-        gates = [registration.index(value) for value in ("Assert-AwfDirectoryPath", "[IO.FileInfo]", "Assert-AwfNativePath", "Save-AwfLegacyChannel", "Add-AwfUserPath")]
+        registration = script[script.index("function Confirm-AwfInstalledLauncher"):script.index("function Invoke-AwfBootstrap")]
+        gates = [registration.index(value) for value in ("Assert-AwfDirectoryPath", "[IO.FileInfo]", "Assert-AwfNativePath", "Add-AwfProcessPath")]
         self.assertEqual(gates, sorted(gates))
         stage = script[script.index("function New-AwfPrivateStage"):script.index("function Save-AwfOfficialDownload")]
         self.assertLess(stage.index("Set-Acl"), stage.index("Assert-AwfNativePath"))
@@ -255,17 +255,17 @@ class PackageTests(unittest.TestCase):
 
     def test_path_promotion_is_narrow_and_after_physical_verification(self):
         script = (SCRIPTS / "install.ps1").read_text()
-        pure = script[script.index("function Move-AwfPathEntryFirst"):script.index("function Add-AwfUserPath")]
+        pure = script[script.index("function Move-AwfPathEntryFirst"):script.index("function Add-AwfProcessPath")]
         self.assertNotIn("SetEnvironmentVariable", pure)
         self.assertIn("OrdinalIgnoreCase", pure)
         self.assertIn("$remaining.Add($part)", pure)
-        setters = script[script.index("function Add-AwfUserPath"):script.index("function Warn-AwfCommandShadowing")]
-        self.assertIn("Move-AwfPathEntryFirst $old $Bin", setters)
+        setters = script[script.index("function Add-AwfProcessPath"):script.index("function Warn-AwfCommandShadowing")]
+        self.assertNotIn("'User'", setters)
         self.assertIn("Move-AwfPathEntryFirst $process $Bin", setters)
         self.assertNotIn("'Machine'", setters)
         main = script[script.index("function Invoke-AwfBootstrap"):]
-        self.assertLess(main.index("Register-AwfInstalledLauncher"), main.index("Warn-AwfCommandShadowing"))
-        warn = script[script.index("function Warn-AwfCommandShadowing"):script.index("function Register-AwfInstalledLauncher")]
+        self.assertLess(main.index("Confirm-AwfInstalledLauncher"), main.index("Warn-AwfCommandShadowing"))
+        warn = script[script.index("function Warn-AwfCommandShadowing"):script.index("function Confirm-AwfInstalledLauncher")]
         self.assertIn("Get-Command", warn)
         self.assertIn("Write-Warning", warn)
         self.assertIn("$PSModuleAutoLoadingPreference = 'None'", warn)
@@ -275,7 +275,7 @@ class PackageTests(unittest.TestCase):
         for label in ("quoted", "case variant", "trailing separator", "all exact duplicates", "already first",
                       "missing", "other formatting preserved", "unrelated duplicates preserved", "idempotent"):
             self.assertIn(label, native)
-        self.assertNotIn("Add-AwfUserPath", native)
+        self.assertNotIn("Add-AwfProcessPath", native)
         self.assertNotIn("SetEnvironmentVariable", native)
 
     def test_documented_simple_entry_and_trust_boundary(self):
@@ -283,8 +283,9 @@ class PackageTests(unittest.TestCase):
         self.assertIn('powershell -NoProfile -Command "irm https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/scripts/install.ps1 | iex"', document)
         self.assertIn("mutable official branch", document)
         self.assertIn("not independently authenticate", document)
-        self.assertIn("full simplified flow is not live", document)
-        self.assertIn("predates guided init", document)
+        self.assertIn("not published or accepted on native Windows", document)
+        self.assertIn("protocol 3", document)
+        self.assertNotIn("-SkipInit", document)
         self.assertNotIn("<INDEPENDENT_INSTALL_PS1_SHA256>", document)
 
     def test_optional_pin_and_real_entry_regressions(self):
@@ -302,19 +303,32 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn("function Read-Host", native)
         self.assertNotIn("Set-ExecutionPolicy", native)
 
-    def test_channel_persistence_fixture_uses_private_temporary_stage(self):
-        native = (SCRIPTS / "test_channel.ps1").read_text()
-        fixture = native[native.index("if ([Environment]::OSVersion.Platform"):]
-        self.assertIn("$temporary = [IO.Path]::GetTempPath()", fixture)
-        self.assertIn("$root = New-AwfPrivateStage $temporary", fixture)
-        self.assertNotIn("LocalApplicationData", fixture)
-        self.assertNotIn("GetFolderPath", fixture)
-        for override in ("function New-AwfPrivateStage", "function Assert-AwfNativePath", "function Assert-AwfDirectoryPath"):
-            self.assertNotIn(override, native)
-        for check in ("Save-AwfLegacyChannel $root $true", "Save-AwfLegacyChannel $root $false",
-                      "failed write preserves old marker", "failed write cleans temporary marker",
-                      "Protected channel persistence fixture passed", "finally { Remove-Item -LiteralPath $root -Recurse -Force }"):
-            self.assertIn(check, fixture)
+    def test_bootstrap_is_fresh_only_and_native_owns_installation(self):
+        script = (SCRIPTS / "install.ps1").read_text()
+        main = script[script.index("function Invoke-AwfBootstrap"):]
+        self.assertLess(main.index("Assert-AwfFreshRoot $root"), main.index("New-AwfPrivateStage"))
+        root = script[script.index("function Assert-AwfFreshRoot"):script.index("function Confirm-AwfInstalledLauncher")]
+        self.assertIn("Get-Item -LiteralPath $Root -Force -ErrorAction Stop", root)
+        self.assertIn("catch [Management.Automation.ItemNotFoundException] { return }", root)
+        self.assertIn("empty, partial, or credentials-only roots", root)
+        self.assertIn("does not migrate, adopt, repair, or overwrite", root)
+        for forbidden in ("_install", "Save-AwfLegacyChannel", "-SkipInit", "& $launcher init",
+                          "SetEnvironmentVariable('Path', $new, 'User')"):
+            self.assertNotIn(forbidden, script)
+        self.assertEqual(script.count("Set-Acl"), 1)
+        stage = script[script.index("function New-AwfPrivateStage"):script.index("function Save-AwfOfficialDownload")]
+        self.assertIn("Set-Acl", stage)
+        self.assertIn("$protocol = @(& $executable install-protocol)", main)
+        self.assertIn("$protocol.Count -ne 1 -or $protocol[0] -cne '3'", main)
+        self.assertLess(main.index("Expand-AwfVerifiedArchive"), main.index("& $executable install-protocol"))
+        self.assertLess(main.index("& $executable install-protocol"), main.index("$null = & $executable @installArguments"))
+        self.assertIn("$installArguments += @('--channel', 'go-v1')", main)
+        self.assertIn("Confirm-AwfPreview $Version ([bool] $AllowPrerelease) (Test-AwfInteractive)", main)
+        self.assertNotIn("$UseChannel", script)
+        native = (SCRIPTS / "test_fresh_install.ps1").read_text()
+        for label in ("empty root", "credentials-only root", "root file", "unknown root state",
+                      "existing root precedes staging", "historical protocol", "fresh protocol"):
+            self.assertIn(label, native)
 
     def test_distribution_manifest_names_only_verified_existing_release(self):
         manifest = json.loads((SCRIPTS.parent / "distribution" / "go-v1.json").read_text())
@@ -330,18 +344,17 @@ class PackageTests(unittest.TestCase):
         main = script[script.index("function Invoke-AwfBootstrap"):]
         self.assertNotIn("Mandatory = $true", script)
         self.assertIn("https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/distribution/go-v1.json", script)
-        stages = ["Read-AwfChannelManifest", "Confirm-AwfPreview", "Get-AwfReleaseUrls",
+        stages = ["Read-AwfChannelManifest", "Assert-AwfFreshChannel", "Confirm-AwfPreview", "Get-AwfReleaseUrls",
                   "Assert-AwfChannelRelease", "$channelDigest -and $digest -cne $channelDigest",
                   "Get-FileHash", "Expand-AwfVerifiedArchive", "& $executable",
-                  "Register-AwfInstalledLauncher", "& $launcher init"]
+                  "Confirm-AwfInstalledLauncher", "Next, run awf init"]
         positions = [main.index(stage) for stage in stages]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("$Metadata -or $Channel -or $redirects -eq 5", script)
         self.assertIn("$Url -cne $script:ChannelUrl", script)
-        self.assertIn("$channel.cliProtocol -ceq '2'", script)
-        self.assertIn("This published release predates guided init and channel-aware update", script)
+        self.assertIn("$Channel.cliProtocol -cne '3'", script)
+        self.assertIn("this bootstrap does not install historical releases", script)
         self.assertIn("if (-not $Interactive)", script)
-        self.assertIn("[IO.File]::Move($temporary, $path)", script)
         self.assertNotIn("[IO.File]::WriteAllText($path", script)
 
 

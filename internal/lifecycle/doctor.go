@@ -108,8 +108,8 @@ func inspectDoctor(local string, platform doctorPlatform, lookPath func(string) 
 		directory bool
 	}{
 		{"", true}, {"bin", true}, {"bin/awf.exe", false}, {"versions", true},
-		{"current.json", false}, {"channel.json", false}, {"config.json", false},
-		{"runtime.json", false}, {"starting.json", false}, {"state", true}, {"state/jobs", true},
+		{"installation.json", false}, {"current.json", false}, {"channel.json", false}, {"config.json", false},
+		{"runtime.json", false}, {"starting.json", false}, {"private", true}, {"private/runtime.json", false}, {"private/starting.json", false}, {"state", true}, {"state/jobs", true},
 		{"credentials", true}, {"credentials/windows-node", true}, {"credentials/windows-node/node-token.dpapi", false},
 	}
 	for _, item := range paths {
@@ -146,7 +146,7 @@ func inspectDoctor(local string, platform doctorPlatform, lookPath func(string) 
 		}
 		if platform.aclDetails != nil {
 			metadata := platform.aclDetails(path)
-			status, detail := summarizeDoctorACL(&metadata)
+			status, detail := summarizeDoctorACLRole(&metadata, pathPermissionRole(root, path))
 			r.Findings = append(r.Findings, doctorFinding{Check: label + ".acl", Status: status, Detail: detail, ACL: &metadata})
 		} else {
 			metadata, err := platform.acl(path)

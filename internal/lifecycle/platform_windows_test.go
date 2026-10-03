@@ -38,7 +38,7 @@ func TestWindowsPairingDPAPIContract(t *testing.T) {
 		{"short-token", "ABCD", entropy, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := privatePermissionFixtureRoot(t)
 			if e := privateRoot(root); e != nil {
 				t.Fatal(e)
 			}
@@ -58,10 +58,7 @@ func TestWindowsPairingDPAPIContract(t *testing.T) {
 	}
 }
 func TestWindowsPrivateACLAndAtomicPointer(t *testing.T) {
-	root := t.TempDir()
-	if e := protectDirectory(root); e != nil {
-		t.Fatal(e)
-	}
+	root := privatePermissionFixtureRoot(t)
 	p, e := syscall.UTF16PtrFromString(root)
 	if e != nil {
 		t.Fatal(e)
@@ -119,7 +116,7 @@ func TestWindowsPrivateACLAndAtomicPointer(t *testing.T) {
 }
 
 func TestWindowsRejectsProtectedBroadChildACL(t *testing.T) {
-	root := t.TempDir()
+	root := privatePermissionFixtureRoot(t)
 	if e := privateRoot(root); e != nil {
 		t.Fatal(e)
 	}
@@ -187,7 +184,7 @@ func setBroadFixtureACL(t *testing.T, path string) {
 func TestWindowsExternalCredentialRequiresPrivateFileAndParent(t *testing.T) {
 	for _, target := range []string{"file", "parent"} {
 		t.Run(target, func(t *testing.T) {
-			root := t.TempDir()
+			root := privatePermissionFixtureRoot(t)
 			if e := privateRoot(root); e != nil {
 				t.Fatal(e)
 			}
@@ -220,7 +217,7 @@ func TestWindowsExternalCredentialRequiresPrivateFileAndParent(t *testing.T) {
 // protected fixture root, and that replacements and nested directories retain
 // that DACL. The managed Windows node establishes this boundary itself.
 func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
-	root := t.TempDir()
+	root := privatePermissionFixtureRoot(t)
 	if e := privateRoot(root); e != nil {
 		t.Fatal(e)
 	}
@@ -274,7 +271,7 @@ func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
 // New pairing writer fixtures stay within t.TempDir. They never use the
 // installation's real configured credential, SSH, registry, or a Host.
 func TestWindowsNativePairWriterRoundTripAndNoOverwrite(t *testing.T) {
-	root := t.TempDir()
+	root := privatePermissionFixtureRoot(t)
 	if e := privateRoot(root); e != nil {
 		t.Fatal(e)
 	}
@@ -318,11 +315,11 @@ func TestWindowsNativePairWriterRoundTripAndNoOverwrite(t *testing.T) {
 }
 
 func TestWindowsNativePairWriterRejectsUnsafeExternalParent(t *testing.T) {
-	root := t.TempDir()
+	root := privatePermissionFixtureRoot(t)
 	if e := privateRoot(root); e != nil {
 		t.Fatal(e)
 	}
-	external := t.TempDir()
+	external := privatePermissionFixtureRoot(t)
 	if e := privateRoot(external); e != nil {
 		t.Fatal(e)
 	}

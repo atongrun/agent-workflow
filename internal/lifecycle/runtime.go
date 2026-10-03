@@ -39,9 +39,24 @@ func randomToken() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
-func runtimePath(root string) string { return filepath.Join(root, "runtime.json") }
+func runtimePath(root string) string { return filepath.Join(root, "private", "runtime.json") }
+
+// A missing identity means stopped only when no historical root-level token
+// remains. Read-only callers never create the private runtime directory.
+func checkRuntimeIdentity(root, path string) error {
+	if e := rejectLegacyLayout(root); e != nil {
+		return e
+	}
+	if e := checkPrivatePath(filepath.Dir(path)); e != nil {
+		return e
+	}
+	return checkPrivatePath(path)
+}
 func readRuntime(root string) (Runtime, error) {
 	var r Runtime
+	if e := checkRuntimeIdentity(root, runtimePath(root)); e != nil {
+		return r, e
+	}
 	e := readJSON(runtimePath(root), &r)
 	if e != nil {
 		return r, e
@@ -85,9 +100,12 @@ type Startup struct {
 	Version  string `json:"version"`
 }
 
-func startupPath(root string) string { return filepath.Join(root, "starting.json") }
+func startupPath(root string) string { return filepath.Join(root, "private", "starting.json") }
 func readStartup(root string) (Startup, error) {
 	var p Startup
+	if e := checkRuntimeIdentity(root, startupPath(root)); e != nil {
+		return p, e
+	}
 	e := readJSON(startupPath(root), &p)
 	if e != nil {
 		return p, e
@@ -109,6 +127,9 @@ func noPendingStartup(root string) error {
 	return errors.New("a requested startup is still pending or unknown; stop/update cannot assume the child is absent")
 }
 func createStartup(root string, p Startup) error {
+	if _, e := managedDirectory(root, "private"); e != nil {
+		return e
+	}
 	guard, e := lockFile(filepath.Join(root, "startup.lock"))
 	if e != nil {
 		return e

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"syscall"
 	"unsafe"
@@ -92,18 +91,24 @@ func rejectReparseAttributes(attributes uint32) error {
 	}
 	return nil
 }
-func protectDirectory(p string) error {
-	if e := rejectReparsePath(p); e != nil {
-		return e
-	}
-	u, e := user.Current()
+
+// createPrivateDirectory installs its protected DACL in the same Win32 call
+// that creates the directory. Existing paths are never opened for ACL writes.
+func createPrivateDirectory(p string) error {
+	token, e := syscall.OpenCurrentProcessToken()
 	if e != nil {
 		return e
 	}
-
-	// Replace the entire DACL, including old explicit entries; chmod and granting
-	// two identities alone do not make an existing Windows directory private.
-	sddl, e := syscall.UTF16PtrFromString("D:P(A;OICI;FA;;;" + u.Uid + ")(A;OICI;FA;;;SY)")
+	defer token.Close()
+	current, e := token.GetTokenUser()
+	if e != nil {
+		return e
+	}
+	id, e := current.User.Sid.String()
+	if e != nil {
+		return e
+	}
+	sddl, e := syscall.UTF16PtrFromString("O:" + id + "D:P(A;OICI;FA;;;" + id + ")(A;OICI;FA;;;SY)")
 	if e != nil {
 		return e
 	}
@@ -114,22 +119,16 @@ func protectDirectory(p string) error {
 		return fmt.Errorf("cannot create private AWF directory ACL: %w", callErr)
 	}
 	defer syscall.LocalFree(syscall.Handle(sd))
-	var present, defaulted int32
-	var dacl uintptr
-	r, _, callErr = advapi.NewProc("GetSecurityDescriptorDacl").Call(sd, uintptr(unsafe.Pointer(&present)), uintptr(unsafe.Pointer(&dacl)), uintptr(unsafe.Pointer(&defaulted)))
-	if r == 0 || present == 0 {
-		return errors.New("cannot inspect private AWF directory ACL")
-	}
 	path, e := syscall.UTF16PtrFromString(p)
 	if e != nil {
 		return e
 	}
-	r, _, _ = advapi.NewProc("SetNamedSecurityInfoW").Call(uintptr(unsafe.Pointer(path)), 1, 0x80000004, 0, 0, dacl, 0)
-	if r != 0 {
-		return fmt.Errorf("cannot protect AWF directory: Windows error %d", r)
+	sa := syscall.SecurityAttributes{Length: uint32(unsafe.Sizeof(syscall.SecurityAttributes{})), SecurityDescriptor: sd}
+	r, _, callErr = syscall.NewLazyDLL("kernel32.dll").NewProc("CreateDirectoryW").Call(uintptr(unsafe.Pointer(path)), uintptr(unsafe.Pointer(&sa)))
+	if r == 0 {
+		return &os.PathError{Op: "CreateDirectoryW", Path: p, Err: callErr}
 	}
-
-	return nil
+	return checkPrivatePath(p)
 }
 func lockFile(p string) (*os.File, error) {
 	f, e := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0600)
@@ -221,74 +220,20 @@ func setAutostart(root string, enable bool) error {
 	return nil
 }
 
-func checkPrivatePath(p string) error {
+func checkPrivatePath(p string) error { return inspectPathPermissions(p, privatePermissionRole) }
+func checkProgramPath(p string) error { return inspectPathPermissions(p, programPermissionRole) }
+
+func inspectPathPermissions(p string, role permissionRole) error {
 	if e := rejectReparsePath(p); e != nil {
 		return e
 	}
-	u, e := user.Current()
-	if e != nil {
-		return e
+	m := inspectDoctorACL(p)
+	issues := permissionPolicyIssues(&m, role)
+	if !m.Complete {
+		return errors.New("path security descriptor could not be completely inspected")
 	}
-	path, e := syscall.UTF16PtrFromString(p)
-	if e != nil {
-		return e
-	}
-	var sd, dacl uintptr
-	var owner *syscall.SID
-	advapi := syscall.NewLazyDLL("advapi32.dll")
-	r, _, _ := advapi.NewProc("GetNamedSecurityInfoW").Call(uintptr(unsafe.Pointer(path)), 1, 5, uintptr(unsafe.Pointer(&owner)), 0, uintptr(unsafe.Pointer(&dacl)), 0, uintptr(unsafe.Pointer(&sd)))
-	if r != 0 {
-		return fmt.Errorf("cannot inspect path ACL: Windows error %d", r)
-	}
-	defer syscall.LocalFree(syscall.Handle(sd))
-	if owner == nil {
-		return errors.New("path owner is unknown")
-	}
-	ownerID, e := owner.String()
-	if e != nil {
-		return e
-	}
-	if ownerID != u.Uid && ownerID != "S-1-5-18" {
-		return errors.New("path is owned by an identity other than the current user or SYSTEM")
-	}
-	if dacl == 0 {
-		return errors.New("unrestricted path DACL is not allowed")
-	}
-	var info struct{ Count, Used, Free uint32 }
-	r, _, callErr := advapi.NewProc("GetAclInformation").Call(dacl, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info), 2)
-	if r == 0 {
-		return callErr
-	}
-	seen := map[string]bool{}
-	for i := uint32(0); i < info.Count; i++ {
-		var ace unsafe.Pointer
-		r, _, callErr = advapi.NewProc("GetAce").Call(dacl, uintptr(i), uintptr(unsafe.Pointer(&ace)))
-		if r == 0 {
-			return callErr
-		}
-		header := (*struct {
-			Type, Flags uint8
-			Size        uint16
-		})(ace)
-		if header.Type != 0 || header.Flags&8 != 0 || header.Size < 16 {
-			return errors.New("path has unsupported or ineffective access rules")
-		}
-		mask := *(*uint32)(unsafe.Add(ace, 4))
-		sid := (*syscall.SID)(unsafe.Add(ace, 8))
-		identity, e := sid.String()
-		if e != nil {
-			return e
-		}
-		if identity != u.Uid && identity != "S-1-5-18" {
-			return errors.New("path permits an identity other than the current user or SYSTEM")
-		}
-		if mask != 0x1f01ff && mask != 0x10000000 {
-			return errors.New("path lacks the required full-control private access rule")
-		}
-		seen[identity] = true
-	}
-	if !seen[u.Uid] || !seen["S-1-5-18"] {
-		return errors.New("path must explicitly permit the current user and SYSTEM")
+	if len(issues) != 0 {
+		return fmt.Errorf("path does not satisfy %s permissions: %s", role, issues[0])
 	}
 	return nil
 }

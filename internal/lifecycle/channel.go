@@ -92,7 +92,7 @@ func parseChannelManifest(data []byte) (channelManifest, error) {
 	if err = json.Unmarshal(data, &m); err != nil {
 		return m, errors.New("invalid channel manifest")
 	}
-	if m.Schema != "1" || m.Channel != channelName || (m.CLIProtocol != "1" && m.CLIProtocol != "2") {
+	if m.Schema != "1" || m.Channel != channelName || (m.CLIProtocol != "1" && m.CLIProtocol != "2" && m.CLIProtocol != "3") {
 		return m, errors.New("unsupported channel schema, name, or CLI protocol")
 	}
 	if err = validGoReleaseVersion(m.Version); err != nil {
