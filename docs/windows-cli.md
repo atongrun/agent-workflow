@@ -512,7 +512,16 @@ credential changes):
 ```powershell
 .\scripts\test_install.ps1
 .\scripts\test_channel.ps1
+.\scripts\test_entry.ps1
 ```
+
+`test_entry.ps1` launches fresh copies of the current PowerShell executable. Its
+first-download shim supplies the unmodified local installer to actual `irm | iex`;
+child-only empty `LOCALAPPDATA` forces the real profile guard before staging or
+network. It also checks malformed optional pins before side effects and invokes
+the real `Read-Host` with stdin closed. It never installs AWF or modifies the
+parent environment. This regression does not replace a controlled, published
+one-command install through real transport and guided init.
 
 The portable suite covers stable/RC tag grammar, explicit packaging opt-in,
 pre-build rejection without output changes, deterministic archives, checksums,

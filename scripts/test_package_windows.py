@@ -225,6 +225,21 @@ class PackageTests(unittest.TestCase):
         self.assertIn("predates guided init", document)
         self.assertNotIn("<INDEPENDENT_INSTALL_PS1_SHA256>", document)
 
+    def test_optional_pin_and_real_entry_regressions(self):
+        script = (SCRIPTS / "install.ps1").read_text()
+        main = script[script.index("function Invoke-AwfBootstrap"):]
+        self.assertNotIn("[ValidatePattern(", script)
+        self.assertLess(main.index("Assert-AwfArchivePin"), main.index("Get-AwfNativeArchitecture"))
+        self.assertIn("$answer -isnot [string] -or $answer -cnotmatch", script)
+        native = (SCRIPTS / "test_entry.ps1").read_text()
+        self.assertIn("$process.StandardInput.Close()", native)
+        self.assertIn("function Invoke-RestMethod", native)
+        self.assertIn("scripts/install.ps1' | iex", native)
+        self.assertIn("$env:LOCALAPPDATA = ''", native)
+        self.assertIn("AWF_REAL_READHOST_EOF_REJECTED", native)
+        self.assertNotIn("function Read-Host", native)
+        self.assertNotIn("Set-ExecutionPolicy", native)
+
     def test_distribution_fixture_names_only_verified_existing_release(self):
         manifest = json.loads((SCRIPTS.parent / "distribution" / "go-v1.json").read_text())
         self.assertEqual(manifest, {

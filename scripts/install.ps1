@@ -17,7 +17,6 @@ Optional independently obtained SHA-256 for this architecture's release ZIP.
 [CmdletBinding()]
 param(
     [string] $Version,
-    [ValidatePattern('\A[0-9A-Fa-f]{64}\z')]
     [string] $Sha256,
     [switch] $AllowPrerelease,
     [switch] $SkipInit
@@ -28,6 +27,15 @@ $ErrorActionPreference = 'Stop'
 $script:Repository = 'atongrun/agent-workflow'
 $script:MaxReleaseBytes = 100MB
 $script:ChannelUrl = 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/distribution/go-v1.json'
+
+function Assert-AwfArchivePin([string] $Digest) {
+    # Optional parameter attributes are also variable validation under IEX;
+    # an omitted string can be validated as empty before the script even starts.
+    # Validate explicitly at the entrypoint instead, before any side effects.
+    if ($Digest -and $Digest -cnotmatch '\A[0-9A-Fa-f]{64}\z') {
+        throw 'Sha256 must be exactly 64 hexadecimal digits when supplied.'
+    }
+}
 
 function Assert-AwfReleaseVersion([string] $Tag, [switch] $AllowPrerelease) {
     if ($Tag -cmatch '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z') { return }
@@ -82,7 +90,7 @@ function Confirm-AwfPreview([string] $Tag, [bool] $Approved, [bool] $Interactive
     $question = "AWF $Tag is a preview release. Install this preview? [y/N]"
     if ($UseChannel) { $question = "AWF $Tag is a preview release. Install it and allow preview updates in the Go v1 channel? [y/N]" }
     $answer = Read-Host $question
-    if ($answer -notmatch '\A(?i:y|yes)\z') { throw 'Preview installation cancelled. Nothing was installed.' }
+    if ($answer -isnot [string] -or $answer -cnotmatch '\A(?i:y|yes)\z') { throw 'Preview installation cancelled. Nothing was installed.' }
     return $true
 }
 
@@ -447,6 +455,7 @@ function Add-AwfUserPath([string] $Bin) {
 }
 
 function Invoke-AwfBootstrap {
+    Assert-AwfArchivePin $Sha256
     if ($Version) { Assert-AwfReleaseVersion $Version -AllowPrerelease }
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         throw 'This bootstrap requires native Windows PowerShell 5.1 or PowerShell 7 on Windows.'

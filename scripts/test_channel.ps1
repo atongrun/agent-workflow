@@ -12,6 +12,10 @@ function Assert-Rejected([scriptblock] $Action, [string] $Message) {
     try { & $Action | Out-Null } catch { $rejected = $true }
     Assert-True $rejected $Message
 }
+foreach ($pin in @('', $null, ('a' * 64), ('A' * 64))) { Assert-AwfArchivePin $pin }
+foreach ($pin in @(' ', 'bad', ('a' * 63), ('g' * 64), (('a' * 64) + "`n"))) {
+    Assert-Rejected { Assert-AwfArchivePin $pin } 'malformed optional pin rejected'
+}
 $manifestPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'distribution\go-v1.json'
 $text = [IO.File]::ReadAllText($manifestPath)
 $channel = Read-AwfChannelManifest $text
@@ -58,7 +62,7 @@ Assert-True (-not (Confirm-AwfPreview 'v1.0.0' $false $false)) 'stable requires 
 Assert-True (Confirm-AwfPreview 'v1.0.0-rc.2' $true $false) 'explicit noninteractive preview opt-in'
 Assert-Rejected { Confirm-AwfPreview 'v1.0.0-rc.2' $false $false } 'noninteractive preview fails closed'
 Assert-True ($script:questions.Count -eq 0) 'no unexpected prompt in noninteractive mode'
-foreach ($answer in @('', 'n', 'no', 'yes please')) {
+foreach ($answer in @($null, '', 'n', 'no', 'yes please')) {
     $script:answers = @($answer)
     Assert-Rejected { Confirm-AwfPreview 'v1.0.0-rc.2' $false $true } 'preview decline cancels'
 }
