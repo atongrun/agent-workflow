@@ -385,3 +385,81 @@ Before native work, the precise dependency-install experiment is:
 
 Bootstrap stays thin: reviewed Go installer acquisition/verification and handoff;
 all installation decisions, progress and transactions belong in the Go core.
+
+## Fourth local slice: real dependency development acceptance
+
+The explicitly authorized dependency experiment ran only beneath
+`/tmp/awf-pi-dependency-acceptance`. This machine is **Debian 13**, PID 1 `tail`,
+with no running systemd; it cannot satisfy the Ubuntu 22.04/24.04 native matrix.
+No system roots, service account, global npm installation, systemd service,
+provider credentials, production endpoint or model call were used.
+
+The complete hash-verified official Node 22.19.0 archive was extracted privately,
+including its npm topology and three exact internal command links. Node reports
+v22.19.0 and its bundled npm 10.9.3. Official Pi package/lock metadata was used
+unchanged with the exact `npm ci --ignore-scripts` arguments above. Empty private
+npm configs, a private cache, the existing environment network proxy and existing
+system CA bundle were used; TLS verification remained enabled. Initial direct
+DNS and proxy CA failures were corrected without disabling TLS or changing to a
+mirror. The successful operation installed **122 packages**; **25 optional** lock
+entries were skipped because their OS/CPU excludes Linux x64.
+
+Every installed lock entry was then matched to its exact installed version and
+URL-bound npm cache entry; actual cached tarball bytes were SHA-512 checked
+against the official lock or the 8 previously reviewed supplementary registry
+pins. The original lock SHA-256 remains unchanged. This proves the selected
+platform dependency bytes for this experiment, not the unselected platform
+packages or a general supported-runtime matrix. No postinstall scripts ran or
+were needed for the tested entry/import/extension paths. No general permission
+to enable such scripts is inferred.
+
+Both `dist/bundle/cli.js --version` and npm `.bin/pi --version` report 1.0.2.
+Twelve dependency entry imports succeeded, including Pi SDK/core/AI/TUI, TypeBox,
+jiti, esbuild, protobufjs, Google GenAI and photon-node. Importing a library does
+not test every native operation it exports. Official Pi extension loading resolves
+the independent AWF extension outside the Pi program tree, including TypeBox;
+architect and reviewer tool registrations match the existing AWF source. No
+separate global TypeBox installation or AWF extension dependency bundle was
+needed for these tested official Pi loading paths.
+
+A bounded ephemeral **stdio** bundled-CLI launch, with `--no-session`, disabled
+builtin tools and discovery, loaded the actual AWF extension. Only `get_state`
+was sent; a test-only extension used the official `getAllTools()` API to observe
+registration. No prompt, tool execution, model catalog choice or model request
+was sent. `get_all_tools` is not an RPC command; it is not used by the committed
+test. Closing stdin provided an orderly exit. Pi automatically creates `{}`
+auth/model store placeholders even in this mode; their emptiness was checked and
+the isolated test directory was removed. No credentials were issued or stored.
+
+The checked-in opt-in `TestPiInstalledOfflineFixture` executes only when
+`AWF_PI_INSTALLED_FIXTURE_DIR` explicitly names the verified private `/tmp` fixture.
+It pins the extracted official Node executable and official lock hashes, uses
+fresh private agent/XDG paths, checks bundled version and AWF registration,
+asserts empty stores and normal EOF shutdown, then cleans its temporary state.
+It does not install dependencies or run downloaded code in default test runs.
+A JavaScript test guard denies fetch/HTTP(S)/TLS/TCP connection/listen APIs,
+including direct Socket connects, records every denial and a final exit counter.
+Zero guarded attempts are required throughout the test. This guard is for
+cooperative verified software, **not an OS or adversarial native-code sandbox**.
+The fixed commands never send prompts or execute tools independently of it.
+
+The complete Pi npm tree was archived and relocated under the source-verified
+`releases/1.0.2` managed data layout. All **16401 inventory entries**, regular-file
+hashes/modes and **9 internal links** were preserved. The relocated npm launcher
+again reports 1.0.2. This is a private packaging/relocation test, not a published
+Pi release or implemented activator. The official initial install script remains
+unavailable (pi.dev proxy returns 403); `/opt/pi-cli/bin/pi` stable launcher and
+its initial setup cannot yet be claimed verified. Official managed update source
+is known; no `pi update` was invoked and no custom updater was introduced.
+
+The existing Go fixture extractor remains intentionally limited to Node-only
+selection and Pi JSON metadata: it cannot consume this larger npm program tree
+or claim an installed runtime. Reusing its aggregate 8192-entry archive boundary
+for the 16401-entry Pi tree would fail. A next bounded implementation needs a
+specific verified-Pi preparation capability, complete Node/npm selection and
+ownership/notices/receipt rules; do not weaken the generic extractor silently.
+Native shared-program update rights, fixed launcher verification, Ubuntu/systemd
+process-group stop/activation/health acceptance, explicit credentials/catalog/model
+initialization and product E2E remain required. None is replaced by these version,
+import, registration or packaging checks; maintenance remains the existing narrow
+admission gate.
