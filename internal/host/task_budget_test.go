@@ -362,16 +362,24 @@ func TestBudgetPersistenceAndRestart(t *testing.T) {
 	if !reflect.DeepEqual(before, s.store.Snapshot()) {
 		t.Fatal("restart/retry changed limits or audit")
 	}
-	// Force an atomic persistence failure without changing stored JSON.
-	moved := s.cfg.DataDir + "-moved"
-	if err := os.Rename(s.cfg.DataDir, moved); err != nil {
+	// Block the atomic state-file replacement without moving DataDir or its
+	// open host.lock handle, which Windows does not permit. Preserve the JSON.
+	statePath := filepath.Join(s.cfg.DataDir, "state.json")
+	moved := statePath + "-saved"
+	if err := os.Rename(statePath, moved); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Rename(moved, s.cfg.DataDir)
-	if err := os.WriteFile(s.cfg.DataDir, []byte("not a directory"), 0600); err != nil {
+	defer func() {
+		if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
+			t.Error(err)
+		}
+		if err := os.Rename(moved, statePath); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := os.Mkdir(statePath, 0700); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(s.cfg.DataDir)
 	in.RequestID = "failed-budget"
 	in.ExpectedBudgetRevision = ptr(1)
 	in.TaskMinutes = ptr(5)
