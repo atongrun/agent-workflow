@@ -65,7 +65,7 @@ func bindingMatches(ref *core.Session, binding piBinding) bool {
 }
 func validPiRole(role string) bool { return role == "architect" || role == "reviewer" }
 func piControlOperation(op string) bool {
-	return op == "pi/model" || op == "pi/compact" || op == "pi/abort"
+	return op == "pi/model" || op == "pi/compact" || op == "pi/abort" || op == "pi/resume"
 }
 func pendingPiControl(st *core.State, taskID, role string) bool {
 	for _, req := range st.Requests {
