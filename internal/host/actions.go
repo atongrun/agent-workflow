@@ -185,6 +185,15 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			s.launch(func() { s.promptReview(in.RequestID, id) })
 		}
 	}
+	// Reconcile only the original cancellation of a terminal run that still
+	// carries question waits. This cannot create new cancellation authority.
+	if duplicate && op == "execution/cancel" {
+		task, _ := s.task(id)
+		receipt := s.store.Snapshot().Requests[in.RequestID]
+		if task != nil && task.DeletedAt == nil && task.Execution != nil && task.Execution.RequestID == in.ExecutionRequestID && task.Execution.Status == "cancelled" && task.Execution.CancelRequested && len(task.Execution.PendingQuestions) > 0 && receipt != nil && (receipt.Status == "accepted_native" || receipt.Status == "needs_verification") {
+			s.launch(func() { s.cancelExecution(in.RequestID, id, in.ExecutionRequestID, task.LifecycleRevision) })
+		}
+	}
 	s.response(w, in.RequestID)
 }
 func executionActive(t *core.Task) bool {

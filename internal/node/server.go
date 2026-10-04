@@ -429,6 +429,10 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if terminal(rec.Job.Status) {
+		if err := s.cleanupCancelledQuestions(r.Context(), p, rec); err != nil {
+			writeError(w, 409, "question_cleanup_pending", err.Error())
+			return
+		}
 		writeJSON(w, 200, rec.Job)
 		return
 	}
@@ -436,7 +440,9 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, 503, "storage_unavailable", err.Error())
 		return
 	}
-	rec.CancelRequestID = req.RequestID
+	if rec.CancelRequestID == "" {
+		rec.CancelRequestID = req.RequestID
+	}
 	rec.Job.CancelRequested = true
 	if rec.CancelPhase == "" {
 		rec.CancelPhase = "pending"
@@ -455,6 +461,10 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		if !terminal(rec.Job.Status) {
 			s.abort(r.Context(), p, rec)
 		}
+	}
+	if err := s.cleanupCancelledQuestions(r.Context(), p, rec); err != nil {
+		writeError(w, 409, "question_cleanup_pending", err.Error())
+		return
 	}
 	writeJSON(w, 200, rec.Job)
 	s.wake(p)

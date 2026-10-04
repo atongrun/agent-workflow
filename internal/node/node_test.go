@@ -32,6 +32,12 @@ type fakeNative struct {
 	failCreate                          bool
 	questionReplies                     int
 	questionReplyStatus                 int
+	questionRejects                     int
+	questionRejectStatus                int
+	dropQuestionReject                  bool
+	retainQuestionOnReject              bool
+	questionReadStatus                  int
+	afterQuestionReject                 func()
 	dropQuestionReply                   bool
 	afterQuestionReply                  func()
 	lastModel                           *opencode.ModelSelection
@@ -87,6 +93,10 @@ func (f *fakeNative) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	case "/question":
+		if f.questionReadStatus != 0 {
+			http.Error(w, "unavailable", f.questionReadStatus)
+			return
+		}
 		if f.questions == nil {
 			respond([]any{})
 		} else {
@@ -125,6 +135,44 @@ func (f *fakeNative) serve(w http.ResponseWriter, r *http.Request) {
 			out = append(out, s)
 		}
 		respond(out)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/question/") && strings.HasSuffix(r.URL.Path, "/reject") && r.Method == "POST" {
+		qid := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/question/"), "/reject")
+		found := false
+		kept := []json.RawMessage{}
+		for _, raw := range f.questions {
+			var q opencode.Question
+			json.Unmarshal(raw, &q)
+			if q.ID == qid {
+				found = true
+				if f.retainQuestionOnReject {
+					kept = append(kept, raw)
+				}
+			} else {
+				kept = append(kept, raw)
+			}
+		}
+		if !found {
+			http.Error(w, "expired", 404)
+			return
+		}
+		f.questions = kept
+		f.questionRejects++
+		if f.afterQuestionReject != nil {
+			f.afterQuestionReject()
+		}
+		if f.dropQuestionReject {
+			f.dropQuestionReject = false
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		if f.questionRejectStatus != 0 {
+			http.Error(w, "expired", f.questionRejectStatus)
+			return
+		}
+		respond(true)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/question/") && strings.HasSuffix(r.URL.Path, "/reply") && r.Method == "POST" {

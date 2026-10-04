@@ -197,3 +197,34 @@ func TestQuestionReplyScopedTypedACKAndNoRetry(t *testing.T) {
 		})
 	}
 }
+
+func TestQuestionRejectUsesScopedOwnerAuthentication(t *testing.T) {
+	for _, ack := range []string{"true", "false", "{}", "404"} {
+		t.Run(ack, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != "POST" || r.URL.Path != "/question/que_old/reject" || r.URL.Query().Get("directory") != `C:\Workspace` {
+					t.Error("wrong rejection scope")
+				}
+				_, password, ok := r.BasicAuth()
+				if !ok || password != "owner-password" {
+					t.Error("missing owner authentication")
+				}
+				if ack == "404" {
+					w.WriteHeader(http.StatusNotFound)
+				}
+				fmt.Fprint(w, ack)
+			}))
+			defer server.Close()
+			client, _ := New(Config{URL: server.URL, Password: "owner-password"})
+			err := client.RejectQuestion(context.Background(), `C:\Workspace`, "que_old")
+			if (err == nil) != (ack == "true") || calls.Load() != 1 {
+				t.Fatal("wrong ACK or repeated mutation", err, calls.Load())
+			}
+			if err := client.RejectQuestion(context.Background(), `C:\Workspace`, "que_../other"); err == nil || calls.Load() != 1 {
+				t.Fatal("invalid question forwarded")
+			}
+		})
+	}
+}

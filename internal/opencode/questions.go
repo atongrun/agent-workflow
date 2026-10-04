@@ -54,3 +54,18 @@ func (c *Client) ReplyQuestion(ctx context.Context, directory, id string, answer
 	}
 	return nil
 }
+
+// RejectQuestion dismisses one native request; caller must durably fence it.
+func (c *Client) RejectQuestion(ctx context.Context, directory, id string) error {
+	if !ValidQuestionID(id) {
+		return errors.New("invalid native question ID")
+	}
+	var ok bool
+	if err := c.request(ctx, "POST", "/question/"+id+"/reject", directory, nil, &ok); err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("native question rejection was not acknowledged")
+	}
+	return nil
+}

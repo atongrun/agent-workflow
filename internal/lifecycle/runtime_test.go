@@ -326,3 +326,29 @@ func TestUpdateAllFailsBeforeCreatingInstallation(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeIdleCancelledTurnRequiresActualQuestionAbsence(t *testing.T) {
+	pending := true
+	client := &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
+		if req.Method != "GET" {
+			t.Fatal("idle performed cancellation cleanup")
+		}
+		body := map[string]string{"/global/health": `{"healthy":true,"version":"1.18.34"}`, "/session/status": `{}`, "/permission": `[]`, "/question": `[]`}[req.URL.Path]
+		if req.URL.Path == "/question" && pending {
+			body = `[{"id":"que_cancelled","sessionID":"ses_cancelled"}]`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	native, err := opencode.New(opencode.Config{URL: "http://127.0.0.1:4096", HTTPClient: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Node: node.Config{Projects: map[string]string{"fixture": t.TempDir()}}}
+	if nativeIdle(context.Background(), native, cfg) == nil {
+		t.Fatal("idle accepted orphan question from cancelled turn")
+	}
+	pending = false
+	if err := nativeIdle(context.Background(), native, cfg); err != nil {
+		t.Fatal(err)
+	}
+}

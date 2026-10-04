@@ -28,6 +28,14 @@ func (s *Server) Idle() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range s.jobs {
+		if len(r.Job.PendingQuestions) > 0 || r.Job.QuestionCleanupState != "" && r.Job.QuestionCleanupState != "cleared" {
+			return fmt.Errorf("job %s cancellation question state is unresolved", r.Job.ID)
+		}
+		for _, receipt := range r.Job.QuestionCleanup {
+			if receipt == nil || receipt.Status != "cleared" {
+				return fmt.Errorf("job %s question cleanup is unresolved", r.Job.ID)
+			}
+		}
 		if !terminal(r.Job.Status) {
 			return fmt.Errorf("job %s is %s; wait for or resolve it before stopping/updating", r.Job.ID, r.Job.Status)
 		}

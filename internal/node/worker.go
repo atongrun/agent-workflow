@@ -44,6 +44,7 @@ func (s *Server) advance(ctx context.Context, p *project, r *record) {
 		if !terminal(r.Job.Status) {
 			s.abort(ctx, p, r)
 		}
+		_ = s.cleanupCancelledQuestions(ctx, p, r)
 		return
 	}
 	if r.Job.SubmissionState == "queued" {

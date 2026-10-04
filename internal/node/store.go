@@ -79,6 +79,42 @@ func (s *Server) load() error {
 		default:
 			return fmt.Errorf("durable job %s has unknown submission state", r.Job.ID)
 		}
+
+		switch r.Job.QuestionCleanupState {
+		case "", "cleared", "needs_verification":
+		default:
+			return fmt.Errorf("durable job %s has unknown cleanup state", r.Job.ID)
+		}
+		if (r.Job.QuestionCleanupState != "" || len(r.Job.QuestionCleanup) > 0) && !cleanupAuthority(&r) {
+			return fmt.Errorf("durable job %s has unauthorized cleanup state", r.Job.ID)
+		}
+		if r.Job.QuestionCleanupState == "cleared" && len(r.Job.PendingQuestions) > 0 {
+			return fmt.Errorf("durable job %s has inconsistent cleanup state", r.Job.ID)
+		}
+
+		if len(r.Job.QuestionCleanup) > 0 && r.Job.QuestionCleanupState == "" {
+			return fmt.Errorf("durable job %s has missing cleanup state", r.Job.ID)
+		}
+		if len(r.Job.QuestionCleanup) > 128 {
+			return fmt.Errorf("durable job %s exceeds cleanup receipt limit", r.Job.ID)
+		}
+		for id, receipt := range r.Job.QuestionCleanup {
+			if id != receiptQuestionID(receipt) || !cleanupAuthority(&r) || !cleanupBinding(&r, receipt) {
+				return fmt.Errorf("durable job %s has invalid cleanup receipt", r.Job.ID)
+			}
+			if r.Job.QuestionCleanupState == "cleared" && receipt.Status != "cleared" {
+				return fmt.Errorf("durable job %s has inconsistent cleanup receipt", r.Job.ID)
+			}
+			switch receipt.Status {
+			case "cleared", "needs_verification":
+			case "dispatching":
+				receipt.Status = "needs_verification"
+				receipt.Acknowledged = false
+				receipt.Error = "node restarted during question rejection; never resend"
+			default:
+				return fmt.Errorf("durable job %s has unknown cleanup receipt state", r.Job.ID)
+			}
+		}
 		if len(r.QuestionReplies) > 128 {
 			return fmt.Errorf("durable job %s exceeds question receipt limit", r.Job.ID)
 		}
@@ -102,4 +138,11 @@ func (s *Server) load() error {
 		s.jobs[r.Job.ID] = &r
 	}
 	return nil
+}
+
+func receiptQuestionID(r *QuestionCleanup) string {
+	if r == nil {
+		return ""
+	}
+	return r.QuestionID
 }

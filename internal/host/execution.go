@@ -244,6 +244,16 @@ func (s *Server) applyJob(id string, job *node.Job, lifecycleRevision int) {
 		// a reviewed execution or regresses it back to running/uncertain.
 		wasTerminal := e.Status == "completed" || e.Status == "failed" || e.Status == "cancelled"
 		if wasTerminal {
+			// A cancelled job may clear an orphaned native question later.
+			// Refresh only waits proven cleared by that original cancellation;
+			// terminal outcome, verdict, evidence and accrued counters absorb polls.
+			if e.Status == "cancelled" && job.Status == "cancelled" && e.CancelRequested && job.CancelRequested && job.AbortConfirmed && job.SessionID == e.SessionID && cancelledQuestionWaitsCleared(e, job) {
+				e.PendingQuestions = job.PendingQuestions
+				if before != string(mustJSON(t)) {
+					core.Emit(st, id, "execution.event", e)
+					core.Changed(st, t)
+				}
+			}
 			return nil
 		}
 		e.SessionID = job.SessionID
@@ -399,4 +409,21 @@ func bounded(text string, limit int) string {
 		return text
 	}
 	return text[:limit] + "\n[Truncated projection; inspect the native session/message reference for complete evidence]"
+}
+
+func cancelledQuestionWaitsCleared(e *core.Execution, job *node.Job) bool {
+	if len(e.PendingQuestions) == 0 || len(job.PendingQuestions) != 0 || job.QuestionCleanupState != "cleared" {
+		return false
+	}
+	for _, raw := range e.PendingQuestions {
+		var q struct {
+			ID        string `json:"id"`
+			SessionID string `json:"sessionID"`
+		}
+		if json.Unmarshal(raw, &q) != nil || q.ID == "" || q.SessionID != e.SessionID {
+			return false
+		}
+
+	}
+	return true
 }
