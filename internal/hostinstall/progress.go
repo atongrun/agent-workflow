@@ -46,6 +46,8 @@ func (p *Progress) Event(e ProgressEvent) {
 				text = fmt.Sprintf("AWF %s download [%s%s] %d/%d bytes %.1f%%", e.Component, strings.Repeat("=", filled), strings.Repeat(" ", 20-filled), e.Bytes, e.Total, percent)
 			}
 		}
+	} else if e.State == "progress" {
+		text = fmt.Sprintf("AWF %s %s: %d bytes observed", e.Component, e.Stage, e.Bytes)
 	}
 	prefix, suffix := "", "\n"
 	if p.TTY && e.State == "progress" {

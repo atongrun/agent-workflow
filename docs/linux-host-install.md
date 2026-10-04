@@ -157,3 +157,114 @@ Official source references:
 
 - [Pi package and Node engine](https://github.com/earendil-works/pi/blob/v1.0.2/packages/coding-agent/package.json), [configuration](https://github.com/earendil-works/pi/blob/v1.0.2/packages/coding-agent/docs/configuration.md), [CLI](https://github.com/earendil-works/pi/blob/v1.0.2/packages/coding-agent/docs/cli.md), [managed update implementation](https://github.com/earendil-works/pi/blob/v1.0.2/packages/coding-agent/src/package-manager-cli.ts).
 - [Magpie headless installer](https://github.com/yetone/magpie/blob/main/site/public/install.sh), [service documentation](https://github.com/yetone/magpie/blob/main/README.md), [MIT license](https://github.com/yetone/magpie/blob/main/LICENSE), [binary release repository](https://github.com/yetone/magpie-releases).
+
+## Second local slice: sandbox fixture apply
+
+The next internal entrypoint is `ApplyFixture(ctx, manifest, stagedBundle,
+sandboxRoot, observer)`. It accepts only an existing private real directory
+beneath literal `/tmp`, with no symlink ancestors, on Linux amd64. There is still
+no public apply/install CLI, no real `/opt`, `/etc` or `/var` write, no process
+execution in the installer, no account or service mutation and no network request
+from apply. Tests invoke only the compiled test helper to simulate process death;
+the payloads themselves are never run. The first-slice commit remains independent.
+
+Apply revalidates the manifest and staged artifact hashes, then creates a fresh
+private extraction tree. Only these fixed program files can be selected:
+
+| Component | Sandbox generation files | Availability |
+| --- | --- | --- |
+| Node | `opt/node/bin/node`, required `opt/node/LICENSE`, optional README/CHANGELOG | Files only; no native execution acceptance |
+| Host | `opt/awf/awf`, strict `opt/awf/build.json` | Files only; no config or health readiness |
+| Extension | `opt/awf/extensions/awf.ts`, strict `extension.json` | Files prepared, runtime unavailable: TypeBox/Pi resolution not established |
+| Magpie | `opt/magpie/magpie` from pinned raw official asset | Files only; no provider account, config or service readiness |
+| Pi | No program files copied | Unavailable: package/lock metadata is not a verified installed dependency tree |
+
+Node's archive must use its exact `node-VERSION-linux-x64/` prefix. Other regular
+files under the official `bin/include/lib/share` namespaces are scanned and
+bounded but discarded. Only the exact official npm/npx/corepack symlink names and
+relative targets are recognized and discarded; no link is created. This slice
+supplies the Node binary, not usable npm/npx/corepack commands. Host/extension
+archives have a strict root-level whitelist, no extra files or directories.
+Required Host `build.json` fields are exactly `schema: 1`, release `version`,
+`sourceCommit`, `os`, `arch`, `hostProtocol`. Extension `extension.json` fields
+are exactly `schema: 1`, `version`, `sourceCommit`, `extensionProtocol`,
+`piRPCVersion`, all matching the manifest. Unknown/duplicate identity JSON fields
+are rejected. Structural build identity and ELF checks are not execution proof.
+
+Canonical paths (max 512 bytes), unique entries, regular files/directories,
+sanitized 0644/0755 output modes and explicit file whitelists are required.
+Absolute paths, traversal, backslashes, links outside the exact discarded Node
+exceptions, hardlinks, devices/FIFOs, set-ID bits, PAX/sparse extensions, excessive
+entries and hidden trailing nonzero tar payloads fail closed. Limits cover 4096
+visible archive entries in aggregate, 256 MiB per archive file, 512 MiB expanded
+stream bytes in aggregate (including discarded payloads and tar overhead), and
+compressed manifest bounds. Selected executable files get ELF target validation.
+Output is written through Go's directory-root API into a fresh private tree.
+
+A pinned pure-Go `github.com/ulikunitz/xz v0.5.15` decoder handles Node XZ without
+executing an external decompressor. Its `DictCap` is a minimum, not a maximum.
+Preflight validates one XZ stream's footer/index, every indexed block header and
+raw LZMA2 chunk boundaries before decoder construction; it accepts one LZMA2
+filter, at most a 64 MiB dictionary, a 1 MiB index, bounded blocks/chunks and
+expanded sizes. Chunk scanning prevents a lying index from hiding an unexamined
+next block header. The decoder additionally verifies compressed data, index
+consistency and checksums. Unsupported compression features are rejected, not
+silently delegated to a shell. A native official Node asset still requires later
+acceptance against these intentionally bounded rules.
+
+### Activation, receipts and recovery
+
+A nonblocking kernel flock on `.apply.lock` serializes applies in one sandbox.
+The lock is released by process exit; no stale PID file is deleted to gain entry.
+After extraction and file/directory synchronization, a verified tree is prepared
+at `releases/layout-1-<manifest SHA256>`. `install.json` binds layout schema, fixture
+mode, manifest/source/platform, every selected file's path/size/mode/SHA-256 and
+component availability. It records `filesPrepared: true`,
+`installationComplete: false`, and `runtimeReady: false` for every component.
+The receipt is preparation evidence; selection is a separate step.
+
+Only after the complete tree is verified does an atomic synchronized
+`current.json` replacement select that local generation and receipt SHA-256.
+That proves fixture file activation only, not an installed running product.
+Cancellation before selection leaves current unchanged. A crash after generation
+preparation is recovered by re-extracting pinned assets, comparing the exact
+expected receipt/inventory/hashes to the prepared generation and selecting it.
+Recovery never trusts an existing receipt's self-reported hashes. Missing, extra,
+linked or modified files and malformed selectors require explicit inspection.
+Different currently selected manifests are refused: upgrade/rollback is outside
+this slice. Interrupted temporary trees are never adopted or followed; they may
+remain for explicit inspection while retries create a new tree.
+
+The sandbox is a trusted same-user fixture boundary, not an adversarial multiuser
+installation root. It does not handle malicious concurrent ancestor replacement,
+bind mounts or unauthorized processes sharing write access. This temporary-root
+entrypoint must not become a production root override. Native apply requires its
+own ownership, mount/ACL, service lifecycle and maintenance authorization design.
+
+Progress spans actual `verify`, `extract`, and `activate` start/completion/failure.
+Extraction reports observed stream bytes without an invented percentage. Pi
+emits `extract: unavailable`, never an extraction/install completion. Failed
+verification/extraction cannot emit activation completion. Unknown download
+totals retain the first-slice bytes-only contract; pipes remain free of ANSI.
+
+### Third-slice interfaces to design before native implementation
+
+The future native controller should separate these capabilities rather than
+reuse a generic root-path option on the fixture API:
+
+- A program preparation capability verifies a fully published component closure,
+  required notices and native build/version acceptance before activation.
+- An explicit initialization capability owns service account/config paths and
+  credential entry. Shared Pi program root is `/opt/pi-cli`; service agent state
+  is `/var/lib/awf/pi-agent`; ordinary `~/.pi/agent` remains independent. No model
+  is selected until the actual loopback Magpie catalog is observed and confirmed.
+- A maintenance lease freezes new Host dispatch, records ownership/revision,
+  waits for the supported idle condition and authorizes compatible reload. A
+  service adapter may reload only with that lease; a stale idle snapshot is
+  insufficient. Failures and process death must retain a recoverable outcome.
+- A native service adapter owns explicit unit/account actions and verifies
+  loopback health plus exact running build identity. Those actions need separate
+  native acceptance and publication/deployment authorization.
+
+These are design boundaries, not runnable stubs or capabilities granted by a
+sandbox receipt. No third-slice interface implementation is included here.
