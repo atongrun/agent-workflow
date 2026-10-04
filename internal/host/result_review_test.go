@@ -136,7 +136,11 @@ func TestResultReviewUnknownAndFailedCannotBeDoneOrReworked(t *testing.T) {
 			s := testServer(t)
 			task := createTask(t, s, "review-"+status)
 			terminalReviewFixture(t, s, task, status, true)
-			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "bad-done", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Model says all passed"}); w.Code != 409 {
+			var doneChecks []core.EvidenceCheck
+			if status != "completed" {
+				doneChecks = fixtureEvidenceChecks()
+			}
+			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "bad-done", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Model says all passed", EvidenceChecks: doneChecks}); w.Code != 409 {
 				t.Fatal(w.Code, w.Body.String())
 			}
 			unknown := unknownEvidenceChecks()
@@ -156,28 +160,21 @@ func TestResultReviewUnknownAndFailedCannotBeDoneOrReworked(t *testing.T) {
 		})
 	}
 }
-func TestResultReviewEvidenceGates(t *testing.T) {
+func TestResultReviewReceiptIdentityGates(t *testing.T) {
 	mutations := map[string]func(*core.Task){
-		"missing_diff": func(x *core.Task) { x.Execution.Evidence[0].Output = "Only a summary" },
-		"failed_tests": func(x *core.Task) { x.Execution.Evidence[1].Metadata = json.RawMessage(`{"exit":1}`) },
-		"background_tests": func(x *core.Task) {
-			x.Execution.Evidence[1].Input = json.RawMessage(`{"command":"go test ./... & wait"}`)
-		},
-		"masked_test_exit": func(x *core.Task) {
-			x.Execution.Evidence[1].Input = json.RawMessage(`{"command":"go test ./... || true"}`)
-		},
-		"echoed_test_command": func(x *core.Task) {
-			x.Execution.Evidence[1].Input = json.RawMessage(`{"command":"echo go test ./..."}`)
-		},
-		"conflicting_exit": func(x *core.Task) { x.Execution.Evidence[1].Metadata = json.RawMessage(`{"exit":0,"exitCode":1}`) },
-		"unknown_exit":     func(x *core.Task) { x.Execution.Evidence[1].Metadata = nil },
-		"push_only": func(x *core.Task) {
-			x.Execution.Evidence[2].Input = json.RawMessage(`{"command":"git push origin HEAD"}`)
-		},
-		"wrong_remote_branch": func(x *core.Task) { x.Execution.Evidence[2].Output = fixtureRemoteSHA + "\trefs/heads/other" },
-		"truncated":           func(x *core.Task) { x.Execution.Evidence[0].Truncated = true },
-		"wrong_session":       func(x *core.Task) { x.Execution.Evidence[1].SessionID = "ses_other" },
-		"uncompleted_tool":    func(x *core.Task) { x.Execution.Evidence[1].Status = "running" },
+		"missing_record":          func(x *core.Task) { x.Execution.Evidence = x.Execution.Evidence[1:] },
+		"ambiguous_record":        func(x *core.Task) { x.Execution.Evidence = append(x.Execution.Evidence, x.Execution.Evidence[0]) },
+		"wrong_session":           func(x *core.Task) { x.Execution.Evidence[1].SessionID = "ses_other" },
+		"empty_execution_session": func(x *core.Task) { x.Execution.SessionID = "" },
+		"uncompleted_tool":        func(x *core.Task) { x.Execution.Evidence[1].Status = "running" },
+		"wrong_kind":              func(x *core.Task) { x.Execution.Evidence[1].Kind = "summary" },
+		"missing_tool":            func(x *core.Task) { x.Execution.Evidence[1].Tool = "" },
+		"missing_message_id":      func(x *core.Task) { x.Execution.Evidence[1].MessageID = "" },
+		"missing_call_id":         func(x *core.Task) { x.Execution.Evidence[1].CallID = "" },
+		"stale_execution":         func(x *core.Task) { x.Execution.RequestID = "new-run" },
+		"not_reporting":           func(x *core.Task) { x.Status = "executing" },
+		"changed_pi_session":      func(x *core.Task) { x.Sessions["architect"].ID = "other-pi" },
+		"stale_lifecycle":         func(x *core.Task) { x.LifecycleRevision++ },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -187,12 +184,201 @@ func TestResultReviewEvidenceGates(t *testing.T) {
 			if err := s.store.Update(func(st *core.State) error { mutate(st.Tasks[task.ID]); return nil }); err != nil {
 				t.Fatal(err)
 			}
-			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "reject", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Claimed done", EvidenceChecks: fixtureEvidenceChecks()}); w.Code != 409 {
+			before, _ := s.task(task.ID)
+			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "reject", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Pi assessment", EvidenceChecks: fixtureEvidenceChecks()}); w.Code != 409 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			got, _ := s.task(task.ID)
+			if got.Status != before.Status || got.Completion != nil {
+				t.Fatal("invalid reference changed outcome")
+			}
+		})
+	}
+}
+
+func TestResultReviewContentsArePiJudgment(t *testing.T) {
+	// Synthetic native receipts demonstrate the protocol boundary, not an
+	// endorsement of the contents or a reconstruction of the production task.
+	mutations := map[string]func(*core.Task){
+		"no_diff_marker":   func(x *core.Task) { x.Execution.Evidence[0].Output = "Only a summary" },
+		"failed_tests":     func(x *core.Task) { x.Execution.Evidence[1].Metadata = json.RawMessage(`{"exit":1}`) },
+		"conflicting_exit": func(x *core.Task) { x.Execution.Evidence[1].Metadata = json.RawMessage(`{"exit":0,"exitCode":1}`) },
+		"unknown_exit":     func(x *core.Task) { x.Execution.Evidence[1].Metadata = nil },
+		"other_tool": func(x *core.Task) {
+			x.Execution.Evidence[1].Tool = "read"
+			x.Execution.Evidence[1].Input = json.RawMessage(`{"filePath":"example"}`)
+		},
+		"empty_output": func(x *core.Task) { x.Execution.Evidence[0].Output = "" },
+		"truncated": func(x *core.Task) {
+			x.Execution.Evidence[0].Truncated = true
+			x.Execution.Evidence[1].Metadata = json.RawMessage(`{"exit":0,"truncated":true}`)
+		},
+		"different_remote_output": func(x *core.Task) { x.Execution.Evidence[2].Output = fixtureRemoteSHA + "\trefs/heads/other" },
+		"windows_wrapper": func(x *core.Task) {
+			x.Execution.Evidence[1].Input = json.RawMessage(`{"command":"powershell -Command 'npm test; exit $LASTEXITCODE'"}`)
+		},
+		"substitution_and_pipeline": func(x *core.Task) {
+			x.Execution.Evidence[2].Input = json.RawMessage(`{"command":"sha=$(git ls-remote origin); printf '%s' \"$sha\" | cat"}`)
+		},
+		"echoed_command": func(x *core.Task) { x.Execution.Evidence[1].Input = json.RawMessage(`{"command":"echo go test"}`) },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			s := testServer(t)
+			task := createTask(t, s, name)
+			terminalReviewFixture(t, s, task, "completed", true)
+			if err := s.store.Update(func(st *core.State) error {
+				mutate(st.Tasks[task.ID])
+				st.Tasks[task.ID].Budget = core.Budget{TaskSeconds: 161, PlanSeconds: 161, Reworks: 0}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := s.task(task.ID)
+			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "pi-verdict", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Pi review conclusion, not machine verification", EvidenceChecks: fixtureEvidenceChecks()}); w.Code != 202 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			got, _ := s.task(task.ID)
+			if got.Status != "done" || got.Execution.ResultReview.IndependentlyVerified || string(mustJSON(before.Execution.Evidence)) != string(mustJSON(got.Execution.Evidence)) || before.Budget != got.Budget {
+				t.Fatal("review rewrote evidence, promoted verification or changed counters")
+			}
+			for _, e := range got.Execution.Evidence {
+				if e.Verified {
+					t.Fatal("Pi judgment promoted native verification")
+				}
+			}
+		})
+	}
+}
+
+func TestResultReviewAssessmentSchemaAndSources(t *testing.T) {
+	mutations := map[string]struct {
+		mutate func([]core.EvidenceCheck)
+		code   int
+	}{
+		"duplicate_source":   {func(c []core.EvidenceCheck) { c[0].Sources = []string{"native-diff", "native-diff"} }, 409},
+		"empty_source":       {func(c []core.EvidenceCheck) { c[0].Sources = []string{""} }, 409},
+		"no_source":          {func(c []core.EvidenceCheck) { c[0].Sources = nil }, 409},
+		"too_many_sources":   {func(c []core.EvidenceCheck) { c[0].Sources = make([]string, 101) }, 409},
+		"foreign_source":     {func(c []core.EvidenceCheck) { c[0].Sources = []string{"other-task-source"} }, 409},
+		"duplicate_kind":     {func(c []core.EvidenceCheck) { c[1].Kind = "diff" }, 400},
+		"unknown_kind":       {func(c []core.EvidenceCheck) { c[0].Kind = "complete" }, 400},
+		"invalid_status":     {func(c []core.EvidenceCheck) { c[0].Status = "verified" }, 400},
+		"invalid_sha_format": {func(c []core.EvidenceCheck) { c[2].RemoteSHA = "remote is good" }, 400},
+	}
+	for name, test := range mutations {
+		t.Run(name, func(t *testing.T) {
+			s := testServer(t)
+			task := createTask(t, s, name)
+			terminalReviewFixture(t, s, task, "completed", true)
+			checks := fixtureEvidenceChecks()
+			test.mutate(checks)
+			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "reject", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Pi assessment", EvidenceChecks: checks}); w.Code != test.code {
 				t.Fatal(w.Code, w.Body.String())
 			}
 		})
 	}
 }
+
+func TestResultReviewFreeTextNeverCompletesTask(t *testing.T) {
+	s := testServer(t)
+	task := createTask(t, s, "chat-only")
+	terminalReviewFixture(t, s, task, "completed", true)
+	for _, text := range []string{"done", `"done"`, "done!", "complete", `{"verdict":"done"}`} {
+		for _, eventType := range []string{"message_update", "message_end"} {
+			s.piEvent(task.ID, "architect", task.Sessions["architect"].ProcessID, mustJSON(map[string]any{"type": eventType, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": text}}}}))
+			got, _ := s.task(task.ID)
+			if got.Status != "reporting" || got.Completion != nil {
+				t.Fatal("free text completed task")
+			}
+		}
+		if text != "done" {
+			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: core.ID(), ExecutionRequestID: "result-run", Verdict: text, Summary: "Text is not enum", EvidenceChecks: fixtureEvidenceChecks()}); w.Code != 400 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		}
+	}
+	if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "legal-enum", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Pi structured assessment", EvidenceChecks: fixtureEvidenceChecks()}); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestResultReviewConcurrentVerdictsAndExactRetries(t *testing.T) {
+	s := testServer(t)
+	task := createTask(t, s, "concurrent-verdict")
+	terminalReviewFixture(t, s, task, "completed", true)
+	var wg sync.WaitGroup
+	codes := make(chan int, 8)
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := finishFixture(t, s, task.ID, extensionInput{RequestID: fmt.Sprintf("verdict-%d", i), ExecutionRequestID: "result-run", Verdict: "done", Summary: "Pi assessment", EvidenceChecks: fixtureEvidenceChecks()})
+			codes <- w.Code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	accepted := 0
+	for code := range codes {
+		if code == 202 {
+			accepted++
+		} else if code != 409 {
+			t.Fatalf("unexpected concurrent finish status: %d", code)
+		}
+	}
+	got, _ := s.task(task.ID)
+	if accepted != 1 || len(got.CompletionHistory) != 1 || got.Status != "done" {
+		t.Fatal("concurrent verdict produced multiple transitions")
+	}
+	var winner string
+	for id, request := range s.store.Snapshot().Requests {
+		if request.TaskID == task.ID && request.Operation == "extension/finish" {
+			winner = id
+		}
+	}
+	in := extensionInput{RequestID: winner, ExecutionRequestID: "result-run", Verdict: "done", Summary: "Pi assessment", EvidenceChecks: fixtureEvidenceChecks()}
+	before := string(mustJSON(got))
+	if w := finishFixture(t, s, task.ID, in); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	got, _ = s.task(task.ID)
+	if string(mustJSON(got)) != before {
+		t.Fatal("exact retry changed finished task")
+	}
+	in.Summary = "different assessment"
+	if w := finishFixture(t, s, task.ID, in); w.Code != 409 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestResultReviewCannotCiteAnotherTaskOrHistoricalExecution(t *testing.T) {
+	for _, historical := range []bool{false, true} {
+		t.Run(fmt.Sprint(historical), func(t *testing.T) {
+			s := testServer(t)
+			task := createTask(t, s, "current-task")
+			other := createTask(t, s, "other-task")
+			terminalReviewFixture(t, s, task, "completed", true)
+			terminalReviewFixture(t, s, other, "completed", true)
+			if err := s.store.Update(func(st *core.State) error {
+				st.Tasks[other.ID].Execution.Evidence[0].Source = "foreign-native-source"
+				if historical {
+					old := *st.Tasks[other.ID].Execution
+					st.Tasks[task.ID].ExecutionHistory = append(st.Tasks[task.ID].ExecutionHistory, old)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			checks := fixtureEvidenceChecks()
+			checks[0].Sources = []string{"foreign-native-source"}
+			if w := finishFixture(t, s, task.ID, extensionInput{RequestID: "foreign-verdict", ExecutionRequestID: "result-run", Verdict: "done", Summary: "Pi assessment", EvidenceChecks: checks}); w.Code != 409 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestResultReviewBudgetExhaustionAndNonterminal(t *testing.T) {
 	s, task, _, log, _ := piControlFixture(t, "")
 	if err := s.store.Update(func(st *core.State) error {

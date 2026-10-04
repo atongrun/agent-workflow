@@ -81,7 +81,8 @@ type ExecutionTarget struct {
 	RepositoryID string `json:"repositoryId,omitempty"`
 }
 
-// EvidenceChecks are traceable same-Pi assessments, never independent proof.
+// EvidenceChecks are Pi review conclusions with native receipt references.
+// The Host validates reference identity, never contents or independent proof.
 type EvidenceCheck struct {
 	Kind      string   `json:"kind"`
 	Status    string   `json:"status"`

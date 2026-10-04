@@ -1,7 +1,6 @@
 package host
 
 import (
-	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -145,18 +144,24 @@ func (s *Server) beginExecutionSummary(id string) {
 	}
 	latest, _ := s.task(id)
 	payload := map[string]any{"task": latest.Title, "goal": latest.Goal, "acceptanceCriteria": latest.AcceptanceCriteria, "plan": latest.Plan, "execution": latest.Execution, "branch": latest.Branch}
-	text := "The authorized native execution has a terminal receipt. Review its actual diff, test results and remote branch SHA using the traced native tool evidence below. Continue this same Pi session. Push acceptance alone is not Done. Tool evidence is observed and verified:false, never independent proof. For each evidenceChecks kind diff/tests/remote_sha, cite native evidence sources and use observed only when actual output is available; otherwise use unknown with a reason. tests requires successful recorded exit metadata; remote_sha requires git ls-remote output matching the work branch and SHA. Call awf_finish with this executionRequestId. Use needs_changes if any required evidence is unknown or the execution failed/cancelled. Do not invent evidence, claim independent verification, or start another execution. All Git remains agent-owned.\n" + string(mustJSON(payload))
+	text := "The authorized native execution has a terminal receipt. Review its actual diff, test results and remote branch SHA using the traced native tool evidence below. Continue this same Pi session. Push acceptance alone is not Done. Tool evidence is observed and verified:false, never independent proof. For each evidenceChecks kind diff/tests/remote_sha, cite the exact native evidence source values. observed is your assessment of cited native receipts, not machine verification or a successful exit. You must judge the actual changes, test outcomes and remote branch/SHA correspondence yourself. The Host checks schema, receipt identity and legal transitions; it does not interpret shell commands or output. Empty/truncated output, missing or failed exit data and masked exits require your explicit assessment of uncertainty; use unknown with a reason when evidence is insufficient. A native turn ending or a tool exit zero is not acceptance. Call awf_finish with this executionRequestId. Use needs_changes if any required evidence is unknown or the execution failed/cancelled. Do not invent evidence, claim independent verification, or start another execution. All Git remains agent-owned.\n" + string(mustJSON(payload))
 	s.launch(func() { s.prompt(requestID, id, "architect", text) })
 }
 
 var remoteSHAPattern = regexp.MustCompile(`^[a-fA-F0-9]{40}([a-fA-F0-9]{24})?$`)
 
+// observedCheck validates receipt identity and reference availability only.
+// Pi judges the contents; a referenced tool's exit is not task approval.
 func observedCheck(t *core.Task, check core.EvidenceCheck) bool {
-	if len(check.Sources) == 0 || len(check.Sources) > 100 {
+	if t.Execution.SessionID == "" || len(check.Sources) == 0 || len(check.Sources) > 100 {
 		return false
 	}
-	found := false
+	seen := map[string]bool{}
 	for _, source := range check.Sources {
+		if source == "" || seen[source] {
+			return false
+		}
+		seen[source] = true
 		var evidence *core.Evidence
 		for i := range t.Execution.Evidence {
 			e := &t.Execution.Evidence[i]
@@ -167,57 +172,11 @@ func observedCheck(t *core.Task, check core.EvidenceCheck) bool {
 				evidence = e
 			}
 		}
-		if evidence == nil || evidence.Kind != "tool" || evidence.Tool != "bash" || evidence.Status != "completed" || evidence.SessionID != t.Execution.SessionID || evidence.MessageID == "" || evidence.CallID == "" || evidence.Output == "" || evidence.Truncated {
+		if evidence == nil || evidence.Kind != "tool" || evidence.Tool == "" || evidence.Status != "completed" || evidence.SessionID != t.Execution.SessionID || evidence.MessageID == "" || evidence.CallID == "" {
 			return false
-		}
-		var input struct {
-			Command string `json:"command"`
-		}
-		if json.Unmarshal(evidence.Input, &input) != nil || input.Command == "" {
-			return false
-		}
-		var meta struct {
-			Exit      *int `json:"exit"`
-			ExitCode  *int `json:"exitCode"`
-			Truncated bool `json:"truncated"`
-		}
-		if len(evidence.Metadata) > 0 && json.Unmarshal(evidence.Metadata, &meta) != nil {
-			return false
-		}
-		if meta.Truncated {
-			return false
-		}
-		exit := meta.Exit
-		if exit == nil {
-			exit = meta.ExitCode
-		}
-		if exit == nil || *exit != 0 || meta.Exit != nil && meta.ExitCode != nil && *meta.Exit != *meta.ExitCode {
-			return false
-		}
-		command, commandOK := observedCommand(input.Command)
-		if !commandOK {
-			return false
-		}
-		switch check.Kind {
-		case "diff":
-			found = found || ((strings.HasPrefix(command, "git diff ") || strings.HasPrefix(command, "git show ") || command == "git diff" || command == "git show") && strings.Contains(evidence.Output, "diff --git "))
-		case "tests":
-			for _, test := range []string{"go test", "npm test", "npm run test", "pnpm test", "pnpm run test", "yarn test", "pytest", "cargo test", "node --test", "ctest", "dotnet test"} {
-				found = found || command == test || strings.HasPrefix(command, test+" ") || strings.HasPrefix(command, test+":")
-			}
-		case "remote_sha":
-			if !remoteSHAPattern.MatchString(check.RemoteSHA) || !strings.HasPrefix(command, "git ls-remote ") {
-				return false
-			}
-			for _, line := range strings.Split(evidence.Output, "\n") {
-				fields := strings.Fields(line)
-				if len(fields) == 2 && strings.EqualFold(fields[0], check.RemoteSHA) && fields[1] == "refs/heads/"+t.Branch {
-					found = true
-				}
-			}
 		}
 	}
-	return found
+	return true
 }
 func validateEvidenceChecks(t *core.Task, checks []core.EvidenceCheck, done bool) error {
 	if len(checks) == 0 && !done {
@@ -238,28 +197,15 @@ func validateEvidenceChecks(t *core.Task, checks []core.EvidenceCheck, done bool
 				return fail("evidence_unknown", "unknown evidence requires a reason and cannot authorize Done", 409)
 			}
 		case "observed":
+			if check.Kind == "remote_sha" && !remoteSHAPattern.MatchString(check.RemoteSHA) {
+				return fail("invalid_evidence_checks", "remoteSha must be a 40 or 64 character hexadecimal assessment value", 400)
+			}
 			if !observedCheck(t, check) {
-				return fail("evidence_unknown", "assessment does not reference sufficient actual native tool output", 409)
+				return fail("evidence_unknown", "assessment must reference unique completed native tool receipts from this execution session", 409)
 			}
 		default:
 			return fail("invalid_evidence_checks", "status must be observed or unknown", 400)
 		}
 	}
 	return nil
-}
-
-// Conservative command attribution, not a shell interpreter or independent
-// verifier. Masked exits, pipelines and multiple commands remain unknown.
-func observedCommand(command string) (string, bool) {
-	command = strings.TrimSpace(strings.ToLower(command))
-	if strings.ContainsAny(command, ";|\n\r`") || strings.Contains(command, "$(") || strings.Contains(strings.ReplaceAll(command, "&&", ""), "&") {
-		return "", false
-	}
-	parts := strings.Split(command, "&&")
-	for _, prefix := range parts[:len(parts)-1] {
-		if !strings.HasPrefix(strings.TrimSpace(prefix), "cd ") {
-			return "", false
-		}
-	}
-	return strings.TrimSpace(parts[len(parts)-1]), true
 }
