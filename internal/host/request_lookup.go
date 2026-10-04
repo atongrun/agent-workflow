@@ -44,6 +44,13 @@ func (s *Server) requestLookup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		payload, payloadID = original, original.RequestID
+	case "pi/resume":
+		var original piResumeInput
+		if err := decodeLookupPayload(in.Payload, &original); err != nil {
+			writeError(w, err)
+			return
+		}
+		payload, payloadID = original, original.RequestID
 	case "budget":
 		var original budgetInput
 		if err := decodeLookupPayload(in.Payload, &original); err != nil {
@@ -73,7 +80,7 @@ func (s *Server) requestLookup(w http.ResponseWriter, r *http.Request) {
 		}
 		payload, payloadID = original, original.RequestID
 	default:
-		writeError(w, fail("invalid_operation", "verified lookup supports only budget, target, start, rework, delete, and restore", 400))
+		writeError(w, fail("invalid_operation", "verified lookup supports only pi/resume, budget, target, start, rework, delete, and restore", 400))
 		return
 	}
 	if payloadID != in.RequestID {

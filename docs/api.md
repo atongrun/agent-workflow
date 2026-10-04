@@ -19,8 +19,9 @@ Errors: `{ "error": { "code": "...", "message": "..." } }`. HTTP 202 is acceptan
 | GET | `/v1/tasks/:id` | `{task}` |
 | PATCH | `/v1/tasks/:id/budget` | `{requestId,expectedBudgetRevision,taskMinutes?,maxReworks?}`; tighten inactive task totals only |
 | PATCH | `/v1/tasks/:id/target` | `{requestId,expectedTargetRevision,repository,repositoryId?,projectId,nodeId}` |
-| GET | `/v1/tasks/:id/messages?role=architect` | `{messages,session,history}` from native Pi `get_messages` / `get_entries`; `architect` is the compatibility key for the single task Pi; `reviewer` exists only for an explicitly enabled optional session |
+| GET | `/v1/tasks/:id/messages?role=architect` | `{messages,session,history,historySource,historyStatus,historyError?}`; read-only live RPC or persisted transcript; `architect` is the compatibility key for the single task Pi; `reviewer` exists only for an explicitly enabled optional session |
 | POST | `/v1/tasks/:id/messages` | `{requestId,role,text}` |
+| POST | `/v1/tasks/:id/pi/resume` | `{requestId,role,expectedSessionId,expectedProcessId,expectedLifecycleRevision}`; explicit restore, no prompt or execution |
 | POST | `/v1/tasks/:id/pi/abort` | `{requestId,role}`; native clear_queue then abort |
 | POST | `/v1/tasks/:id/pi/ui-response` | `{requestId,role,response:{id,confirmed? ,value?,cancelled?}}` |
 | POST | `/v1/tasks/:id/plan/confirm` | `{requestId,revision}` |
@@ -71,7 +72,15 @@ New execution records include an immutable `target` snapshot with revision, proj
 
 ## Conversation and events
 
-Pi owns history, compaction, context and generation. `messages` is native active context; `history` is the raw `get_entries` response. To display pre-compaction history without resurrecting discarded branches, follow native entry `parentId` ancestry from `leafId`, selecting message entries. Do not rebuild model context from an AWF event projection.
+Pi owns history, compaction, context and generation. GET messages never starts, resumes, evicts or reserves a Pi process; Task, event and model reads likewise do not activate a session. An already-live exact generation uses native `get_messages` / `get_entries` (`historySource:"native"`). A changed generation returns 409 `stale_pi_session`. `session.available` describes process availability, independently of history availability.
+
+Offline reads use the task role's managed native JSONL file (`historySource:"persisted"`). `history.entries` preserves all valid native entries, while `messages` follows message ancestry from the last valid file entry, which is native reload's leaf. Abandoned branches are excluded. This is a branch transcript, not reconstructed model context: compaction, custom messages and branch summaries remain raw history entries. Live RPC remains authoritative for an in-memory branch. The reader supports native tree versions 2 and 3 without migration, caps files at 16 MiB and 20,000 entries, rejects foreign paths and symlinks, and never modifies native files or Host state. Managed directories are trusted Host-owned storage; this is not protection against a hostile same-user process replacing ancestor directories concurrently. See the [official session format](https://github.com/earendil-works/pi/blob/v1.0.2/packages/coding-agent/docs/session-format.md).
+
+`historyStatus:"complete"` means the available representation was fully read; a fresh empty session returns source `none` and status `complete`. A partial trailing write or invalid later entry returns the valid prefix with status `incomplete`. Missing, ambiguous, unsupported or untrusted persisted history returns source `none`, status `unavailable`, empty arrays and a fixed safe `historyError` summary. Errors never include native input or file paths. Existing `session` fields retain their compatibility shape. Clients must distinguish these states instead of treating unavailable history as a newly empty conversation.
+
+POST resume is explicit activation only. All five fields are required; `expectedProcessId` is a string and may be empty before first startup. A fresh startup restores the original session and verifies native state; an already-live session confirms its current Host/client binding. Neither path sends a prompt, submits a node job or invokes a model. It returns 202 `{task,request}`; poll the request for completion. Completed `request.result` contains `{binding:{role,sessionId,processId}}`; this records the completed generation, while current Task sessions determine availability. Exact retries return the original receipt without startup, and changed payloads return `idempotency_conflict`. Verified request lookup supports operation `pi/resume` with the original payload.
+
+Lifecycle/session/process mismatches, unresolved control receipts and full protected capacity return 409 (`task_lifecycle_changed`, `stale_pi_session`, `pi_control_pending`, `pi_capacity`). Reporting and Review keep their original Pi until verdict settlement; explicit activation may reclaim only another safely idle session with recoverable persisted history. An unconfirmed close retains capacity ownership and prevents startup. Configuration/capacity/binding failures before the durable native-start fence settle `failed` and clear pending state; uncertain attempted startup remains `needs_verification`, including after restart, and cannot be replayed or bypassed with a new request ID. A disconnected browser or GET history reload does not authorize activation.
 
 SSE emits `event: awf`, numeric `id`, and JSON `{id,type,taskId,time,data}`. `Last-Event-ID` takes precedence over `after`. Types include:
 - `task.updated`: full current Task when small enough
@@ -208,5 +217,6 @@ request with a new ID.
 Restore requires the deletion receipt to have settled and clears only the
 marker. It does not resume a process or automatically start any execution.
 Native conversation reads return `task_deleted` (409) while deleted; after
-explicit restore, opening the conversation resumes the original native history.
+explicit restore, history can be read without activation. Explicit `pi/resume`
+or an authorized message action resumes the original native session.
 There is no hard-purge endpoint.

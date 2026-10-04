@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +15,10 @@ import (
 )
 
 func (s *Server) client(taskID, role string) (*pi.Client, error) {
+	return s.clientWithStartFence(taskID, role, nil)
+}
+
+func (s *Server) clientWithStartFence(taskID, role string, beforeStart func(string) error) (*pi.Client, error) {
 	s.piLifecycle.Lock()
 	defer s.piLifecycle.Unlock()
 	t, err := s.task(taskID)
@@ -87,6 +90,7 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 	}
 	var requestedModel *core.PiModel
 	var evict *pi.Client
+	var evictKey string
 	capacityErr := s.store.Update(func(st *core.State) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -101,6 +105,9 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 		}
 		if live >= s.cfg.MaxPiProcesses {
 			for candidate, client := range s.clients {
+				if !client.Alive() {
+					continue
+				}
 				parts := strings.SplitN(candidate, ":", 2)
 				if len(parts) != 2 {
 					continue
@@ -110,16 +117,11 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 					continue
 				}
 				session := task.Sessions[parts[1]]
-				if session == nil || !taskPiIdle(task) || lifecycleRequestPending(st, task.ID) {
+				if session == nil || !piReclaimable(st, task.ID, parts[1]) {
 					continue
 				}
-				if session.Persisted {
-					if _, err := os.Stat(session.File); err != nil {
-						continue
-					}
-				}
 				evict = client
-				delete(s.clients, candidate)
+				evictKey = candidate
 				session.Available = false
 				break
 			}
@@ -135,7 +137,14 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 	}
 	defer func() { s.mu.Lock(); s.starting--; s.mu.Unlock() }()
 	if evict != nil {
-		_ = evict.Close()
+		if err := evict.Close(); err != nil {
+			return nil, fail("pi_capacity", "native process exit was not confirmed; wait for recovery", 409)
+		}
+		s.mu.Lock()
+		if s.clients[evictKey] == evict {
+			delete(s.clients, evictKey)
+		}
+		s.mu.Unlock()
 	}
 	processID := core.ID()
 	if err = s.store.Update(func(st *core.State) error {
@@ -170,6 +179,11 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 	provider, modelID := "", ""
 	if requestedModel != nil {
 		provider, modelID = requestedModel.Provider, requestedModel.ID
+	}
+	if beforeStart != nil {
+		if err := beforeStart(processID); err != nil {
+			return nil, err
+		}
 	}
 	c, err = pi.Start(pi.Config{AgentDirectory: s.cfg.PiAgentDir, Provider: provider, ModelID: modelID, LifecycleRevision: t.LifecycleRevision, Binary: s.cfg.PiBinary, Directory: directory, Restricted: t.PlanningProfile == core.RestrictedPlanning, SessionDirectory: sessionDirectory, SessionID: ref.ID, SessionFile: sessionFile, Extension: s.cfg.PiExtension, HostURL: s.cfg.InternalURL, Token: s.scopedToken(taskID, role), TaskID: taskID, Role: role, ExcludeEnv: s.controlEnv(), OnEvent: func(raw json.RawMessage) { s.piEvent(taskID, role, processID, raw) }})
 	if err != nil {
@@ -400,49 +414,7 @@ func (s *Server) chargePi(t *core.Task) {
 		t.Budget.ActiveSince = nil
 	}
 }
-func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
-	role := r.URL.Query().Get("role")
-	if role == "" {
-		role = "architect"
-	}
-	if role != "architect" && role != "reviewer" {
-		writeError(w, fail("invalid_role", "role must be architect or reviewer", 400))
-		return
-	}
-	id := r.PathValue("id")
-	c, err := s.client(id, role)
-	if err != nil {
-		if task, taskErr := s.task(id); taskErr == nil && task.DeletedAt != nil {
-			writeError(w, fail("task_deleted", "restore this task before opening its native conversation", 409))
-			return
-		}
-		writeError(w, fail("pi_unavailable", err.Error(), 503))
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	data, err := c.Call(ctx, "get_messages", nil)
-	if err != nil {
-		writeError(w, fail("pi_unavailable", err.Error(), 503))
-		return
-	}
-	var result map[string]json.RawMessage
-	if err = json.Unmarshal(data, &result); err != nil {
-		writeError(w, err)
-		return
-	}
-	t, _ := s.task(id)
-	entries, entryErr := c.Call(ctx, "get_entries", nil)
-	if entryErr != nil {
-		writeError(w, fail("native_history_unavailable", entryErr.Error(), 503))
-		return
-	}
-	messages := result["messages"]
-	if len(messages) == 0 {
-		messages = json.RawMessage(`[]`)
-	}
-	writeJSON(w, 200, map[string]any{"messages": messages, "session": t.Sessions[role], "history": entries})
-}
+
 func (s *Server) prompt(requestID, taskID, role, text string) {
 	lock := s.piDispatchLock(taskID, role)
 	lock.Lock()

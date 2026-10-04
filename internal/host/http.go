@@ -85,6 +85,7 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("GET /v1/overview", s.overview)
 	public.HandleFunc("GET /v1/tasks/{id}/messages", s.messages)
 	public.HandleFunc("GET /v1/tasks/{id}/events", s.events)
+	public.HandleFunc("POST /v1/tasks/{id}/pi/resume", s.piResume)
 	public.HandleFunc("GET /v1/tasks/{id}/requests/{requestId}", s.piRequest)
 	public.HandleFunc("POST /v1/tasks/{id}/requests/{requestId}", s.requestLookup)
 	for _, read := range []string{"commands", "stats", "models"} {

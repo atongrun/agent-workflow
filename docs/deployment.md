@@ -28,7 +28,7 @@ Example `host.json` (local, gitignored):
 
 Use distinct randomly generated tokens of at least 24 characters, installed by the operator in a protected service environment. Never put real tokens in Git, CLI arguments, browser storage or application HTML. The example hostname is a placeholder; use the verified private network node address and enforce its network ACL. If transport is not on an authenticated private network, use TLS. The Host refuses redirects when forwarding credentials.
 
-The Host defaults to at most one live Pi process (configurable 1–4). It evicts only idle sessions with no queued/in-flight prompt or native dialog and preserves their native session files. If every slot is active or needs recovery, new sessions fail clearly instead of growing unbounded. Measure actual target memory with the selected model/tool workload before production acceptance.
+The Host defaults to at most one live Pi process (configurable 1–4). GET history never activates or evicts a session. Explicit activation can evict only idle sessions with no queued/in-flight prompt or native dialog and recoverable persisted history; Reporting and Review sessions remain protected until verdict settlement. Native files are preserved, and an unconfirmed close retains process ownership and blocks startup. If every slot is active or needs recovery, new sessions fail clearly instead of growing unbounded. Measure actual target memory with the selected model/tool workload before production acceptance.
 
 Run `awf host --config /etc/awf/host.json`. For a service manager, configure graceful SIGTERM, restart-on-failure, a private writable state directory and resource limits. Do not deploy two Host writers against the same state directory. Back up the whole state directory, including native Pi sessions, together with node job state using an operationally consistent snapshot. Do not delete locks/state to make a failing startup pass.
 
@@ -143,3 +143,28 @@ Matching node/Host source now cleans precisely bound residual questions after ex
 For a staged rollout, upgrade the node first, then the Host. The node keeps the existing cancel route and adds optional job receipt fields; an older Host ignores those fields and does not refresh terminal question waits. A newer Host with an older node cannot establish cleanup and retains those waits. This patch requires no Pi extension change. Once both ends are upgraded, an exact retry of the original Host cancellation request can reconcile an old terminal cancelled execution only when it still has pending questions and its original receipt is `accepted_native` or `needs_verification`. GET polling alone does not dispatch cleanup; a fresh cancellation request for a terminal execution remains rejected. The node also requires durable explicit cancellation authority, confirmed abort and provable original native turn ownership, so upgrading never creates authority for an unrelated or merely timed-out execution.
 
 A running older supervisor/node does not gain this capability by replacing files. An old RC7 instance already blocked by an orphan question cannot hot-load this repair or pass the unchanged update/stop idle gate merely because a new binary is available. Coordinate any separately authorized maintenance recovery with the native owner; this change supplies no force-stop, credential extraction, state surgery, permission approval or gate bypass. Retain original Host/node/Pi state and use the exact original cancellation identity for receipt reconciliation after an approved cold rollout. Malformed/missing original turn evidence stays blocked instead of guessing ownership.
+
+
+### Read-only history and explicit resume rollout
+
+This change updates the Go Host and public API documentation only. The node and
+Pi extension are unchanged. Coordinate it with the private web consumer: first
+make that consumer understand optional `historySource`, `historyStatus` and safe
+`historyError`, then enable explicit `pi/resume` only when the new Host contract
+is present. On an old Host, do not assume this route exists; surface a clear
+upgrade requirement rather than repeatedly calling it. After deploying the Host,
+verify that inactive history refreshes do not start Pi and that an intentional
+activation uses the five-field binding and original request receipt. Reconnect,
+`agent_end`, process-close and history-refresh events must never automatically
+activate a session. Avoid exposing an old consumer that assumes every history
+GET makes the process available during the transition.
+
+Use a separately approved maintenance window if the private consumer cannot be
+staged compatibly. Validate at capacity one by alternating Cancelled and
+Reporting history views: repeated GETs must preserve process generation and the
+awaiting-verdict session; a conflicting explicit activation returns a clear
+capacity error. Preserve the entire native/Host state and unresolved receipts.
+No node rollout, model invocation or automatic replay is needed for this change.
+
+A Linux one-line Host installer is a separate follow-up. Existing Windows
+installer assets do not provide a supported Linux Host installation command.
