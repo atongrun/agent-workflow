@@ -1,9 +1,9 @@
 {
   "schema": "1",
   "channel": "go-v1",
-  "version": "v1.0.0-rc.8",
-  "sourceCommit": "3285437b070eb23c9ba6a32ec098e922e855c253",
+  "version": "v1.0.0-rc.9",
+  "sourceCommit": "586c052a060bf0b406558694b6707172b8a920e3",
   "cliProtocol": "3",
-  "windowsAMD64SHA256": "df7339952690913ce1b69bc05ee407ffc9cdfc068d3d9a5962ca40a841483e62",
-  "windowsARM64SHA256": "1dbb4156777da0579a762e3aaa046aee4c77bb05154f8e8afa9b91112f5d58f6"
+  "windowsAMD64SHA256": "2724aacbf9d18d8ce9d83417fa4eeab8a034b906585d52e7bb2c1444ce6e2290",
+  "windowsARM64SHA256": "2a1bb36522072534b90230e0b230ddab6d64a13b93ad6acb8c8d257303a8a006"
 }
