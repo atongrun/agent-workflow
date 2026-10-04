@@ -124,6 +124,7 @@ func (s *Server) monitor(id string) {
 					err = fmt.Errorf("node no longer has the durable job; verify native session and workspace before any retry")
 				} else {
 					marked := false
+					var dispatchRequest node.JobRequest
 					markErr := s.store.Update(func(st *core.State) error {
 						cur := st.Tasks[id]
 						if cur.DeletedAt != nil || cur.LifecycleRevision != t.LifecycleRevision || cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.DispatchAttempted || cur.Execution.CancelRequested {
@@ -140,9 +141,19 @@ func (s *Server) monitor(id string) {
 								return err
 							}
 						}
+						// Shared-plan consumption can change while this task is queued.
+						left := remainingSeconds(cur)
+						if left <= 0 || cur.Execution.TimeoutSeconds <= 0 {
+							return fail("budget_exhausted", "execution budget exhausted before dispatch", 409)
+						}
+						if left < cur.Execution.TimeoutSeconds {
+							cur.Execution.TimeoutSeconds = left
+						}
 						cur.Execution.DispatchAttempted = true
 						cur.Execution.Status = "dispatching"
 						marked = true
+						// Submit exactly the fingerprint persisted by this reservation.
+						dispatchRequest = s.jobRequest(cur)
 						core.Changed(st, cur)
 						return nil
 					})
@@ -152,7 +163,7 @@ func (s *Server) monitor(id string) {
 						continue
 					} else {
 						ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
-						_, err = s.nodeCall(ctx, executionNodeID(t), "POST", "/v1/jobs", s.jobRequest(t), &job)
+						_, err = s.nodeCall(ctx, executionNodeID(t), "POST", "/v1/jobs", dispatchRequest, &job)
 						cancel()
 					}
 				}

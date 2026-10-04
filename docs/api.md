@@ -15,6 +15,7 @@ Errors: `{ "error": { "code": "...", "message": "..." } }`. HTTP 202 is acceptan
 | GET | `/v1/tasks` | `{tasks}` |
 | POST | `/v1/tasks` | `{requestId,title}`; legacy optional `projectId,repository,goal,acceptanceCriteria,nodeId,planId` remain accepted |
 | GET | `/v1/tasks/:id` | `{task}` |
+| PATCH | `/v1/tasks/:id/budget` | `{requestId,expectedBudgetRevision,taskMinutes?,maxReworks?}`; tighten inactive task totals only |
 | PATCH | `/v1/tasks/:id/target` | `{requestId,expectedTargetRevision,repository,repositoryId?,projectId,nodeId}` |
 | GET | `/v1/tasks/:id/messages?role=architect` | `{messages,session,history}` from native Pi `get_messages` / `get_entries`; `architect` is the compatibility key for the single task Pi; `reviewer` exists only for an explicitly enabled optional session |
 | POST | `/v1/tasks/:id/messages` | `{requestId,role,text}` |
@@ -27,7 +28,17 @@ Errors: `{ "error": { "code": "...", "message": "..." } }`. HTTP 202 is acceptan
 | POST | `/v1/tasks/:id/rework` | `{requestId,revision,executionRequestId,expectedTargetRevision}`; latest Pi completion (or optional review) must be Needs Changes |
 | GET | `/v1/tasks/:id/events?after=0` | SSE |
 
-Canonical JSON fields are defined in `internal/core/model.go`. Settings are snapshotted at task creation and never retroactively applied. Optional `planId` groups tasks for a shared 180-minute budget; it defaults to the task ID. It does not imply permission to start other tasks. Budgets expose accumulated observed active seconds and retain the 60-minute task / two-rework / 180-minute plan limits across native sessions.
+Canonical JSON fields are defined in `internal/core/model.go`. Global settings are snapshotted at task creation and never retroactively applied. Optional `planId` groups tasks for a shared 180-minute budget; it defaults to the task ID. It does not imply permission to start other tasks. Budgets expose accumulated observed active seconds and default to 60-minute task / two-rework / 180-minute plan limits across native sessions.
+
+## Tightening an existing task budget
+
+Read the task's `budgetRevision` (zero for existing tasks), then PATCH its budget with that `expectedBudgetRevision` and at least one integer limit. For a 10-minute / one-rework total, send `{requestId:"<stable-id>",expectedBudgetRevision:0,taskMinutes:10,maxReworks:1}`. `taskMinutes` must be at least 1; `maxReworks` may be 0. Omitted limits remain unchanged. Neither limit may increase, and at least one must decrease. Unknown fields and query parameters are rejected; plan limits cannot be changed here.
+
+The operation accepts settled tasks, including Blocked tasks with prior failed execution. It rejects active/queued/uncertain execution, reporting/review, active Pi or compaction, pending commands/dialogs/native permissions/questions, unresolved request receipts, unknown task/execution/receipt states, and Trash tasks. It does not start work, reset counters/waits, change plan confirmation, or alter prior executions and native session identities. A lower total may be below already spent seconds or reworks: spent usage remains visible, with no further time or rework allowance. Existing rework eligibility still applies; tightening a failed execution does not authorize a retry.
+
+A successful PATCH returns HTTP 202 with a **completed** request receipt, atomically increments `budgetRevision`, and emits `budget.tightened` plus `task.updated`. The durable receipt's `result` records before/after limits and the resulting revision. Exact retries do not reapply the change, including after the task becomes active. Changed payloads or stale revisions return 409. Verified POST request lookup supports operation `budget` and the original payload, as well as GET receipt lookup. Defaults and other tasks are unaffected.
+
+`taskMinutes` caps accumulated **observed active time**, including Host-accounted Pi planning/compaction/reporting and node-accounted execution; it is not a deadline measured from task creation or start. OpenCode busy/retry observations accrue execution time; permission/question waits do not. Sampling, native terminal-duration fallback and integer-second accounting are the existing measurement limits. First node dispatch rechecks remaining task/shared-plan time and caps the persisted timeout before submission; exhaustion or an invalid timeout fails closed for verification. Already attempted dispatch fingerprints remain unchanged.
 
 ## Drafts and execution targets
 

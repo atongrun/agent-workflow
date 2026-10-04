@@ -69,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	public.HandleFunc("GET /v1/targets", s.targets)
 	public.HandleFunc("PATCH /v1/tasks/{id}/target", s.updateTarget)
+	public.HandleFunc("PATCH /v1/tasks/{id}/budget", s.updateBudget)
 	public.HandleFunc("GET /v1/tasks", s.listTasks)
 	public.HandleFunc("POST /v1/tasks", s.createTask)
 	public.HandleFunc("GET /v1/tasks/{id}", s.getTask)
