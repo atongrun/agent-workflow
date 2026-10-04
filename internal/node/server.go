@@ -428,6 +428,12 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Cancellation retries cannot acquire authority with a new identity, even
+	// after the job becomes terminal. Check before native reads or persistence.
+	if (terminal(rec.Job.Status) && strings.TrimSpace(rec.CancelRequestID) == "") || (rec.CancelRequestID != "" && rec.CancelRequestID != req.RequestID) {
+		writeError(w, 409, "request_conflict", "retry the original cancellation requestId")
+		return
+	}
 	if terminal(rec.Job.Status) {
 		if err := s.cleanupCancelledQuestions(r.Context(), p, rec); err != nil {
 			writeError(w, 409, "question_cleanup_pending", err.Error())

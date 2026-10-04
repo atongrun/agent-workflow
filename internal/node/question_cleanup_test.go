@@ -56,7 +56,7 @@ func TestCancelledQuestionCleanupConcurrentExactScope(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if code := cleanupCall(t, s, job, "cancel-retry"); code != 200 {
+			if code := cleanupCall(t, s, job, "cancel-original"); code != 200 {
 				t.Errorf("cancel retry %d", code)
 			}
 		}()
@@ -128,6 +128,73 @@ func TestCancelledQuestionCleanupLostACKAndRestartNoReplay(t *testing.T) {
 		t.Fatal("restart resent reject", count)
 	}
 	awaitCleanupIdle(t, reopened)
+}
+
+func TestCancelledQuestionCleanupRejectsWrongIdentityWithoutSideEffects(t *testing.T) {
+	for _, original := range []string{"cancel-original", "", "   "} {
+		t.Run(fmt.Sprintf("original=%q", original), func(t *testing.T) {
+			s, f, _, job, _ := cancelledQuestionFixture(t)
+			rec, p := s.lookup(job.ID)
+			p.mu.Lock()
+			rec.CancelRequestID = original
+			if err := s.persist(rec); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := json.Marshal(rec)
+			path := filepath.Join(s.jobsDir, job.ID+".json")
+			durableBefore, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			infoBefore, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.mu.Unlock()
+			f.mu.Lock()
+			requestsBefore := f.requests
+			f.mu.Unlock()
+			var wg sync.WaitGroup
+			for i := range 12 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if code := cleanupCall(t, s, job, fmt.Sprintf("wrong-cancel-%d", i)); code != 409 {
+						t.Errorf("wrong cancellation identity accepted: %d", code)
+					}
+				}()
+			}
+			wg.Wait()
+			p.mu.Lock()
+			after, _ := json.Marshal(rec)
+			p.mu.Unlock()
+			durableAfter, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			infoAfter, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			requestsAfter, rejects := f.requests, f.questionRejects
+			f.mu.Unlock()
+			if string(before) != string(after) || string(durableBefore) != string(durableAfter) || !os.SameFile(infoBefore, infoAfter) || !infoBefore.ModTime().Equal(infoAfter.ModTime()) || requestsBefore != requestsAfter || rejects != 0 {
+				t.Fatal("wrong identity performed native reads, persistence or cleanup", requestsBefore, requestsAfter, rejects)
+			}
+			if original == "cancel-original" {
+				if code := cleanupCall(t, s, job, original); code != 200 {
+					t.Fatal("correct original retry failed", code)
+				}
+				f.mu.Lock()
+				count := f.questionRejects
+				f.mu.Unlock()
+				if count != 1 {
+					t.Fatal("original retry did not clean exactly once", count)
+				}
+			}
+		})
+	}
 }
 func TestCancelledQuestionCleanupPendingNeverResends(t *testing.T) {
 	s, f, _, job, qid := cancelledQuestionFixture(t)
@@ -228,8 +295,8 @@ func TestCancelledQuestionCleanupRefusesUnprovenTurn(t *testing.T) {
 				rec.Job.Status = "completed"
 			}
 			p.mu.Unlock()
-			code := cleanupCall(t, s, job, "cancel-new")
-			if mode != "no_cancel_authority" && mode != "completed" && code != 409 {
+			code := cleanupCall(t, s, job, "cancel-original")
+			if mode != "completed" && code != 409 {
 				t.Fatal(code)
 			}
 			f.mu.Lock()
@@ -433,10 +500,11 @@ func awaitCleanupIdle(t *testing.T, s *Server) {
 	t.Fatal(last)
 }
 func TestCancelledQuestionCleanupAlreadyAbsentNeedsNoReject(t *testing.T) {
-	s, f, _, job, _ := cancelledQuestionFixture(t)
+	s, f, cfg, job, _ := cancelledQuestionFixture(t)
 	f.mu.Lock()
 	old := append([]json.RawMessage(nil), f.questions...)
 	f.questions = []json.RawMessage{}
+	f.statuses = map[string]opencode.Status{} // Native idle sessions are omitted.
 	f.mu.Unlock()
 	rec, p := s.lookup(job.ID)
 	p.mu.Lock()
@@ -444,7 +512,16 @@ func TestCancelledQuestionCleanupAlreadyAbsentNeedsNoReject(t *testing.T) {
 	if err := s.persist(rec); err != nil {
 		t.Fatal(err)
 	}
+	before := rec.Job
 	p.mu.Unlock()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if lock, err := OfflineIdle(cfg); err == nil {
+		lock.Close()
+		t.Fatal("historical pending snapshot did not gate offline idle")
+	}
+	s = startNode(t, cfg)
 	if code := cleanupCall(t, s, job, "cancel-original"); code != 200 {
 		t.Fatal(code)
 	}
@@ -453,6 +530,14 @@ func TestCancelledQuestionCleanupAlreadyAbsentNeedsNoReject(t *testing.T) {
 	state := rec.Job.QuestionCleanupState
 	receipts := len(rec.Job.QuestionCleanup)
 	pending := len(rec.Job.PendingQuestions)
+	got := rec.Job
+	got.QuestionCleanupState = before.QuestionCleanupState
+	got.QuestionCleanup = before.QuestionCleanup
+	got.PendingQuestions = before.PendingQuestions
+	got.UpdatedAt = before.UpdatedAt
+	if !reflect.DeepEqual(got, before) || rec.CancelRequestID != "cancel-original" {
+		t.Fatal("absence verification altered historical outcome or counters")
+	}
 	p.mu.Unlock()
 	f.mu.Lock()
 	rejects := f.questionRejects

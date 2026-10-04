@@ -34,6 +34,7 @@ type fakeNative struct {
 	questionReplyStatus                 int
 	questionRejects                     int
 	questionRejectStatus                int
+	requests                            int
 	dropQuestionReject                  bool
 	retainQuestionOnReject              bool
 	questionReadStatus                  int
@@ -80,6 +81,7 @@ func (f *fakeNative) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.requests++
 	respond := func(v any) { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(v) }
 	switch r.URL.Path {
 	case "/global/health":
@@ -480,7 +482,11 @@ func TestCancelAlreadyCompletedPreservesOutcome(t *testing.T) {
 	_, job := call(t, s, "POST", "/v1/jobs", req("done-before-cancel"))
 	job = waitJob(t, s, job.ID, func(j Job) bool { return j.NativeStatus == "busy" })
 	f.complete(job.SessionID)
-	_, job = call(t, s, "POST", "/v1/jobs/"+job.ID+"/cancel", map[string]string{"requestId": "cancel-late"})
+	code, _ := call(t, s, "POST", "/v1/jobs/"+job.ID+"/cancel", map[string]string{"requestId": "cancel-late"})
+	if code != 200 && code != 409 {
+		t.Fatal("unexpected late cancellation response", code)
+	}
+	_, job = call(t, s, "GET", "/v1/jobs/"+job.ID, nil)
 	if job.Status != "completed" || job.AbortConfirmed {
 		t.Fatalf("fabricated cancellation: %+v", job)
 	}
