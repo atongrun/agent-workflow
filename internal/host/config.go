@@ -162,6 +162,12 @@ func New(c Config) (*Server, error) {
 				r.Status = "needs_verification"
 			}
 		}
+		// Restart cannot establish the outcome of an earlier native control.
+		for _, task := range state.Tasks {
+			for role, session := range task.Sessions {
+				rebuildPiControlFence(state, task.ID, role, session)
+			}
+		}
 		return nil
 	})
 	if err != nil {

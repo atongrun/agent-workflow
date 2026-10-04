@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -66,13 +67,26 @@ func validPiRole(role string) bool { return role == "architect" || role == "revi
 func piControlOperation(op string) bool {
 	return op == "pi/model" || op == "pi/compact" || op == "pi/abort"
 }
-func pendingPiControl(st *core.State, ref *core.Session) bool {
-	for _, id := range ref.PendingCommands {
-		if req := st.Requests[id]; req != nil && piControlOperation(req.Operation) {
+func pendingPiControl(st *core.State, taskID, role string) bool {
+	for _, req := range st.Requests {
+		if req.TaskID == taskID && (req.Role == role || req.Role == "") && piControlOperation(req.Operation) && requestPending(req) {
 			return true
 		}
 	}
 	return false
+}
+
+// Transient process queues are discarded on close/restart; unresolved native
+// control receipts remain authoritative regardless of process generation.
+func rebuildPiControlFence(st *core.State, taskID, role string, ref *core.Session) {
+	ref.PendingCommands = nil
+	for _, req := range st.Requests {
+		if req.TaskID == taskID && (req.Role == role || req.Role == "") && piControlOperation(req.Operation) && requestPending(req) {
+			ref.PendingCommands = append(ref.PendingCommands, req.ID)
+		}
+	}
+	sort.Strings(ref.PendingCommands)
+	refreshPending(ref)
 }
 
 // Caller holds the dispatch lock. This never starts or replaces a process.
@@ -298,6 +312,9 @@ func (s *Server) piControl(w http.ResponseWriter, r *http.Request) {
 		if !ref.Available {
 			return fail("session_unavailable", "the intended Pi session is not running", 409)
 		}
+		if op != "pi/abort" && pendingPiControl(st, taskID, in.Role) {
+			return fail("pi_control_pending", "reconcile the original Pi control receipt before another control", 409)
+		}
 		if op == "pi/model" {
 			if !validModel(piModel{Provider: in.Provider, ID: in.ModelID}) {
 				return fail("invalid_model", "select a returned provider and model ID", 400)
@@ -323,9 +340,8 @@ func (s *Server) piControl(w http.ResponseWriter, r *http.Request) {
 				return fail("budget_exhausted", "task budget exhausted", 409)
 			}
 		} else {
-			for _, pendingID := range append([]string(nil), ref.PendingCommands...) {
-				pending := st.Requests[pendingID]
-				if pending == nil {
+			for _, pending := range st.Requests {
+				if pending.TaskID != taskID || (pending.Role != in.Role && pending.Role != "") || !requestPending(pending) {
 					continue
 				}
 				if pending.Operation == "pi/model" && pending.Dispatched {
@@ -334,7 +350,12 @@ func (s *Server) piControl(w http.ResponseWriter, r *http.Request) {
 				if pending.Operation == "pi/abort" {
 					return fail("pi_busy", "a Pi stop already needs its receipt", 409)
 				}
-				if !pending.Dispatched && pending.Status == "accepted" {
+			}
+			// Cancellation still targets only this process's queued commands;
+			// the durable checks above never infer outcomes for older receipts.
+			for _, pendingID := range append([]string(nil), ref.PendingCommands...) {
+				pending := st.Requests[pendingID]
+				if pending != nil && pending.TaskID == taskID && (pending.Role == in.Role || pending.Role == "") && (pending.SessionID == "" || pending.SessionID == ref.ID) && (pending.ProcessID == "" || pending.ProcessID == ref.ProcessID) && !pending.Dispatched && pending.Status == "accepted" {
 					pending.Status = "cancelled"
 					settleCommand(ref, pendingID)
 				}

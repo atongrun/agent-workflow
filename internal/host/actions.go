@@ -61,7 +61,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				return fail("session_unavailable", "role session does not exist", 409)
 			}
 			ref := t.Sessions[in.Role]
-			if pendingPiControl(st, ref) {
+			if pendingPiControl(st, id, in.Role) {
 				return fail("pi_control_pending", "wait for the Pi control receipt before sending another message", 409)
 			}
 			if in.ExpectedSessionID != "" || in.ExpectedProcessID != "" {

@@ -53,7 +53,7 @@ func (s *Server) internalAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, op, role := r.PathValue("id"), r.PathValue("action"), r.Header.Get("X-AWF-Role")
-	_, err := s.reserve(in.RequestID, id, "extension/"+op, in, func(st *core.State) error {
+	duplicate, err := s.reserve(in.RequestID, id, "extension/"+op, in, func(st *core.State) error {
 		t := st.Tasks[id]
 		if t == nil {
 			return fail("not_found", "task not found", 404)
@@ -189,6 +189,13 @@ func (s *Server) internalAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	s.requestDone(in.RequestID, "completed", nil)
+	// New finish receipts already committed with the verdict. Exact historical
+	// retries may repair an older split receipt without repeating its effect.
+	if op != "finish" || duplicate {
+		if err := s.requestDone(in.RequestID, "completed", nil); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	s.response(w, in.RequestID)
 }

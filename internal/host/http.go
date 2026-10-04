@@ -151,7 +151,17 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 func (s *Server) reserve(id, taskID, op string, payload any, fn func(*core.State) error) (bool, error) {
-	return s.reserveRequest(id, taskID, op, payload, func(st *core.State, _ *core.Request) error { return fn(st) })
+	return s.reserveRequest(id, taskID, op, payload, func(st *core.State, req *core.Request) error {
+		if err := fn(st); err != nil {
+			return err
+		}
+		// Finish has no external effect after this transaction. Commit its
+		// acknowledgement with the verdict, not in a second durable write.
+		if op == "extension/finish" {
+			req.Status = "completed"
+		}
+		return nil
+	})
 }
 func (s *Server) reserveRequest(id, taskID, op string, payload any, fn func(*core.State, *core.Request) error) (bool, error) {
 	if !requestPattern.MatchString(id) {
@@ -188,8 +198,8 @@ func (s *Server) response(w http.ResponseWriter, id string) {
 	req := st.Requests[id]
 	writeJSON(w, 202, map[string]any{"task": st.Tasks[req.TaskID], "request": req})
 }
-func (s *Server) requestDone(id, status string, err error) {
-	_ = s.store.Update(func(st *core.State) error {
+func (s *Server) requestDone(id, status string, err error) error {
+	return s.store.Update(func(st *core.State) error {
 		if r := st.Requests[id]; r != nil {
 			if r.Operation == "execution_result" && r.Status == "completed" {
 				return nil
