@@ -145,7 +145,7 @@ const RestrictedPlanning = "restricted"
 
 type Task struct {
 	BudgetRevision     int                 `json:"budgetRevision"`
-	LifecycleRevision  int                 `json:"lifecycleRevision,omitempty"`
+	LifecycleRevision  int                 `json:"lifecycleRevision"`
 	DeletedAt          *time.Time          `json:"deletedAt,omitempty"`
 	PlanningProfile    string              `json:"planningProfile,omitempty"`
 	TargetRevision     int                 `json:"targetRevision"`
