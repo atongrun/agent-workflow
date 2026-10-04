@@ -19,15 +19,26 @@ foreach ($pin in @(' ', 'bad', ('a' * 63), ('g' * 64), (('a' * 64) + "`n"))) {
 $manifestPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'distribution\go-v1.json'
 $text = [IO.File]::ReadAllText($manifestPath)
 $published = Read-AwfChannelManifest $text
-Assert-True ($published.version -ceq 'v1.0.0-rc.7') 'distribution selects published RC7'
+Assert-True ($published.schema -ceq '1' -and $published.channel -ceq 'go-v1') 'distribution uses the exact Go channel schema'
 Assert-True ($published.cliProtocol -ceq '3') 'published fresh installer requires protocol 3'
-Assert-True ($published.sourceCommit -ceq 'c26c350ffa02614dd66cd106ae49884352c1f05b') 'distribution pins exact RC7 source'
-Assert-True ($published.windowsAMD64SHA256 -ceq 'ef5763a45a3f3eafc0bb26864d44acf7014fa91baeafd79fef26a784b7f70fd6') 'distribution pins published AMD64 bytes'
-Assert-True ($published.windowsARM64SHA256 -ceq 'eb66d8d9c65b65036c8edf3326588e98575c02d7ae5c3ae9f22f125f554a944b') 'distribution pins published ARM64 bytes'
+# Parser validation requires exact version, source SHA and architecture digests.
+# Check lossless parsing against the current file instead of a retired release.
+$raw = $text | ConvertFrom-Json
+foreach ($key in @('schema', 'channel', 'version', 'sourceCommit', 'cliProtocol', 'windowsAMD64SHA256', 'windowsARM64SHA256')) {
+    Assert-True ($published[$key] -ceq $raw.$key) "distribution preserves exact $key"
+}
 
-# The published RC7 channel declares the reviewed fresh-install capability.
+# The current channel declares the reviewed fresh-install capability.
 # Historical protocol refusal remains covered by the synthetic fixtures below.
 Assert-AwfFreshChannel $published
+# Well-formed forged source pins must still fail against release/tag evidence.
+$publishedRelease = [pscustomobject] @{ target_commitish = $published.sourceCommit }
+$publishedRef = [pscustomobject] @{ ref = ('refs/tags/' + $published.version); object = [pscustomobject] @{ type = 'commit'; sha = $published.sourceCommit } }
+Assert-AwfChannelRelease $published $publishedRelease $publishedRef
+$forgedSource = 'a' * 40
+if ($forgedSource -ceq $published.sourceCommit) { $forgedSource = 'b' * 40 }
+$forged = Read-AwfChannelManifest ($text.Replace($published.sourceCommit, $forgedSource))
+Assert-Rejected { Assert-AwfChannelRelease $forged $publishedRelease $publishedRef } 'well-formed forged current source rejected'
 # Synthetic protocol-3 metadata for parser/source fixtures only.
 $text = @'
 {
@@ -43,6 +54,9 @@ $text = @'
 $channel = Read-AwfChannelManifest $text
 Assert-True ($channel.version -ceq 'v1.2.3-rc.1') 'synthetic fresh release version'
 Assert-True ($channel.cliProtocol -ceq '3') 'fresh release declares public install capability'
+Assert-True ($channel.sourceCommit -ceq '5e7e85df0891888c21d8a4a7af4d2329f7b2b9a5') 'synthetic source pin preserved exactly'
+Assert-True ($channel.windowsAMD64SHA256 -ceq '165c6290b83d6ec12c5b1dece198c661963c3ad9ab6cddf8f813e7a7edd7432a') 'synthetic AMD64 pin preserved exactly'
+Assert-True ($channel.windowsARM64SHA256 -ceq '7c6b07e9b1fb3ff2f9bfa60151d94e25da0e91ac96af4ae5a5a7a481f80dd951') 'synthetic ARM64 pin preserved exactly'
 Assert-AwfFreshChannel $channel
 foreach ($protocol in @('1', '2')) {
     Assert-Rejected { Assert-AwfFreshChannel @{ cliProtocol = $protocol } } 'historical protocol cannot fresh-install'

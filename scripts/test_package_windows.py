@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
@@ -354,14 +355,50 @@ class PackageTests(unittest.TestCase):
                       "historical sibling preserved on refusal", "unavailable known folder has no fallback"):
             self.assertIn(label, native)
 
-    def test_distribution_manifest_names_only_verified_existing_release(self):
-        manifest = json.loads((SCRIPTS.parent / "distribution" / "go-v1.json").read_text())
-        self.assertEqual(manifest, {
-            "schema": "1", "channel": "go-v1", "version": "v1.0.0-rc.7",
-            "sourceCommit": "c26c350ffa02614dd66cd106ae49884352c1f05b", "cliProtocol": "3",
-            "windowsAMD64SHA256": "ef5763a45a3f3eafc0bb26864d44acf7014fa91baeafd79fef26a784b7f70fd6",
-            "windowsARM64SHA256": "eb66d8d9c65b65036c8edf3326588e98575c02d7ae5c3ae9f22f125f554a944b",
-        })
+    def test_distribution_manifest_obeys_fresh_go_channel_contract(self):
+        # Portable metadata checks do not authenticate a remote release. Native
+        # channel fixtures separately bind tag/source and downloaded ZIP bytes.
+        keys = {"schema", "channel", "version", "sourceCommit", "cliProtocol",
+                "windowsAMD64SHA256", "windowsARM64SHA256"}
+
+        def validate(text):
+            self.assertLessEqual(len(text), 4096)
+            self.assertNotIn("\\", text)  # Escaped keys/values are outside this flat contract.
+            def unique_object(pairs):
+                self.assertEqual(len(pairs), len(dict(pairs)))
+                return dict(pairs)
+            manifest = json.loads(text, object_pairs_hook=unique_object)
+            self.assertIsInstance(manifest, dict)
+            self.assertEqual(set(manifest), keys)
+            self.assertTrue(all(isinstance(value, str) for value in manifest.values()))
+            self.assertEqual(manifest["schema"], "1")
+            self.assertEqual(manifest["channel"], "go-v1")
+            self.assertEqual(manifest["cliProtocol"], "3")
+            package.validate_version(manifest["version"], allow_prerelease=True)
+            self.assertTrue(manifest["version"].startswith("v1."))
+            for key, length in (("sourceCommit", 40), ("windowsAMD64SHA256", 64),
+                                ("windowsARM64SHA256", 64)):
+                self.assertIsNotNone(re.fullmatch(r"[0-9a-f]{%d}" % length, manifest[key]))
+            return manifest
+
+        text = (SCRIPTS.parent / "distribution" / "go-v1.json").read_text()
+        manifest = validate(text)
+        validate(json.dumps({**manifest, "version": "v1.7.2-rc.99", "sourceCommit": "1234" * 10,
+                             "windowsAMD64SHA256": "a" * 64, "windowsARM64SHA256": "b" * 64}))
+        for key, bad in (("schema", "2"), ("channel", "python"), ("cliProtocol", "2"),
+                         ("version", "v2.0.0"), ("version", "v1.0.0-rc.01"),
+                         ("sourceCommit", "awf/go-v1"), ("sourceCommit", "A" * 40),
+                         ("sourceCommit", 123), ("windowsAMD64SHA256", "a" * 63),
+                         ("windowsARM64SHA256", "A" * 64)):
+            with self.subTest(key=key, bad=bad), self.assertRaises((AssertionError, ValueError)):
+                validate(json.dumps({**manifest, key: bad}))
+        for bad in (text.replace('"schema": "1"', '"schema": "1", "schema": "1"'),
+                    json.dumps({**manifest, "extra": "x"}),
+                    json.dumps({key: value for key, value in manifest.items() if key != "sourceCommit"}),
+                    json.dumps(list(manifest.items())),
+                    text.replace('"schema"', '"schem\\u0061"'), " " * 4097 + text):
+            with self.subTest(text=bad), self.assertRaises(AssertionError):
+                validate(bad)
 
     def test_bootstrap_channel_contract(self):
         script = (SCRIPTS / "install.ps1").read_text()
