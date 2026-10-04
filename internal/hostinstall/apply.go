@@ -35,6 +35,7 @@ type InstallReceipt struct {
 	Components           []AppliedComponent `json:"components"`
 	PiProgramRoot        string             `json:"piProgramRoot"`
 	ServicePiAgent       string             `json:"servicePiAgent"`
+	PiRuntime            *PiRuntimeReceipt  `json:"piRuntime,omitempty"`
 }
 type fixtureSelection struct {
 	Schema        int    `json:"schema"`
@@ -46,12 +47,26 @@ type fixtureSelection struct {
 // ApplyFixture is deliberately internal and Linux-only, accepts only private
 // sandboxes beneath real /tmp, and never executes installed files. It cannot
 // install to the real program/config/service roots. No public CLI calls it.
-func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Observer) (receipt InstallReceipt, err error) {
-	if runtime.GOOS != "linux" || m.Arch != "amd64" {
+func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Observer) (InstallReceipt, error) {
+	return applyFixtureLayout(ctx, m, stage, sandbox, o, nil)
+}
+
+// ApplyRuntimeFixture prepares the audited Node/npm/Pi closure in a private
+// Linux amd64 /tmp sandbox. It executes only pinned npm with offline ci and
+// scripts disabled. This is not native activation or a public installation API.
+func ApplyRuntimeFixture(ctx context.Context, m Manifest, stage, sandbox string, o Observer, in RuntimeInput) (InstallReceipt, error) {
+	return applyFixtureLayout(ctx, m, stage, sandbox, o, &in)
+}
+
+func applyFixtureLayout(ctx context.Context, m Manifest, stage, sandbox string, o Observer, in *RuntimeInput) (receipt InstallReceipt, err error) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || m.Arch != "amd64" {
 		return receipt, errors.New("fixture apply requires Linux amd64")
 	}
 	if err = m.Validate(); err != nil {
 		return receipt, err
+	}
+	if in != nil && !auditedRuntimeManifest(m) {
+		return receipt, errors.New("runtime preparation requires the audited Node/npm/Pi versions and bytes")
 	}
 	if nilObserver(o) {
 		return receipt, errors.New("fixture apply requires progress")
@@ -72,6 +87,12 @@ func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Obse
 		return receipt, errors.New("sandbox unavailable")
 	}
 	defer root.Close()
+	if in != nil {
+		info, e := root.Stat(".")
+		if e != nil || requireFixtureOwner(info) != nil {
+			return receipt, errors.New("runtime sandbox ownership invalid")
+		}
+	}
 	lock, err := fixtureLock(root)
 	if err != nil {
 		return receipt, &StageError{"bundle", "activate", "another fixture apply is running or lock is invalid"}
@@ -83,8 +104,13 @@ func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Obse
 	encoded, _ := json.Marshal(m)
 	sum := sha256.Sum256(encoded)
 	digest := hex.EncodeToString(sum[:])
+	schema, mode := 1, "sandbox-fixture"
 	generation := "layout-1-" + digest
-	if err = checkSandboxTopology(root, generation); err != nil {
+	if in != nil {
+		schema, mode = 2, "sandbox-runtime-fixture"
+		generation = "layout-2-" + digest + "-" + runtimeInputDigest(*in)
+	}
+	if err = checkSandboxTopologyMode(root, generation, schema, mode); err != nil {
 		return receipt, &StageError{"bundle", "verify", "sandbox state requires explicit inspection"}
 	}
 	o.Event(ProgressEvent{Component: "bundle", Stage: "verify", State: "started"})
@@ -102,8 +128,11 @@ func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Obse
 		return receipt, &StageError{"bundle", "extract", "private extraction directory unavailable"}
 	}
 	defer dest.Close()
-	receipt = InstallReceipt{Schema: 1, Mode: "sandbox-fixture", ManifestSHA256: digest, SourceCommit: m.SourceCommit, OS: m.OS, Arch: m.Arch, FilesPrepared: true, InstallationComplete: false, PiProgramRoot: "/opt/pi-cli", ServicePiAgent: "/var/lib/awf/pi-agent"}
+	receipt = InstallReceipt{Schema: schema, Mode: mode, ManifestSHA256: digest, SourceCommit: m.SourceCommit, OS: m.OS, Arch: m.Arch, FilesPrepared: true, InstallationComplete: false, PiProgramRoot: "/opt/pi-cli", ServicePiAgent: "/var/lib/awf/pi-agent"}
 	budget := &extractionBudget{}
+	if in != nil {
+		budget.maxEntries = maxRuntimeEntries
+	}
 	// Fixed order makes receipts independent of manifest component order.
 	for _, id := range componentOrder {
 		var c Component
@@ -114,7 +143,7 @@ func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Obse
 			}
 		}
 		item := AppliedComponent{ID: id, Version: c.Version, State: "files_prepared", Reason: "fixture files only; native runtime acceptance not performed", Files: []InstalledFile{}}
-		if id == "pi" {
+		if id == "pi" && in == nil {
 			item.State = "unavailable"
 			item.Reason = "official installer metadata only; verified Pi dependency closure is unavailable"
 			receipt.Components = append(receipt.Components, item)
@@ -122,8 +151,27 @@ func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Obse
 			continue
 		}
 		o.Event(ProgressEvent{Component: id, Stage: "extract", State: "started"})
-		if id == "magpie" {
+		if id == "pi" {
+			o.Event(ProgressEvent{Component: id, Stage: "closure-verify", State: "started"})
+			plan, e := planPiRuntime(ctx, stage, *in, budget)
+			if e != nil {
+				return receipt, &StageError{id, "closure-verify", "pinned dependency catalog, cache or archive verification failed"}
+			}
+			receipt.PiRuntime = &plan.receipt
+			o.Event(ProgressEvent{Component: id, Stage: "closure-verify", State: "completed"})
+			item.Files, err = preparePiRuntime(ctx, dest, *in, plan, o)
+			if err != nil {
+				return receipt, &StageError{id, "npm-ci-offline", "verified runtime preparation failed"}
+			}
+			item.Reason = "audited runtime files prepared; native service acceptance not performed"
+		} else if id == "magpie" {
 			a := c.Artifacts[0]
+			if in != nil {
+				if a.Bytes > maxExpandedBytes-budget.expanded {
+					return receipt, &StageError{id, "extract", "runtime expanded byte limit"}
+				}
+				budget.expanded += a.Bytes
+			}
 			f, e := os.Open(filepath.Join(stage, id, a.Name))
 			if e != nil {
 				return receipt, &StageError{id, "extract", "staged payload unavailable"}
@@ -135,17 +183,23 @@ func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Obse
 			}
 			item.Files = []InstalledFile{file}
 		} else {
-			item.Files, err = extractArchive(ctx, m, c, filepath.Join(stage, id, c.Artifacts[0].Name), dest, budget, o)
+			item.Files, err = extractNodeArchive(ctx, m, c, filepath.Join(stage, id, c.Artifacts[0].Name), dest, budget, o, in != nil && id == "node")
 			if err != nil {
 				return receipt, &StageError{id, "extract", "archive, identity, digest or architecture verification failed"}
 			}
 		}
-		if id == "awf-extension" {
+		if id == "awf-extension" && in == nil {
 			item.State = "files_prepared_runtime_unavailable"
 			item.Reason = "extension files only; bundled dependency resolution and Pi runtime are unavailable"
 		}
 		receipt.Components = append(receipt.Components, item)
 		o.Event(ProgressEvent{Component: id, Stage: "extract", State: "completed"})
+	}
+	if receipt.PiRuntime != nil {
+		receipt.PiRuntime.ArchiveEntries = budget.entries
+		receipt.PiRuntime.ExpandedBytes = budget.expanded
+		receipt.PiRuntime.ArchiveEntryLimit = maxRuntimeEntries
+		receipt.PiRuntime.ExpandedByteLimit = maxExpandedBytes
 	}
 	if ctx.Err() != nil {
 		return receipt, &StageError{"bundle", "activate", "fixture apply cancelled"}
@@ -182,7 +236,7 @@ func ApplyFixture(ctx context.Context, m Manifest, stage, sandbox string, o Obse
 		return receipt, &StageError{"bundle", "activate", "generation is unreadable"}
 	}
 	receiptSum := sha256.Sum256(receiptBytes)
-	selection := fixtureSelection{1, "sandbox-fixture", generation, hex.EncodeToString(receiptSum[:])}
+	selection := fixtureSelection{schema, mode, generation, hex.EncodeToString(receiptSum[:])}
 	if _, err = root.Lstat("current.json"); err == nil {
 		var current fixtureSelection
 		if readIdentity(root, "current.json", &current) != nil || current != selection {
@@ -223,6 +277,9 @@ func validateSandbox(name string) error {
 	return nil
 }
 func checkSandboxTopology(root *os.Root, generation string) error {
+	return checkSandboxTopologyMode(root, generation, 1, "sandbox-fixture")
+}
+func checkSandboxTopologyMode(root *os.Root, generation string, schema int, mode string) error {
 	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return err
@@ -232,6 +289,9 @@ func checkSandboxTopology(root *os.Root, generation string) error {
 		info, err := root.Lstat(name)
 		if err != nil {
 			return err
+		}
+		if schema == 2 && requireFixtureOwner(info) != nil {
+			return errors.New("sandbox ownership mismatch")
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return errors.New("linked sandbox entry")
@@ -261,13 +321,16 @@ func checkSandboxTopology(root *os.Root, generation string) error {
 			return errors.New("oversized selection")
 		}
 		var current fixtureSelection
-		if readIdentity(root, "current.json", &current) != nil || current.Schema != 1 || current.Mode != "sandbox-fixture" || current.Generation != generation || !digestPattern.MatchString(current.ReceiptSHA256) {
+		if readIdentity(root, "current.json", &current) != nil || current.Schema != schema || current.Mode != mode || current.Generation != generation || !digestPattern.MatchString(current.ReceiptSHA256) {
 			return errors.New("invalid or different selection")
 		}
 	}
 	return nil
 }
 func verifyGeneration(dir string, receipt InstallReceipt, data []byte) error {
+	if receipt.PiRuntime != nil && receipt.PiRuntime.OwnerUID != os.Getuid() {
+		return errors.New("receipt ownership mismatch")
+	}
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
 		return errors.New("invalid generation directory")
@@ -308,19 +371,28 @@ func verifyGeneration(dir string, receipt InstallReceipt, data []byte) error {
 		if err != nil {
 			return err
 		}
+		if receipt.PiRuntime != nil && requireFixtureOwner(info) != nil {
+			return errors.New("generation ownership mismatch")
+		}
 		if info.IsDir() {
 			if !dirs[name] || info.Mode().Perm()&0077 != 0 {
 				return errors.New("unexpected generation directory")
 			}
 			return nil
 		}
-		if !info.Mode().IsRegular() {
-			return errors.New("linked or special generation entry")
-		}
 		file, ok := expected[name]
 		seen[name] = true
 		if !ok {
 			return errors.New("unexpected generation file")
+		}
+		if file != nil && file.LinkTarget != "" {
+			if receipt.Schema != 2 || receipt.PiRuntime == nil || verifyPinnedLink(root, *file) != nil {
+				return errors.New("unexpected generation link")
+			}
+			return nil
+		}
+		if !info.Mode().IsRegular() || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+			return errors.New("linked, special or privileged generation entry")
 		}
 		if file == nil {
 			if info.Mode().Perm() != 0600 {

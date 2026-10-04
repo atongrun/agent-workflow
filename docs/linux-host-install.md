@@ -292,7 +292,7 @@ modules work.
 The fixed official managed update source verifies `managed-install.json`
 (`kind: pi-managed-install`, `schemaVersion: 1`, `layout: releases-v1`),
 `releases/VERSION/node_modules/.bin/pi`, atomic `current-version`, and
-`PI_MANAGED_INSTALL_ROOT`. The proposed stable `/opt/pi-cli/bin/pi` launcher is
+`PI_MANAGED_INSTALL_ROOT`. At the third-slice boundary, the proposed stable `/opt/pi-cli/bin/pi` launcher was
 still unverified because the official initial install script could not be read.
 The standalone Bun release includes additional assets; extracting only its Pi
 binary is not a verified substitute. The current fixture selects Node **only**,
@@ -452,7 +452,7 @@ unavailable (pi.dev proxy returns 403); `/opt/pi-cli/bin/pi` stable launcher and
 its initial setup cannot yet be claimed verified. Official managed update source
 is known; no `pi update` was invoked and no custom updater was introduced.
 
-The existing Go fixture extractor remains intentionally limited to Node-only
+At the fourth-slice boundary, the Go fixture extractor remained limited to Node-only
 selection and Pi JSON metadata: it cannot consume this larger npm program tree
 or claim an installed runtime. Reusing its aggregate 8192-entry archive boundary
 for the 16401-entry Pi tree would fail. A next bounded implementation needs a
@@ -463,3 +463,110 @@ process-group stop/activation/health acceptance, explicit credentials/catalog/mo
 initialization and product E2E remain required. None is replaced by these version,
 import, registration or packaging checks; maintenance remains the existing narrow
 admission gate.
+
+
+## Fifth local slice: audited runtime preparation and shared launcher
+
+`ApplyRuntimeFixture` now wires complete Node/npm and a dedicated Pi closure into
+Go's existing private fixture transaction. It is internal Go code, not a native
+install command or one-line bootstrap. `ApplyFixture` retains its nonexecuting,
+Node-only/Pi-metadata behavior and schema 1 receipt. The new explicit capability
+is Linux amd64 only and accepts existing private, real, same-UID directories
+beneath `/tmp`; it cannot write `/opt`, `/etc`, `/var`, create accounts or units,
+initialize credentials or start services.
+
+Runtime preparation requires exactly the audited Node 22.19.0 gzip bytes, npm
+10.9.3 executable tree and fixed Pi 1.0.2 package/lock bytes. The complete Node
+archive, including notices, npm/corepack dependencies and the three exact known
+command links, is prepared. Node's executable hash is checked again before npm
+execution. Arbitrary manifest-pinned executables are insufficient for this
+capability. The two official Pi metadata files remain byte-for-byte unchanged.
+
+All **147 lock entries** are validated as a catalog; the **122 Linux x64 selected
+entries** additionally require URL-bound SHA512 npm-cache evidence and their
+actual tarball bytes. The **25 platform-inapplicable optional entries** are not
+installed or claimed tarball-verified. All eight integrity omissions in the
+unchanged official lock are supplemented by caller-reviewed, hash-verified
+official npm metadata. These pins bind the schema 2 generation alongside the
+manifest digest; a changed pin set cannot reuse the current generation.
+
+Go invokes the verified bundled npm with the official installer arguments plus
+`--offline`: `ci --ignore-scripts --min-release-age=0 --omit=dev
+--include=optional --no-fund --no-audit --loglevel=error --progress=false`.
+Empty private npm configs, explicit private cache/config/log/prefix paths and a
+minimal environment prevent inherited registry credentials or npm options.
+No lifecycle script runs. npm owns dependency installation and bin creation;
+there is no custom npm dependency resolver or reconstruction of install scripts.
+The command has a two-minute limit, and Linux cancellation kills its process
+group. npm failure or cancellation leaves no selected runtime generation.
+
+Before npm runs, Go builds an expected file inventory from the verified tarballs.
+After npm exits, Go checks every selected installed file against its tarball
+SHA256/length, each declared bin link, package versions/URLs/integrities in npm's
+generated hidden lock, and the exact original root package/lock bytes. It refuses
+missing/extra files, special entries and changed link targets; directory ownership
+and private modes are checked. The generated tree has **9 exact npm bin links**.
+Package notice files are retained rather than selectively discarded. File modes
+are normalized to 0644/0755 and directories to 0700 inside this fixture.
+
+The dedicated runtime archive limit is **32768 entries**, justified by the actual
+Node archive's 5780 entries plus the selected Pi tarball inventory; the generic
+fixture limit remains 8192. Runtime expanded streams, tar headers/padding and
+Magpie's copied bytes share the 512 MiB ceiling. npm compressed tarball bytes are
+also capped at 256 MiB aggregate, with 64 MiB per tarball/file, and cache indexes
+at 4096 entries/4 MiB. Metadata stays bounded. Only npm tarballs permit bounded
+legacy NODETAR/SCHILY metadata and canonical path/size fields; sparse/link metadata
+is refused. Fixed legacy DefinitelyTyped roots are allowed for their two exact
+locations/versions. Two fixed proxy packages repeat `dist/index.js` using `/./`;
+only their exact audited alias pair with identical bytes, size and mode is allowed.
+Third occurrences, other aliases, traversal and differing content are rejected.
+
+The schema 2 receipt records manifest and supplementary-input digests, owner UID,
+147/122/25 counts, observed archive entry/expanded-byte totals and limits, every
+regular file's hash/mode and every link's exact target. It still reports
+`installationComplete: false`, `runtimeReady: false` and
+`nativeAcceptance: false`. Retry builds and verifies a fresh expected runtime;
+it never adopts mutable stored receipt hashes. Existing flock, synchronization,
+atomic selection and cancellation boundaries are reused. Different/modified
+receipts, programs, links or selectors require inspection instead of replacement.
+Progress exposes real closure verification, offline npm ci, extraction and fixture
+selection phases. Selection is not a service activation event.
+
+The equivalent shared `/opt/pi-cli/bin/pi` launcher uses pinned Node's `execve`
+(rather than spawning another long-lived process) to preserve PID and stdio. It
+validates the source-defined `managed-install.json` marker and `current-version`,
+sets **`PI_MANAGED_INSTALL_ROOT`**, selects the official releases-v1 CLI path,
+prepends the pinned Node/npm directory to PATH and removes the installer-API
+base override. It is our source-compatible launcher, not a recovered copy of the
+unavailable initial install script. The pi.dev script/API 403 was not bypassed.
+
+Actual tests of the prepared tree verify bundled npm/Pi versions, 12 dependency
+imports, the exact prepared AWF extension path's registration, launcher environment,
+PID and read-only stdio RPC/EOF behavior. The official managed route for
+`pi update self --force` returns its documented refusal before network access,
+without changing `current-version`. These tests use a cooperative JS network guard
+and empty private state, send no prompt or tool call, and do not invoke a model.
+A normal network upgrade was not attempted; recognizing the managed root does
+not prove upgrade acceptance or permission to update shared programs.
+
+Native ownership is explicitly planned as **administrator-owned programs, service
+read-only**. Ordinary Pi keeps `~/.pi/agent`; Host/Pi service state stays independent
+at `/var/lib/awf/pi-agent`. The official ordinary-startup managed cleanup catches
+permission failures, but native read-only service behavior still needs acceptance.
+Shared upgrades require an explicit administrator operation retaining the durable
+maintenance owner/revision, sealing/draining admission and stopping both systemd
+control groups before program changes. The service is not granted shared updater
+write rights. There is no custom updater or native ownership adapter in this slice.
+
+### Remaining native Ubuntu gate
+
+The remaining product gate requires a disposable **Ubuntu 22.04/24.04 amd64 VM
+with systemd and explicit native-install permission**. The current Debian 13
+container (PID 1 `tail`) is not that environment. The native adapter remains to
+implement and accept fixed root/account/config/unit ownership, initialization
+receipts, shutdown/process-group verification, transactional activation and
+identity/loopback health. Native notice acceptance, deliberate service credentials
+and catalog/model selection, a real shared upgrade and full product E2E belong in
+that separately authorized environment. The synthetic Host build/identity fixtures
+are not published release assets. No operational one-line install URL, publication,
+release, production deployment or native acceptance is claimed here.

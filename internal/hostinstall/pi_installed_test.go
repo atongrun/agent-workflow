@@ -45,6 +45,11 @@ func TestPiInstalledOfflineFixture(t *testing.T) {
 	}
 	checkHash(node, "596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9")
 	checkHash(filepath.Join(dir, "pi-release/package-lock.json"), "b8e9e6a191bcf1e6e3ff8dafe5c0c9042b48e0087cd6d6816dcaa051222ba680")
+	checkPiOffline(t, dir, node, filepath.Join(dir, "pi-release/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"))
+}
+
+func checkPiOffline(t *testing.T, dir, node, cli string, preparedExtension ...string) {
+	t.Helper()
 	work, err := os.MkdirTemp(dir, "offline-check-")
 	if err != nil {
 		t.Fatal(err)
@@ -63,17 +68,18 @@ func TestPiInstalledOfflineFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	extPath, probe := filepath.Join(work, "awf.ts"), filepath.Join(work, "probe.ts")
-	if err := os.WriteFile(extPath, extension, 0600); err != nil {
+	if len(preparedExtension) == 1 {
+		extPath = preparedExtension[0]
+	} else if err := os.WriteFile(extPath, extension, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(probe, []byte(piRegistrationProbe), 0600); err != nil {
 		t.Fatal(err)
 	}
 	env := []string{"PATH=" + filepath.Dir(node) + ":/usr/bin:/bin", "PI_CODING_AGENT_DIR=" + agent, "NODE_OPTIONS=--import=" + guard, "XDG_CONFIG_HOME=" + filepath.Join(work, "xdg-config"), "XDG_CACHE_HOME=" + filepath.Join(work, "xdg-cache"),
-		"AWF_HOST_URL=http://127.0.0.1:0", "AWF_EXTENSION_TOKEN=offline-registration-fixture-not-an-issued-credential", "AWF_TASK_ID=dependency-fixture", "AWF_ROLE=architect", "AWF_LIFECYCLE_REVISION=0"}
+		"PI_INSTALLER_API_BASE=http://127.0.0.1:1/forbidden", "AWF_HOST_URL=http://127.0.0.1:0", "AWF_EXTENSION_TOKEN=offline-registration-fixture-not-an-issued-credential", "AWF_TASK_ID=dependency-fixture", "AWF_ROLE=architect", "AWF_LIFECYCLE_REVISION=0"}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cli := filepath.Join(dir, "pi-release/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js")
 	version := exec.CommandContext(ctx, node, cli, "--version")
 	version.Env = env
 	version.Dir = work
@@ -133,6 +139,11 @@ func TestPiInstalledOfflineFixture(t *testing.T) {
 		Type                string   `json:"type"`
 		Tools               []string `json:"tools"`
 		BlockedNetworkCalls int      `json:"blockedNetworkCalls"`
+		PID                 int      `json:"pid"`
+		ManagedRoot         string   `json:"managedRoot"`
+		InstallerAPIBase    string   `json:"installerAPIBase"`
+		ExecPath            string   `json:"execPath"`
+		Path                string   `json:"path"`
 	}
 	finalNetworkProbe := false
 	for _, line := range strings.Split(stderr.String(), "\n") {
@@ -156,6 +167,12 @@ func TestPiInstalledOfflineFixture(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+	if strings.HasSuffix(cli, "/opt/pi-cli/bin/pi") && (registration.ManagedRoot != filepath.Dir(filepath.Dir(cli)) || registration.InstallerAPIBase != "" || registration.ExecPath != node || strings.Split(registration.Path, ":")[0] != filepath.Dir(node)) {
+		t.Fatal("shared launcher contract", registration)
+	}
+	if registration.PID != cmd.Process.Pid {
+		t.Fatal("launcher changed process identity", registration.PID, cmd.Process.Pid)
 	}
 	if !finalNetworkProbe || registration.Type != "awf_dependency_probe" || registration.BlockedNetworkCalls != 0 || !reflect.DeepEqual(registration.Tools, []string{"awf_execution", "awf_finish", "awf_plan", "awf_task"}) {
 		t.Fatal("bundled extension registration", stderr.String())
@@ -188,6 +205,6 @@ process.on("exit",()=>process.stderr.write(JSON.stringify({type:"awf_network_fin
 syncBuiltinESMExports();
 `
 const piRegistrationProbe = `export default function(pi) {
-pi.on("session_start",()=>{process.stderr.write(JSON.stringify({type:"awf_dependency_probe",tools:pi.getAllTools().map(t=>t.name).filter(n=>n.startsWith("awf_")).sort(),blockedNetworkCalls:globalThis.__awfBlockedNetworkCalls})+"\n");});
+pi.on("session_start",()=>{process.stderr.write(JSON.stringify({type:"awf_dependency_probe",tools:pi.getAllTools().map(t=>t.name).filter(n=>n.startsWith("awf_")).sort(),blockedNetworkCalls:globalThis.__awfBlockedNetworkCalls,pid:process.pid,managedRoot:process.env.PI_MANAGED_INSTALL_ROOT||"",installerAPIBase:process.env.PI_INSTALLER_API_BASE||"",execPath:process.execPath,path:process.env.PATH})+"\n");});
 }
 `
