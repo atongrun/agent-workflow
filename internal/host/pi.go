@@ -305,7 +305,7 @@ func (s *Server) piEvent(taskID, role, processID string, raw json.RawMessage) {
 			ref.PendingCommands = nil
 			ref.NativeQueued = 0
 			ref.AwaitingStart = false
-			refreshPending(ref)
+			rebuildPiControlFence(st, taskID, role, ref)
 			ref.Busy = false
 			ref.Streaming = false
 			ref.Compacting = false
@@ -350,7 +350,7 @@ func (s *Server) piEvent(taskID, role, processID string, raw json.RawMessage) {
 		case "agent_settled":
 			ref.Settled++
 			for _, request := range st.Requests {
-				if request.TaskID == taskID && request.Role == role && request.Status == "accepted_native" {
+				if request.TaskID == taskID && request.Role == role && request.SessionID == ref.ID && request.ProcessID == processID && request.Status == "accepted_native" && nativePromptOperation(request.Operation) {
 					request.Status = "settled"
 				}
 			}
@@ -481,7 +481,7 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 			if req == nil || req.Status != "accepted" {
 				return fail("prompt_cancelled", "prompt is no longer pending", 409)
 			}
-			if pendingPiControl(st, ref) {
+			if pendingPiControl(st, taskID, role) {
 				return fail("pi_control_pending", "Pi control has fenced this prompt", 409)
 			}
 			if req.SessionID != "" && (req.SessionID != ref.ID || req.ProcessID != "" && !bindingMatches(ref, piBinding{role, req.SessionID, req.ProcessID})) {

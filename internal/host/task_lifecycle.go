@@ -120,20 +120,30 @@ func (s *Server) taskLifecycle(w http.ResponseWriter, r *http.Request) {
 
 func lifecycleRequestPending(st *core.State, id string) bool {
 	for _, req := range st.Requests {
-		if req.TaskID != id {
-			continue
-		}
-		switch req.Status {
-		case "accepted", "needs_verification", "queued", "running", "dispatching", "uncertain", "cancelling":
+		if req.TaskID == id && requestPending(req) {
 			return true
-		case "accepted_native":
-			// Execution cancellation and UI delivery have their own terminal
-			// job/dialog state. Native prompt receipts require an actual settle.
-			switch req.Operation {
-			case "messages", "review", "auto_review", "execution_result":
-				return true
-			}
 		}
 	}
 	return false
+}
+
+// Durable receipts, not process-local queue caches, define unresolved effects.
+// Native cancellation/UI acknowledgements have their own terminal job/dialog
+// state; native prompts and controls require their original settlement.
+func requestPending(req *core.Request) bool {
+	switch req.Status {
+	case "completed", "settled", "failed", "cancelled":
+		return false
+	case "accepted_native":
+		return req.Operation != "execution/cancel" && req.Operation != "pi/ui-response"
+	case "sent_native":
+		return req.Operation != "pi/ui-response"
+	default:
+		// Includes known pending states and unsupported/unknown outcomes.
+		return true
+	}
+}
+
+func nativePromptOperation(op string) bool {
+	return op == "messages" || op == "review" || op == "auto_review" || op == "execution_result"
 }
