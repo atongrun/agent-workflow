@@ -12,6 +12,8 @@ Errors: `{ "error": { "code": "...", "message": "..." } }`. HTTP 202 is acceptan
 | GET | `/v1/agents` | `{agents}`; native reachability, no synthetic online state |
 | GET | `/v1/settings` | `{settings}` |
 | PATCH | `/v1/settings` | `{requestId,defaultBranch,branchPrefix}` → `{settings}` |
+| GET | `/v1/model-settings` | `{catalog:{revision,models:[{provider,id,name}]},preference:{revision,model:{provider,id}},effectiveFor:"new_sessions"}` |
+| PATCH | `/v1/model-settings` | `{model:{provider,id},expectedRevision,expectedCatalogRevision}` → the same authoritative snapshot |
 | GET | `/v1/tasks` | `{tasks}` |
 | POST | `/v1/tasks` | `{requestId,title}`; legacy optional `projectId,repository,goal,acceptanceCriteria,nodeId,planId` remain accepted |
 | GET | `/v1/tasks/:id` | `{task}` |
@@ -32,6 +34,16 @@ Errors: `{ "error": { "code": "...", "message": "..." } }`. HTTP 202 is acceptan
 | GET | `/v1/tasks/:id/events?after=0` | SSE |
 
 Canonical JSON fields are defined in `internal/core/model.go`. Global settings are snapshotted at task creation and never retroactively applied. Optional `planId` groups tasks for a shared 180-minute budget; it defaults to the task ID. It does not imply permission to start other tasks. Budgets expose accumulated observed active seconds and default to 60-minute task / two-rework / 180-minute plan limits across native sessions.
+
+## Product model preference
+
+`/v1/model-settings` uses the same Host bearer authentication as `/v1` routes. The catalog is a bounded, sanitized view of the server-selected native Pi `models.json`, restricted to the configured provider and loopback Magpie transport. The opaque catalog revision changes with the source configuration. Listing does not start Pi, call a model or establish upstream availability. Task model reads intersect configured choices with native `get_available_models`; startup and selection also verify native membership. No endpoint accepts or returns URLs, keys, headers or catalog paths.
+
+PATCH requires both revisions. One atomic durable update validates the current catalog, increments `preference.revision` and emits `model.preference_changed`; success returns HTTP 200 with the same shape as GET. There is no request ID or native dispatch. Concurrent or repeated stale PATCHes return 409 `model_settings_conflict`: refresh before selecting. After a lost response, GET reconciles the preference; never automatically replay PATCH. Unsupported references return 400 `model_not_allowed`; unreadable or unsupported configuration returns 503 `model_catalog_unavailable`. Saving is allowed while tasks run and never modifies their sessions, receipts, budgets or history.
+
+The initial preference is `magpie / deepseek/deepseek-v4-pro`. Durable global fields are `settings.piDefaultModel` and `settings.piModelRevision`; task creation-time snapshots do not override the preference when a new native session opens. Only new native sessions use it. A failed, unconfirmed startup with no history may retry using a newly selected default. Confirmed native bindings remain independent.
+
+Sessions expose `{provider,id}` in `session.model` and `session.modelStatus` (`ready`, `starting`, or `needs_model_selection`). A `starting` model is intended and unconfirmed; `ready` records native verification. Existing history resumes without default-model CLI overrides, including exact-header recovery in the current role directory when its recorded path was lost. Native session identity and actual `get_state` model are checked; an unbound old session adopts only that explicit value. An unavailable/disallowed or mismatched previously bound model retains the session for explicit idle selection and blocks prompt/compact with `needs_model_selection`. Recover through existing bound `POST /v1/tasks/:id/pi/model`; the binding is persisted only after native acknowledgement and final-state verification. The Host neither rewrites native history nor rebuilds a session to select a model.
 
 ## Tightening an existing task budget
 

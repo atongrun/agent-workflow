@@ -62,6 +62,9 @@ func TestNativePiHostIntegration(t *testing.T) {
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	agentDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(`{"providers":{"magpie":{"baseUrl":"http://127.0.0.1:3425/v1","api":"openai-completions","apiKey":"magpie","models":[{"id":"deepseek/deepseek-v4-pro"}]}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PI_CODING_AGENT_DIR", agentDir)
 	diagnosticsDir := t.TempDir()
 	t.Setenv("NATIVE_PI_DIAGNOSTIC_DIR", diagnosticsDir)
@@ -89,6 +92,7 @@ func TestNativePiHostIntegration(t *testing.T) {
 		s := testServer(t)
 		s.cfg.PiBinary = binary
 		s.cfg.PiExtension = extension
+		s.cfg.PiAgentDir = agentDir
 		return s
 	}
 

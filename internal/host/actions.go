@@ -51,6 +51,9 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		}
 		switch op {
 		case "messages":
+			if ref := t.Sessions[in.Role]; ref != nil && ref.Available && ref.ModelStatus == "needs_model_selection" {
+				return fail("needs_model_selection", "select an allowed idle model before generating", 409)
+			}
 			if strings.TrimSpace(in.Text) == "" {
 				return fail("empty_message", "text is required", 400)
 			}

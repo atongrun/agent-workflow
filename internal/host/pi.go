@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -48,6 +49,43 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 			sessionFile = ""
 		}
 	}
+	// A native history file also marks a resume in the crash window before
+	// Persisted/File was confirmed. Never apply a new global default to it.
+	sessionDirectory := filepath.Join(s.cfg.DataDir, "sessions", taskID, role)
+	resuming := sessionFile != "" || ref.Persisted
+	if entries, readErr := os.ReadDir(sessionDirectory); readErr == nil {
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".jsonl") || sessionFile != "" {
+				continue
+			}
+			path := filepath.Join(sessionDirectory, entry.Name())
+			file, err := os.Open(path)
+			if err != nil {
+				return nil, fail("session_missing", "native session history is unreadable", 409)
+			}
+			scanner := bufio.NewScanner(file)
+			var header struct {
+				Type string `json:"type"`
+				ID   string `json:"id"`
+			}
+			valid := scanner.Scan() && json.Unmarshal(scanner.Bytes(), &header) == nil && header.Type == "session" && header.ID == ref.ID
+			file.Close()
+			if !valid {
+				return nil, fail("session_missing", "native history cannot be matched to the original session", 409)
+			}
+			sessionFile, resuming = path, true
+		}
+	} else if !os.IsNotExist(readErr) {
+		return nil, fail("session_unavailable", "native session directory is unreadable", 409)
+	}
+	if ref.Persisted && sessionFile == "" {
+		return nil, fail("session_missing", "persisted native history is unavailable; restore it before continuing", 409)
+	}
+	catalog, err := s.modelCatalog()
+	if err != nil {
+		return nil, err
+	}
+	var requestedModel *core.PiModel
 	var evict *pi.Client
 	capacityErr := s.store.Update(func(st *core.State) error {
 		s.mu.Lock()
@@ -108,11 +146,32 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 			return fail("target_changed", "legacy target changed while Pi was starting; retry the session read", 409)
 		}
 		current.Sessions[role].ProcessID = processID
+		if !resuming {
+			if current.Sessions[role].ModelStatus != "starting" {
+				requestedModel = current.Sessions[role].Model
+			}
+			if requestedModel == nil {
+				copy := st.Settings.PiDefaultModel
+				requestedModel = &copy
+			}
+			if !catalogContains(catalog, *requestedModel) {
+				return fail("needs_model_selection", "the default Pi model is unavailable; select an allowed default before creating a session", 409)
+			}
+			copy := *requestedModel
+			current.Sessions[role].Model = &copy
+			if current.Sessions[role].ModelStatus == "" || current.Sessions[role].ModelStatus == "starting" {
+				current.Sessions[role].ModelStatus = "starting"
+			}
+		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	c, err = pi.Start(pi.Config{LifecycleRevision: t.LifecycleRevision, Binary: s.cfg.PiBinary, Directory: directory, Restricted: t.PlanningProfile == core.RestrictedPlanning, SessionDirectory: filepath.Join(s.cfg.DataDir, "sessions", taskID, role), SessionID: ref.ID, SessionFile: sessionFile, Extension: s.cfg.PiExtension, HostURL: s.cfg.InternalURL, Token: s.scopedToken(taskID, role), TaskID: taskID, Role: role, ExcludeEnv: s.controlEnv(), OnEvent: func(raw json.RawMessage) { s.piEvent(taskID, role, processID, raw) }})
+	provider, modelID := "", ""
+	if requestedModel != nil {
+		provider, modelID = requestedModel.Provider, requestedModel.ID
+	}
+	c, err = pi.Start(pi.Config{AgentDirectory: s.cfg.PiAgentDir, Provider: provider, ModelID: modelID, LifecycleRevision: t.LifecycleRevision, Binary: s.cfg.PiBinary, Directory: directory, Restricted: t.PlanningProfile == core.RestrictedPlanning, SessionDirectory: sessionDirectory, SessionID: ref.ID, SessionFile: sessionFile, Extension: s.cfg.PiExtension, HostURL: s.cfg.InternalURL, Token: s.scopedToken(taskID, role), TaskID: taskID, Role: role, ExcludeEnv: s.controlEnv(), OnEvent: func(raw json.RawMessage) { s.piEvent(taskID, role, processID, raw) }})
 	if err != nil {
 		return nil, err
 	}
@@ -124,18 +183,48 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 		return nil, err
 	}
 	var native struct {
-		SessionID    string `json:"sessionId"`
-		SessionFile  string `json:"sessionFile"`
-		IsStreaming  bool   `json:"isStreaming"`
-		IsCompacting bool   `json:"isCompacting"`
+		SessionID    string   `json:"sessionId"`
+		SessionFile  string   `json:"sessionFile"`
+		IsStreaming  bool     `json:"isStreaming"`
+		IsCompacting bool     `json:"isCompacting"`
+		Model        *piModel `json:"model"`
 	}
 	if err = json.Unmarshal(data, &native); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
-	if native.SessionID == "" {
+	if native.SessionID == "" || native.SessionID != ref.ID {
 		_ = c.Close()
 		return nil, fmt.Errorf("Pi get_state missing native sessionId")
+	}
+	confirmed := nativeModelRef(native.Model)
+	if requestedModel != nil && !modelRefsEqual(requestedModel, confirmed) {
+		_ = c.Close()
+		return nil, fail("needs_model_selection", "Pi did not select the exact requested default model", 409)
+	}
+	modelStatus := "ready"
+	if s.allowedNativeModel(native.Model) != nil || (resuming && ref.Model != nil && !modelRefsEqual(ref.Model, confirmed)) {
+		modelStatus = "needs_model_selection"
+	}
+	availableData, availableErr := c.Call(ctx, "get_available_models", nil)
+	var available struct {
+		Models []piModel `json:"models"`
+	}
+	found := false
+	if availableErr == nil && json.Unmarshal(availableData, &available) == nil {
+		for _, entry := range available.Models {
+			if modelRefsEqual(confirmed, nativeModelRef(&entry)) {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		modelStatus = "needs_model_selection"
+	}
+	if requestedModel != nil && modelStatus != "ready" {
+		_ = c.Close()
+		return nil, fail("needs_model_selection", "the requested default model is unavailable in native Pi", 409)
 	}
 	err = s.store.Update(func(st *core.State) error {
 		t := st.Tasks[taskID]
@@ -147,6 +236,12 @@ func (s *Server) client(taskID, role string) (*pi.Client, error) {
 		current.Busy = native.IsStreaming || native.IsCompacting
 		current.Streaming = native.IsStreaming
 		current.Compacting = native.IsCompacting
+		// An unbound old session can adopt only its explicit verified native
+		// value. A previously bound session never adopts a fallback silently.
+		if current.Model == nil || !resuming {
+			current.Model = confirmed
+		}
+		current.ModelStatus = modelStatus
 		refreshPending(current)
 		core.Changed(st, t)
 		return nil
@@ -370,6 +465,14 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 	var binding piBinding
 	var startSettled int64
 	var pending *pi.PendingCall
+	if err == nil {
+		task, _ := s.task(taskID)
+		if task.Sessions[role].ModelStatus != "ready" {
+			err = fail("needs_model_selection", "select an allowed idle model before generating", 409)
+		} else {
+			err = s.verifyPiGeneration(c, task.Sessions[role])
+		}
+	}
 	if err == nil {
 		err = s.store.Update(func(st *core.State) error {
 			t := st.Tasks[taskID]

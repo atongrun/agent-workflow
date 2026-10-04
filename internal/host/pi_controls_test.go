@@ -29,6 +29,27 @@ func TestPiControlHelper(t *testing.T) {
 	}
 	var mu sync.Mutex
 	model := piModel{"test", "one", "One"}
+	for i, a := range os.Args {
+		if i+1 >= len(os.Args) {
+			continue
+		}
+		if a == "--model" {
+			model.ID = os.Args[i+1]
+		}
+		if a == "--session" {
+			var history struct {
+				SessionID string  `json:"sessionId"`
+				ID        string  `json:"id"`
+				Model     piModel `json:"model"`
+			}
+			if b, err := os.ReadFile(os.Args[i+1]); err == nil && json.Unmarshal(b, &history) == nil {
+				if history.SessionID == "" {
+					history.SessionID = history.ID
+				}
+				sessionID, model = history.SessionID, history.Model
+			}
+		}
+	}
 	compacting := false
 	var compactID string
 	output := func(value any) { b, _ := json.Marshal(value); fmt.Println(string(b)) }
@@ -38,6 +59,11 @@ func TestPiControlHelper(t *testing.T) {
 	logPath := os.Getenv("PI_CONTROL_TEST_LOG")
 	release := os.Getenv("PI_CONTROL_TEST_RELEASE")
 	mode := os.Getenv("PI_CONTROL_TEST_MODE")
+	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err == nil {
+		encoded, _ := json.Marshal(map[string]any{"args": os.Args, "agentDir": os.Getenv("PI_CODING_AGENT_DIR")})
+		fmt.Fprintln(f, string(encoded))
+		f.Close()
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var in map[string]any
@@ -139,6 +165,14 @@ func piControlFixture(t *testing.T, mode string) (*Server, *core.Task, piControl
 		t.Skip("subprocess fixture uses a POSIX launcher")
 	}
 	s := testServer(t)
+	s.cfg.PiProvider = "test"
+	writeModelCatalog(t, s, "test", []string{"one", "two", "missing"})
+	if err := s.store.Update(func(st *core.State) error {
+		st.Settings.PiDefaultModel = core.PiModel{Provider: "test", ID: "one"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	task := createTask(t, s, "pi-control-task")
 	dir := t.TempDir()
 	log := filepath.Join(dir, "rpc.log")

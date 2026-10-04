@@ -6,19 +6,30 @@ import (
 )
 
 type Settings struct {
-	Architect     string `json:"architect"`
-	Executor      string `json:"executor"`
-	Reviewer      string `json:"reviewer"`
-	DefaultBranch string `json:"defaultBranch"`
-	BranchPrefix  string `json:"branchPrefix"`
-	TaskMinutes   int    `json:"taskMinutes"`
-	MaxReworks    int    `json:"maxReworks"`
-	PlanMinutes   int    `json:"planMinutes"`
+	PiDefaultModel  PiModel `json:"piDefaultModel"`
+	PiModelRevision int     `json:"piModelRevision"`
+	Architect       string  `json:"architect"`
+	Executor        string  `json:"executor"`
+	Reviewer        string  `json:"reviewer"`
+	DefaultBranch   string  `json:"defaultBranch"`
+	BranchPrefix    string  `json:"branchPrefix"`
+	TaskMinutes     int     `json:"taskMinutes"`
+	MaxReworks      int     `json:"maxReworks"`
+	PlanMinutes     int     `json:"planMinutes"`
 }
 
-func Defaults() Settings { return Settings{"pi", "opencode", "disabled", "main", "awf/", 60, 2, 180} }
+type PiModel struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+}
+
+func Defaults() Settings {
+	return Settings{Architect: "pi", Executor: "opencode", Reviewer: "disabled", DefaultBranch: "main", BranchPrefix: "awf/", TaskMinutes: 60, MaxReworks: 2, PlanMinutes: 180, PiDefaultModel: PiModel{Provider: "magpie", ID: "deepseek/deepseek-v4-pro"}}
+}
 
 type Session struct {
+	Model           *PiModel             `json:"model,omitempty"`
+	ModelStatus     string               `json:"modelStatus,omitempty"`
 	Settled         int64                `json:"settled"`
 	DialogDeadlines map[string]time.Time `json:"dialogDeadlines,omitempty"`
 	Streaming       bool                 `json:"streaming"`

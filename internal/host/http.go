@@ -79,6 +79,8 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("POST /v1/tasks/{id}/restore", s.taskLifecycle)
 	public.HandleFunc("GET /v1/settings", s.settings)
 	public.HandleFunc("PATCH /v1/settings", s.settings)
+	public.HandleFunc("GET /v1/model-settings", s.modelSettings)
+	public.HandleFunc("PATCH /v1/model-settings", s.modelSettings)
 	public.HandleFunc("GET /v1/agents", s.agents)
 	public.HandleFunc("GET /v1/overview", s.overview)
 	public.HandleFunc("GET /v1/tasks/{id}/messages", s.messages)

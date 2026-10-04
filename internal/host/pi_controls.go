@@ -172,6 +172,11 @@ func (s *Server) piRead(w http.ResponseWriter, r *http.Request) {
 		result["commands"] = commands
 		result["controls"] = []string{"stats", "model", "compact", "stop"}
 	case "models":
+		catalog, catalogErr := s.modelCatalog()
+		if catalogErr != nil {
+			writeError(w, catalogErr)
+			return
+		}
 		var native struct {
 			Models []piModel `json:"models"`
 		}
@@ -182,7 +187,7 @@ func (s *Server) piRead(w http.ResponseWriter, r *http.Request) {
 		}
 		models := []piModel{}
 		for _, model := range native.Models {
-			if validModel(model) {
+			if validModel(model) && catalogContains(catalog, core.PiModel{Provider: model.Provider, ID: model.ID}) {
 				models = append(models, model)
 			}
 			if len(models) >= 2000 {
@@ -297,10 +302,20 @@ func (s *Server) piControl(w http.ResponseWriter, r *http.Request) {
 			if !validModel(piModel{Provider: in.Provider, ID: in.ModelID}) {
 				return fail("invalid_model", "select a returned provider and model ID", 400)
 			}
+			catalog, err := s.modelCatalog()
+			if err != nil {
+				return err
+			}
+			if !catalogContains(catalog, core.PiModel{Provider: in.Provider, ID: in.ModelID}) {
+				return fail("model_not_allowed", "select a model from the allowed catalog", 400)
+			}
 		} else if in.Provider != "" || in.ModelID != "" {
 			return fail("invalid_control", "model fields are only accepted for model selection", 400)
 		}
 		if op != "pi/abort" {
+			if op == "pi/compact" && ref.ModelStatus != "ready" {
+				return fail("needs_model_selection", "select an allowed idle model before compacting", 409)
+			}
 			if !taskPiIdle(task) {
 				return fail("pi_busy", "wait for all task Pi roles, queued messages and dialogs to settle", 409)
 			}
@@ -374,6 +389,22 @@ func (s *Server) runPiControl(taskID, op string, in piControlInput) {
 		}
 		if err == nil && (native.SessionID != binding.SessionID || native.IsStreaming || native.IsCompacting || native.PendingMessageCount != 0) {
 			err = errors.New("native Pi is no longer idle")
+		}
+		if err == nil && op == "pi/model" {
+			catalog, catalogErr := s.modelCatalog()
+			if catalogErr != nil {
+				err = catalogErr
+			} else if !catalogContains(catalog, core.PiModel{Provider: in.Provider, ID: in.ModelID}) {
+				err = errors.New("selected model is no longer allowed")
+			}
+		}
+		if err == nil && op == "pi/compact" {
+			task, taskErr := s.task(taskID)
+			if taskErr != nil {
+				err = taskErr
+			} else {
+				err = s.verifyPiGeneration(client, task.Sessions[in.Role])
+			}
 		}
 		if err == nil && op == "pi/model" {
 			data, err = client.Call(ctx, "get_available_models", nil)
@@ -483,6 +514,13 @@ func (s *Server) runPiControl(taskID, op string, in piControlInput) {
 		}
 		if op == "pi/model" && (native.Model == nil || native.Model.Provider != in.Provider || native.Model.ID != in.ModelID) {
 			return errors.New("current model did not match the selected model")
+		}
+		if op == "pi/model" {
+			if err := s.allowedNativeModel(native.Model); err != nil {
+				return err
+			}
+			ref.Model = nativeModelRef(native.Model)
+			ref.ModelStatus = "ready"
 		}
 		if op == "pi/abort" && (native.IsStreaming || native.IsCompacting || native.PendingMessageCount != 0) {
 			return errors.New("Pi stop has not reached idle state")

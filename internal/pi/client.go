@@ -20,6 +20,7 @@ import (
 )
 
 type Config struct {
+	AgentDirectory, Provider, ModelID                                                                    string
 	LifecycleRevision                                                                                    int
 	Restricted                                                                                           bool
 	Binary, Directory, SessionDirectory, SessionID, SessionFile, Extension, HostURL, Token, TaskID, Role string
@@ -74,12 +75,18 @@ func Start(cfg Config) (*Client, error) {
 		args = append(args, "--system-prompt", "You are Pi, the planning and result-reporting assistant for one AWF task. Use the available AWF tools and the current task conversation to help the user clarify scope, propose a concrete plan, and assess actual execution evidence. State uncertainty honestly and do not invent repository knowledge or authorization.", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--tools", tools,
 			"--append-system-prompt", "This task uses restricted model-only planning. The managed planning directory is not a repository workspace. Repository selection is metadata, not tool access or permission to execute. You cannot inspect repository or arbitrary filesystem contents in this session; use only the task context and evidence returned by explicitly authorized execution. Missing goal or acceptance criteria remain unset until clarified in the proposed plan.")
 	}
+	if cfg.Provider != "" && cfg.ModelID != "" {
+		args = append(args, "--provider", cfg.Provider, "--model", cfg.ModelID)
+	}
+	if cfg.AgentDirectory != "" {
+		args = append(args, "--offline")
+	}
 	cmd := exec.Command(cfg.Binary, args...)
 	cmd.Dir = cfg.Directory
 	env := []string{}
 	for _, value := range os.Environ() {
 		key := strings.SplitN(value, "=", 2)[0]
-		exclude := strings.HasPrefix(key, "AWF_")
+		exclude := strings.HasPrefix(key, "AWF_") || (cfg.AgentDirectory != "" && key == "PI_CODING_AGENT_DIR")
 		for _, name := range cfg.ExcludeEnv {
 			if key == name {
 				exclude = true
@@ -90,6 +97,9 @@ func Start(cfg Config) (*Client, error) {
 		}
 	}
 	cmd.Env = append(env, "AWF_HOST_URL="+cfg.HostURL, "AWF_EXTENSION_TOKEN="+cfg.Token, "AWF_TASK_ID="+cfg.TaskID, "AWF_ROLE="+cfg.Role, "AWF_LIFECYCLE_REVISION="+strconv.Itoa(cfg.LifecycleRevision))
+	if cfg.AgentDirectory != "" {
+		cmd.Env = append(cmd.Env, "PI_CODING_AGENT_DIR="+cfg.AgentDirectory)
+	}
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

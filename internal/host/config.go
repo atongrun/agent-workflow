@@ -19,6 +19,8 @@ type NodeConfig struct {
 	TokenEnv string `json:"tokenEnv"`
 }
 type Config struct {
+	PiAgentDir        string                `json:"piAgentDir,omitempty"`
+	PiProvider        string                `json:"piProvider,omitempty"`
 	EnableReviewer    bool                  `json:"enableReviewer,omitempty"`
 	MaxPiProcesses    int                   `json:"maxPiProcesses,omitempty"`
 	Listen            string                `json:"listen"`
@@ -79,6 +81,18 @@ func New(c Config) (*Server, error) {
 		return nil, err
 	}
 	c.DataDir = absoluteDataDir
+	if c.PiAgentDir == "" {
+		c.PiAgentDir = filepath.Join(c.DataDir, "pi-agent")
+	}
+	if !filepath.IsAbs(c.PiAgentDir) {
+		return nil, errors.New("piAgentDir must be an explicit absolute directory")
+	}
+	if c.PiProvider == "" {
+		c.PiProvider = "magpie"
+	}
+	if !modelRefValid(core.PiModel{Provider: c.PiProvider, ID: "configured"}) {
+		return nil, errors.New("invalid piProvider")
+	}
 	for id, dir := range c.Projects {
 		if id == "" || !filepath.IsAbs(dir) {
 			return nil, errors.New("project directories must be explicit absolute paths")
@@ -107,6 +121,9 @@ func New(c Config) (*Server, error) {
 	}
 	s := &Server{cfg: c, store: st, token: token, extensionToken: extension, clients: map[string]*pi.Client{}, monitors: map[string]bool{}, http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, stop: make(chan struct{})}
 	err = st.Update(func(state *core.State) error {
+		if state.Settings.PiDefaultModel == (core.PiModel{}) {
+			state.Settings.PiDefaultModel = core.Defaults().PiDefaultModel
+		}
 		state.Settings.Reviewer = "disabled"
 		if c.EnableReviewer {
 			state.Settings.Reviewer = "pi"

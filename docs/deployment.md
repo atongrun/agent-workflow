@@ -18,6 +18,8 @@ Example `host.json` (local, gitignored):
   "tokenEnv": "AWF_HOST_TOKEN",
   "extensionTokenEnv": "AWF_EXTENSION_SECRET",
   "piBinary": "/opt/pi/bin/pi",
+  "piAgentDir": "/var/lib/awf/pi-agent",
+  "piProvider": "magpie",
   "piExtension": "/opt/awf/extensions/awf.ts",
   "projects": {"acceptance": "/srv/awf/acceptance"},
   "nodes": {"windows": {"url": "http://execution-node.example:7071", "tokenEnv": "AWF_WINDOWS_TOKEN"}}
@@ -29,6 +31,32 @@ Use distinct randomly generated tokens of at least 24 characters, installed by t
 The Host defaults to at most one live Pi process (configurable 1–4). It evicts only idle sessions with no queued/in-flight prompt or native dialog and preserves their native session files. If every slot is active or needs recovery, new sessions fail clearly instead of growing unbounded. Measure actual target memory with the selected model/tool workload before production acceptance.
 
 Run `awf host --config /etc/awf/host.json`. For a service manager, configure graceful SIGTERM, restart-on-failure, a private writable state directory and resource limits. Do not deploy two Host writers against the same state directory. Back up the whole state directory, including native Pi sessions, together with node job state using an operationally consistent snapshot. Do not delete locks/state to make a failing startup pass.
+
+### AWF model configuration
+
+Use the same installed Pi 1.0.2 executable for products that need it; keep AWF's writable agent configuration independent. `piAgentDir` defaults to `<dataDir>/pi-agent` and must be absolute; `piProvider` defaults to `magpie` and is fixed by server configuration. Every Host-owned Pi process receives this exact `PI_CODING_AGENT_DIR`, overriding an inherited value, and `--offline` disables startup model-catalog networking. The Host does not install another Pi, mutate another product's defaults, or write native provider files.
+
+Provision `<piAgentDir>/models.json` through the operator. This non-secret example follows Pi 1.0.2's native custom-model format:
+
+```json
+{
+  "providers": {
+    "magpie": {
+      "baseUrl": "http://127.0.0.1:3425/v1",
+      "api": "openai-completions",
+      "apiKey": "magpie",
+      "models": [
+        {"id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
+        {"id": "qwen-cn/qwen3.8-flash", "name": "Qwen 3.8 Flash"}
+      ]
+    }
+  }
+}
+```
+
+`magpie` is a public dummy key for this loopback bridge, not an upstream credential. The bounded adapter accepts only `openai-completions`, HTTP loopback port 3425 with path `/v1`, this literal dummy key and models without transport overrides. Provider headers and per-model URL/key/API overrides are refused. Missing, malformed or unreadable configuration fails explicitly; there is no native/direct-provider fallback. Catalog listing alone cannot prove the bridge or upstream model is healthy; target acceptance must verify the real installed native catalog and approved model operation. The public API exposes only model references/names and opaque revisions.
+
+The product default is stored in Host state, independently of native Pi settings. Updating it during active work affects only new native sessions. Existing histories resume without model CLI overrides. If their verified actual model is outside the allowed catalog, they remain available for the existing explicit idle model control while prompt/compact fail with `needs_model_selection`; no migration scan, session reconstruction or history rewrite is performed. Map the web proxy's model settings endpoint to authenticated `GET/PATCH /v1/model-settings`; the existing `/v1` boundary still excludes `/internal`.
 
 ### Host permission checks across operating systems
 
