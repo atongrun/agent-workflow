@@ -285,7 +285,7 @@ func (s *Server) abortPi(requestID, taskID, role string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	err := c.Stop(ctx)
+	err := s.fencedPiStop(ctx, c)
 	if err != nil {
 		s.requestDone(requestID, "needs_verification", err)
 		return
@@ -367,7 +367,7 @@ func (s *Server) respondUI(requestID, taskID, role string, response map[string]a
 		return
 	}
 	id, _ := response["id"].(string)
-	if err := c.Respond(id, response); err != nil {
+	if err := s.fencedPiRespond(c, id, response); err != nil {
 		s.requestDone(requestID, "needs_verification", err)
 		return
 	}

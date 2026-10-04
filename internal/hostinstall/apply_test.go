@@ -10,15 +10,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"hash/crc32"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/ulikunitz/xz"
 )
 
 type tarEntry struct {
@@ -56,26 +53,12 @@ func fixtureArchive(t *testing.T, format string, entries []tarEntry) []byte {
 		}
 	}
 	_ = tw.Close() // oversized-header fixtures deliberately have an incomplete body
-	if format == "tar.xz" {
-		w, err := xz.NewWriter(&out)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = w.Write(archive.Bytes())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = w.Close(); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		w := gzip.NewWriter(&out)
-		if _, err := w.Write(archive.Bytes()); err != nil {
-			t.Fatal(err)
-		}
-		if err := w.Close(); err != nil {
-			t.Fatal(err)
-		}
+	w := gzip.NewWriter(&out)
+	if _, err := w.Write(archive.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
 	return out.Bytes()
 }
@@ -85,7 +68,7 @@ func applyFixture(t *testing.T) (Manifest, map[string][]byte) {
 	elfBytes := payloads[m.Components[4].Artifacts[0].URL]
 	host, _ := json.Marshal(buildIdentity{1, m.Version, m.SourceCommit, m.OS, m.Arch, m.HostProtocol})
 	extension, _ := json.Marshal(extensionIdentity{1, m.Version, m.SourceCommit, m.ExtensionProtocol, m.PiRPCVersion})
-	replacePayload(&m, payloads, "node", fixtureArchive(t, "tar.xz", []tarEntry{{name: "node-v22.19.0-linux-x64/bin/node", payload: elfBytes}, {name: "node-v22.19.0-linux-x64/LICENSE", payload: []byte("fixture notice")}, {name: "node-v22.19.0-linux-x64/bin/npm", kind: tar.TypeSymlink, link: "../lib/node_modules/npm/bin/npm-cli.js"}, {name: "node-v22.19.0-linux-x64/lib/node_modules/npm/bin/npm-cli.js", payload: []byte("not installed or executed")}}))
+	replacePayload(&m, payloads, "node", fixtureArchive(t, "tar.gz", []tarEntry{{name: "node-v22.19.0-linux-x64/bin/node", payload: elfBytes}, {name: "node-v22.19.0-linux-x64/LICENSE", payload: []byte("fixture notice")}, {name: "node-v22.19.0-linux-x64/bin/npm", kind: tar.TypeSymlink, link: "../lib/node_modules/npm/bin/npm-cli.js"}, {name: "node-v22.19.0-linux-x64/lib/node_modules/npm/bin/npm-cli.js", payload: []byte("not installed or executed")}}))
 	replacePayload(&m, payloads, "awf-host", fixtureArchive(t, "tar.gz", []tarEntry{{name: "awf", payload: elfBytes}, {name: "build.json", payload: host}}))
 	replacePayload(&m, payloads, "awf-extension", fixtureArchive(t, "tar.gz", []tarEntry{{name: "awf.ts", payload: []byte(`import { Type } from "typebox";`)}, {name: "extension.json", payload: extension}}))
 	return m, payloads
@@ -174,7 +157,7 @@ func TestFixtureApplySelectsVerifiedFilesAndTruthfulReceipt(t *testing.T) {
 	}
 }
 func TestFixtureApplyRejectsUnsafeArchivesAndIdentity(t *testing.T) {
-	for _, mode := range []string{"traversal", "absolute", "backslash", "normalized", "symlink", "hardlink", "device", "duplicate", "setuid", "oversized", "host-arch", "identity", "unknown-file", "bad-gzip", "bad-xz", "huge-xz-dictionary", "node-link"} {
+	for _, mode := range []string{"traversal", "absolute", "backslash", "normalized", "symlink", "hardlink", "device", "duplicate", "setuid", "oversized", "host-arch", "identity", "unknown-file", "bad-gzip", "node-link"} {
 		t.Run(mode, func(t *testing.T) {
 			m, payloads := applyFixture(t)
 			elfBytes := payloads[m.Components[4].Artifacts[0].URL]
@@ -212,24 +195,14 @@ func TestFixtureApplyRejectsUnsafeArchivesAndIdentity(t *testing.T) {
 				entries = append(entries, tarEntry{name: "run-installer.sh", payload: []byte("not executed")})
 			case "node-link":
 				component = "node"
-				format = "tar.xz"
+				format = "tar.gz"
 				entries = []tarEntry{{name: "node-v22.19.0-linux-x64/bin/npm", kind: tar.TypeSymlink, link: "/etc/private-secret"}}
 			}
 			data := fixtureArchive(t, format, entries)
 			if mode == "bad-gzip" {
 				data[len(data)-1] ^= 1
 			}
-			if mode == "bad-xz" || mode == "huge-xz-dictionary" {
-				component = "node"
-				data = append([]byte(nil), payloads[m.Components[0].Artifacts[0].URL]...)
-				if mode == "bad-xz" {
-					data[len(data)-1] ^= 1
-				} else {
-					n := (int(data[12]) + 1) * 4
-					data[16] = 40
-					binary.LittleEndian.PutUint32(data[12+n-4:], crc32.ChecksumIEEE(data[12:12+n-4]))
-				}
-			}
+
 			replacePayload(&m, payloads, component, data)
 			stage := stageApplyFixture(t, m, payloads)
 			sandbox := privateParent(t)

@@ -13,13 +13,11 @@ import (
 	"path"
 	"sort"
 	"strings"
-
-	"github.com/ulikunitz/xz"
 )
 
 const maxExpandedBytes int64 = 512 << 20
 const maxExtractedFileBytes int64 = 256 << 20
-const maxArchiveEntries = 4096
+const maxArchiveEntries = 8192
 
 type InstalledFile struct {
 	Path   string `json:"path"`
@@ -150,15 +148,6 @@ func extractArchive(ctx context.Context, m Manifest, c Component, src string, de
 		}
 		defer gz.Close()
 		decoded = gz
-	case "tar.xz":
-		// Preflight all block dictionaries before decoder allocation.
-		if err = preflightXZ(ctx, f, a.Bytes); err != nil {
-			return nil, err
-		}
-		decoded, err = (xz.ReaderConfig{DictCap: 8 << 20, SingleStream: true}).NewReader(raw)
-		if err != nil {
-			return nil, err
-		}
 	default:
 		return nil, errors.New("unsupported archive format")
 	}

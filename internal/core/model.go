@@ -197,10 +197,11 @@ type Event struct {
 	Data   json.RawMessage `json:"data"`
 }
 type State struct {
-	Version  int                 `json:"version"`
-	Settings Settings            `json:"settings"`
-	Tasks    map[string]*Task    `json:"tasks"`
-	Requests map[string]*Request `json:"requests"`
-	Events   []Event             `json:"events"`
-	Sequence int64               `json:"sequence"`
+	Maintenance *Maintenance        `json:"maintenance,omitempty"`
+	Version     int                 `json:"version"`
+	Settings    Settings            `json:"settings"`
+	Tasks       map[string]*Task    `json:"tasks"`
+	Requests    map[string]*Request `json:"requests"`
+	Events      []Event             `json:"events"`
+	Sequence    int64               `json:"sequence"`
 }

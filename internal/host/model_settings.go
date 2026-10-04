@@ -185,6 +185,9 @@ func (s *Server) modelSettings(w http.ResponseWriter, r *http.Request) {
 		settings = s.store.Snapshot().Settings
 	} else {
 		err = s.store.Update(func(st *core.State) error {
+			if err := maintenanceAdmission(st, "", "model-settings"); err != nil {
+				return err
+			}
 			current, err := s.modelCatalog()
 			if err != nil {
 				return err

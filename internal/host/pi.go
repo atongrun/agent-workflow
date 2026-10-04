@@ -92,6 +92,9 @@ func (s *Server) clientWithStartFence(taskID, role string, beforeStart func(stri
 	var evict *pi.Client
 	var evictKey string
 	capacityErr := s.store.Update(func(st *core.State) error {
+		if err := maintenanceEffect(st); err != nil {
+			return err
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.closing {
@@ -474,7 +477,7 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 		})
 	}
 	if err == nil {
-		pending, err = c.BeginCall("prompt", map[string]any{"message": text, "streamingBehavior": "followUp"})
+		pending, err = s.fencedPiBegin(c, "prompt", map[string]any{"message": text, "streamingBehavior": "followUp"})
 	}
 	lock.Unlock()
 	if err != nil {
@@ -588,7 +591,7 @@ func (s *Server) watchPiBudget(taskID, role string, c *pi.Client) {
 		}
 		if seconds >= int64(t.Settings.TaskMinutes*60) || t.Budget.PlanSeconds >= int64(t.Settings.PlanMinutes*60) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			err = c.Stop(ctx)
+			err = s.fencedPiStop(ctx, c)
 			cancel()
 			s.stopForBudget(taskID)
 			_ = s.store.Update(func(st *core.State) error {

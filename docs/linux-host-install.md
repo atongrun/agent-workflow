@@ -1,7 +1,7 @@
-# Linux Host installation: first local slice
+# Linux Host installation: local preparation slices
 
-This slice adds an independent `linux-host-v1` manifest contract, read-only
-planning/diagnosis and an internal download/hash/staging core. It does not publish
+The first slice introduced an independent `linux-host-v1` manifest contract, read-only
+planning/diagnosis and an internal download/hash/staging core. That slice did not publish
 a channel or installer, install programs, extract archives, execute packages,
 initialize credentials, create service accounts, write systemd units, open ports,
 start services, select models or change Host Defaults. The existing Windows
@@ -66,7 +66,7 @@ establish a tested Node version. Publication must pin a natively validated versi
 
 | Component | Version and exact source shape | Format |
 | --- | --- | --- |
-| `node` | `vVERSION`, minimum 22.19.0; `https://nodejs.org/dist/vVERSION/node-vVERSION-linux-x64.tar.xz` (`arm64` suffix reserved) | `tar.xz` |
+| `node` | `vVERSION`, minimum 22.19.0; `https://nodejs.org/dist/vVERSION/node-vVERSION-linux-x64.tar.gz` (`arm64` suffix reserved) | `tar.gz` |
 | `pi` | `1.0.2`; `https://pi.dev/api/installer/releases/1.0.2/package.json` and `package-lock.json` | `json` |
 | `awf-host` | Manifest release; `https://github.com/atongrun/agent-workflow/releases/download/TAG/awf_TAG_linux_amd64.tar.gz` | `tar.gz` |
 | `awf-extension` | Same release; `https://github.com/atongrun/agent-workflow/releases/download/TAG/awf-extension_TAG.tar.gz` | `tar.gz` |
@@ -144,14 +144,14 @@ initialization is explicit. Magpie's headless CLI can be supplied as program bit
 without interactive provider initialization; actual account/provider setup and
 model catalog selection remain an explicit initialization step. The proposed
 Magpie service is loopback-only (`magpie serve`, 127.0.0.1:3425), with no guessed
-model default or inferred Magpie configuration environment variable.
+model default. The third slice below records source-verified configuration behavior.
 
 Service reload/upgrades need a Host maintenance gate that freezes new dispatch,
 waits for the supported idle state and performs an explicit compatible reload.
 An idle snapshot followed by `systemctl restart` is not a safe upgrade gate. Full
 service ownership, init, loopback health/build identity, safe archive extraction,
-Pi npm installation, native Ubuntu acceptance and that maintenance gate require
-later bounded slices; none is implemented here.
+Pi npm installation and native Ubuntu acceptance remain pending. The third slice
+below implements durable admission fencing; it grants no native activation.
 
 Official source references:
 
@@ -195,22 +195,18 @@ Canonical paths (max 512 bytes), unique entries, regular files/directories,
 sanitized 0644/0755 output modes and explicit file whitelists are required.
 Absolute paths, traversal, backslashes, links outside the exact discarded Node
 exceptions, hardlinks, devices/FIFOs, set-ID bits, PAX/sparse extensions, excessive
-entries and hidden trailing nonzero tar payloads fail closed. Limits cover 4096
+entries and hidden trailing nonzero tar payloads fail closed. Limits cover 8192
 visible archive entries in aggregate, 256 MiB per archive file, 512 MiB expanded
 stream bytes in aggregate (including discarded payloads and tar overhead), and
 compressed manifest bounds. Selected executable files get ELF target validation.
 Output is written through Go's directory-root API into a fresh private tree.
 
-A pinned pure-Go `github.com/ulikunitz/xz v0.5.15` decoder handles Node XZ without
-executing an external decompressor. Its `DictCap` is a minimum, not a maximum.
-Preflight validates one XZ stream's footer/index, every indexed block header and
-raw LZMA2 chunk boundaries before decoder construction; it accepts one LZMA2
-filter, at most a 64 MiB dictionary, a 1 MiB index, bounded blocks/chunks and
-expanded sizes. Chunk scanning prevents a lying index from hiding an unexamined
-next block header. The decoder additionally verifies compressed data, index
-consistency and checksums. Unsupported compression features are rejected, not
-silently delegated to a shell. A native official Node asset still requires later
-acceptance against these intentionally bounded rules.
+Third-slice source audit replaces Node XZ with the official gzip asset and the
+standard-library bounded gzip/tar reader. The external XZ dependency, custom XZ
+preflight and notice are removed; earlier commits remain independent. The actual
+Node 22.19.0 gzip has 5780 entries, so the aggregate entry ceiling is 8192. Its
+186097638 regular payload bytes fit the existing 512 MiB expanded bound. No
+external decompressor, npm or downloaded program is executed by fixture apply.
 
 ### Activation, receipts and recovery
 
@@ -247,24 +243,145 @@ emits `extract: unavailable`, never an extraction/install completion. Failed
 verification/extraction cannot emit activation completion. Unknown download
 totals retain the first-slice bytes-only contract; pipes remain free of ANSI.
 
-### Third-slice interfaces to design before native implementation
+## Third local slice: metadata, initialization proposal and maintenance
 
-The future native controller should separate these capabilities rather than
-reuse a generic root-path option on the fixture API:
+`plan --json` now includes an `initialization` proposal: fixed loopback Host config,
+literal systemd unit text, ordered activation requirements and unresolved items.
+`BuildInitializationPlan` performs validation/rendering only. It writes no files
+and never reports `readyToInstall: true`. The proposed receipt conditions depend
+on a future native adapter; fixture receipts cannot satisfy them. Proposed paths
+are `/opt/node`, `/opt/pi-cli`, `/opt/awf`, `/opt/magpie`, `/etc/awf`,
+`/var/lib/awf` and `/var/cache/awf`. Service account `awf` has independent HOME and
+Pi agent state; ordinary `~/.pi/agent` is untouched. Projects/nodes/models are
+empty until explicitly initialized. Only token environment *names* are rendered.
 
-- A program preparation capability verifies a fully published component closure,
-  required notices and native build/version acceptance before activation.
-- An explicit initialization capability owns service account/config paths and
-  credential entry. Shared Pi program root is `/opt/pi-cli`; service agent state
-  is `/var/lib/awf/pi-agent`; ordinary `~/.pi/agent` remains independent. No model
-  is selected until the actual loopback Magpie catalog is observed and confirmed.
-- A maintenance lease freezes new Host dispatch, records ownership/revision,
-  waits for the supported idle condition and authorizes compatible reload. A
-  service adapter may reload only with that lease; a stale idle snapshot is
-  insufficient. Failures and process death must retain a recoverable outcome.
-- A native service adapter owns explicit unit/account actions and verifies
-  loopback health plus exact running build identity. Those actions need separate
-  native acceptance and publication/deployment authorization.
+### Verified public sources; uninstalled dependency closure
 
-These are design boundaries, not runnable stubs or capabilities granted by a
-sandbox receipt. No third-slice interface implementation is included here.
+Actual fixed public bytes were downloaded to a private `/tmp` directory and
+hash-checked without execution:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Node 22.19.0 linux-x64 gzip | 54907188 | `d36e56998220085782c0ca965f9d51b7726335aed2f5fc7321c6c0ad233aa96d` |
+| Magpie v0.1.855 linux-amd64 | 31375522 | `f79df4bd90aa81371eff4386740b1fdcb557cf272d395494948c15b9f4f8ff10` |
+| Pi 1.0.2 install package.json | 317 | `491cb1ec4fba98d9547b037cd9dea48ae0bba651a0a80d67dd1660705b60f1c5` |
+| Pi 1.0.2 install package-lock.json | 63566 | `b8e9e6a191bcf1e6e3ff8dafe5c0c9042b48e0087cd6d6816dcaa051222ba680` |
+
+Node matches its [official SHASUMS256](https://nodejs.org/dist/v22.19.0/SHASUMS256.txt).
+Magpie matches its [release asset digest](https://github.com/yetone/magpie-releases/releases/tag/v0.1.855).
+Pi's [official release metadata assets](https://github.com/earendil-works/pi/releases/tag/v1.0.2)
+match byte-for-byte the fixed-tag `packages/coding-agent/install-lock` files.
+The manifest permits either the original pi.dev installer pair or this exact
+GitHub release pair, with local filenames `package.json` and `package-lock.json`.
+It rejects mixed sources; it never substitutes repository main. Access to pi.dev
+was unavailable in this execution environment; no install script was downloaded
+or run and no script layout is inferred.
+
+`InspectPiMetadata` validates bounded lock-v3 JSON, exact installer root, pinned
+registry tarball URLs and SHA-512 integrity. The actual lock has 147 package
+entries plus its root; 8 internal 1.0.2 entries lack integrity. Separate reviewed
+version-specific public `registry.npmjs.org` metadata supplies those 8 SHA-512
+pins, with independent metadata SHA-256 verification and exact name/version/URL
+matching. The original official lock is not edited. The report calls this a
+complete *locked catalog*, never an installed dependency closure. It lists
+lifecycle-script packages (`@google/genai`, `esbuild`, `protobufjs` in this lock);
+installation must use `--ignore-scripts`. It does not implement a semver resolver
+or custom npm updater, verify downloaded npm tarballs, or infer native optional
+modules work.
+
+The fixed official managed update source verifies `managed-install.json`
+(`kind: pi-managed-install`, `schemaVersion: 1`, `layout: releases-v1`),
+`releases/VERSION/node_modules/.bin/pi`, atomic `current-version`, and
+`PI_MANAGED_INSTALL_ROOT`. The proposed stable `/opt/pi-cli/bin/pi` launcher is
+still unverified because the official initial install script could not be read.
+The standalone Bun release includes additional assets; extracting only its Pi
+binary is not a verified substitute. The current fixture selects Node **only**,
+so it cannot yet run npm. Extension TypeBox/Pi resolution is also pending.
+
+Magpie [source at inspected commit](https://github.com/yetone/magpie/tree/25826ea19fe0cb4416ffe6a80b2d5916c68e4e14)
+confirms XDG_CONFIG_HOME/XDG_CACHE_HOME and MAGPIE_ADDR. This source inspection
+is separate from release-binary acceptance. Its `settings.LAN` overrides the
+address to `0.0.0.0`; the environment variable alone cannot guarantee loopback.
+Initialization must explicitly enforce independent `LAN=false` configuration,
+reject portable-data markers beside the shared binary, and verify actual kernel
+listeners before any native activation receipt. Never copy a user's Magpie
+credential/config directory to bootstrap a service.
+
+### Durable Host admission gate
+
+Opt-in `enableMaintenance: true` adds authenticated `GET /v1/maintenance` and
+`POST /v1/maintenance/{begin,seal,end}`. Existing configs omit the flag and keep
+their default routes; any persisted lease keeps its recovery API even when the
+flag is disabled. These routes do not write installation paths or call systemd.
+
+All actions require `requestId` and explicit `expectedRevision`. Begin additionally
+requires exact `targetManifestSHA256`; its requestId owns the lease. Seal/end
+require `ownerRequestId` identifying that original owner. Every transition increments
+a durable revision and emits an audit event. Exact retries return saved receipts
+without replaying effects or releasing a newer lease. There is no TTL or automatic
+unseal on restart. Unknown persisted phases/revisions fail startup closed.
+
+Begin atomically freezes new reservations and captures only already-busy tasks
+for a narrow drain allowlist: existing native abort/UI replies, cancellation,
+question replies, execution result/review settlement and known extension callbacks.
+Idle tasks cannot acquire new drain authority. New tasks, messages, generation,
+rework, model changes, settings, resume and future unknown operations are blocked.
+Previously accepted work may finish; historical exact receipts remain readable.
+
+Seal checks persisted execution status, pending questions/permissions, native
+busy/pending/streaming/queued state, accrued active interval, uncertain or pending
+requests, process startup and Host shutdown. Unknown outcomes block it. Startup
+is serialized by the lifecycle lock. Actual mutating Node requests and Pi sends
+share an effect read lease; seal takes its write lease, preventing queued budget
+stops/cancel/UI/control sends from crossing the seal. Sealed durable and transient
+state writes fail closed, including normalization and delayed callbacks. Explicit
+owner/revision release is the only supported exit. The idle status is an
+observation; seal is the atomic admission transition.
+
+`nativeActivationReady` always remains false. Read-only native RPCs are not a
+native process shutdown barrier. A future adapter must retain the sealed lease,
+stop **both** systemd control groups and verify exit before replacing programs,
+then verify compatible running identity/health before explicit release. The
+maintenance target digest is binding evidence, not permission or implemented
+upgrade/rollback. Default health and Windows runtime contracts remain unchanged.
+
+### Minimal native Ubuntu acceptance scope still required
+
+Current usable pieces are read-only manifest/initialization proposals, bounded
+verified staging, safe `/tmp` fixture apply/recovery, metadata catalog inspection
+and the opt-in durable admission API. They are not a complete installer. No
+install/init/start/update mutator or one-line bootstrap is published.
+
+The next approved test environment needs a disposable Ubuntu 22.04 or 24.04
+amd64 VM with systemd and explicit root permission for fixed program roots,
+`awf` user/group, `/etc/awf`, state/cache ownership and unit installation. Root
+must inspect existing paths, create immutable program generations, private state
+and config, and establish a reviewed shared-Pi update ownership policy. Project
+write permissions need explicit configuration: the proposed strict unit sandbox
+currently grants only state/cache writes. No account or unit action was run here.
+
+Before native work, the precise dependency-install experiment is:
+
+1. In a private temporary directory in that test environment, verify the official
+   Node gzip above and retain its complete npm runtime topology. Verify the two
+   fixed Pi release metadata files and the 8 supplementary public npm pins.
+2. With those exact files as package.json/package-lock.json, use the pinned Node
+   and npm to run the **official** arguments, with no lifecycle scripts:
+   `npm ci --ignore-scripts --min-release-age=0 --omit=dev --include=optional --no-fund --no-audit --loglevel=error --progress=false`.
+   Network is limited to the official npm registry. npm downloads/extracts package
+   tarballs; its acceptance of all 8 supplementary pins must be verified separately
+   because the official lock itself omits their integrity. Do not claim this step
+   provides strict integrity until the downloaded tarball bytes are checked.
+3. Verify the installed `.bin/pi --version` is exactly 1.0.2 with no credentials,
+   provider initialization or model calls; inspect platform optional/native
+   dependencies, TypeBox resolution and notices. Obtain/read the official initial
+   managed installer source before implementing its stable launcher. Do not run an
+   arbitrary fallback install script or invent the root layout.
+4. Only later, with explicit native account/credential/service authorization,
+   initialize distinct service credentials, start Magpie with LAN disabled,
+   observe real loopback catalog and choose models explicitly; validate systemd
+   ownership, groups, shutdown and Host/Pi/Magpie identity. Product E2E/model calls
+   and any publication/deployment require their separately approved scope.
+
+Bootstrap stays thin: reviewed Go installer acquisition/verification and handoff;
+all installation decisions, progress and transactions belong in the Go core.

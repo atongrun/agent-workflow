@@ -19,6 +19,7 @@ type NodeConfig struct {
 	TokenEnv string `json:"tokenEnv"`
 }
 type Config struct {
+	EnableMaintenance bool                  `json:"enableMaintenance,omitempty"`
 	PiAgentDir        string                `json:"piAgentDir,omitempty"`
 	PiProvider        string                `json:"piProvider,omitempty"`
 	EnableReviewer    bool                  `json:"enableReviewer,omitempty"`
@@ -39,16 +40,19 @@ type Server struct {
 	token, extensionToken string
 	// Serializes Pi startup, eviction, and task deletion without holding the store lock during process I/O.
 	piLifecycle sync.Mutex
-	mu          sync.Mutex
-	clients     map[string]*pi.Client
-	dispatches  map[string]*sync.Mutex
-	monitors    map[string]bool
-	http        *http.Client
-	stop        chan struct{}
-	once        sync.Once
-	wg          sync.WaitGroup
-	closing     bool
-	starting    int
+	// Lock order for maintenance: piLifecycle, then nativeEffects, then store.
+	// Effect senders never acquire piLifecycle while holding nativeEffects.
+	nativeEffects sync.RWMutex
+	mu            sync.Mutex
+	clients       map[string]*pi.Client
+	dispatches    map[string]*sync.Mutex
+	monitors      map[string]bool
+	http          *http.Client
+	stop          chan struct{}
+	once          sync.Once
+	wg            sync.WaitGroup
+	closing       bool
+	starting      int
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -120,6 +124,12 @@ func New(c Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{cfg: c, store: st, token: token, extensionToken: extension, clients: map[string]*pi.Client{}, monitors: map[string]bool{}, http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, stop: make(chan struct{})}
+	if persisted := st.Snapshot().Maintenance; persisted != nil && persisted.Phase == "sealed" {
+		// Preserve the sealed durable view on restart. Bound native reads still
+		// require a live owned client; startup/dispatch are fenced until release.
+		s.launch(s.watchExecutionResults)
+		return s, nil
+	}
 	err = st.Update(func(state *core.State) error {
 		if state.Settings.PiDefaultModel == (core.PiModel{}) {
 			state.Settings.PiDefaultModel = core.Defaults().PiDefaultModel

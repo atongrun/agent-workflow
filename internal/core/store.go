@@ -64,6 +64,9 @@ func Open(dir string) (*Store, error) {
 	if s.state.Version != 1 || s.state.Tasks == nil || s.state.Requests == nil {
 		return nil, errors.New("unsupported or invalid state")
 	}
+	if err = ValidateMaintenance(s.state.Maintenance); err != nil {
+		return nil, err
+	}
 	success = true
 	return s, nil
 }
@@ -103,12 +106,14 @@ func (s *Store) Update(fn func(*State) error) error {
 		return s.fault
 	}
 	before, _ := json.Marshal(s.state)
+	sealed := s.state.Maintenance != nil && s.state.Maintenance.Phase == "sealed"
 	if err := fn(&s.state); err != nil {
 		var restored State
 		_ = json.Unmarshal(before, &restored)
 		s.state = restored
 		return err
 	}
+
 	totals := map[string]int64{}
 	for _, task := range s.state.Tasks {
 		key := task.PlanID
@@ -124,6 +129,17 @@ func (s *Store) Update(fn func(*State) error) error {
 		}
 		task.Budget.PlanSeconds = totals[key]
 	}
+	changed, _ := json.Marshal(s.state)
+	if err := ValidateMaintenance(s.state.Maintenance); err != nil || sealed && (s.state.Maintenance == nil || s.state.Maintenance.Phase == "draining" || s.state.Maintenance.Phase == "sealed" && !bytes.Equal(before, changed)) {
+		var restored State
+		_ = json.Unmarshal(before, &restored)
+		s.state = restored
+		if err != nil {
+			return err
+		}
+		return ErrMaintenanceSealed
+	}
+
 	after, _ := json.Marshal(s.state)
 	if bytes.Equal(before, after) {
 		return nil
@@ -181,12 +197,18 @@ func (s *Store) Close() error {
 func (s *Store) Event(taskID, kind string, data any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state.Maintenance != nil && s.state.Maintenance.Phase == "sealed" {
+		return
+	}
 	Emit(&s.state, taskID, kind, data)
 }
 
 func (s *Store) NativeEvent(taskID, role, processID string, data any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state.Maintenance != nil && s.state.Maintenance.Phase == "sealed" {
+		return
+	}
 	t := s.state.Tasks[taskID]
 	if t == nil || t.DeletedAt != nil || t.Sessions[role] == nil || t.Sessions[role].ProcessID != processID {
 		return

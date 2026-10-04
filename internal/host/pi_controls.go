@@ -463,7 +463,7 @@ func (s *Server) runPiControl(taskID, op string, in piControlInput) {
 		})
 	}
 	if err == nil {
-		pending, err = client.BeginCall(method, fields)
+		pending, err = s.fencedPiBegin(client, method, fields)
 	}
 	lock.Unlock()
 	if err != nil {
@@ -489,7 +489,11 @@ func (s *Server) runPiControl(taskID, op string, in piControlInput) {
 	var result any
 	if err == nil && op == "pi/abort" {
 		s.emitClearedQueue(taskID, binding, data)
-		_, err = client.Call(ctx, "abort", nil)
+		abortCall, abortErr := s.fencedPiBegin(client, "abort", nil)
+		err = abortErr
+		if err == nil {
+			_, err = abortCall.Wait(ctx)
+		}
 	}
 	if err == nil && op == "pi/model" {
 		var model piModel

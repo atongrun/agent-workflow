@@ -16,6 +16,13 @@ import (
 )
 
 func (s *Server) nodeCall(ctx context.Context, nodeID, method, path string, payload any, out any) (int, error) {
+	if method != http.MethodGet {
+		done, err := s.beginNativeEffect()
+		if err != nil {
+			return 0, err
+		}
+		defer done()
+	}
 	cfg, ok := s.cfg.Nodes[nodeID]
 	if !ok {
 		return 0, fmt.Errorf("node not configured")
@@ -133,6 +140,9 @@ func (s *Server) monitor(id string) {
 					marked := false
 					var dispatchRequest node.JobRequest
 					markErr := s.store.Update(func(st *core.State) error {
+						if err := maintenanceEffect(st); err != nil {
+							return err
+						}
 						cur := st.Tasks[id]
 						if cur.DeletedAt != nil || cur.LifecycleRevision != t.LifecycleRevision || cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.DispatchAttempted || cur.Execution.CancelRequested {
 							return nil

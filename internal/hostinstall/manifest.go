@@ -106,7 +106,7 @@ func (m Manifest) Validate() error {
 			if major < 22 || (major == 22 && minor < 19) {
 				return errors.New("Pi requires Node at least 22.19.0")
 			}
-			name := "node-" + c.Version + "-linux-" + nodeArch + ".tar.xz"
+			name := "node-" + c.Version + "-linux-" + nodeArch + ".tar.gz"
 			expected = map[string]string{name: "https://nodejs.org/dist/" + c.Version + "/" + name}
 		case "pi":
 			if c.Version != m.PiRPCVersion {
@@ -114,6 +114,12 @@ func (m Manifest) Validate() error {
 			}
 			base := "https://pi.dev/api/installer/releases/" + c.Version + "/"
 			expected = map[string]string{"package.json": base + "package.json", "package-lock.json": base + "package-lock.json"}
+			// Official release copies have identical installer metadata bytes. Require
+			// a coherent pair; never mix sources or fall back to repository main.
+			if len(c.Artifacts) > 0 && strings.HasPrefix(c.Artifacts[0].URL, "https://github.com/earendil-works/pi/") {
+				base = "https://github.com/earendil-works/pi/releases/download/v" + c.Version + "/pi-coding-agent-install-"
+				expected = map[string]string{"package.json": base + "package.json", "package-lock.json": base + "package-lock.json"}
+			}
 		case "awf-host", "awf-extension":
 			if c.Version != m.Version {
 				return errors.New("Host and extension must share the manifest release")
@@ -148,7 +154,7 @@ func (m Manifest) Validate() error {
 			format := "tar.gz"
 			switch c.ID {
 			case "node":
-				format = "tar.xz"
+				format = "tar.gz"
 			case "pi":
 				format = "json"
 			case "magpie":

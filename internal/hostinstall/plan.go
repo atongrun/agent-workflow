@@ -23,13 +23,14 @@ type Finding struct {
 	Detail string `json:"detail"`
 }
 type Plan struct {
-	Schema       int               `json:"schema"`
-	ReadyToStage bool              `json:"readyToStage"`
-	Environment  Environment       `json:"environment"`
-	Findings     []Finding         `json:"findings"`
-	Components   []Component       `json:"components"`
-	Paths        map[string]string `json:"paths"`
-	Pending      []string          `json:"pending"`
+	Schema         int                `json:"schema"`
+	ReadyToStage   bool               `json:"readyToStage"`
+	Environment    Environment        `json:"environment"`
+	Findings       []Finding          `json:"findings"`
+	Components     []Component        `json:"components"`
+	Paths          map[string]string  `json:"paths"`
+	Pending        []string           `json:"pending"`
+	Initialization InitializationPlan `json:"initialization"`
 }
 
 func BuildPlan(m Manifest, e Environment) (Plan, error) {
@@ -39,6 +40,7 @@ func BuildPlan(m Manifest, e Environment) (Plan, error) {
 	p := Plan{Schema: 1, ReadyToStage: true, Environment: e, Findings: []Finding{}, Components: m.Components,
 		Paths:   map[string]string{"hostProgram": "/opt/awf", "piProgram": "/opt/pi-cli", "magpieProgram": "/opt/magpie", "hostConfig": "/etc/awf/host.json", "hostState": "/var/lib/awf", "servicePiAgent": "/var/lib/awf/pi-agent"},
 		Pending: []string{"program installation", "explicit account and credential initialization", "loopback service configuration", "systemd enable/start", "actual model catalog selection", "maintenance gate and explicit idle reload"}}
+	p.Initialization, _ = BuildInitializationPlan(m)
 	checks := []struct {
 		key    string
 		ok     bool

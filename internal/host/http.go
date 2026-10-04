@@ -64,6 +64,10 @@ func auth(token string, h http.Handler) http.Handler {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	public := http.NewServeMux()
+	if s.cfg.EnableMaintenance || s.store.Snapshot().Maintenance != nil {
+		public.HandleFunc("GET /v1/maintenance", s.maintenanceStatus)
+		public.HandleFunc("POST /v1/maintenance/{action}", s.maintenanceAction)
+	}
 	public.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok", "version": "v1"})
 	})
@@ -179,6 +183,9 @@ func (s *Server) reserveRequest(id, taskID, op string, payload any, fn func(*cor
 			}
 			duplicate = true
 			return nil
+		}
+		if err := maintenanceAdmission(st, taskID, op); err != nil {
+			return err
 		}
 		// Historical exact retries are receipts only. Every newly reserved task
 		// mutation, including extension tools and automatic dispatch, is fenced.

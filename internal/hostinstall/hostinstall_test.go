@@ -39,7 +39,7 @@ func manifestFixture() (Manifest, map[string][]byte) {
 		}
 		m.Components = append(m.Components, Component{id, v, []Artifact{a}})
 	}
-	add("node", "v22.19.0", "tar.xz", "node-v22.19.0-linux-x64.tar.xz", "https://nodejs.org/dist/v22.19.0/node-v22.19.0-linux-x64.tar.xz", []byte("opaque-node-archive"))
+	add("node", "v22.19.0", "tar.gz", "node-v22.19.0-linux-x64.tar.gz", "https://nodejs.org/dist/v22.19.0/node-v22.19.0-linux-x64.tar.gz", []byte("opaque-node-archive"))
 	add("pi", "1.0.2", "json", "package.json", "https://pi.dev/api/installer/releases/1.0.2/package.json", []byte(`{"dependencies":{"pi":"1.0.2"}}`))
 	add("pi", "1.0.2", "json", "package-lock.json", "https://pi.dev/api/installer/releases/1.0.2/package-lock.json", []byte(`{"lockfileVersion":3}`))
 	add("awf-host", m.Version, "tar.gz", "awf_"+m.Version+"_linux_amd64.tar.gz", "https://github.com/atongrun/agent-workflow/releases/download/"+m.Version+"/awf_"+m.Version+"_linux_amd64.tar.gz", []byte("opaque-host-archive"))
