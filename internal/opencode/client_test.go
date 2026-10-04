@@ -163,3 +163,37 @@ func TestOptionalNativeModelSelection(t *testing.T) {
 		}
 	}
 }
+
+func TestQuestionReplyScopedTypedACKAndNoRetry(t *testing.T) {
+	for _, ack := range []string{"true", "false", "{}"} {
+		t.Run(ack, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != "POST" || r.URL.Path != "/question/que_native/reply" || r.URL.Query().Get("directory") != `C:\Workspace` {
+					t.Error("wrong question route/scope")
+				}
+				_, password, ok := r.BasicAuth()
+				if !ok || password != "local-password" {
+					t.Error("missing node-local basic auth")
+				}
+				var body struct {
+					Answers [][]string `json:"answers"`
+				}
+				if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Answers) != 1 || body.Answers[0][0] != "Yes" {
+					t.Error("typed answer changed")
+				}
+				fmt.Fprint(w, ack)
+			}))
+			defer server.Close()
+			client, _ := New(Config{URL: server.URL, Password: "local-password"})
+			err := client.ReplyQuestion(context.Background(), `C:\Workspace`, "que_native", [][]string{{"Yes"}})
+			if (err == nil) != (ack == "true") || calls.Load() != 1 {
+				t.Fatal("wrong ACK or retried mutation", err, calls.Load())
+			}
+			if err := client.ReplyQuestion(context.Background(), `C:\Workspace`, "que_../escape", [][]string{{"Yes"}}); err == nil || calls.Load() != 1 {
+				t.Fatal("unsafe native question ID forwarded")
+			}
+		})
+	}
+}

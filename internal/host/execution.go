@@ -40,7 +40,7 @@ func (s *Server) nodeCall(ctx context.Context, nodeID, method, path string, payl
 		return res.StatusCode, err
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return res.StatusCode, fmt.Errorf("node HTTP %d: %s", res.StatusCode, strings.TrimSpace(string(data)))
+		return res.StatusCode, &nodeHTTPError{Status: res.StatusCode, Body: strings.TrimSpace(string(data))}
 	}
 	if out != nil {
 		if err = json.Unmarshal(data, out); err != nil {
@@ -49,6 +49,13 @@ func (s *Server) nodeCall(ctx context.Context, nodeID, method, path string, payl
 	}
 	return res.StatusCode, nil
 }
+
+type nodeHTTPError struct {
+	Status int
+	Body   string
+}
+
+func (e *nodeHTTPError) Error() string { return fmt.Sprintf("node HTTP %d: %s", e.Status, e.Body) }
 func executionNodeID(t *core.Task) string {
 	if t.Execution != nil && t.Execution.Target != nil {
 		return t.Execution.Target.NodeID
@@ -70,7 +77,7 @@ func (s *Server) jobRequest(t *core.Task) node.JobRequest {
 	} else if len(t.ReviewHistory) > 0 {
 		reviewContext = "\n\nPrior review findings for this explicitly authorized rework:\n" + string(mustJSON(t.ReviewHistory[len(t.ReviewHistory)-1]))
 	}
-	return node.JobRequest{RequestID: t.Execution.RequestID, TaskID: t.ID, ProjectID: t.ProjectID, Repository: t.Repository, Branch: t.Branch, Plan: t.Plan.Content, Prompt: fmt.Sprintf("Implement only this explicitly confirmed task.\nTitle: %s\nGoal: %s\nAcceptance criteria: %s\nRepository: %s\nBase branch: %s\nWork branch: %s\n\nConfirmed plan:\n%s\n\nYou own all Git operations via your native tools. Preserve existing work. Run relevant checks and report actual artifacts, commit references, command output and failures. Do not claim tests or commits that did not happen.", t.Title, t.Goal, t.AcceptanceCriteria, t.Repository, t.Settings.DefaultBranch, t.Branch, t.Plan.Content) + reviewContext, TimeoutSeconds: t.Execution.TimeoutSeconds, SessionID: t.Execution.OriginalSessionID}
+	return node.JobRequest{RequestID: t.Execution.RequestID, TaskID: t.ID, ProjectID: t.ProjectID, Repository: t.Repository, Branch: t.Branch, Plan: t.Plan.Content, Prompt: fmt.Sprintf("Implement only this explicitly confirmed task.\nTitle: %s\nGoal: %s\nAcceptance criteria: %s\nRepository: %s\nBase branch: %s\nWork branch: %s\n\nConfirmed plan:\n%s\n\nYou own all Git operations via your native tools. Preserve existing work. Run relevant checks and report actual artifacts, commit references, command output and failures. Capture the actual code diff with git diff or git show, test command output/exit status, and remote branch SHA with git ls-remote, using separate native tool calls with unmasked exit codes. Missing evidence must be reported as unknown. Do not claim tests, pushes or commits that did not happen.", t.Title, t.Goal, t.AcceptanceCriteria, t.Repository, t.Settings.DefaultBranch, t.Branch, t.Plan.Content) + reviewContext, TimeoutSeconds: t.Execution.TimeoutSeconds, SessionID: t.Execution.OriginalSessionID}
 }
 func (s *Server) recoverExecutions() {
 	for _, t := range s.store.Snapshot().Tasks {
@@ -79,7 +86,7 @@ func (s *Server) recoverExecutions() {
 		}
 		if executionActive(t) {
 			s.monitor(t.ID)
-		} else if t.Execution != nil && t.Execution.Status == "completed" && (t.Status == "reporting" || t.Status == "review") {
+		} else if t.Execution != nil && resultTerminal(t) && (t.Status == "reporting" || t.Status == "review") {
 			id := t.ID
 			s.launch(func() { s.beginExecutionSummary(id) })
 		}
@@ -209,11 +216,8 @@ func (s *Server) monitor(id string) {
 						s.cancelExecution("cancel-reconcile-"+t.Execution.RequestID, id, t.Execution.RequestID, t.LifecycleRevision)
 					})
 				}
-				if job.Status == "completed" {
+				if job.Status == "completed" || job.Status == "failed" || job.Status == "cancelled" {
 					s.beginExecutionSummary(id)
-					return
-				}
-				if job.Status == "failed" || job.Status == "cancelled" {
 					return
 				}
 			}
@@ -236,6 +240,12 @@ func (s *Server) applyJob(id string, job *node.Job, lifecycleRevision int) {
 		if e == nil || e.JobID != job.ID || e.RequestID != job.RequestID || t.ID != job.TaskID {
 			return nil
 		}
+		// Native terminal receipts are absorbing. Late polling never reopens
+		// a reviewed execution or regresses it back to running/uncertain.
+		wasTerminal := e.Status == "completed" || e.Status == "failed" || e.Status == "cancelled"
+		if wasTerminal {
+			return nil
+		}
 		e.SessionID = job.SessionID
 		e.Status = job.Status
 		e.Summary = bounded(job.Summary, 32*1024)
@@ -251,7 +261,19 @@ func (s *Server) applyJob(id string, job *node.Job, lifecycleRevision int) {
 			evidence = evidence[len(evidence)-100:]
 		}
 		for _, v := range evidence {
-			e.Evidence = append(e.Evidence, core.Evidence{Kind: v.Kind, Content: bounded(string(mustJSON(v)), 64*1024), Source: "opencode.native:" + v.MessageID + ":" + v.CallID, Verified: false})
+			source := v.Source
+			if source == "" {
+				source = "opencode.native:" + v.MessageID + ":" + v.CallID
+			}
+			truncated := len(v.Output) > 64*1024 || len(v.Input) > 64*1024 || len(v.Metadata) > 8*1024
+			input, metadata := v.Input, v.Metadata
+			if len(input) > 64*1024 {
+				input = nil
+			}
+			if len(metadata) > 8*1024 {
+				metadata = nil
+			}
+			e.Evidence = append(e.Evidence, core.Evidence{Kind: v.Kind, Content: bounded(string(mustJSON(v)), 64*1024), Source: source, Verified: false, Tool: v.Tool, Status: v.Status, MessageID: v.MessageID, CallID: v.CallID, SessionID: job.SessionID, Input: input, Output: bounded(v.Output, 64*1024), Metadata: metadata, Truncated: truncated})
 		}
 		elapsed := int64(job.ExecutionSeconds)
 		if elapsed > e.AccountedSeconds {
@@ -260,25 +282,32 @@ func (s *Server) applyJob(id string, job *node.Job, lifecycleRevision int) {
 			t.Budget.PlanSeconds += diff
 			e.AccountedSeconds = elapsed
 		}
-		switch job.Status {
-		case "running":
-			t.Status = "executing"
-		case "queued":
-			t.Status = "queued"
-		case "uncertain", "cancelling":
-			t.Status = "needs_verification"
-		case "failed":
-			t.Status = "blocked"
-		case "cancelled":
-			t.Status = "cancelled"
-		case "completed":
-			if t.Settings.Reviewer == "pi" {
-				t.Status = "review"
-				t.Phase = "review"
-			} else {
-				t.Status = "reporting"
-				t.Phase = "execution"
+		if !wasTerminal {
+			switch job.Status {
+			case "running":
+				t.Status = "executing"
+			case "queued":
+				t.Status = "queued"
+			case "uncertain", "cancelling":
+				t.Status = "needs_verification"
+			case "failed":
+				t.Status = "blocked"
+			case "cancelled":
+				t.Status = "cancelled"
+			case "completed":
+				if t.Settings.Reviewer == "pi" {
+					t.Status = "review"
+					t.Phase = "review"
+				} else {
+					t.Status = "reporting"
+					t.Phase = "execution"
+				}
 			}
+		}
+		if !wasTerminal && (job.Status == "completed" || job.Status == "failed" || job.Status == "cancelled") && t.Settings.Reviewer != "pi" {
+			t.Status = "reporting"
+			t.Phase = "execution"
+			e.ResultReview = newResultReview(t)
 		}
 		if req := st.Requests[e.RequestID]; req != nil {
 			req.Status = job.Status
@@ -370,50 +399,4 @@ func bounded(text string, limit int) string {
 		return text
 	}
 	return text[:limit] + "\n[Truncated projection; inspect the native session/message reference for complete evidence]"
-}
-
-func (s *Server) beginExecutionSummary(id string) {
-	t, err := s.task(id)
-	if err != nil || t.DeletedAt != nil || t.Execution == nil || t.Execution.Status != "completed" || (t.Status != "reporting" && t.Status != "review") {
-		return
-	}
-	if t.Settings.Reviewer == "pi" {
-		s.beginAutomaticReview(id)
-		return
-	}
-	if remainingSeconds(t) <= 0 {
-		_ = s.store.Update(func(st *core.State) error {
-			cur := st.Tasks[id]
-			if cur.DeletedAt != nil || cur.LifecycleRevision != t.LifecycleRevision || cur.Status != t.Status {
-				return nil
-			}
-			cur.Status = "blocked"
-			cur.LastError = "Execution finished but budget is exhausted before the Pi summary"
-			core.Changed(st, cur)
-			return nil
-		})
-		return
-	}
-	requestID := "result-" + t.Execution.RequestID
-	duplicate, err := s.reserve(requestID, id, "execution_result", map[string]string{"executionRequestId": t.Execution.RequestID}, func(st *core.State) error {
-		cur := st.Tasks[id]
-		if cur.LifecycleRevision != t.LifecycleRevision || cur.Execution == nil || cur.Execution.RequestID != t.Execution.RequestID || cur.Status != "reporting" {
-			return fail("stale_execution", "execution result changed", 409)
-		}
-		ref := cur.Sessions["architect"]
-		if ref.Busy || ref.Pending {
-			return fail("pi_busy", "Pi is still finishing another turn", 409)
-		}
-		if remainingSeconds(cur) <= 0 {
-			return fail("budget_exhausted", "budget exhausted before Pi result summary", 409)
-		}
-		ref.PendingCommands = append(ref.PendingCommands, requestID)
-		refreshPending(ref)
-		core.Changed(st, cur)
-		return nil
-	})
-	if err == nil && !duplicate {
-		payload := map[string]any{"task": t.Title, "goal": t.Goal, "acceptanceCriteria": t.AcceptanceCriteria, "plan": t.Plan, "execution": t.Execution, "branch": t.Branch}
-		s.prompt(requestID, id, "architect", "The authorized OpenCode native execution has finished. Continue this same Pi conversation: explain the actual result and evidence to the user, distinguish missing tests/artifacts from success, and call awf_finish with done or needs_changes for this executionRequestId. Do not invent evidence and do not start a separate reviewer. All Git work remains agent-owned.\n"+string(mustJSON(payload)))
-	}
 }

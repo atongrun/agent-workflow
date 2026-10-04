@@ -82,13 +82,14 @@ type Job struct {
 }
 
 type record struct {
-	Version         int        `json:"version"`
-	Job             Job        `json:"job"`
-	Request         JobRequest `json:"request"`
-	Fingerprint     string     `json:"fingerprint"`
-	SessionTitle    string     `json:"sessionTitle"`
-	CancelRequestID string     `json:"cancelRequestId,omitempty"`
-	CancelPhase     string     `json:"cancelPhase,omitempty"`
+	QuestionReplies map[string]*questionReceipt `json:"questionReplies,omitempty"`
+	Version         int                         `json:"version"`
+	Job             Job                         `json:"job"`
+	Request         JobRequest                  `json:"request"`
+	Fingerprint     string                      `json:"fingerprint"`
+	SessionTitle    string                      `json:"sessionTitle"`
+	CancelRequestID string                      `json:"cancelRequestId,omitempty"`
+	CancelPhase     string                      `json:"cancelPhase,omitempty"`
 	// Accounting deliberately does not carry a wall-clock sample across restarts.
 	HadWait  bool `json:"hadWait,omitempty"`
 	lastBusy time.Time

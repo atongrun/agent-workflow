@@ -73,6 +73,8 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("GET /v1/tasks", s.listTasks)
 	public.HandleFunc("POST /v1/tasks", s.createTask)
 	public.HandleFunc("GET /v1/tasks/{id}", s.getTask)
+	public.HandleFunc("GET /v1/tasks/{id}/execution/questions", s.executionQuestions)
+	public.HandleFunc("POST /v1/tasks/{id}/execution/questions/{questionId}/reply", s.executionQuestionReply)
 	public.HandleFunc("POST /v1/tasks/{id}/delete", s.taskLifecycle)
 	public.HandleFunc("POST /v1/tasks/{id}/restore", s.taskLifecycle)
 	public.HandleFunc("GET /v1/settings", s.settings)
@@ -187,7 +189,23 @@ func (s *Server) response(w http.ResponseWriter, id string) {
 func (s *Server) requestDone(id, status string, err error) {
 	_ = s.store.Update(func(st *core.State) error {
 		if r := st.Requests[id]; r != nil {
+			if r.Operation == "execution_result" && r.Status == "completed" {
+				return nil
+			}
 			r.Status = status
+			if r.Operation == "execution_result" {
+				if t := st.Tasks[r.TaskID]; t != nil && t.Execution != nil && t.Execution.ResultReview != nil && t.Execution.ResultReview.RequestID == id && t.Execution.ResultReview.Status != "reviewed" {
+					review := t.Execution.ResultReview
+					switch status {
+					case "accepted_native", "settled":
+						review.Status = "awaiting_verdict"
+					case "needs_verification", "failed", "cancelled":
+						review.Status = "needs_verification"
+						review.Error = "inspect the original Pi result receipt; automatic replay is disabled"
+					}
+					core.Changed(st, t)
+				}
+			}
 			if err != nil {
 				r.Error = err.Error()
 				if t := st.Tasks[r.TaskID]; t != nil {

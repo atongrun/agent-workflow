@@ -463,7 +463,7 @@ func settleCommand(ref *core.Session, id string) {
 }
 
 func needsRework(t *core.Task) bool {
-	if t.Execution == nil {
+	if t.Execution == nil || t.Execution.Status != "completed" {
 		return false
 	}
 	if t.Settings.Reviewer != "pi" {

@@ -2,6 +2,7 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+const evidenceCheck = Type.Object({kind:Type.Union([Type.Literal("diff"),Type.Literal("tests"),Type.Literal("remote_sha")]),status:Type.Union([Type.Literal("observed"),Type.Literal("unknown")]),sources:Type.Array(Type.String()),remoteSha:Type.Optional(Type.String()),notes:Type.Optional(Type.String())});
 export default function (pi: ExtensionAPI) {
   const host = process.env.AWF_HOST_URL;
   const token = process.env.AWF_EXTENSION_TOKEN;
@@ -21,7 +22,7 @@ export default function (pi: ExtensionAPI) {
   }
   pi.registerTool({ name: "awf_task", label: "Read AWF task", description: "Read this task goal, acceptance criteria, plan, role sessions, execution evidence and budgets before planning or reviewing", parameters: Type.Object({}), execute: (id, params, signal) => call("context", id, params, signal) });
   if (role === "architect") {
-    pi.registerTool({ name: "awf_finish", label: "Summarize AWF execution", description: "Complete the current native execution in this same Pi session. Cite real artifact/test evidence; use needs_changes when work is incomplete. This is not an independent review or Git merge.", parameters: Type.Object({ executionRequestId: Type.String(), verdict: Type.Union([Type.Literal("done"),Type.Literal("needs_changes")]), summary: Type.String({minLength:1}), findings: Type.Array(Type.String()) }), execute: (id,params,signal) => call("finish",id,params,signal) });
+    pi.registerTool({ name: "awf_finish", label: "Summarize AWF execution", description: "Complete the current native execution in this same Pi session. Review traced diff/test/remote-SHA output using evidenceChecks; unknown evidence requires needs_changes. Tool observations are not independent verification or proof of Git merge.", parameters: Type.Object({ executionRequestId: Type.String(), verdict: Type.Union([Type.Literal("done"),Type.Literal("needs_changes")]), summary: Type.String({minLength:1}), findings: Type.Array(Type.String()), evidenceChecks: Type.Array(evidenceCheck) }), execute: (id,params,signal) => call("finish",id,params,signal) });
     pi.registerTool({
       name: "awf_plan", label: "Propose AWF plan", description: "Publish a concrete task plan for the user's explicit confirmation. This NEVER authorizes or starts execution. Plan revisions invalidate earlier confirmation.",
       parameters: Type.Object({ content: Type.String({ minLength: 1, description: "Scope, approach, acceptance checks, branch and repository instructions for the executor" }) }),

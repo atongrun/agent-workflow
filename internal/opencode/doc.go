@@ -9,6 +9,6 @@
 // associate their request with a session and message before sending it once.
 //
 // Pending permission/question lists supplement SSE because events are not
-// replayed after disconnect. No API in this package grants native permissions,
-// answers questions, installs software, runs Git or creates credentials.
+// replayed after disconnect. This package never grants permissions, installs software, runs Git or creates credentials.
+// Explicit question replies require a caller-provided durable at-most-once fence.
 package opencode

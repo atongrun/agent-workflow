@@ -30,6 +30,10 @@ type fakeNative struct {
 	creates, prompts, aborts, streams   int
 	dropPrompt, dropCreate, emptyPrompt bool
 	failCreate                          bool
+	questionReplies                     int
+	questionReplyStatus                 int
+	dropQuestionReply                   bool
+	afterQuestionReply                  func()
 	lastModel                           *opencode.ModelSelection
 }
 
@@ -121,6 +125,48 @@ func (f *fakeNative) serve(w http.ResponseWriter, r *http.Request) {
 			out = append(out, s)
 		}
 		respond(out)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/question/") && strings.HasSuffix(r.URL.Path, "/reply") && r.Method == "POST" {
+		if f.questionReplyStatus != 0 {
+			http.Error(w, "native question rejection", f.questionReplyStatus)
+			return
+		}
+		qid := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/question/"), "/reply")
+		var body struct {
+			Answers [][]string `json:"answers"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "bad JSON", 400)
+			return
+		}
+		found := false
+		kept := []json.RawMessage{}
+		for _, raw := range f.questions {
+			var q opencode.Question
+			_ = json.Unmarshal(raw, &q)
+			if q.ID == qid {
+				found = true
+			} else {
+				kept = append(kept, raw)
+			}
+		}
+		if !found {
+			http.Error(w, "expired question", 404)
+			return
+		}
+		f.questions = kept
+		f.questionReplies++
+		if f.afterQuestionReply != nil {
+			f.afterQuestionReply()
+		}
+		if f.dropQuestionReply {
+			f.dropQuestionReply = false
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		respond(true)
 		return
 	}
 	bits := strings.Split(strings.Trim(r.URL.Path, "/"), "/")

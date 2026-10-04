@@ -138,7 +138,10 @@ func New(c Config) (*Server, error) {
 			}
 		}
 		for _, r := range state.Requests {
-			if r.Status == "accepted" {
+			if r.Operation == "execution_result" && r.Status == "accepted" && !r.Dispatched {
+				r.Status = "queued"
+				r.ProcessID = ""
+			} else if r.Status == "accepted" {
 				r.Status = "needs_verification"
 			}
 		}
@@ -149,6 +152,7 @@ func New(c Config) (*Server, error) {
 		return nil, err
 	}
 	s.recoverExecutions()
+	s.launch(s.watchExecutionResults)
 	return s, nil
 }
 func (s *Server) launch(fn func()) bool {

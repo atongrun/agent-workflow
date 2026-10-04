@@ -351,6 +351,10 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 func (s *Server) prompt(requestID, taskID, role, text string) {
 	lock := s.piDispatchLock(taskID, role)
 	lock.Lock()
+	if receipt := s.store.Snapshot().Requests[requestID]; receipt != nil && receipt.Operation == "execution_result" && receipt.Status == "cancelled" {
+		lock.Unlock()
+		return
+	}
 	if s.restoreCancelledPrompt(requestID, taskID, role, text) {
 		lock.Unlock()
 		return
@@ -358,7 +362,7 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 	saved := s.store.Snapshot().Requests[requestID]
 	var c *pi.Client
 	var err error
-	if saved != nil && saved.SessionID != "" {
+	if saved != nil && saved.SessionID != "" && saved.ProcessID != "" {
 		c, err = s.boundPiClient(taskID, piBinding{role, saved.SessionID, saved.ProcessID})
 	} else {
 		c, err = s.client(taskID, role)
@@ -377,8 +381,13 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 			if pendingPiControl(st, ref) {
 				return fail("pi_control_pending", "Pi control has fenced this prompt", 409)
 			}
-			if req.SessionID != "" && !bindingMatches(ref, piBinding{role, req.SessionID, req.ProcessID}) {
+			if req.SessionID != "" && (req.SessionID != ref.ID || req.ProcessID != "" && !bindingMatches(ref, piBinding{role, req.SessionID, req.ProcessID})) {
 				return fail("stale_pi_session", "Pi session changed before message dispatch", 409)
+			}
+			if req.Operation == "execution_result" {
+				if t.DeletedAt != nil || t.Execution == nil || !resultTerminal(t) || t.Status != "reporting" || t.Execution.ResultReview == nil || t.Execution.ResultReview.RequestID != requestID || remainingSeconds(t) <= 0 {
+					return fail("result_unavailable", "result review binding or budget changed before dispatch", 409)
+				}
 			}
 			binding = piBinding{role, ref.ID, ref.ProcessID}
 			startSettled = ref.Settled
@@ -397,7 +406,7 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 		_ = s.store.Update(func(st *core.State) error {
 			t := st.Tasks[taskID]
 			req := st.Requests[requestID]
-			if req == nil || req.Status == "cancelled" {
+			if req == nil || req.Status == "cancelled" || req.Operation == "execution_result" && req.Status == "completed" {
 				return nil
 			}
 			req.Status = "failed"
@@ -457,7 +466,7 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 		}
 		refreshPending(ref)
 		if !ref.Busy && !ref.Pending {
-			if req := st.Requests[requestID]; req != nil {
+			if req := st.Requests[requestID]; req != nil && !(req.Operation == "execution_result" && req.Status == "completed") {
 				req.Status = "settled"
 			}
 		}

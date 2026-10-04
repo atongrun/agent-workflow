@@ -445,7 +445,7 @@ func TestDefaultSinglePiCompletionDoesNotCreateReviewer(t *testing.T) {
 		cur.Execution = &core.Execution{RequestID: "run", JobID: "job", Status: "running"}
 		return nil
 	})
-	s.applyJob(task.ID, &node.Job{ID: "job", TaskID: task.ID, RequestID: "run", Status: "completed", SessionID: "native-executor", Evidence: []node.Evidence{{Kind: "tool", MessageID: "msg_native", CallID: "tool_native", Content: "actual native test output"}}}, 0)
+	s.applyJob(task.ID, &node.Job{ID: "job", TaskID: task.ID, RequestID: "run", Status: "completed", SessionID: "native-executor", Evidence: fixtureResultEvidence(task.Branch)}, 0)
 	cur, _ := s.task(task.ID)
 	if cur.Status != "reporting" || cur.Phase != "execution" || cur.Sessions["reviewer"] != nil {
 		t.Fatalf("default execution created review gate: %+v", cur)
@@ -454,7 +454,7 @@ func TestDefaultSinglePiCompletionDoesNotCreateReviewer(t *testing.T) {
 	if w.Code != 409 {
 		t.Fatalf("default task accepted separate review: %d", w.Code)
 	}
-	body := `{"requestId":"finish","executionRequestId":"run","verdict":"done","summary":"Native tool evidence inspected","findings":[]}`
+	body := string(mustJSON(extensionInput{RequestID: "finish", ExecutionRequestID: "run", Verdict: "done", Summary: "Synthetic native tool fixture assessed", Findings: []string{}, EvidenceChecks: fixtureEvidenceChecks()}))
 	req := httptest.NewRequest("POST", "/internal/tasks/"+task.ID+"/finish", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+s.scopedToken(task.ID, "architect"))
 	req.Header.Set("X-AWF-Role", "architect")

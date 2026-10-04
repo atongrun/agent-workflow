@@ -48,10 +48,19 @@ type Budget struct {
 	ActiveSince *time.Time `json:"activeSince,omitempty"`
 }
 type Evidence struct {
-	Kind     string `json:"kind"`
-	Content  string `json:"content"`
-	Source   string `json:"source"`
-	Verified bool   `json:"verified"`
+	Tool      string          `json:"tool,omitempty"`
+	Status    string          `json:"status,omitempty"`
+	MessageID string          `json:"messageId,omitempty"`
+	CallID    string          `json:"callId,omitempty"`
+	SessionID string          `json:"sessionId,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	Output    string          `json:"output,omitempty"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	Truncated bool            `json:"truncated,omitempty"`
+	Kind      string          `json:"kind"`
+	Content   string          `json:"content"`
+	Source    string          `json:"source"`
+	Verified  bool            `json:"verified"`
 }
 type ExecutionTarget struct {
 	Revision     int    `json:"revision"`
@@ -61,7 +70,27 @@ type ExecutionTarget struct {
 	RepositoryID string `json:"repositoryId,omitempty"`
 }
 
+// EvidenceChecks are traceable same-Pi assessments, never independent proof.
+type EvidenceCheck struct {
+	Kind      string   `json:"kind"`
+	Status    string   `json:"status"`
+	Sources   []string `json:"sources"`
+	RemoteSHA string   `json:"remoteSha,omitempty"`
+	Notes     string   `json:"notes,omitempty"`
+}
+type ResultReview struct {
+	RequestID             string          `json:"requestId"`
+	ExecutionRequestID    string          `json:"executionRequestId"`
+	SessionID             string          `json:"sessionId"`
+	NativeSessionID       string          `json:"nativeSessionId"`
+	Status                string          `json:"status"`
+	Verdict               string          `json:"verdict,omitempty"`
+	EvidenceChecks        []EvidenceCheck `json:"evidenceChecks"`
+	IndependentlyVerified bool            `json:"independentlyVerified"`
+	Error                 string          `json:"error,omitempty"`
+}
 type Execution struct {
+	ResultReview       *ResultReview     `json:"resultReview,omitempty"`
 	Target             *ExecutionTarget  `json:"target,omitempty"`
 	PendingPermissions []json.RawMessage `json:"pendingPermissions,omitempty"`
 	PendingQuestions   []json.RawMessage `json:"pendingQuestions,omitempty"`
@@ -90,12 +119,13 @@ type Review struct {
 	ExecutionRequestID string    `json:"executionRequestId"`
 }
 type Completion struct {
-	Verdict            string    `json:"verdict"`
-	Summary            string    `json:"summary"`
-	Findings           []string  `json:"findings"`
-	At                 time.Time `json:"at"`
-	SessionID          string    `json:"sessionId"`
-	ExecutionRequestID string    `json:"executionRequestId"`
+	EvidenceChecks     []EvidenceCheck `json:"evidenceChecks,omitempty"`
+	Verdict            string          `json:"verdict"`
+	Summary            string          `json:"summary"`
+	Findings           []string        `json:"findings"`
+	At                 time.Time       `json:"at"`
+	SessionID          string          `json:"sessionId"`
+	ExecutionRequestID string          `json:"executionRequestId"`
 }
 
 // RestrictedPlanning keeps model-only planning separate from execution workspaces.

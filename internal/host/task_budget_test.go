@@ -310,6 +310,8 @@ func TestBudgetSpentLimitsPreventFurtherWork(t *testing.T) {
 			planFixture(t, s, task.ID, true)
 			if err := s.store.Update(func(st *core.State) error {
 				x := st.Tasks[task.ID]
+				x.Execution.Status = "completed"
+				x.Execution.Error = ""
 				x.Completion = &core.Completion{Verdict: "needs_changes", ExecutionRequestID: "prior"}
 				return nil
 			}); err != nil {
@@ -326,8 +328,13 @@ func TestBudgetSpentLimitsPreventFurtherWork(t *testing.T) {
 			_, err := s.reserve("spent-rework", task.ID, "rework", nil, func(st *core.State) error {
 				return s.prepareExecution(st, st.Tasks[task.ID], "spent-rework", 1, true, nil)
 			})
-			if err == nil || !reflect.DeepEqual(before, s.store.Snapshot()) {
-				t.Fatal("spent limits allowed rework or reset state")
+			want := "budget_exhausted"
+			if reworks == 0 {
+				want = "rework_limit"
+			}
+			api, ok := err.(*apiError)
+			if !ok || api.Code != want || !reflect.DeepEqual(before, s.store.Snapshot()) {
+				t.Fatalf("spent limit did not fail for %s or reset state: %v", want, err)
 			}
 		})
 	}

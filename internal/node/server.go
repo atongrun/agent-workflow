@@ -238,6 +238,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.get(w, r, bits[0])
 			return
 		}
+		if len(bits) == 2 && bits[1] == "questions" && r.Method == "GET" {
+			s.jobQuestions(w, r, bits[0])
+			return
+		}
+		if len(bits) == 3 && bits[1] == "question-replies" && r.Method == "GET" {
+			s.questionReceipt(w, r, bits[0], bits[2])
+			return
+		}
+		if len(bits) == 4 && bits[1] == "questions" && bits[3] == "reply" && r.Method == "POST" {
+			s.replyQuestion(w, r, bits[0], bits[2])
+			return
+		}
 		if len(bits) == 2 && bits[1] == "cancel" && r.Method == "POST" {
 			s.cancelJob(w, r, bits[0])
 			return

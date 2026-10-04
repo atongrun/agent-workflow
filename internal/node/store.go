@@ -79,6 +79,26 @@ func (s *Server) load() error {
 		default:
 			return fmt.Errorf("durable job %s has unknown submission state", r.Job.ID)
 		}
+		if len(r.QuestionReplies) > 128 {
+			return fmt.Errorf("durable job %s exceeds question receipt limit", r.Job.ID)
+		}
+		for key, receipt := range r.QuestionReplies {
+			if !validQuestionReceipt(receipt) || key != receipt.Reply.RequestID || !questionRequestPattern.MatchString(key) || receipt.Hash == "" || receipt.Reply.JobID != r.Job.ID || receipt.Reply.TaskID != r.Job.TaskID || receipt.Reply.ExecutionRequestID != r.Job.RequestID || receipt.Reply.SessionID != r.Job.SessionID {
+				return fmt.Errorf("durable job %s has invalid question receipt", r.Job.ID)
+			}
+			switch receipt.Reply.Status {
+			case "completed", "needs_verification":
+			case "failed":
+				if receipt.Reply.HTTPStatus != 400 && receipt.Reply.HTTPStatus != 409 {
+					return fmt.Errorf("durable job %s has invalid question failure receipt", r.Job.ID)
+				}
+			case "dispatching":
+				receipt.Reply.Status = "needs_verification"
+				receipt.Reply.Error = "node restarted during native reply; do not resend"
+			default:
+				return fmt.Errorf("durable job %s has unknown question receipt state", r.Job.ID)
+			}
+		}
 		s.jobs[r.Job.ID] = &r
 	}
 	return nil

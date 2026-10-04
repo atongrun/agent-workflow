@@ -36,13 +36,14 @@ func (s *Server) internalAuth(h http.Handler) http.Handler {
 }
 
 type extensionInput struct {
-	LifecycleRevision  int      `json:"lifecycleRevision,omitempty"`
-	RequestID          string   `json:"requestId"`
-	Content            string   `json:"content,omitempty"`
-	Verdict            string   `json:"verdict,omitempty"`
-	Summary            string   `json:"summary,omitempty"`
-	Findings           []string `json:"findings,omitempty"`
-	ExecutionRequestID string   `json:"executionRequestId,omitempty"`
+	EvidenceChecks     []core.EvidenceCheck `json:"evidenceChecks,omitempty"`
+	LifecycleRevision  int                  `json:"lifecycleRevision,omitempty"`
+	RequestID          string               `json:"requestId"`
+	Content            string               `json:"content,omitempty"`
+	Verdict            string               `json:"verdict,omitempty"`
+	Summary            string               `json:"summary,omitempty"`
+	Findings           []string             `json:"findings,omitempty"`
+	ExecutionRequestID string               `json:"executionRequestId,omitempty"`
 }
 
 func (s *Server) internalAction(w http.ResponseWriter, r *http.Request) {
@@ -91,8 +92,8 @@ func (s *Server) internalAction(w http.ResponseWriter, r *http.Request) {
 			if role != "architect" || t.Settings.Reviewer == "pi" {
 				return fail("wrong_role", "same-Pi completion is available only to the task Pi", 403)
 			}
-			if t.Execution == nil || t.Execution.Status != "completed" || in.ExecutionRequestID != t.Execution.RequestID || t.Status != "reporting" {
-				return fail("stale_execution", "finish must reference the current completed execution", 409)
+			if t.Execution == nil || !resultTerminal(t) || in.ExecutionRequestID != t.Execution.RequestID || t.Status != "reporting" {
+				return fail("stale_execution", "finish must reference the current terminal execution", 409)
 			}
 			if in.Verdict != "done" && in.Verdict != "needs_changes" {
 				return fail("invalid_verdict", "verdict must be done or needs_changes", 400)
@@ -100,13 +101,56 @@ func (s *Server) internalAction(w http.ResponseWriter, r *http.Request) {
 			if strings.TrimSpace(in.Summary) == "" {
 				return fail("invalid_summary", "execution summary required", 400)
 			}
-			if in.Verdict == "done" && len(t.Execution.Evidence) == 0 {
-				return fail("evidence_missing", "completion requires native execution evidence", 409)
+			if in.Verdict == "done" && t.Execution.Status != "completed" {
+				return fail("execution_not_complete", "failed or cancelled execution cannot be Done", 409)
 			}
-			result := core.Completion{Verdict: in.Verdict, Summary: in.Summary, Findings: in.Findings, At: time.Now().UTC(), SessionID: t.Sessions["architect"].ID, ExecutionRequestID: t.Execution.RequestID}
+			if err := validateEvidenceChecks(t, in.EvidenceChecks, in.Verdict == "done"); err != nil {
+				return err
+			}
+			checks := in.EvidenceChecks
+			if len(checks) == 0 {
+				checks = unknownEvidenceChecks()
+			}
+			if t.Execution.ResultReview == nil {
+				t.Execution.ResultReview = newResultReview(t)
+			}
+			review := t.Execution.ResultReview
+			if t.Sessions["architect"] == nil || review.SessionID != t.Sessions["architect"].ID {
+				return fail("stale_pi_session", "result review must remain in the original Pi session", 409)
+			}
+			review.Status = "reviewed"
+			review.Verdict = in.Verdict
+			review.EvidenceChecks = checks
+			review.IndependentlyVerified = false
+			review.Error = ""
+			// A same-session verdict may arrive before the queued result prompt. Close
+			// that unsent receipt so it cannot spend budget or block later lifecycle.
+			if receipt := st.Requests[review.RequestID]; receipt != nil {
+				if receipt.TaskID != t.ID || receipt.Operation != "execution_result" || receipt.SessionID != review.SessionID {
+					return fail("stale_pi_session", "result receipt binding changed", 409)
+				}
+				if !receipt.Dispatched && (receipt.Status == "queued" || receipt.Status == "accepted") {
+					receipt.Status = "cancelled"
+					receipt.Error = "same-session verdict arrived before result delivery"
+				} else if receipt.Dispatched {
+					// A valid matching verdict resolves uncertain delivery without replay.
+					receipt.Status = "completed"
+					receipt.Error = ""
+					receipt.Result = mustJSON(map[string]string{"resolvedBy": in.RequestID, "executionRequestId": t.Execution.RequestID, "verdict": in.Verdict})
+				}
+				settleCommand(t.Sessions["architect"], receipt.ID)
+			}
+			result := core.Completion{EvidenceChecks: checks, Verdict: in.Verdict, Summary: in.Summary, Findings: in.Findings, At: time.Now().UTC(), SessionID: t.Sessions["architect"].ID, ExecutionRequestID: t.Execution.RequestID}
 			t.Completion = &result
 			t.CompletionHistory = append(t.CompletionHistory, result)
 			t.Status = in.Verdict
+			if t.Execution.Status == "failed" {
+				t.Status = "blocked"
+			}
+			if t.Execution.Status == "cancelled" {
+				t.Status = "cancelled"
+			}
+			core.Emit(st, id, "execution.review", review)
 			if in.Verdict == "done" {
 				t.Phase = "done"
 			}
