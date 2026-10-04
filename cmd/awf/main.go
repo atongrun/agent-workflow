@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/atongrun/agent-workflow/internal/host"
+	"github.com/atongrun/agent-workflow/internal/hostinstall"
 	"github.com/atongrun/agent-workflow/internal/lifecycle"
 )
 
@@ -34,9 +35,11 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: awf host --config host.json | awf request METHOD /v1/path [JSON] | awf doctor [--json] | awf install | awf init | awf pair [--status | --retry] | awf start | awf stop | awf update [--version vX.Y.Z] | awf version")
+		return fmt.Errorf("usage: awf host-install plan|doctor --manifest FILE [--json] | awf host --config host.json | awf request METHOD /v1/path [JSON] | awf doctor [--json] | awf install | awf init | awf pair [--status | --retry] | awf start | awf stop | awf update [--version vX.Y.Z] | awf version")
 	}
 	switch args[0] {
+	case "host-install":
+		return hostinstall.Run(args[1:], os.Stdout)
 	case "host":
 		flags := flag.NewFlagSet("host", flag.ContinueOnError)
 		file := flags.String("config", "host.json", "Host configuration path")

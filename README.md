@@ -56,3 +56,11 @@ A reviewed release, explicit publication approval, and native Windows acceptance
 are still required. See [fresh-install design and acceptance](docs/fresh-install.md)
 and [the Windows CLI contract](docs/windows-cli.md).
 `awf update --all` remains unimplemented. No new runtime or hosting is required.
+
+## Linux Host installation planning
+
+The independent Linux Host installer first slice exposes read-only
+`awf host-install plan|doctor --manifest FILE [--json]`. Its internal download and
+verification core only stages files. No Linux channel, one-line installer, native
+installation or service activation is published by this slice. See the
+[Linux manifest, staging and pending acceptance contract](docs/linux-host-install.md).
