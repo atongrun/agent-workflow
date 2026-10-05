@@ -1,10 +1,40 @@
 # Public native Ubuntu test
 
-## Current diagnostic rerun
+## Approved disposable-VM parent preparation
+
+The diagnostic run [37338037770](https://github.com/atongrun/agent-workflow/actions/runs/37338037770)
+proved `/opt` was a physical root:root directory with mode `0777`. Only the group
+and other write conditions failed. On 2026-10-05 16:14 UTC the user explicitly
+approved temporarily changing only this disposable VM's `/opt` to `0755`,
+running the native acceptance and scoped cleanup, then restoring `0777`.
+
+`native_ci_parent.py --prepare-ci-opt` requires that exact initial metadata;
+different metadata stops the run. A root-private write-ahead receipt records
+the original device/inode/type and mode before an `fchmod` on a verified
+directory descriptor. There is no recursive chmod, chown, child permission
+change or installer-check exception. The wrapper's outer finally restores the
+same directory after the harness's cleanup attempt, including preflight or
+native failures. An `always()` step retries only existing ledger-owned cleanup
+and that same parent restoration; it never adopts a new parent. When a native
+ownership ledger remains after the first attempt restored `0777`, the retry
+revalidates the same private receipt/inode and temporarily reacquires `0755`
+before path-based cleanup, then restores `0777` in its finally. With no remaining
+native control it performs no second permission adjustment. A successful
+restoration verifies the original identity, root:root ownership and `0777`.
+Unexpected identity/mode or unknown control contents block changes and retain
+the private receipt. A hard VM/job termination without receipts remains
+unverified restoration, not a success claim.
+
+The current native job has a 30-minute timeout. The wrapper is restricted to
+the approved hosted Ubuntu 24.04 branch/job. The immutable RC1 installer and
+assets remain unchanged. Actual Pi update, provider authentication and model
+calls are outside this approval.
+
+## Completed diagnostic rerun
 
 The first real run 37335670384 reached terminal Failure before installation:
-`/opt` failed the parent trust prerequisite. The current workflow explicitly
-uses `--diagnostic-only`, with a five-minute job timeout. Even a clean runner
+`/opt` failed the parent trust prerequisite. The diagnostic workflow explicitly
+used `--diagnostic-only`, with a five-minute job timeout. Even a clean runner
 cannot proceed into installation in this mode. It collects only `lstat`/`stat`
 UID, GID, octal mode, directory/symlink status for `/opt` and `/`, plus the exact
 published Go predicate and failed terms. Group ID is metadata, not a required
@@ -13,9 +43,10 @@ runtime download or provider data is part of this diagnostic run. Its workflow
 has no cleanup invocation, since diagnostics create no native ownership ledger
 or installation. Native acceptance remains false; a failed prerequisite retains
 a failed job result.
-The parent explicitly authorized this one diagnostic correction/run.
+The parent explicitly authorized that single diagnostic correction/run, now
+completed. The read-only diagnostic option remains available separately.
 
-## Native harness retained for later permitted execution
+## Native acceptance harness
 
 The user approved this GitHub Actions acceptance on 2026-10-05 15:26 UTC.
 The independent branch is `awf/linux-native-ci-test-v1`; push on that branch in
@@ -23,10 +54,9 @@ this repository is the only trigger. No default branch, PR, self-hosted runner,
 container, release write or model/provider secret is used. Only `contents: read`
 is granted, checkout credentials are not persisted, and official actions are
 pinned to the previously verified full SHAs. The old release workflow does not
-match this branch. The retained full acceptance plan has a 30-minute budget,
+match this branch. The full acceptance plan has a 30-minute budget,
 with an internal 22-minute command budget, eight-minute installation and bounded
-lifecycle/cleanup calls. The current diagnostic workflow is limited to five
-minutes and cannot execute this sequence.
+lifecycle/cleanup calls.
 
 One standard `ubuntu-24.04` VM is used first. Actual root/PID1 systemd, glibc,
 cgroup v2, required root capabilities, storage, fresh fixed paths, units,

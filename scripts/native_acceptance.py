@@ -443,7 +443,8 @@ def previous_report(path, default):
         require(payload['sourceCommit']==probe.SOURCE and payload['workflowCommit']==os.environ['GITHUB_SHA'],'previous report identity differs')
         allowed={'schema','sourceCommit','version','workflowCommit','stages','healthRounds','acceptancePassed','cleanup',
                  'modelCalls','providerAuthenticationPerformed','piUpdateExecuted','CloudConeAcceptance',
-                 'preflight','failure','publicAssetsVerified','preinstalledRuntimePreserved','resources'}
+                 'preflight','failure','publicAssetsVerified','preinstalledRuntimePreserved','resources',
+                 'parentPreparation','parentRestoration'}
         default.update({key:value for key,value in payload.items() if key in allowed})
     except Exception:
         default['failure']='previous public report unavailable; cleanup uses private ledger only'
