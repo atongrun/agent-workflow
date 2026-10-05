@@ -45,7 +45,8 @@ This explicitly private provenance route does not validate a public release/tag,
 download progress or bootstrap E2E. The production bootstrap/Go installer retain
 all public source checks, and the Linux public channel remains unpublished.
 
-After separately approved extraction, the installation invocation has this form:
+After extraction within that same approved window, the installation invocation
+has this form:
 
 ```sh
 systemd-run --scope --unit=awf-acceptance-install \
