@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -26,7 +27,7 @@ func loadPrivateNativeInput(dir, expected string, identity buildIdentity) (Manif
 	var m Manifest
 	var in RuntimeInput
 	bad := errors.New("private native input ownership, bytes or candidate identity mismatch")
-	if !digestPattern.MatchString(expected) || validateSandbox(dir) != nil {
+	if !digestPattern.MatchString(expected) || validatePrivateNativeDirectory(dir) != nil {
 		return m, in, bad
 	}
 	root, err := os.OpenRoot(dir)
@@ -90,6 +91,32 @@ func loadPrivateNativeInput(dir, expected string, identity buildIdentity) (Manif
 	return m, in, nil
 }
 
+func validatePrivateNativeDirectory(dir string) error {
+	bad := errors.New("private native input requires trusted same-owner ancestors beneath sticky /tmp")
+	if validateSandbox(dir) != nil {
+		return bad
+	}
+	for current := dir; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil || !info.IsDir() {
+			return bad
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return bad
+		}
+		if current == "/tmp" {
+			if info.Mode()&os.ModeSticky == 0 || (os.Getuid() == 0 && st.Uid != 0) {
+				return bad
+			}
+			return nil
+		}
+		if int(st.Uid) != os.Getuid() || info.Mode().Perm()&0077 != 0 {
+			return bad
+		}
+	}
+}
+
 func TestPrivateNativeAcceptance(t *testing.T) {
 	if *privateNativeInput == "" {
 		t.Skip("private candidate input and explicit manifest approval not supplied")
@@ -144,6 +171,20 @@ func TestPrivateNativeAcceptance(t *testing.T) {
 
 func TestPrivateNativeInputRefusesUnapprovedOrUnsafeInputs(t *testing.T) {
 	dir := privateParent(t)
+	if err := validatePrivateNativeDirectory(dir); err != nil {
+		t.Fatal(err)
+	}
+	parent := privateParent(t)
+	nested := filepath.Join(parent, "input")
+	if err := os.Mkdir(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePrivateNativeDirectory(nested); err == nil {
+		t.Fatal("renameable input ancestor admitted")
+	}
 	for _, expected := range []string{"", "guessed", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
 		if _, _, err := loadPrivateNativeInput(dir, expected, NativeBuildIdentity()); err == nil {
 			t.Fatal("unapproved or missing manifest admitted")
