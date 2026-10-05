@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Meaningful native-harness boundary tests with no root/system mutation."""
 import copy
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -13,6 +15,45 @@ import native_acceptance as native
 
 
 class NativeHarnessTests(unittest.TestCase):
+    def test_diagnostic_mode_never_enters_native_code_even_on_pass(self):
+        for passed in (True,False):
+            with self.subTest(preflightPassed=passed), \
+                 patch('sys.argv',['native','--expected-release','24.04','--report','/tmp/report.json','--diagnostic-only']), \
+                 patch.dict(native.os.environ,{'GITHUB_SHA':'c'*40},clear=True), \
+                 patch.object(native.probe,'ci_guard'), \
+                 patch.object(native.probe,'inspect',return_value={'preflightPassed':passed,'nativeInstallationPerformed':False}), \
+                 patch.object(native,'CONTROL') as control, \
+                 patch.object(native,'Acceptance') as acceptance, \
+                 patch.object(native,'capture_existing_runtime') as baseline, \
+                 patch.object(native.probe,'run') as command, \
+                 patch.object(native.urllib.request,'urlopen') as download, \
+                 patch.object(native,'report_write') as save, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(native.main(),0 if passed else 1)
+                self.assertEqual(control.method_calls,[])
+                acceptance.assert_not_called()
+                baseline.assert_not_called()
+                command.assert_not_called()
+                download.assert_not_called()
+                save.assert_called_once()
+                report=save.call_args.args[1]
+                self.assertTrue(report['diagnosticOnly'])
+                self.assertFalse(report['acceptancePassed'])
+                self.assertFalse(report['preflight']['nativeInstallationPerformed'])
+                self.assertEqual(report['stages'],[])
+                self.assertEqual(report['healthRounds'],[])
+                self.assertEqual(report['cleanup'],dict(passed=True,noSystemMutation=True))
+
+    def test_diagnostic_and_cleanup_modes_cannot_be_combined(self):
+        with patch('sys.argv',['native','--expected-release','24.04','--report','/tmp/report.json','--diagnostic-only','--cleanup-only']), \
+             patch.object(native.probe,'ci_guard'), \
+             patch.object(native.probe,'inspect') as inspect, \
+             patch.object(native,'CONTROL') as control:
+            with self.assertRaisesRegex(native.TestFailure,'exclusive'):
+                native.main()
+            inspect.assert_not_called()
+            self.assertEqual(control.method_calls,[])
+
     def runner(self,ledger):
         runner=native.Acceptance.__new__(native.Acceptance)
         runner.report={}

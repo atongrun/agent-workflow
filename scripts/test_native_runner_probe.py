@@ -3,9 +3,12 @@
 import contextlib
 import copy
 import io
+import json
 from pathlib import Path
+import stat
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import probe_native_runner as probe
 
@@ -16,6 +19,57 @@ class RunnerProbeTests(unittest.TestCase):
                       RUNNER_OS='Linux',GITHUB_REPOSITORY=probe.REPOSITORY,
                       GITHUB_REF='refs/heads/'+probe.BRANCH,GITHUB_EVENT_NAME='push',
                       GITHUB_SHA='c'*40)
+
+    def test_go_parent_predicate_distinguishes_write_bits_owner_and_type(self):
+        info=SimpleNamespace(st_uid=0,st_gid=1234,st_mode=stat.S_IFDIR|0o755)
+        self.assertTrue(probe.parent_predicate(info)['passed'])
+        for uid,mode,failed in [
+            (0,stat.S_IFDIR|0o777,{'noGroupWrite','noOtherWrite'}),
+            (1001,stat.S_IFDIR|0o755,{'rootOwned'}),
+            (0,stat.S_IFDIR|0o2755,{'noSetGID'}),
+            (0,stat.S_IFDIR|0o4755,{'noSetUID'}),
+            (0,stat.S_IFREG|0o755,{'directory'}),
+            (0,stat.S_IFLNK|0o777,{'noGroupWrite','noOtherWrite','notPhysicalSymlink','directory'}),
+        ]:
+            with self.subTest(uid=uid,mode=oct(mode)):
+                info.st_uid,info.st_mode=uid,mode
+                result=probe.parent_predicate(info)
+                self.assertFalse(result['passed'])
+                self.assertEqual(set(result['failedPredicates']),failed)
+
+    def test_diagnostics_keep_lstat_separate_and_do_not_expose_link_target(self):
+        link=SimpleNamespace(st_uid=0,st_gid=42,st_mode=stat.S_IFLNK|0o777)
+        directory=SimpleNamespace(st_uid=0,st_gid=0,st_mode=stat.S_IFDIR|0o755)
+        with patch.object(probe,'Path') as paths:
+            opt=paths.return_value
+            opt.lstat.side_effect=[link,directory]
+            opt.stat.return_value=directory
+            opt.resolve.side_effect=['/private-target-never-report','/']
+            report=probe.opt_parent_diagnostics()
+            self.assertEqual([c.args[0] for c in paths.call_args_list],['/opt','/'])
+            self.assertEqual(opt.method_calls,[call.lstat(),
+                call.resolve(strict=True),call.stat(),
+                call.lstat(),call.resolve(strict=True),call.stat()])
+        row=report['paths'][0]
+        self.assertTrue(row['lstat']['physicalSymlink'])
+        self.assertFalse(row['stat']['physicalSymlink'])
+        self.assertEqual(row['lstat']['gid'],42)
+        self.assertEqual(row['lstat']['octalMode'],'0777')
+        self.assertFalse(row['goParentTrustPredicate']['passed'])
+        self.assertFalse(row['physicalPathMatchesRequestedPath'])
+        self.assertNotIn('/private-target-never-report',json.dumps(report))
+        self.assertFalse(report['mutationsPerformed'])
+
+    def test_metadata_error_is_sanitized_and_does_not_skip_root(self):
+        directory=SimpleNamespace(st_uid=0,st_gid=0,st_mode=stat.S_IFDIR|0o755)
+        with patch.object(probe,'Path') as paths:
+            paths.return_value.lstat.side_effect=[FileNotFoundError(2,'private-error-detail'),directory]
+            paths.return_value.stat.return_value=directory
+            paths.return_value.resolve.return_value='/'
+            report=probe.opt_parent_diagnostics()
+        self.assertEqual(report['paths'][0]['metadataError'],dict(type='FileNotFoundError',errno=2))
+        self.assertTrue(report['paths'][1]['goParentTrustPredicate']['passed'])
+        self.assertNotIn('private-error-detail',json.dumps(report))
 
     def test_non_hosted_pr_or_unapproved_branch_is_refused(self):
         probe.ci_guard(self.env,0,0)

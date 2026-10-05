@@ -105,6 +105,51 @@ def trusted(path, directory=False):
             raise ValueError('fixed executable unavailable: '+str(item))
 
 
+def parent_predicate(info):
+    """The published Go trusted(parent, true) condition, including special bits."""
+    tests = dict(rootOwned=info.st_uid == 0,
+                 noGroupWrite=not bool(info.st_mode & stat.S_IWGRP),
+                 noOtherWrite=not bool(info.st_mode & stat.S_IWOTH),
+                 notPhysicalSymlink=not stat.S_ISLNK(info.st_mode),
+                 noSetUID=not bool(info.st_mode & stat.S_ISUID),
+                 noSetGID=not bool(info.st_mode & stat.S_ISGID),
+                 directory=stat.S_ISDIR(info.st_mode))
+    return dict(passed=all(tests.values()), predicates=tests,
+                failedPredicates=[name for name, passed in tests.items() if not passed])
+
+
+def opt_parent_diagnostics():
+    # Exactly /opt and its sole ancestor /. No directory listings, environment,
+    # content, credentials or user-controlled path arguments are collected.
+    rows=[]
+    for name in ('/opt','/'):
+        path=Path(name)
+        def describe(info):
+            return dict(uid=info.st_uid,gid=info.st_gid,
+                        octalMode=format(stat.S_IMODE(info.st_mode),'04o'),
+                        directory=stat.S_ISDIR(info.st_mode),
+                        physicalSymlink=stat.S_ISLNK(info.st_mode))
+        row=dict(path=name)
+        try:
+            link_info=path.lstat()
+            row['lstat']=describe(link_info)
+            row['goParentTrustPredicate']=parent_predicate(link_info)
+            row['physicalPathMatchesRequestedPath']=str(path.resolve(strict=True))==name
+            row['stat']=describe(path.stat())
+        except OSError as error:
+            row['metadataError']=dict(type=type(error).__name__,errno=error.errno)
+        rows.append(row)
+    return dict(paths=rows,sourceCommit=SOURCE,
+                sourceLocation='internal/hostinstall/native_linux.go:160',
+                predicateLocation='internal/hostinstall/native_linux.go:166',
+                parentTraversalLocation='internal/hostinstall/native_linux.go:171',
+                expectedSupportedMachine=dict(rootOwnedDirectory=True,
+                    groupAndOtherWriteBitsClear=True,physicalSymlink=False,
+                    setUIDAndSetGIDBitsClear=True,exampleOctalMode='0755',
+                    gidIsMetadataNotATrustPredicate=True),
+                mutationsPerformed=False)
+
+
 def run(*args):
     result = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, timeout=20,
@@ -191,6 +236,7 @@ def inspect(expected_release):
                   checks={}, preflightPassed=False, nativeInstallationPerformed=False,
                   actualNamespaceMountExecutionVerified=False, nativeAcceptance=False,
                   CloudConeAcceptance=False, modelCalls=0, piUpdateExecuted=False)
+    report['parentDiagnostics']=opt_parent_diagnostics()
     checks = report['checks']
     errors = []
 

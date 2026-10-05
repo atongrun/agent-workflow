@@ -463,8 +463,10 @@ def main():
     parser.add_argument('--expected-release',required=True,choices=('22.04','24.04'))
     parser.add_argument('--report',required=True,type=Path)
     parser.add_argument('--cleanup-only',action='store_true')
+    parser.add_argument('--diagnostic-only',action='store_true')
     args=parser.parse_args()
     probe.ci_guard(os.environ,os.getuid(),os.geteuid())
+    require(not (args.cleanup_only and args.diagnostic_only),'diagnostic and cleanup modes are exclusive')
     report=dict(schema=1,sourceCommit=probe.SOURCE,version=probe.RELEASE,workflowCommit=os.environ['GITHUB_SHA'],
                 stages=[],healthRounds=[],acceptancePassed=False,cleanup={'passed':False},
                 modelCalls=0,providerAuthenticationPerformed=False,piUpdateExecuted=False,CloudConeAcceptance=False)
@@ -487,6 +489,14 @@ def main():
             print('AWF native test: cleanup blocked; private ledger retained',flush=True)
             return 1
     report['preflight']=probe.inspect(args.expected_release)
+    if args.diagnostic_only:
+        report['diagnosticOnly']=True
+        report['cleanup']=dict(passed=True,noSystemMutation=True)
+        if not report['preflight']['preflightPassed']:
+            report['failure']='native prerequisites failed; read-only diagnostics captured'
+        report_write(args.report,report)
+        print('AWF native test: read-only diagnostics completed; no installation',flush=True)
+        return 0 if report['preflight']['preflightPassed'] else 1
     if not report['preflight']['preflightPassed']:
         report['failure']='native prerequisites failed before installation'
         report['cleanup']=dict(passed=True,noSystemMutation=True)

@@ -1,13 +1,32 @@
 # Public native Ubuntu test
 
+## Current diagnostic rerun
+
+The first real run 37335670384 reached terminal Failure before installation:
+`/opt` failed the parent trust prerequisite. The current workflow explicitly
+uses `--diagnostic-only`, with a five-minute job timeout. Even a clean runner
+cannot proceed into installation in this mode. It collects only `lstat`/`stat`
+UID, GID, octal mode, directory/symlink status for `/opt` and `/`, plus the exact
+published Go predicate and failed terms. Group ID is metadata, not a required
+root-group condition. No chmod/chown, adopted directory, namespace mutation,
+runtime download or provider data is part of this diagnostic run. Its workflow
+has no cleanup invocation, since diagnostics create no native ownership ledger
+or installation. Native acceptance remains false; a failed prerequisite retains
+a failed job result.
+The parent explicitly authorized this one diagnostic correction/run.
+
+## Native harness retained for later permitted execution
+
 The user approved this GitHub Actions acceptance on 2026-10-05 15:26 UTC.
 The independent branch is `awf/linux-native-ci-test-v1`; push on that branch in
 this repository is the only trigger. No default branch, PR, self-hosted runner,
 container, release write or model/provider secret is used. Only `contents: read`
 is granted, checkout credentials are not persisted, and official actions are
 pinned to the previously verified full SHAs. The old release workflow does not
-match this branch. The job timeout is 30 minutes, with an internal 22-minute
-command budget, eight-minute installation and bounded lifecycle/cleanup calls.
+match this branch. The retained full acceptance plan has a 30-minute budget,
+with an internal 22-minute command budget, eight-minute installation and bounded
+lifecycle/cleanup calls. The current diagnostic workflow is limited to five
+minutes and cannot execute this sequence.
 
 One standard `ubuntu-24.04` VM is used first. Actual root/PID1 systemd, glibc,
 cgroup v2, required root capabilities, storage, fresh fixed paths, units,
