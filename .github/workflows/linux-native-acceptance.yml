@@ -1,0 +1,57 @@
+name: Linux TEST ONLY native Ubuntu acceptance
+
+on:
+  push:
+    branches: [awf/linux-native-ci-test-v1]
+
+permissions: {}
+concurrency:
+  group: awf-linux-native-ci-test-v1
+  cancel-in-progress: false
+
+jobs:
+  native:
+    if: github.repository == 'atongrun/agent-workflow' && github.ref == 'refs/heads/awf/linux-native-ci-test-v1' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Test the harness safety boundaries locally
+        run: |
+          python3 scripts/test_native_runner_probe.py
+          python3 scripts/test_native_acceptance.py
+      - name: Real public bootstrap and native lifecycle in this disposable VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/awf-native-acceptance"
+          mkdir "$evidence_dir"
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow \
+            GITHUB_REF=refs/heads/awf/linux-native-ci-test-v1 \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_acceptance.py" \
+            --expected-release 24.04 --report "$evidence_dir/report.json"
+      - name: Retry only ledger-owned cleanup after failure or cancellation
+        if: always()
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow \
+            GITHUB_REF=refs/heads/awf/linux-native-ci-test-v1 \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_acceptance.py" \
+            --expected-release 24.04 --report "$RUNNER_TEMP/awf-native-acceptance/report.json" --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: native-ubuntu-24.04-${{ github.sha }}
+          path: ${{ runner.temp }}/awf-native-acceptance/report.json
+          if-no-files-found: warn
+          retention-days: 7
