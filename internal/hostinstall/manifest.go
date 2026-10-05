@@ -1,5 +1,5 @@
-// Package hostinstall plans Linux Host installation and stages verified artifacts.
-// It never installs programs, executes packages, configures accounts or services.
+// Package hostinstall verifies Linux Host artifacts and provides separate
+// read-only planning, private runtime fixtures and root-only native lifecycle.
 package hostinstall
 
 import (

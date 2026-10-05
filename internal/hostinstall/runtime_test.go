@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -235,7 +234,7 @@ func TestRuntimeOfficialOfflineFixture(t *testing.T) {
 			}
 		}
 	}
-	if links != 12 {
+	if links != 13 {
 		t.Fatal("Node/Pi link count", links)
 	}
 	sawNpm, sawClosure := false, false
@@ -252,13 +251,13 @@ func TestRuntimeOfficialOfflineFixture(t *testing.T) {
 	}
 	generation := generationPath(t, sandbox)
 	node := filepath.Join(generation, "opt/node/bin/node")
-	launcher := filepath.Join(generation, "opt/pi-cli/bin/pi")
+	launcher := filepath.Join(generation, "opt/pi-cli/awf-launcher.mjs")
 	checkPiOffline(t, privateParent(t), node, launcher, filepath.Join(generation, "opt/awf/extensions/awf.ts"))
 	// Verify the exact prepared AWF extension, outside the Pi release tree.
 	if !bytes.Equal(read(generation, "opt/awf/extensions/awf.ts"), extension) {
 		t.Fatal("extension changed")
 	}
-	for _, tc := range []struct{ cli, want string }{{"opt/node/lib/node_modules/npm/bin/npm-cli.js", "10.9.3"}, {"opt/pi-cli/releases/1.0.2/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js", "1.0.2"}} {
+	for _, tc := range []struct{ cli, want string }{{"opt/node/lib/node_modules/npm/bin/npm-cli.js", "10.9.3"}, {piReleaseDir + "/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js", "1.0.2"}} {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		cmd := exec.CommandContext(ctx, node, filepath.Join(generation, tc.cli), "--version")
 		cmd.Env = []string{"PATH=" + filepath.Dir(node) + ":/usr/bin:/bin", "PI_CODING_AGENT_DIR=" + filepath.Join(privateParent(t), "agent")}
@@ -269,7 +268,7 @@ func TestRuntimeOfficialOfflineFixture(t *testing.T) {
 		}
 	}
 	checkRuntimeImports(t, node, generation)
-	checkManagedUpdateRejection(t, node, launcher)
+	checkGlobalUpdateCommand(t, node, generation)
 	before := read(sandbox, "current.json")
 	again, err := ApplyRuntimeFixture(context.Background(), m, stage, sandbox, &recorder{}, in)
 	if err != nil || !reflect.DeepEqual(receipt, again) || !bytes.Equal(before, read(sandbox, "current.json")) {
@@ -331,34 +330,33 @@ func TestRuntimeOfficialOfflineFixture(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(concurrent, "current.json")); !os.IsNotExist(err) {
 		t.Fatal("concurrent cancellation selected runtime")
 	}
-	t.Logf("runtime schema2: 147 lock entries / 122 verified installed / 25 optional skipped / 12 exact Node+Pi links; launcher PID+stdio and force-update route verified; no native acceptance")
+	t.Logf("runtime schema2: 147 lock entries / 122 verified installed / 25 optional skipped / 13 exact Node+Pi links; launcher PID+stdio and same-prefix official update selection verified; no native acceptance")
 }
 
-func checkManagedUpdateRejection(t *testing.T, node, launcher string) {
+func checkGlobalUpdateCommand(t *testing.T, node, generation string) {
 	t.Helper()
 	work := privateParent(t)
 	guard := filepath.Join(work, "guard.mjs")
 	if err := os.WriteFile(guard, []byte(piOfflineGuard), 0600); err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Dir(filepath.Dir(launcher))
-	before, err := os.ReadFile(filepath.Join(root, "current-version"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, node, launcher, "update", "self", "--force")
-	cmd.Env = []string{"PATH=/nonexistent", "PI_INSTALLER_API_BASE=http://127.0.0.1:1/forbidden", "PI_CODING_AGENT_DIR=" + filepath.Join(work, "agent"), "NODE_OPTIONS=--import=" + guard}
+	config := filepath.Join(generation, piReleaseDir, "node_modules/@earendil-works/pi-coding-agent/dist/config.js")
+	probe := `import {pathToFileURL} from 'node:url'; const c=await import(pathToFileURL(process.argv[1])); console.log(JSON.stringify(c.getSelfUpdateCommand(c.PACKAGE_NAME,undefined,{packageName:c.PACKAGE_NAME,installSpec:c.PACKAGE_NAME+'@1.0.2'})));`
+	cmd := exec.CommandContext(ctx, node, "--input-type=module", "-e", probe, config)
+	cmd.Env = []string{"PATH=" + filepath.Dir(node) + ":/usr/bin:/bin", "PI_CODING_AGENT_DIR=" + filepath.Join(work, "agent"), "NODE_OPTIONS=--import=" + guard}
 	cmd.Dir = work
-	out, err := cmd.CombinedOutput()
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 1 || !strings.Contains(string(out), "Managed pi installations do not support --force") || strings.Contains(string(out), "awf_network_denied") || !strings.Contains(string(out), `"blockedNetworkCalls":0`) {
-		t.Fatal("official managed update contract", string(out), err)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	var command struct {
+		Command string
+		Args    []string
 	}
-	after, err := os.ReadFile(filepath.Join(root, "current-version"))
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatal("rejected update changed selector")
+	want := []string{"--prefix", filepath.Join(generation, "opt/pi-cli"), "install", "-g", "--ignore-scripts", "--min-release-age=0", "@earendil-works/pi-coding-agent@1.0.2"}
+	if err != nil || json.Unmarshal(out, &command) != nil || command.Command != "npm" || !reflect.DeepEqual(command.Args, want) || !strings.Contains(stderr.String(), `"blockedNetworkCalls":0`) {
+		t.Fatal("official global update selection", string(out), stderr.String(), err)
 	}
 }
 

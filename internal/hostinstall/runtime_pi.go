@@ -29,7 +29,7 @@ import (
 const maxRuntimeEntries = 32768
 const maxNpmTarballBytes int64 = 64 << 20
 const maxNpmCompressedBytes int64 = 256 << 20
-const piReleaseDir = "opt/pi-cli/releases/1.0.2"
+const piReleaseDir = "opt/pi-cli/lib"
 
 // RuntimeInput contains a caller-reviewed supplementary public metadata pin set
 // and a private npm cache. It grants no network, script or system-write authority.
@@ -151,7 +151,7 @@ func planPiRuntime(ctx context.Context, stage string, in RuntimeInput, budget *e
 		}
 		supp[v.Dist.Tarball] = v.Dist.Integrity
 	}
-	p := &piRuntimePlan{pkg: pkg, lock: lock, selected: map[string]runtimePackage{}, expected: map[string]InstalledFile{}, receipt: PiRuntimeReceipt{OwnerUID: os.Getuid(), Ownership: "private-same-uid-fixture; native programs must be administrator-owned and service-read-only", InputSHA256: runtimeInputDigest(in), LockedPackages: r.LockedPackages, UpdaterContract: "official managed releases-v1 route; actual network upgrade not accepted"}}
+	p := &piRuntimePlan{pkg: pkg, lock: lock, selected: map[string]runtimePackage{}, expected: map[string]InstalledFile{}, receipt: PiRuntimeReceipt{OwnerUID: os.Getuid(), Ownership: "private-same-uid-fixture; native programs must be administrator-owned and service-read-only", InputSHA256: runtimeInputDigest(in), LockedPackages: r.LockedPackages, UpdaterContract: "official global npm prefix; pi update owns current Pi; initial receipt is provenance, future transitive dependencies are not pinned"}}
 	for name, v := range l.Packages {
 		if name == "" {
 			continue
@@ -519,6 +519,7 @@ func preparePiRuntime(ctx context.Context, dest *os.Root, in RuntimeInput, plan 
 	cmd.Stderr = io.Discard
 	o.Event(ProgressEvent{Component: "pi", Stage: "npm-ci-offline", State: "started"})
 	if err := cmd.Run(); err != nil {
+		o.Event(ProgressEvent{Component: "pi", Stage: "npm-ci-offline", State: "failed"})
 		return nil, errors.New("official offline npm ci failed; no runtime selected")
 	}
 	o.Event(ProgressEvent{Component: "pi", Stage: "npm-ci-offline", State: "completed"})
@@ -543,9 +544,9 @@ func preparePiRuntime(ctx context.Context, dest *os.Root, in RuntimeInput, plan 
 		}
 		files = append(files, InstalledFile{Path: target, SHA256: hex.EncodeToString(hash.Sum(nil)), Bytes: n, Mode: 0644})
 	}
-	for name, data := range map[string][]byte{"opt/pi-cli/managed-install.json": []byte(`{"kind":"pi-managed-install","schemaVersion":1,"layout":"releases-v1"}`), "opt/pi-cli/current-version": []byte("1.0.2\n"), "opt/pi-cli/bin/pi": []byte(sharedPiLauncher)} {
+	for name, data := range map[string][]byte{"opt/pi-cli/awf-launcher.mjs": []byte(sharedPiLauncher)} {
 		mode := uint32(0644)
-		if name == "opt/pi-cli/bin/pi" {
+		if name == "opt/pi-cli/awf-launcher.mjs" {
 			mode = 0755
 		}
 		f, e := writeSelected(ctx, dest, name, bytes.NewReader(data), int64(len(data)), mode)
@@ -554,6 +555,13 @@ func preparePiRuntime(ctx context.Context, dest *os.Root, in RuntimeInput, plan 
 		}
 		files = append(files, f)
 	}
+	// Keep npm's own global bin topology. A custom file at bin/pi can make the
+	// official updater refuse to replace it. The stable AWF launcher lives outside bin.
+	bin := InstalledFile{Path: "opt/pi-cli/bin/pi", Mode: 0777, LinkTarget: "../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"}
+	if err := createPinnedLink(dest, bin); err != nil {
+		return nil, err
+	}
+	files = append(files, bin)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
 }
@@ -670,20 +678,17 @@ func verifyNpmInstalled(root *os.Root, plan *piRuntimePlan) error {
 	return nil
 }
 
-// Equivalent shared launcher, not a copy of the inaccessible initial installer.
+// Launcher for the supported global npm prefix, not an upstream updater.
 // execve preserves PID/stdin/stdout and avoids an orphaned launcher child.
 const sharedPiLauncher = `#!/opt/node/bin/node
-import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const marker=JSON.parse(fs.readFileSync(path.join(root,"managed-install.json"),"utf8"));
-if(marker.kind!=="pi-managed-install"||marker.schemaVersion!==1||marker.layout!=="releases-v1")throw new Error("Invalid managed Pi installation");
-const version=fs.readFileSync(path.join(root,"current-version"),"utf8").trim();
-if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version))throw new Error("Invalid managed Pi selector");
+const root=path.dirname(fileURLToPath(import.meta.url));
 const node=path.join(path.dirname(root),"node/bin/node");
-const cli=path.join(root,"releases",version,"node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js");
-const env={...process.env,PI_MANAGED_INSTALL_ROOT:root,PATH:path.dirname(node)+":"+(process.env.PATH||"/usr/bin:/bin")};
+const cli=path.join(root,"lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js");
+const env={...process.env,PATH:path.dirname(node)+":"+(process.env.PATH||"/usr/bin:/bin")};
+delete env.PI_MANAGED_INSTALL_ROOT;
+delete env.PI_PACKAGE_DIR;
 delete env.PI_INSTALLER_API_BASE;
 if(typeof process.execve!=="function")throw new Error("Pinned Node execve support required");
 process.execve(node,[node,cli,...process.argv.slice(2)],env);

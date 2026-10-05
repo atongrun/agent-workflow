@@ -10,7 +10,7 @@ The implementation includes task/request persistence, explicit plan confirmation
 
 ## Build and test
 
-Go 1.24 or later; the Go implementation uses the standard library only.
+Go 1.25 or later; the Go implementation uses the standard library only.
 
 ```sh
 go test ./...
@@ -57,10 +57,16 @@ are still required. See [fresh-install design and acceptance](docs/fresh-install
 and [the Windows CLI contract](docs/windows-cli.md).
 `awf update --all` remains unimplemented. No new runtime or hosting is required.
 
-## Linux Host installation planning
+## Linux Host fresh installation
 
-The independent Linux Host installer first slice exposes read-only
-`awf host-install plan|doctor --manifest FILE [--json]`. Its internal download and
-verification core only stages files. No Linux channel, one-line installer, native
-installation or service activation is published by this slice. See the
-[Linux manifest, staging and pending acceptance contract](docs/linux-host-install.md).
+The local Linux candidate adds a bootstrap and root-only Go install/init/start/stop/update
+adapter for fresh Ubuntu 22.04/24.04 glibc systemd amd64 machines. It installs Node,
+one official Pi npm prefix at `/opt/pi-cli`, the Go Host, AWF Pi extension and Magpie,
+with observed download/install progress. Ordinary root Pi keeps `~/.pi/agent`;
+the service uses independent `/var/lib/awf/pi-agent`. Official `pi update` selects
+that same prefix; AWF updates preserve the current Pi tree.
+
+**Local source only: no Linux channel/release is published and native Ubuntu
+acceptance is pending.** Install and init do not activate services. See the
+[Linux installer, Pi update contract and acceptance gates](docs/linux-host-install.md).
+Read-only `awf host-install plan|doctor --manifest FILE [--json]` remains available.

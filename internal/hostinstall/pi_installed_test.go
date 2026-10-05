@@ -168,7 +168,7 @@ func checkPiOffline(t *testing.T, dir, node, cli string, preparedExtension ...st
 			}
 		}
 	}
-	if strings.HasSuffix(cli, "/opt/pi-cli/bin/pi") && (registration.ManagedRoot != filepath.Dir(filepath.Dir(cli)) || registration.InstallerAPIBase != "" || registration.ExecPath != node || strings.Split(registration.Path, ":")[0] != filepath.Dir(node)) {
+	if strings.HasSuffix(cli, "/opt/pi-cli/awf-launcher.mjs") && (registration.ManagedRoot != "" || registration.InstallerAPIBase != "" || registration.ExecPath != node || strings.Split(registration.Path, ":")[0] != filepath.Dir(node)) {
 		t.Fatal("shared launcher contract", registration)
 	}
 	if registration.PID != cmd.Process.Pid {

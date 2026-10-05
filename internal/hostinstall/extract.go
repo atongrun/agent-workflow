@@ -381,6 +381,9 @@ func verifySelected(root *os.Root, m Manifest, c Component, files []InstalledFil
 func pinnedLinkTarget(link InstalledFile) (string, error) {
 	target := path.Clean(path.Join(path.Dir(link.Path), link.LinkTarget))
 	prefix := "opt/node/"
+	if link.Path == "opt/pi-cli/bin/pi" && link.LinkTarget == "../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" {
+		return target, nil // exact standard global npm command link
+	}
 	if strings.HasPrefix(link.Path, piReleaseDir+"/") {
 		prefix = piReleaseDir + "/"
 	}

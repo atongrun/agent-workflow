@@ -34,6 +34,9 @@ func main() {
 	}
 }
 func run(args []string) error {
+	if handled, err := hostinstall.HandleNative(context.Background(), args, os.Stdin, os.Stdout, os.Stderr); handled {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("usage: awf host-install plan|doctor --manifest FILE [--json] | awf host --config host.json | awf request METHOD /v1/path [JSON] | awf doctor [--json] | awf install | awf init | awf pair [--status | --retry] | awf start | awf stop | awf update [--version vX.Y.Z] | awf version")
 	}
