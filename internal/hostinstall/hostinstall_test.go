@@ -291,7 +291,7 @@ func TestDoctorAndCLIReadOnly(t *testing.T) {
 		}
 		return "free_observed"
 	})
-	if err != nil || p.ReadyToStage || len(paths) != 6 {
+	if err != nil || p.ReadyToStage || len(paths) != 7 {
 		t.Fatal(p, err)
 	}
 	data, _ := json.Marshal(m)
