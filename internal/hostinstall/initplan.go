@@ -26,14 +26,14 @@ func BuildInitializationPlan(m Manifest) (InitializationPlan, error) {
 		Units: map[string]string{"awf-host.service": hostUnitProposal, "awf-magpie.service": magpieUnitProposal},
 		Activation: []string{
 			"Verify pinned component bytes, notices, full Pi dependency closure and extension module resolution",
-			"Prepare fixed program roots and the awf service account; inspect existing ownership and installations",
+			"Prepare fixed program roots and the awf service account; preserve system Node/npm commands and inspect existing AWF ownership",
 			"Explicitly initialize independent service state and local tokens; require LAN=false; authenticate and select actual Magpie models separately",
 			"Verify loopback listeners and exact native build/version identity in the approved acceptance environment",
 			"On upgrades: acquire durable maintenance owner/revision, drain, seal, stop both systemd units and verify process groups exited",
 			"Replace fixed programs with retained backups under the seal; verify services and explicitly release the original lease",
 		},
 		Pending: []string{
-			"Root-only native install/init/start/stop/update adapter is implemented locally; real Ubuntu 22.04/24.04 acceptance is pending",
+			"Root-only native install/init/start/stop/update adapter supports Ubuntu 22.04/24.04 and Debian 12; real native acceptance is pending",
 			"Official global npm prefix lets pi update select the sole Pi install; actual native upstream network upgrade remains unaccepted",
 			"Runtime fixture verifies full pinned Node/npm and Pi closure; fixtures do not establish native program ownership or activation",
 			"Native programs must be administrator-owned and service-read-only; explicit administrator upgrades must retain the maintenance and systemd stop boundary",

@@ -572,6 +572,9 @@ func TestNativeOfficialInventoryFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := verifyAuditedNode(filepath.Join(installed, "node-v22.19.0-linux-x64/bin/node")); err != nil {
+		t.Fatal("streamed official Node identity", err)
+	}
 	read := func(dir, name string) []byte {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join(dir, name))
@@ -895,5 +898,107 @@ func TestNativeMaintenanceCannotMutateForeignHostListener(t *testing.T) {
 		if strings.Contains(command, "systemctl stop") {
 			t.Fatal("unowned endpoint crossed shutdown boundary")
 		}
+	}
+}
+
+func TestNativePreservesSystemNodeCommands(t *testing.T) {
+	f := newNativeFixture(t)
+	originals := map[string]string{
+		"usr/bin/node":      "existing-system-node-18.20.4",
+		"usr/bin/npm":       "existing-system-npm",
+		"usr/local/bin/npx": "existing-user-npx",
+	}
+	for name, data := range originals {
+		full := filepath.Join(f.dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(data), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.a.lookPath = func(name string) (string, error) {
+		switch name {
+		case "node", "npm":
+			return "/usr/bin/" + name, nil
+		case "npx":
+			return "/usr/local/bin/npx", nil
+		}
+		return "", exec.ErrNotFound
+	}
+	if err := f.a.fresh(); err != nil {
+		t.Fatal("system Node prevented independent AWF install", err)
+	}
+	f.install(t)
+	if _, err := f.a.installed(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for name, expected := range originals {
+		b, err := os.ReadFile(filepath.Join(f.dir, name))
+		if err != nil || string(b) != expected {
+			t.Fatal("existing system command changed", name, err)
+		}
+	}
+	for _, name := range []string{"usr/local/bin/node", "usr/local/bin/npm"} {
+		if _, err := os.Lstat(filepath.Join(f.dir, name)); !os.IsNotExist(err) {
+			t.Fatal("AWF shadowed a system command", name)
+		}
+	}
+	if len(nativeCommandLinks) != 3 || !strings.Contains(hostUnitProposal, "Environment=PATH=/opt/node/bin:/usr/bin:/bin") || !strings.Contains(sharedPiLauncher, "PATH:path.dirname(node)") {
+		t.Fatal("private runtime or command contract changed")
+	}
+}
+
+func TestNativeSystemctlUsesOnlyTrustedFixedLocations(t *testing.T) {
+	for _, location := range []string{"usr/bin/systemctl", "bin/systemctl"} {
+		t.Run(location, func(t *testing.T) {
+			f := newNativeFixture(t)
+			name := filepath.Join(f.dir, location)
+			if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(name, []byte("fixture executable"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			got, err := f.a.systemctlExecutable()
+			if err != nil || got != "/"+location {
+				t.Fatal("fixed systemctl location rejected", got, err)
+			}
+			if err := os.Chmod(name, 0777); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.a.systemctlExecutable(); err == nil {
+				t.Fatal("untrusted systemctl accepted")
+			}
+		})
+	}
+	f := newNativeFixture(t)
+	for _, name := range []string{"usr/bin", "bin"} {
+		if err := os.MkdirAll(filepath.Join(f.dir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(f.dir, "bin/systemctl"), []byte("trusted fallback"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../bin/systemctl", filepath.Join(f.dir, "usr/bin/systemctl")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.a.systemctlExecutable(); err == nil {
+		t.Fatal("unsafe preferred executable fell through to alternate")
+	}
+}
+
+func TestNativeAuditedNodeStreamRefusesWrongFiles(t *testing.T) {
+	dir := privateParent(t)
+	name := filepath.Join(dir, "node")
+	if err := os.WriteFile(name, []byte("wrong"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyAuditedNode(name); err == nil {
+		t.Fatal("wrong-size Node accepted")
+	}
+	if err := verifyAuditedNode(dir); err == nil {
+		t.Fatal("directory Node accepted")
 	}
 }

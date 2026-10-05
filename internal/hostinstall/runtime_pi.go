@@ -513,7 +513,7 @@ func preparePiRuntime(ctx context.Context, dest *os.Root, in RuntimeInput, plan 
 	defer cancel()
 	cmd := exec.CommandContext(childCtx, node, path.Join(dest.Name(), "opt/node/lib/node_modules/npm/bin/npm-cli.js"), "ci", "--offline", "--ignore-scripts", "--min-release-age=0", "--omit=dev", "--include=optional", "--no-fund", "--no-audit", "--loglevel=error", "--progress=false")
 	cmd.Dir = path.Join(dest.Name(), piReleaseDir)
-	cmd.Env = []string{"PATH=" + path.Dir(node) + ":/usr/bin:/bin", "npm_config_cache=" + in.CacheDirectory, "npm_config_userconfig=" + filepath.Join(config, "user.npmrc"), "npm_config_globalconfig=" + filepath.Join(config, "global.npmrc"), "npm_config_prefix=" + cmd.Dir, "npm_config_logs_dir=" + config, "npm_config_registry=https://registry.npmjs.org", "npm_config_global=false", "PI_CODING_AGENT_DIR=" + filepath.Join(config, "agent")}
+	cmd.Env = []string{"PATH=" + path.Dir(node) + ":/usr/bin:/bin", "NODE_OPTIONS=--max-old-space-size=192", "npm_config_cache=" + in.CacheDirectory, "npm_config_userconfig=" + filepath.Join(config, "user.npmrc"), "npm_config_globalconfig=" + filepath.Join(config, "global.npmrc"), "npm_config_prefix=" + cmd.Dir, "npm_config_logs_dir=" + config, "npm_config_registry=https://registry.npmjs.org", "npm_config_global=false", "PI_CODING_AGENT_DIR=" + filepath.Join(config, "agent")}
 	configureRuntimeCommand(cmd)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard

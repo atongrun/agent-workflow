@@ -4,6 +4,8 @@ package hostinstall
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
@@ -118,15 +120,14 @@ func populateNativeCache(ctx context.Context, bootstrap, stage, cache string, o 
 		}
 	}
 	node := filepath.Join(bootstrap, "opt/node/bin/node")
-	b, err := os.ReadFile(node)
-	if err != nil || !pinHash(b, "596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9") {
+	if err := verifyAuditedNode(node); err != nil {
 		return errors.New("audited Node executable required for dependency download")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, filepath.Join(bootstrap, "opt/node/lib/node_modules/npm/bin/npm-cli.js"), "ci", "--ignore-scripts", "--min-release-age=0", "--omit=dev", "--include=optional", "--no-fund", "--no-audit", "--loglevel=error", "--progress=false")
 	cmd.Dir = install
-	cmd.Env = []string{"PATH=" + filepath.Dir(node) + ":/usr/bin:/bin", "npm_config_registry=https://registry.npmjs.org", "npm_config_cache=" + cache, "npm_config_userconfig=" + filepath.Join(bootstrap, "user.npmrc"), "npm_config_globalconfig=" + filepath.Join(bootstrap, "global.npmrc"), "npm_config_logs_dir=" + bootstrap, "npm_config_prefix=" + install, "npm_config_global=false", "npm_config_cafile=/etc/ssl/certs/ca-certificates.crt"}
+	cmd.Env = []string{"PATH=" + filepath.Dir(node) + ":/usr/bin:/bin", "NODE_OPTIONS=--max-old-space-size=192", "npm_config_registry=https://registry.npmjs.org", "npm_config_cache=" + cache, "npm_config_userconfig=" + filepath.Join(bootstrap, "user.npmrc"), "npm_config_globalconfig=" + filepath.Join(bootstrap, "global.npmrc"), "npm_config_logs_dir=" + bootstrap, "npm_config_prefix=" + install, "npm_config_global=false", "npm_config_cafile=/etc/ssl/certs/ca-certificates.crt"}
 	// Preserve only ordinary transport proxy settings, never npm options or auth.
 	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
 		if v, ok := os.LookupEnv(name); ok {
@@ -166,6 +167,24 @@ func populateNativeCache(ctx context.Context, bootstrap, stage, cache string, o 
 			observe()
 		}
 	}
+}
+
+func verifyAuditedNode(name string) error {
+	f, err := os.Open(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() != 121674800 {
+		return errors.New("audited Node size/type changed")
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, 121674801))
+	if err != nil || n != 121674800 || hex.EncodeToString(h.Sum(nil)) != "596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9" {
+		return errors.New("audited Node bytes changed")
+	}
+	return nil
 }
 
 func nativeCacheBytes(cache string) (int64, error) {

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -85,7 +86,7 @@ func TestManifestValidation(t *testing.T) {
 		}
 	}
 }
-func TestPlanUbuntuMatrixAndReservedArm64(t *testing.T) {
+func TestPlanSupportedDistributionsAndReservedArm64(t *testing.T) {
 	m, _ := manifestFixture()
 	good := Environment{"linux", "amd64", "ubuntu", "22.04", true, true}
 	for _, release := range []string{"22.04", "24.04"} {
@@ -96,7 +97,11 @@ func TestPlanUbuntuMatrixAndReservedArm64(t *testing.T) {
 			t.Fatal(p, err)
 		}
 	}
-	for _, e := range []Environment{{"linux", "arm64", "ubuntu", "24.04", true, true}, {"linux", "amd64", "debian", "12", true, true}, {"linux", "amd64", "ubuntu", "24.04", false, true}, {"linux", "amd64", "ubuntu", "24.04", true, false}} {
+	p, err := BuildPlan(m, Environment{"linux", "amd64", "debian", "12", true, true})
+	if err != nil || !p.ReadyToStage {
+		t.Fatal("Debian 12 target refused", p, err)
+	}
+	for _, e := range []Environment{{"linux", "arm64", "ubuntu", "24.04", true, true}, {"linux", "amd64", "debian", "11", true, true}, {"linux", "amd64", "debian", "13", true, true}, {"linux", "amd64", "ubuntu", "24.04", false, true}, {"linux", "amd64", "ubuntu", "24.04", true, false}} {
 		p, err := BuildPlan(m, e)
 		if err != nil || p.ReadyToStage {
 			t.Fatal(p, err)
@@ -521,5 +526,33 @@ func TestStageBoundsSuppliedClientTimeout(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestDoctorSystemNodeIsObservedAndPrivatePrefixStillProtected(t *testing.T) {
+	m, _ := manifestFixture()
+	e := Environment{"linux", "amd64", "debian", "12", true, true}
+	absent := func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	commands := func(name string) (string, error) {
+		if name == "node" || name == "npm" || name == "npx" {
+			return "/usr/bin/" + name, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	p, err := inspectDoctor(m, e, absent, commands, func(int) string { return "free_observed" })
+	if err != nil || !p.ReadyToStage {
+		t.Fatal("system Node blocked independent preparation", p, err)
+	}
+	seen := 0
+	for _, f := range p.Findings {
+		if f.Check == "node-command" || f.Check == "npm-command" || f.Check == "npx-command" {
+			if f.Status != "observed" {
+				t.Fatal(f)
+			}
+			seen++
+		}
+	}
+	if seen != 3 {
+		t.Fatal("system commands not recorded", seen)
 	}
 }

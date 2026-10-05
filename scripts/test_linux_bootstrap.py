@@ -12,6 +12,12 @@ api = {'__name__': 'bootstrap_fixture'}
 exec(compile(source, 'install-linux.sh', 'exec'), api)
 
 class BootstrapTests(unittest.TestCase):
+    def test_supported_distributions_are_explicit(self):
+        for distro, version in [('ubuntu', '22.04'), ('ubuntu', '24.04'), ('debian', '12')]:
+            self.assertTrue(api['supported_distribution']({'ID': distro, 'VERSION_ID': version}))
+        for distro, version in [('debian', '11'), ('debian', '13'), ('ubuntu', '20.04'), ('linuxmint', '22'), ('alpine', '3.20'), ('debian', '12.1')]:
+            self.assertFalse(api['supported_distribution']({'ID': distro, 'VERSION_ID': version}))
+
     def fixture(self):
         version = 'v1.0.0-rc.9'
         return {'schema': 1, 'installerProtocol': 1, 'channel': 'linux-host-v1', 'version': version, 'sourceCommit': 'a' * 40, 'os': 'linux', 'arch': 'amd64', 'libc': 'glibc', 'components': [{'id': 'awf-host', 'version': version, 'artifacts': [{'name': 'awf_' + version + '_linux_amd64.tar.gz', 'url': 'https://github.com/atongrun/agent-workflow/releases/download/' + version + '/awf_' + version + '_linux_amd64.tar.gz', 'format': 'tar.gz', 'sha256': 'b' * 64, 'bytes': 123}]}]}

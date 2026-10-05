@@ -60,13 +60,19 @@ and [the Windows CLI contract](docs/windows-cli.md).
 ## Linux Host fresh installation
 
 The local Linux candidate adds a bootstrap and root-only Go install/init/start/stop/update
-adapter for fresh Ubuntu 22.04/24.04 glibc systemd amd64 machines. It installs Node,
+adapter for Ubuntu 22.04/24.04 and Debian 12 glibc systemd amd64 machines with
+fresh AWF paths/accounts. It installs a private Node runtime while preserving
+existing system Node/npm/npx commands,
 one official Pi npm prefix at `/opt/pi-cli`, the Go Host, AWF Pi extension and Magpie,
 with observed download/install progress. Ordinary root Pi keeps `~/.pi/agent`;
 the service uses independent `/var/lib/awf/pi-agent`. Official `pi update` selects
 that same prefix; AWF updates preserve the current Pi tree.
 
-**Local source only: no Linux channel/release is published and native Ubuntu
-acceptance is pending.** Install and init do not activate services. See the
+**Local source only: no Linux channel/release is published and native acceptance
+on all three distributions is pending.** Install and init do not activate services. See the
 [Linux installer, Pi update contract and acceptance gates](docs/linux-host-install.md).
 Read-only `awf host-install plan|doctor --manifest FILE [--json]` remains available.
+
+A precompiled private offline runner and an existing-machine acceptance scope are
+documented in [native acceptance plan](docs/linux-native-acceptance.md). This plan
+does not authorize a machine connection, installation, activation or publication.

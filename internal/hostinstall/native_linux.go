@@ -32,8 +32,7 @@ var programRoots = []string{"opt/node", "opt/pi-cli", "opt/awf", "opt/magpie"}
 var nativeUnits = []string{"awf-host.service", "awf-magpie.service"}
 var nativeCommandLinks = map[string]string{
 	"usr/local/bin/awf": "/opt/awf/awf", "usr/local/bin/pi": "/opt/pi-cli/awf-launcher.mjs",
-	"usr/local/bin/node": "/opt/node/bin/node", "usr/local/bin/npm": "/opt/node/bin/npm",
-	"usr/local/bin/npx": "/opt/node/bin/npx", "usr/local/bin/magpie": "/opt/magpie/magpie",
+	"usr/local/bin/magpie": "/opt/magpie/magpie",
 }
 
 type nativeReceipt struct {
@@ -64,8 +63,8 @@ func openNative(o Observer) (*nativeAdapter, error) {
 		return nil, errors.New("Linux machine lifecycle requires root")
 	}
 	e := ObserveEnvironment()
-	if e.OS != "linux" || e.Arch != "amd64" || e.Distribution != "ubuntu" || (e.Release != "22.04" && e.Release != "24.04") || !e.Glibc || !e.Systemd {
-		return nil, errors.New("requires Ubuntu 22.04/24.04 glibc systemd amd64; no machine changes made")
+	if e.OS != "linux" || e.Arch != "amd64" || !supportedDistribution(e.Distribution, e.Release) || !e.Glibc || !e.Systemd {
+		return nil, errors.New("requires Ubuntu 22.04/24.04 or Debian 12 glibc systemd amd64; no machine changes made")
 	}
 	if info, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil || !info.Mode().IsRegular() {
 		return nil, errors.New("unified systemd cgroup v2 required for process shutdown verification")
@@ -75,8 +74,22 @@ func openNative(o Observer) (*nativeAdapter, error) {
 		return nil, err
 	}
 	a := &nativeAdapter{root: r, owner: 0, lookup: user.Lookup, lookupGroup: user.LookupGroup, lookPath: exec.LookPath, observer: o, client: &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	systemctlPath, err := a.systemctlExecutable()
+	if err != nil {
+		r.Close()
+		return nil, err
+	}
+	for _, name := range []string{"usr/sbin/useradd", "usr/sbin/nologin"} {
+		if err := a.trustedExecutable(name); err != nil {
+			r.Close()
+			return nil, err
+		}
+	}
 	a.chown = func(name string, uid, gid int) error { return os.Chown("/"+name, uid, gid) }
 	a.command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "/usr/bin/systemctl" {
+			name = systemctlPath
+		}
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		c := exec.CommandContext(ctx, name, args...)
@@ -91,6 +104,35 @@ func openNative(o Observer) (*nativeAdapter, error) {
 		return out.Bytes(), nil
 	}
 	return a, nil
+}
+
+func (a *nativeAdapter) trustedExecutable(name string) error {
+	if err := a.parents(name); err != nil {
+		return err
+	}
+	if err := a.trusted(name, false); err != nil {
+		return err
+	}
+	info, err := a.root.Lstat(name)
+	if err != nil || info.Mode().Perm()&0111 == 0 {
+		return errors.New("required native executable unavailable")
+	}
+	return nil
+}
+
+// Debian package lists use /bin/systemctl; usr-merged machines resolve the
+// /usr/bin location. Support either fixed trusted executable without PATH search.
+func (a *nativeAdapter) systemctlExecutable() (string, error) {
+	for _, name := range []string{"usr/bin/systemctl", "bin/systemctl"} {
+		if _, err := a.root.Lstat(name); os.IsNotExist(err) {
+			continue
+		}
+		if err := a.trustedExecutable(name); err != nil {
+			return "", err
+		}
+		return "/" + name, nil
+	}
+	return "", errors.New("trusted systemctl is required")
 }
 
 type limitedOutput struct{ bytes.Buffer }
@@ -274,7 +316,7 @@ func (a *nativeAdapter) fresh() error {
 	if err := a.unoccupiedPorts(); err != nil {
 		return err
 	}
-	for _, name := range []string{"awf", "pi", "node", "npm", "npx", "magpie"} {
+	for _, name := range []string{"awf", "pi", "magpie"} {
 		if _, err := a.lookPath(name); err == nil {
 			return fmt.Errorf("existing %s command requires inspection; fresh installation does not adopt programs", name)
 		}

@@ -2,12 +2,13 @@
 
 This is a complete **local source candidate**, with a thin bootstrap and a Go
 native adapter. No Linux release assets or channel have been published. It has
-not installed a real machine or activated real services. Ubuntu acceptance and
+not installed a real machine or activated real services. Native acceptance and
 publication require separately approved environments and actions.
 
-The target is Ubuntu 22.04/24.04, glibc, systemd with unified cgroup v2, amd64,
-with root administering a fresh machine. Existing programs, AWF accounts, fixed
-roots or unit overrides require inspection; installation never adopts, repairs
+The targets are Ubuntu 22.04/24.04 and Debian 12, glibc, systemd with unified
+cgroup v2, amd64. Root may install on an existing machine with fresh AWF paths
+and accounts. Existing AWF/Pi/Magpie commands, accounts, fixed roots or unit
+overrides require inspection; installation never adopts, repairs
 or migrates them. Windows lifecycle dispatch, release artifacts and channels are
 unchanged. There is no Dashboard source in this repository or installer.
 
@@ -39,7 +40,7 @@ and units; init creates service state and local tokens. Neither starts services.
 `start --enable` separately enables boot autostart after health verification.
 There is no public system-root override or environment override for native writes.
 
-The bootstrap needs Python 3 already on Ubuntu. It checks root, platform,
+The bootstrap needs Python 3 already on the target system. It checks root, platform,
 glibc and running systemd, downloads to a private `/tmp` directory, reports real
 received bytes, verifies exact compressed length/SHA256, and extracts only `awf`
 and `build.json`. It refuses duplicate, traversal, link, PAX, sparse, extra and
@@ -63,13 +64,20 @@ receipts also never establish native installation.
 | Stable shared Pi launcher | `/opt/pi-cli/awf-launcher.mjs` |
 | Go Host and independent AWF Pi extension | `/opt/awf/awf`, `/opt/awf/extensions/awf.ts` |
 | Magpie CLI 0.1.855 | `/opt/magpie/magpie` |
-| Commands | `/usr/local/bin/{awf,node,npm,npx,pi,magpie}` |
+| Commands | `/usr/local/bin/{awf,pi,magpie}` |
 | Root-owned configuration and install evidence | `/etc/awf` |
 | Dedicated service state and cache | `/var/lib/awf`, `/var/cache/awf` |
 | Service Pi agent directory | `/var/lib/awf/pi-agent` |
 | Service Magpie mutable settings / provider files | `/var/lib/awf/magpie-config/magpie` |
 | Root-owned Magpie settings snapshot | `/etc/awf/magpie-settings.json` (0640, root:awf) |
 | Fixed systemd units | `awf-host.service`, `awf-magpie.service` |
+
+System Node/npm/npx commands are preserved, including an existing Node 18. AWF
+exports only its three commands, and uses absolute bundled Node plus a private
+runtime PATH. It does not replace or shadow the machine's general Node/npm/npx
+commands. No apt upgrade, Node migration or unrelated account/service adoption
+is performed. Debian supports trusted `/usr/bin/systemctl` or `/bin/systemctl`
+and validates `useradd`/`nologin` before mutable operations.
 
 Programs are root-owned and service-read-only. The `awf` account is a non-root
 system account with a non-login shell. `/etc/awf` is root-owned, group `awf`, mode
@@ -197,7 +205,10 @@ fixed Pi packages need supplemental SHA512 metadata; their exact versioned
 registry response SHA256 values are checked into `native_prepare_linux.go`.
 A changed registry response fails closed. The lock is not rewritten. Three
 locked packages declare lifecycle scripts; all npm phases use `--ignore-scripts`.
-No scripts are enabled or substituted.
+No scripts are enabled or substituted. Installer npm processes have a 192 MiB
+V8 old-space cap; this is a heap limit, not an RSS limit or a measured runtime
+minimum. Node identity is checked by streaming SHA256, avoiding a 121 MiB
+whole-executable allocation. Ordinary Pi and its upstream updater are unchanged.
 
 Preparation extracts complete audited Node/npm, fetches official npm packages
 into a fresh isolated cache with scripts disabled and no inherited npm auth or
@@ -265,6 +276,7 @@ go vet ./...
 GOOS=windows GOARCH=amd64 go build ./cmd/awf
 GOOS=windows GOARCH=amd64 go build ./cmd/awf-node
 python3 scripts/test_linux_bootstrap.py
+python3 scripts/test_private_native_kit.py
 sh -n scripts/install-linux.sh
 ```
 
@@ -287,7 +299,7 @@ and rechecks the actual full official program inventory beneath a temporary root
 with synthetic Host bytes and substituted machine commands; it also cannot prove
 native installation or operating-system service ownership.
 
-Before publishing, use separately approved fresh Ubuntu 22.04 and 24.04 amd64
+Before publishing, use separately approved Ubuntu 22.04/24.04 and Debian 12 amd64
 systemd machines to verify the real bootstrap, permissions/account separation,
 notice completeness, install/init/start/stop, both entire process groups exiting,
 exact actual Magpie settings and loopback sockets, genuine `pi update` on the
@@ -297,63 +309,25 @@ Debian 13/PID1-tail executor does not meet that acceptance matrix. No production
 machine, account mutation, systemctl action, listening service, firewall,
 credentials or cloud purchase is authorized by these local checks.
 
-## Minimal approved Ubuntu acceptance run
+## Native acceptance routes
 
-Use two **disposable, otherwise fresh** amd64 VMs, one Ubuntu 22.04 and one 24.04,
-with systemd as PID1, unified cgroup v2, glibc, root/sudo, Python 3, CA certificates,
-`useradd`/`getent`, and ordinary `/proc`/`/sys` mounts. A practical small VM is
-2 vCPU, 2 GiB RAM (4 GiB preferred), and at least 8 GiB free storage for the OS,
-verified preparation, copies and retained update backups. This is a test sizing
-recommendation, not a measured runtime minimum. The runtime does not need a Go
-compiler; packaging requires Go 1.25+. Allow outbound HTTPS to the manifest's
-official GitHub/CDN, Node and npm sources. No inbound port or firewall rule is
-required. Do not attach production volumes, credentials, model accounts or keys.
+The first existing-machine slice is defined in [native acceptance plan](linux-native-acceptance.md).
+It uses a precompiled private offline kit, no source build, no credential import,
+no model calls, and serial installation/process checks. It preserves unrelated
+services and the existing system Node. That slice still requires one explicit
+machine/action approval and does not establish public bootstrap acceptance.
 
-Full bootstrap acceptance additionally needs separately approved **Linux candidate
-release assets/tag** matching this candidate commit and canonical manifest URLs.
-The default channel is unpublished, and supplying only a local Host archive does
-not bypass Go's public tag and remaining asset checks. VM authorization does not
-authorize publishing those assets. Until the candidate artifact route is approved,
-only the local preparation/adapter fixtures can run; they are not bootstrap E2E.
+Public bootstrap acceptance needs separately approved Linux release assets/tag
+matching the candidate and canonical manifest URLs. The default channel is
+unpublished; supplying only a local Host archive cannot bypass Go's public tag
+and remaining asset checks. Private test input is a distinct developer-only
+provenance route, never a released installer flag or a claimed public release.
 
-Take a VM snapshot before testing. On each approved VM, with the reviewed script,
-manifest and verified Host archive present, run the commands in the first section:
-install, init, start, stop, start, and the separately reviewed next-manifest update.
-Verify `/etc/awf/install.json`, exact command links/prefix, root ownership of all
-programs and units, private service ownership, root's independent `~/.pi/agent`,
-and the service's `/var/lib/awf/pi-agent`. Check both units with:
-
-```sh
-sudo systemctl show awf-host.service awf-magpie.service -p FragmentPath -p DropInPaths -p User -p Group -p ActiveState -p MainPID -p ControlGroup -p KillMode
-sudo ss -ltnp 'sport = :7070 or sport = :3425'
-curl --fail --silent http://127.0.0.1:3425/
-```
-
-Inspect Magpie's service mount namespace: the settings target must bind the root
-snapshot read-only, settings ancestors must remain read-only, and provider files
-must remain writable as `awf`. Change the mutable settings outside the service to
-`lan:true`, then exercise systemd restart/reboot: the immutable snapshot must keep
-3425 loopback. `awf start` after a verified stop must refuse that unsafe setting;
-restore false or omit it before continuing. Exercise failure of one stop, retry
-with Host already offline, busy draining and incomplete child-cgroup exit. Retain
-original owner/revision evidence across these cases; never manually reopen a seal.
-A harmless test process may be placed in the service cgroup only within this
-explicitly approved disposable test; verify it and every descendant exit on stop.
-
-For `pi update`, stop both units, record the prefix/package/version, run ordinary
-root `pi update`, and verify the same prefix, stable launcher, no second install,
-root ownership and scripts-disabled upstream command. Start and verify health;
-AWF replacement must preserve that current Pi version. Enable autostart only for
-the reboot case. Provider authentication, catalog/model compatibility and any
-model-backed call require their own approval; basic process/loopback checks do not
-require credentials or a model call.
-
-Exact machine changes are limited to `/opt/{node,pi-cli,awf,magpie}`, six command
-links under `/usr/local/bin`, the `awf` system account/group, `/etc/awf`, private
-`/var/lib/awf` and `/var/cache/awf`, `/var/cache/awf-installer`, and two literal units
-under `/etc/systemd/system` (plus enablement links only with `--enable`). Downloads
-and preparation use private temporary directories; failed updates retain named
-program backups and pending/lease evidence. The simplest rollback is restoring
-the pre-test VM snapshot or destroying/recreating the disposable VM. There is no
-automatic multi-root rollback, and manual deletion of partial state is not treated
-as a safe retry mechanism. Preserve test logs/evidence before discarding the VM.
+Complete acceptance on the three target distributions must also cover actual
+account/root isolation, read-only systemd settings mounts and provider writes,
+loopback/socket ownership, both recursive process groups exiting, boot/restart,
+genuine same-prefix `pi update`, AWF update retaining that Pi, notices, extension
+catalog and separately approved model-backed E2E. Failure injection, arbitrary
+cgroup children, reboot and interrupted replacement belong on separately
+approved disposable environments or explicit maintenance windows. They are
+excluded from the first existing-machine slice. No cloud purchase is implied.

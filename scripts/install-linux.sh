@@ -145,6 +145,11 @@ def extract_host(archive, directory, manifest):
     progress('extract', 'completed')
     return found['awf']
 
+def supported_distribution(release):
+    distro = release.get('ID', '').strip('"')
+    version = release.get('VERSION_ID', '').strip('"')
+    return (distro == 'ubuntu' and version in ('22.04', '24.04')) or (distro == 'debian' and version == '12')
+
 def main():
     parser = argparse.ArgumentParser(description='AWF Linux bootstrap local candidate; default channel is unpublished')
     parser.add_argument('--manifest', help='explicit local reviewed Linux manifest')
@@ -156,8 +161,8 @@ def main():
     if os.geteuid() != 0 or platform.system() != 'Linux' or platform.machine() != 'x86_64':
         raise ValueError('bootstrap requires root on Linux amd64')
     release = dict(line.strip().split('=', 1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
-    if release.get('ID', '').strip('"') != 'ubuntu' or release.get('VERSION_ID', '').strip('"') not in ('22.04', '24.04') or not Path('/run/systemd/system').is_dir() or not Path('/lib64/ld-linux-x86-64.so.2').is_file():
-        raise ValueError('bootstrap requires Ubuntu 22.04/24.04 glibc systemd')
+    if not supported_distribution(release) or not Path('/run/systemd/system').is_dir() or not Path('/lib64/ld-linux-x86-64.so.2').is_file():
+        raise ValueError('bootstrap requires Ubuntu 22.04/24.04 or Debian 12 glibc systemd')
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix='awf-bootstrap-', dir='/tmp') as work:
         directory = Path(work)

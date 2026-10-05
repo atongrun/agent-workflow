@@ -33,12 +33,16 @@ type Plan struct {
 	Initialization InitializationPlan `json:"initialization"`
 }
 
+func supportedDistribution(distribution, release string) bool {
+	return (distribution == "ubuntu" && (release == "22.04" || release == "24.04")) || (distribution == "debian" && release == "12")
+}
+
 func BuildPlan(m Manifest, e Environment) (Plan, error) {
 	if err := m.Validate(); err != nil {
 		return Plan{}, err
 	}
 	p := Plan{Schema: 1, ReadyToStage: true, Environment: e, Findings: []Finding{}, Components: m.Components,
-		Paths:   map[string]string{"hostProgram": "/opt/awf", "piProgram": "/opt/pi-cli", "magpieProgram": "/opt/magpie", "hostConfig": "/etc/awf/host.json", "hostState": "/var/lib/awf", "servicePiAgent": "/var/lib/awf/pi-agent"},
+		Paths:   map[string]string{"hostProgram": "/opt/awf", "nodeProgram": "/opt/node", "piProgram": "/opt/pi-cli", "magpieProgram": "/opt/magpie", "hostConfig": "/etc/awf/host.json", "hostState": "/var/lib/awf", "servicePiAgent": "/var/lib/awf/pi-agent"},
 		Pending: []string{"program installation", "explicit account and credential initialization", "loopback service configuration", "systemd enable/start", "actual model catalog selection", "maintenance gate and explicit idle reload"}}
 	p.Initialization, _ = BuildInitializationPlan(m)
 	checks := []struct {
@@ -47,7 +51,7 @@ func BuildPlan(m Manifest, e Environment) (Plan, error) {
 		detail string
 	}{
 		{"platform", e.OS == "linux" && e.Arch == "amd64" && m.Arch == e.Arch, "only Linux amd64 is in the initial acceptance matrix; arm64 is reserved"},
-		{"distribution", e.Distribution == "ubuntu" && (e.Release == "22.04" || e.Release == "24.04"), "Ubuntu 22.04 or 24.04 required"},
+		{"distribution", supportedDistribution(e.Distribution, e.Release), "Ubuntu 22.04/24.04 or Debian 12 required"},
 		{"libc", e.Glibc, "glibc loader presence required; version/native acceptance remains unverified"},
 		{"service-manager", e.Systemd, "running systemd required"},
 	}
@@ -99,7 +103,7 @@ func inspectDoctor(m Manifest, e Environment, lstat func(string) (os.FileInfo, e
 	if err != nil {
 		return p, err
 	}
-	for _, name := range []string{"hostProgram", "piProgram", "magpieProgram", "hostConfig", "hostState", "servicePiAgent"} {
+	for _, name := range []string{"hostProgram", "nodeProgram", "piProgram", "magpieProgram", "hostConfig", "hostState", "servicePiAgent"} {
 		path := p.Paths[name]
 		info, err := lstat(path)
 		status, detail := "absent", "not present; no path was created"
@@ -115,10 +119,15 @@ func inspectDoctor(m Manifest, e Environment, lstat func(string) (os.FileInfo, e
 		}
 		p.Findings = append(p.Findings, Finding{name, status, detail})
 	}
-	for _, name := range []string{"pi", "node", "magpie"} {
+	for _, name := range []string{"awf", "pi", "magpie"} {
 		if _, err := lookPath(name); err == nil {
 			p.Findings = append(p.Findings, Finding{name + "-command", "needs_review", "existing command resolved; not executed or adopted"})
 			p.ReadyToStage = false
+		}
+	}
+	for _, name := range []string{"node", "npm", "npx"} {
+		if _, err := lookPath(name); err == nil {
+			p.Findings = append(p.Findings, Finding{name + "-command", "observed", "system command preserved; AWF uses its independent /opt/node runtime"})
 		}
 	}
 	for _, port := range []int{7070, 3425} {
