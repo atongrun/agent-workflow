@@ -154,9 +154,6 @@ def extract(source, destination, expected):
         raise ValueError('independently approved kit SHA256 required')
     if not destination.is_absolute() or str(destination) != os.path.normpath(destination) or not str(destination).startswith('/tmp/') or destination.exists() or destination.is_symlink():
         raise ValueError('fresh absolute destination beneath /tmp required')
-    for parent in destination.parents:
-        if parent.is_symlink() or not parent.is_dir():
-            raise ValueError('real destination parents required')
     descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(descriptor, 'rb') as stream:
         info = os.fstat(stream.fileno())
@@ -183,26 +180,73 @@ def extract_entries(kit, destination):
     required = {'kit.json', 'tools/awf', 'tools/native-acceptance.test', 'input/manifest.json', 'input/stage/stage.json'}
     if not required.issubset(names) or any(str(parent) in names for name in names for parent in PurePosixPath(name).parents):
         raise ValueError('missing kit controls or conflicting paths')
-    destination.mkdir(mode=0o700)
-    os.chmod(destination, 0o700)
-    for entry in kit.infolist():
-        target = destination / entry.filename
-        target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        for parent in target.parents:
-            if parent == destination:
-                break
-            os.chmod(parent, 0o700)
-        with target.open('xb') as output, kit.open(entry) as payload:
-            remaining = entry.file_size
-            while remaining:
-                chunk = payload.read(min(1 << 20, remaining))
-                if not chunk:
-                    raise ValueError('truncated private kit payload')
-                output.write(chunk)
-                remaining -= len(chunk)
-            if payload.read(1):
-                raise ValueError('private kit payload exceeded length')
-            os.chmod(target, 0o700 if entry.filename.startswith('tools/') else 0o600)
+    destination_fd = create_private_destination(destination)
+    try:
+        for entry in kit.infolist():
+            directory_fd = os.dup(destination_fd)
+            try:
+                parts = PurePosixPath(entry.filename).parts
+                for part in parts[:-1]:
+                    try:
+                        os.mkdir(part, mode=0o700, dir_fd=directory_fd)
+                    except FileExistsError:
+                        pass
+                    next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+                    os.close(directory_fd)
+                    directory_fd = next_fd
+                    require_private_directory(directory_fd)
+                descriptor = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+                with os.fdopen(descriptor, 'wb') as output, kit.open(entry) as payload:
+                    remaining = entry.file_size
+                    while remaining:
+                        chunk = payload.read(min(1 << 20, remaining))
+                        if not chunk:
+                            raise ValueError('truncated private kit payload')
+                        output.write(chunk)
+                        remaining -= len(chunk)
+                    if payload.read(1):
+                        raise ValueError('private kit payload exceeded length')
+                    os.fchmod(output.fileno(), 0o700 if entry.filename.startswith('tools/') else 0o600)
+            finally:
+                os.close(directory_fd)
+    finally:
+        os.close(destination_fd)
+
+
+def require_private_directory(descriptor):
+    info = os.fstat(descriptor)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError('private same-owner destination ancestor required')
+
+
+def create_private_destination(destination):
+    # Keep all writes relative to held nofollow directory descriptors. Root
+    # extraction also requires the shared /tmp base to be root-owned and sticky.
+    current = os.open('/tmp', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(current)
+        if not stat.S_ISDIR(info.st_mode) or not info.st_mode & stat.S_ISVTX or (os.getuid() == 0 and info.st_uid != 0):
+            raise ValueError('trusted sticky /tmp required')
+        parts = destination.relative_to('/tmp').parts
+        if not parts:
+            raise ValueError('fresh destination beneath /tmp required')
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
+            os.close(current)
+            current = next_fd
+            require_private_directory(current)
+        os.mkdir(parts[-1], mode=0o700, dir_fd=current)
+        result = os.open(parts[-1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
+        try:
+            require_private_directory(result)
+        except Exception:
+            os.close(result)
+            raise
+        return result
+    except OSError as error:
+        raise ValueError('untrusted or unavailable destination ancestor') from error
+    finally:
+        os.close(current)
 
 
 def main():

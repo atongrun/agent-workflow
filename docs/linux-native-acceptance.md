@@ -23,7 +23,9 @@ The kit ZIP and its SHA256 must be privately transferred only after approval.
 Keep it root-owned 0600 on the target. The reviewed extractor requires the
 independently approved exact checksum, uses one same-owner non-linked source
 descriptor for hash and extraction, validates all paths/types/modes/duplicates
-and expansion budgets, and creates a new private `/tmp` destination. It never
+and expansion budgets, and creates a new private `/tmp` destination. Destination
+ancestors are same-owner private directories; root requires root-owned sticky
+`/tmp`. Every write uses held nofollow directory/file descriptors. It never
 uses `unzip`/tar extraction with unchecked paths or writes system roots.
 
 The precompiled Go test runner accepts only an independently approved manifest

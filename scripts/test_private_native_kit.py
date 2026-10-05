@@ -72,6 +72,12 @@ class PrivateKitTests(unittest.TestCase):
             linked_parent.symlink_to(parent, target_is_directory=True)
             with self.assertRaises(ValueError):
                 kit.extract(source, linked_parent / 'unpack', digest)
+            unsafe_parent = parent / 'unsafe-parent'
+            unsafe_parent.mkdir(mode=0o777)
+            unsafe_parent.chmod(0o777)
+            with self.assertRaises(ValueError):
+                kit.extract(source, unsafe_parent / 'unpack', digest)
+            self.assertFalse((unsafe_parent / 'unpack').exists())
             self.assertFalse(destination.exists())
 
     def test_expansion_budget_is_enforced_before_writes(self):
