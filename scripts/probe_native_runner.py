@@ -33,6 +33,7 @@ FIXED_PATHS = (
     '/etc/systemd/system/awf-host.service',
     '/etc/systemd/system/awf-magpie.service',
 )
+INSTALL_PARENTS=('/opt','/etc','/var/lib','/var/cache','/usr/local/bin','/etc/systemd/system')
 UNIT_PATHS = (
     '/etc/systemd/system.control', '/run/systemd/system.control',
     '/run/systemd/transient', '/run/systemd/generator.early',
@@ -118,28 +119,35 @@ def parent_predicate(info):
                 failedPredicates=[name for name, passed in tests.items() if not passed])
 
 
-def opt_parent_diagnostics():
-    # Exactly /opt and its sole ancestor /. No directory listings, environment,
-    # content, credentials or user-controlled path arguments are collected.
+def metadata(info):
+    return dict(uid=info.st_uid,gid=info.st_gid,
+                octalMode=format(stat.S_IMODE(info.st_mode),'04o'),
+                directory=stat.S_ISDIR(info.st_mode),physicalSymlink=stat.S_ISLNK(info.st_mode))
+
+
+def parent_diagnostics(names):
+    # Source-derived parents and their exact ancestors only. No home/auth/env
+    # scanning, file contents or resolved symlink targets are collected.
+    paths=list(dict.fromkeys(str(p) for name in names
+               for p in (PurePosixPath(name),*PurePosixPath(name).parents)))
     rows=[]
-    for name in ('/opt','/'):
+    for name in paths:
         path=Path(name)
-        def describe(info):
-            return dict(uid=info.st_uid,gid=info.st_gid,
-                        octalMode=format(stat.S_IMODE(info.st_mode),'04o'),
-                        directory=stat.S_ISDIR(info.st_mode),
-                        physicalSymlink=stat.S_ISLNK(info.st_mode))
         row=dict(path=name)
         try:
             link_info=path.lstat()
-            row['lstat']=describe(link_info)
+            row['lstat']=metadata(link_info)
             row['goParentTrustPredicate']=parent_predicate(link_info)
             row['physicalPathMatchesRequestedPath']=str(path.resolve(strict=True))==name
-            row['stat']=describe(path.stat())
-        except OSError as error:
-            row['metadataError']=dict(type=type(error).__name__,errno=error.errno)
+            row['stat']=metadata(path.stat())
+        except (OSError,RuntimeError) as error:
+            row['metadataError']=dict(type=type(error).__name__,errno=getattr(error,'errno',None))
         rows.append(row)
-    return dict(paths=rows,sourceCommit=SOURCE,
+    failed=[dict(path=r['path'],failedPredicates=r['goParentTrustPredicate']['failedPredicates'])
+            for r in rows if 'goParentTrustPredicate' in r and not r['goParentTrustPredicate']['passed']]
+    errors=[dict(path=r['path'],**r['metadataError']) for r in rows if 'metadataError' in r]
+    return dict(paths=rows,requestedParents=list(names),failedPaths=failed,metadataErrors=errors,
+                allParentsMeetGoTrustPredicate=not failed and not errors,sourceCommit=SOURCE,
                 sourceLocation='internal/hostinstall/native_linux.go:160',
                 predicateLocation='internal/hostinstall/native_linux.go:166',
                 parentTraversalLocation='internal/hostinstall/native_linux.go:171',
@@ -148,6 +156,10 @@ def opt_parent_diagnostics():
                     setUIDAndSetGIDBitsClear=True,exampleOctalMode='0755',
                     gidIsMetadataNotATrustPredicate=True),
                 mutationsPerformed=False)
+
+
+def opt_parent_diagnostics():
+    return parent_diagnostics(('/opt',))
 
 
 def run(*args):
@@ -159,37 +171,124 @@ def run(*args):
     return result.stdout
 
 
-def fresh_units():
+def unit_diagnostics():
     rows = []
+    conflicts=[]
+    errors=[]
+    try:
+        trusted('/usr/bin/systemctl')
+    except Exception:
+        errors.append(dict(target='/usr/bin/systemctl',reason='untrusted fixed executable; not executed'))
+    can_read_units=not errors
     for unit in UNITS:
-        found = properties(run('/usr/bin/systemctl', 'show', unit,
-                               '--property=LoadState,FragmentPath,DropInPaths', '--no-pager'))
-        if found != dict(LoadState='not-found', FragmentPath='', DropInPaths=''):
-            raise ValueError('existing or unreadable AWF unit/overrides')
-        rows.append(dict(unit=unit, **found))
+        if can_read_units:
+            try:
+                found = properties(run('/usr/bin/systemctl', 'show', unit,
+                                       '--property=LoadState,FragmentPath,DropInPaths', '--no-pager'))
+                rows.append(dict(unit=unit, **found))
+                if found != dict(LoadState='not-found', FragmentPath='', DropInPaths=''):
+                    conflicts.append(dict(kind='loadedUnitOrOverrides',unit=unit))
+            except Exception as error:
+                errors.append(dict(target=unit,errorType=type(error).__name__))
     count = 0
+    exceeded=False
     for directory in UNIT_PATHS:
         p = Path(directory)
-        if not p.exists():
+        try:
+            for entry in p.iterdir():
+                count += 1
+                if count > 65536:
+                    errors.append(dict(target=directory,errorType='ScanBoundExceeded'))
+                    exceeded=True
+                    break
+                try:
+                    if entry.name in (*UNITS, *(u+'.d' for u in UNITS), 'awf-.service.d'):
+                        conflicts.append(dict(kind='unitOrDropIn',path=str(entry)))
+                    if stat.S_ISLNK(entry.lstat().st_mode) and PurePosixPath(os.readlink(entry)).name in UNITS:
+                        conflicts.append(dict(kind='unitAlias',path=str(entry)))
+                    if entry.name == 'service.d' or entry.name.endswith(('.wants', '.requires')):
+                        for child in entry.iterdir():
+                            count += 1
+                            if count > 65536:
+                                errors.append(dict(target=str(entry),errorType='ScanBoundExceeded'))
+                                exceeded=True
+                                break
+                            try:
+                                if entry.name == 'service.d' or child.name in UNITS:
+                                    conflicts.append(dict(kind='globalOverrideOrDependency',path=str(child)))
+                                if stat.S_ISLNK(child.lstat().st_mode) and PurePosixPath(os.readlink(child)).name in UNITS:
+                                    conflicts.append(dict(kind='dependencyAlias',path=str(child)))
+                            except Exception as error:
+                                errors.append(dict(target=str(child),errorType=type(error).__name__))
+                except Exception as error:
+                    errors.append(dict(target=str(entry),errorType=type(error).__name__))
+                if exceeded:
+                    break
+        except FileNotFoundError:
             continue
-        for entry in p.iterdir():
-            count += 1
-            if count > 65536:
-                raise ValueError('systemd scan bound exceeded')
-            if entry.name in (*UNITS, *(u+'.d' for u in UNITS), 'awf-.service.d'):
-                raise ValueError('existing AWF unit/drop-in')
-            if entry.is_symlink() and Path(os.readlink(entry)).name in UNITS:
-                raise ValueError('existing AWF unit alias')
-            if entry.name == 'service.d' or entry.name.endswith(('.wants', '.requires')):
-                for child in entry.iterdir():
-                    count += 1
-                    if count > 65536:
-                        raise ValueError('systemd dependency scan bound exceeded')
-                    if entry.name == 'service.d' or child.name in UNITS:
-                        raise ValueError('global service overrides or AWF dependency')
-                    if child.is_symlink() and Path(os.readlink(child)).name in UNITS:
-                        raise ValueError('existing AWF dependency alias')
-    return rows
+        except Exception as error:
+            errors.append(dict(target=directory,errorType=type(error).__name__))
+        if exceeded:
+            break
+    return dict(units=rows,conflicts=conflicts,metadataErrors=errors,
+                passed=not conflicts and not errors,entriesExamined=count)
+
+
+def fresh_units():
+    data=unit_diagnostics()
+    if not data['passed']:
+        raise ValueError('existing or unreadable AWF unit/overrides; see fixed-object diagnostics')
+    return data['units']
+
+
+def object_diagnostics():
+    rows=[]
+    conflicts=[]
+    errors=[]
+    for name in FIXED_PATHS:
+        try:
+            info=Path(name).lstat()
+            rows.append(dict(path=name,present=True,lstat=metadata(info)))
+            conflicts.append(dict(kind='existingFixedPath',path=name,
+                constraint='testIsolation' if name=='/var/cache/awf-installer' else 'nativeFresh'))
+        except FileNotFoundError:
+            rows.append(dict(path=name,present=False))
+        except Exception as error:
+            error_data=dict(errorType=type(error).__name__,errno=getattr(error,'errno',None))
+            rows.append(dict(path=name,present=None,metadataError=error_data))
+            errors.append(dict(target=name,**error_data))
+    for kind,lookup in [('account',pwd.getpwnam),('group',grp.getgrnam)]:
+        try:
+            lookup('awf')
+            conflicts.append(dict(kind='existingAWF'+kind.title(),constraint='nativeFresh'))
+        except KeyError:
+            pass
+        except Exception as error:
+            errors.append(dict(target='awf-'+kind,errorType=type(error).__name__))
+    for command in ('awf','pi','magpie'):
+        found=shutil.which(command,path='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')
+        if found:
+            conflicts.append(dict(kind='existingCommand',command=command,path=found,constraint='nativeFresh'))
+    try:
+        root_agent=Path(pwd.getpwnam('root').pw_dir)/'.pi/agent'
+        root_agent.lstat()
+        conflicts.append(dict(kind='rootPiAgentExists',constraint='testIsolation'))
+    except FileNotFoundError:
+        pass
+    except Exception as error:
+        errors.append(dict(target='root-Pi-agent',errorType=type(error).__name__))
+    units=unit_diagnostics()
+    conflicts.extend(units['conflicts'])
+    errors.extend(units['metadataErrors'])
+    ports=[]
+    for name,ipv6 in [('/proc/net/tcp',False),('/proc/net/tcp6',True)]:
+        try:
+            ports.extend(listeners(Path(name).read_text(),ipv6))
+        except Exception as error:
+            errors.append(dict(target=name,errorType=type(error).__name__))
+    conflicts.extend(dict(kind='occupiedPort',**port) for port in ports)
+    return dict(fixedPaths=rows,conflicts=conflicts,metadataErrors=errors,unitDiagnostics=units,
+                portListeners=ports,passed=not conflicts and not errors,mutationsPerformed=False)
 
 
 def mount_records(text):
@@ -236,7 +335,10 @@ def inspect(expected_release):
                   checks={}, preflightPassed=False, nativeInstallationPerformed=False,
                   actualNamespaceMountExecutionVerified=False, nativeAcceptance=False,
                   CloudConeAcceptance=False, modelCalls=0, piUpdateExecuted=False)
-    report['parentDiagnostics']=opt_parent_diagnostics()
+    # Collect every source-derived parent and object conflict before any
+    # fail-fast freshness check can conceal later incompatible components.
+    report['parentDiagnostics']=parent_diagnostics(INSTALL_PARENTS+('/usr/bin','/usr/sbin'))
+    report['fixedObjectDiagnostics']=object_diagnostics()
     checks = report['checks']
     errors = []
 
@@ -302,7 +404,7 @@ def inspect(expected_release):
         root_agent = Path(pwd.getpwnam('root').pw_dir)/'.pi/agent'
         if os.path.lexists(root_agent):
             raise ValueError('preexisting root Pi agent directory')
-        for parent in ('/opt','/etc','/var/lib','/var/cache','/usr/local/bin','/etc/systemd/system'):
+        for parent in INSTALL_PARENTS:
             trusted(parent, directory=True)
         occupied = listeners(Path('/proc/net/tcp').read_text()) + listeners(Path('/proc/net/tcp6').read_text(),True)
         if occupied:

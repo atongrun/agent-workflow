@@ -1,5 +1,21 @@
 # Public native Ubuntu test
 
+## Current complete read-only diagnostic
+
+Run 37341262966 verified the approved `/opt` adjustment and restoration but
+then stopped at `/usr/local/bin`, before installation. The current five-minute
+workflow runs `native_acceptance.py --diagnostic-only` with no parent-preparation
+or cleanup invocation. It collects every fixed installation parent and all its
+components, plus the fixed native-command parents, before freshness can fail:
+`/opt`, `/etc`, `/var/lib`, `/var/cache`, `/usr/local/bin`,
+`/etc/systemd/system`, `/usr/bin`, `/usr/sbin` and their exact ancestors.
+Every Go trust term is evaluated; GID remains metadata. Fixed AWF objects,
+account/group, commands, bounded source-derived unit/drop-in/dependency conflicts
+and the two ports are collected together. Root Pi agent presence is a separately
+labelled test-isolation check; no home, authentication or environment scan occurs.
+The diagnostic performs no chmod/chown/install/cleanup, and can never claim
+native acceptance. Read-only errors are reported without hiding later entries.
+
 ## Approved disposable-VM parent preparation
 
 The diagnostic run [37338037770](https://github.com/atongrun/agent-workflow/actions/runs/37338037770)
@@ -25,7 +41,7 @@ Unexpected identity/mode or unknown control contents block changes and retain
 the private receipt. A hard VM/job termination without receipts remains
 unverified restoration, not a success claim.
 
-The current native job has a 30-minute timeout. The wrapper is restricted to
+The completed native run had a 30-minute timeout. The wrapper is restricted to
 the approved hosted Ubuntu 24.04 branch/job. The immutable RC1 installer and
 assets remain unchanged. Actual Pi update, provider authentication and model
 calls are outside this approval.

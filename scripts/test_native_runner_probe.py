@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import stat
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
@@ -70,6 +71,105 @@ class RunnerProbeTests(unittest.TestCase):
         self.assertEqual(report['paths'][0]['metadataError'],dict(type='FileNotFoundError',errno=2))
         self.assertTrue(report['paths'][1]['goParentTrustPredicate']['passed'])
         self.assertNotIn('private-error-detail',json.dumps(report))
+
+    def test_all_source_parents_and_components_report_every_failure(self):
+        names=probe.INSTALL_PARENTS+('/usr/bin','/usr/sbin')
+        seen=[]
+        def fixed(name):
+            seen.append(name)
+            mode=0o777 if name in ('/opt','/usr/local/bin') else 0o755
+            uid=1001 if name=='/usr/local/bin' else 0
+            info=SimpleNamespace(st_uid=uid,st_gid=0,st_mode=stat.S_IFDIR|mode)
+            return SimpleNamespace(lstat=lambda:info,stat=lambda:info,resolve=lambda strict:name)
+        with patch.object(probe,'Path',side_effect=fixed):
+            report=probe.parent_diagnostics(names)
+        expected={'/','/opt','/etc','/etc/systemd','/etc/systemd/system','/var','/var/lib','/var/cache',
+                  '/usr','/usr/local','/usr/local/bin','/usr/bin','/usr/sbin'}
+        self.assertEqual(set(seen),expected)
+        self.assertEqual(len(seen),len(expected))
+        failed={row['path']:set(row['failedPredicates']) for row in report['failedPaths']}
+        self.assertEqual(failed,{'/opt':{'noGroupWrite','noOtherWrite'},
+                                '/usr/local/bin':{'rootOwned','noGroupWrite','noOtherWrite'}})
+        self.assertFalse(report['allParentsMeetGoTrustPredicate'])
+        self.assertEqual(report['metadataErrors'],[])
+
+    def test_all_fixed_conflicts_are_collected_without_parent_failfast(self):
+        present={'/opt/node','/etc/awf','/root/.pi/agent'}
+        info=SimpleNamespace(st_uid=0,st_gid=0,st_mode=stat.S_IFDIR|0o755)
+        units=dict(units=[],conflicts=[dict(kind='loadedUnitOrOverrides',unit=u) for u in probe.UNITS],
+                   metadataErrors=[dict(target=probe.UNITS[0],errorType='OSError')],passed=False)
+        tcp='sl local_address rem_address st\n0: 0100007F:1B9E 00000000:0000 0A\n1: 00000000:0D61 00000000:0000 0A\n'
+        def fixed_stat(path):
+            if str(path) in present:
+                return info
+            raise FileNotFoundError(2,'fixture absent')
+        with patch.object(probe.Path,'lstat',autospec=True,side_effect=fixed_stat), \
+             patch.object(probe.Path,'read_text',side_effect=[tcp,'sl local_address rem_address st\n']), \
+             patch.object(probe.pwd,'getpwnam',return_value=SimpleNamespace(pw_dir='/root')), \
+             patch.object(probe.grp,'getgrnam',return_value=SimpleNamespace()), \
+             patch.object(probe.shutil,'which',side_effect=lambda name,path:'/usr/local/bin/pi' if name=='pi' else None), \
+             patch.object(probe,'unit_diagnostics',return_value=units):
+            report=probe.object_diagnostics()
+        self.assertEqual(len(report['fixedPaths']),len(probe.FIXED_PATHS))
+        kinds=[r['kind'] for r in report['conflicts']]
+        self.assertEqual(kinds.count('existingFixedPath'),2)
+        self.assertIn('existingAWFAccount',kinds)
+        self.assertIn('existingAWFGroup',kinds)
+        self.assertIn('rootPiAgentExists',kinds)
+        self.assertIn('existingCommand',kinds)
+        self.assertEqual(kinds.count('loadedUnitOrOverrides'),2)
+        self.assertEqual(kinds.count('occupiedPort'),2)
+        self.assertFalse(report['passed'])
+        self.assertFalse(report['mutationsPerformed'])
+
+    def test_one_unreadable_unit_does_not_hide_the_other(self):
+        with patch.object(probe,'trusted'),patch.object(probe,'UNIT_PATHS',()), \
+             patch.object(probe,'run',side_effect=[OSError('private-error-detail'),
+                 'LoadState=not-found\nFragmentPath=\nDropInPaths=\n']) as command:
+            report=probe.unit_diagnostics()
+        self.assertEqual(command.call_count,2)
+        self.assertEqual(report['units'][0]['unit'],probe.UNITS[1])
+        self.assertFalse(report['passed'])
+        self.assertNotIn('private-error-detail',json.dumps(report))
+
+    def test_unreadable_fixed_object_is_unknown_and_later_objects_still_collected(self):
+        def fixed_stat(path):
+            if str(path)=='/opt/node':
+                raise PermissionError(13,'private-error-detail')
+            if str(path)=='/opt/pi-cli':
+                return SimpleNamespace(st_uid=0,st_gid=0,st_mode=stat.S_IFDIR|0o755)
+            raise FileNotFoundError(2,'fixture absent')
+        def lookup(name):
+            if name=='root':
+                return SimpleNamespace(pw_dir='/root')
+            raise KeyError(name)
+        with patch.object(probe.Path,'lstat',autospec=True,side_effect=fixed_stat), \
+             patch.object(probe.Path,'read_text',return_value='sl local_address rem_address st\n'), \
+             patch.object(probe.pwd,'getpwnam',side_effect=lookup), \
+             patch.object(probe.grp,'getgrnam',side_effect=KeyError),patch.object(probe.shutil,'which',return_value=None), \
+             patch.object(probe,'unit_diagnostics',return_value={'units':[],'conflicts':[],'metadataErrors':[],'passed':True}):
+            report=probe.object_diagnostics()
+        rows={row['path']:row for row in report['fixedPaths']}
+        self.assertIsNone(rows['/opt/node']['present'])
+        self.assertTrue(rows['/opt/pi-cli']['present'])
+        self.assertFalse(rows['/opt/awf']['present'])
+        self.assertFalse(report['passed'])
+        self.assertNotIn('private-error-detail',json.dumps(report))
+
+    def test_bad_unit_entry_does_not_hide_later_conflicts_in_same_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory=Path(temp)
+            (directory/'bad.wants').write_text('fixture file instead of directory')
+            (directory/'awf-host.service').write_text('fixture')
+            (directory/'awf-magpie.service.d').mkdir()
+            with patch.object(probe,'trusted'),patch.object(probe,'UNIT_PATHS',(temp,)), \
+                 patch.object(probe,'run',return_value='LoadState=not-found\nFragmentPath=\nDropInPaths=\n'):
+                report=probe.unit_diagnostics()
+        paths={row['path'] for row in report['conflicts']}
+        self.assertIn(str(directory/'awf-host.service'),paths)
+        self.assertIn(str(directory/'awf-magpie.service.d'),paths)
+        self.assertEqual(report['metadataErrors'][0]['target'],str(directory/'bad.wants'))
+        self.assertFalse(report['passed'])
 
     def test_non_hosted_pr_or_unapproved_branch_is_refused(self):
         probe.ci_guard(self.env,0,0)
