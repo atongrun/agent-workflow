@@ -63,6 +63,7 @@ Environment=HOME=/var/lib/awf
 Environment=PATH=/opt/node/bin:/usr/bin:/bin
 Environment=PI_CODING_AGENT_DIR=/var/lib/awf/pi-agent
 EnvironmentFile=/etc/awf/host.env
+ExecStartPre=/opt/awf/awf linux-service-check host
 ExecStart=/opt/awf/awf host --config /etc/awf/host.json
 Restart=on-failure
 RestartSec=5
@@ -94,6 +95,7 @@ Environment=HOME=/var/lib/awf
 Environment=XDG_CONFIG_HOME=/var/lib/awf/magpie-config
 Environment=XDG_CACHE_HOME=/var/cache/awf
 Environment=MAGPIE_ADDR=127.0.0.1:3425
+ExecStartPre=/opt/awf/awf linux-service-check magpie
 ExecStart=/opt/magpie/magpie serve
 Restart=on-failure
 RestartSec=5
@@ -104,7 +106,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/awf /var/cache/awf
+ReadOnlyPaths=/var/lib/awf
+ReadWritePaths=/var/lib/awf/magpie-config/magpie /var/cache/awf
+BindReadOnlyPaths=/etc/awf/magpie-settings.json:/var/lib/awf/magpie-config/magpie/settings.json
 
 [Install]
 WantedBy=multi-user.target

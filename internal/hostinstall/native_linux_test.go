@@ -23,14 +23,16 @@ import (
 )
 
 type nativeFixture struct {
-	a           *nativeAdapter
-	dir         string
-	m           Manifest
-	account     bool
-	piVersion   string
-	commands    []string
-	maintenance core.Maintenance
-	busy        bool
+	a                *nativeAdapter
+	dir              string
+	m                Manifest
+	account          bool
+	piVersion        string
+	commands         []string
+	maintenance      core.Maintenance
+	busy             bool
+	states           map[string]bool
+	listenerOverride string
 }
 
 func newNativeFixture(t *testing.T) *nativeFixture {
@@ -38,13 +40,13 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 	if os.Getuid() == 0 || os.Getgid() == 0 {
 		t.Skip("non-root fixture user required; no real service account is created")
 	}
-	f := &nativeFixture{dir: privateParent(t), piVersion: "1.0.2", maintenance: core.Maintenance{Phase: "open"}}
+	f := &nativeFixture{dir: privateParent(t), piVersion: "1.0.2", maintenance: core.Maintenance{Phase: "open", Revision: 1}, states: map[string]bool{}}
 	for _, name := range []string{"opt", "etc/systemd/system", "var/lib", "var/cache", "usr/local/bin", "sys/fs/cgroup/system.slice", "proc/net"} {
 		if err := os.MkdirAll(filepath.Join(f.dir, name), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(f.dir, "proc/net/tcp"), []byte("0: 0100007F:1B9E 00000000:0000 0A\n1: 0100007F:0D61 00000000:0000 0A\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(f.dir, "proc/net/tcp"), nil, 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.dir, "proc/net/tcp6"), nil, 0644); err != nil {
@@ -104,18 +106,48 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 		if filepath.Base(name) == "awf" && len(args) == 1 && args[0] == "linux-build-identity" {
 			return json.Marshal(buildIdentity{1, f.m.Version, f.m.SourceCommit, "linux", "amd64", "v1"})
 		}
-		if len(args) > 0 && args[0] == "show" {
-			if len(args) > 2 && strings.Contains(args[2], "ControlGroup") {
-				return []byte("ActiveState=active\nMainPID=42\nControlGroup=/system.slice/" + args[1] + "\n"), nil
+		if len(args) > 1 && (args[0] == "start" || args[0] == "stop") {
+			f.states[args[1]] = args[0] == "start"
+			return nil, f.syncProcesses()
+		}
+		if len(args) > 2 && args[0] == "show" {
+			if strings.Contains(args[2], "LoadState") {
+				if _, err := f.a.root.Lstat("etc/systemd/system/" + args[1]); os.IsNotExist(err) {
+					return []byte("LoadState=not-found\nFragmentPath=\nDropInPaths=\n"), nil
+				}
+				return []byte("LoadState=loaded\nFragmentPath=/etc/systemd/system/" + args[1] + "\nDropInPaths=\n"), nil
 			}
-			if len(args) > 2 && strings.Contains(args[2], "FragmentPath") {
+			if strings.Contains(args[2], "FragmentPath") {
 				return []byte("FragmentPath=/etc/systemd/system/" + args[1] + "\nDropInPaths=\nUser=awf\nGroup=awf\nKillMode=control-group\nSlice=system.slice\n"), nil
 			}
-			return []byte("ActiveState=inactive\nMainPID=0\nKillMode=control-group\n"), nil
+			if f.states[args[1]] {
+				pid := "42"
+				if args[1] == "awf-magpie.service" {
+					pid = "43"
+				}
+				return []byte("ActiveState=active\nMainPID=" + pid + "\nControlGroup=/system.slice/" + args[1] + "\nKillMode=control-group\n"), nil
+			}
+			return []byte("ActiveState=inactive\nMainPID=0\nControlGroup=\nKillMode=control-group\n"), nil
 		}
 		return nil, nil
 	}
 	f.a.client = &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Port() == "3425" {
+			if !f.states["awf-magpie.service"] {
+				return nil, errors.New("fixture Magpie is stopped")
+			}
+			version := ""
+			for _, c := range f.m.Components {
+				if c.ID == "magpie" {
+					version = c.Version
+				}
+			}
+			b, _ := json.Marshal(map[string]string{"name": "magpie", "version": version})
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(b)), Header: make(http.Header)}, nil
+		}
+		if !f.states["awf-host.service"] {
+			return nil, errors.New("fixture Host is stopped")
+		}
 		status := 200
 		if req.Method == http.MethodPost {
 			var in struct {
@@ -150,6 +182,49 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 		return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(b)), Header: make(http.Header)}, nil
 	})}
 	return f
+}
+
+func (f *nativeFixture) syncProcesses() error {
+	var rows strings.Builder
+	for i, unit := range nativeUnits {
+		pid, inode, port, exe := "42", "101", "1B9E", "/opt/awf/awf"
+		if i == 1 {
+			pid, inode, port, exe = "43", "102", "0D61", "/opt/magpie/magpie"
+		}
+		group := filepath.Join(f.dir, "sys/fs/cgroup/system.slice", unit)
+		if err := os.MkdirAll(group, 0755); err != nil {
+			return err
+		}
+		data := ""
+		if f.states[unit] {
+			data = pid + "\n"
+		}
+		if err := os.WriteFile(filepath.Join(group, "cgroup.procs"), []byte(data), 0644); err != nil {
+			return err
+		}
+		proc := filepath.Join(f.dir, "proc", pid)
+		if err := os.RemoveAll(proc); err != nil {
+			return err
+		}
+		if !f.states[unit] {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Join(proc, "fd"), 0755); err != nil {
+			return err
+		}
+		if err := os.Symlink(exe, filepath.Join(proc, "exe")); err != nil {
+			return err
+		}
+		if err := os.Symlink("socket:["+inode+"]", filepath.Join(proc, "fd/3")); err != nil {
+			return err
+		}
+		fmt.Fprintf(&rows, "0: 0100007F:%s 00000000:0000 0A 0 0 0 0 0 %s\n", port, inode)
+	}
+	data := rows.String()
+	if f.listenerOverride != "" && f.states["awf-host.service"] {
+		data = f.listenerOverride
+	}
+	return os.WriteFile(filepath.Join(f.dir, "proc/net/tcp"), []byte(data), 0644)
 }
 
 func nativePreparedFixture(t *testing.T, m Manifest) (string, InstallReceipt) {
@@ -251,6 +326,9 @@ func TestNativeBusyStopCannotStopUnitsOrClaimCompletion(t *testing.T) {
 	f := newNativeFixture(t)
 	f.install(t)
 	if err := f.a.initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.start(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	f.busy = true
@@ -370,6 +448,9 @@ func TestNativeStartupRefusalsAndCleanupRetainSeal(t *testing.T) {
 			if err := f.a.initialize(ctx); err != nil {
 				t.Fatal(err)
 			}
+			if err := f.a.start(ctx, false); err != nil {
+				t.Fatal(err)
+			}
 			if err := f.a.stop(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -401,9 +482,7 @@ func TestNativeStartupRefusalsAndCleanupRetainSeal(t *testing.T) {
 				if bad == "wrong-host-port" {
 					address, port = "0100007F", "1BAE"
 				}
-				if err := os.WriteFile(filepath.Join(f.dir, "proc/net/tcp"), []byte("0: "+address+":"+port+" 00000000:0000 0A\n1: 0100007F:0D61 00000000:0000 0A\n"), 0644); err != nil {
-					t.Fatal(err)
-				}
+				f.listenerOverride = "0: " + address + ":" + port + " 00000000:0000 0A 0 0 0 0 0 101\n1: 0100007F:0D61 00000000:0000 0A 0 0 0 0 0 102\n"
 			}
 			if err := f.a.start(ctx, false); err == nil {
 				t.Fatal("unsafe/failed startup accepted")
@@ -549,4 +628,272 @@ func TestNativeOfficialInventoryFixture(t *testing.T) {
 		}
 	}
 	t.Log("official full Node/Pi/Magpie inventory copied and checked beneath a temporary root; Host bytes and all machine commands remain synthetic; no native acceptance")
+}
+
+func TestNativeFreshRefusesVendorAliasesDropinsAndOccupiedPorts(t *testing.T) {
+	for _, name := range []string{"usr/lib/systemd/system/awf-host.service", "run/systemd/system/awf-magpie.service.d/override.conf", "etc/systemd/system/multi-user.target.wants/awf-host.service"} {
+		t.Run(name, func(t *testing.T) {
+			f := newNativeFixture(t)
+			full := filepath.Join(f.dir, name)
+			if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte("existing other installation"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.a.fresh(); err == nil {
+				t.Fatal("existing systemd definition adopted")
+			}
+			if _, err := os.Stat(filepath.Join(f.dir, "opt/awf")); !os.IsNotExist(err) {
+				t.Fatal("read-only preflight wrote program root")
+			}
+		})
+	}
+	f := newNativeFixture(t)
+	dir := filepath.Join(f.dir, "usr/local/lib/systemd/system")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/other/awf-host.service", filepath.Join(dir, "unrelated.service")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.fresh(); err == nil {
+		t.Fatal("AWF alias adopted")
+	}
+	f = newNativeFixture(t)
+	if err := os.WriteFile(filepath.Join(f.dir, "proc/net/tcp"), []byte("0: 0100007F:1B9E 00000000:0000 0A 0 0 0 0 0 999\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.fresh(); err == nil {
+		t.Fatal("occupied other application's port adopted")
+	}
+	for _, command := range f.commands {
+		if strings.Contains(command, "systemctl stop") {
+			t.Fatal("fresh preflight stopped another app")
+		}
+	}
+}
+
+func TestNativeUnitRequiresTrustedRegularLiteral(t *testing.T) {
+	for _, kind := range []string{"writable", "link", "changed"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newNativeFixture(t)
+			f.install(t)
+			name := filepath.Join(f.dir, "etc/systemd/system/awf-host.service")
+			switch kind {
+			case "writable":
+				if err := os.Chmod(name, 0664); err != nil {
+					t.Fatal(err)
+				}
+			case "link":
+				if err := os.Rename(name, name+".original"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("awf-host.service.original", name); err != nil {
+					t.Fatal(err)
+				}
+			case "changed":
+				if err := os.WriteFile(name, []byte(hostUnitProposal+"# override\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.a.unit(context.Background(), "awf-host.service"); err == nil {
+				t.Fatal("untrusted or changed unit accepted")
+			}
+		})
+	}
+}
+
+func TestNativeMagpieSnapshotAcceptsDefaultAndGuardsEveryActivation(t *testing.T) {
+	f := newNativeFixture(t)
+	f.install(t)
+	if err := f.a.initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(f.dir, "var/lib/awf/magpie-config/magpie/settings.json")
+	if err := os.WriteFile(name, []byte(`{"theme":"dark"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.start(context.Background(), false); err != nil {
+		t.Fatal("upstream omitted false rejected", err)
+	}
+	snapshot, err := os.ReadFile(filepath.Join(f.dir, "etc/awf/magpie-settings.json"))
+	if err != nil || !strings.Contains(string(snapshot), `"lan":false`) || !strings.Contains(string(snapshot), `"theme":"dark"`) {
+		t.Fatal("snapshot lost safety or settings", err)
+	}
+	if err := os.WriteFile(name, []byte(`{"lan":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.serviceCheck("magpie", false); err != nil {
+		t.Fatal("immutable restart snapshot changed", err)
+	}
+	if !strings.Contains(magpieUnitProposal, "BindReadOnlyPaths=/etc/awf/magpie-settings.json:") || !strings.Contains(magpieUnitProposal, "ReadOnlyPaths=/var/lib/awf") || !strings.Contains(magpieUnitProposal, "ExecStartPre=/opt/awf/awf linux-service-check magpie") || !strings.Contains(hostUnitProposal, "ExecStartPre=/opt/awf/awf linux-service-check host") {
+		t.Fatal("boot/restart bypasses guards")
+	}
+	if err := f.a.serviceCheck("magpie", true); err == nil {
+		t.Fatal("unmounted fixture represented as a protected native service")
+	}
+	if !readOnlySettingsMount([]byte("1 2 0:1 / /var/lib/awf/magpie-config/magpie/settings.json ro,relatime - ext4 /dev/sda rw\n")) || readOnlySettingsMount([]byte("1 2 0:1 / /var/lib/awf/magpie-config/magpie/settings.json rw,relatime - ext4 /dev/sda rw\n")) {
+		t.Fatal("read-only mount evidence parsing")
+	}
+	for _, b := range []string{`{"lan":true}`, `{"lan":null}`, `{"lan":"false"}`, `null`, `{"lan":false,"lan":true}`} {
+		if _, err := checkedMagpieSettings([]byte(b)); err == nil {
+			t.Fatal("unsafe settings admitted", b)
+		}
+	}
+}
+
+func TestNativeShutdownRetryUsesDurableSealAfterHostOffline(t *testing.T) {
+	f := newNativeFixture(t)
+	f.install(t)
+	ctx := context.Background()
+	if err := f.a.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.start(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	old := f.a.command
+	fail := true
+	f.a.command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if len(args) == 2 && args[0] == "stop" {
+			var persisted core.Maintenance
+			if err := f.a.read("etc/awf/stopped-lease.json", &persisted); err != nil || persisted.Phase != "sealed" || persisted.Revision != f.maintenance.Revision {
+				t.Fatal("system stop preceded durable sealed lease", err)
+			}
+			if args[1] == "awf-magpie.service" && fail {
+				fail = false
+				return nil, errors.New("injected stop failure")
+			}
+		}
+		return old(ctx, name, args...)
+	}
+	if err := f.a.stop(ctx); err == nil {
+		t.Fatal("partial shutdown claimed completion")
+	}
+	if f.states["awf-host.service"] || !f.states["awf-magpie.service"] {
+		t.Fatal("fixture did not establish partial stopped/offline Host")
+	}
+	owner := f.maintenance.OwnerRequestID
+	if err := f.a.stop(ctx); err != nil {
+		t.Fatal("owned offline shutdown could not retry", err)
+	}
+	if f.states["awf-magpie.service"] || f.maintenance.OwnerRequestID != owner || f.maintenance.Phase != "sealed" {
+		t.Fatal("retry did not preserve owner/seal")
+	}
+	lease := f.maintenance
+	lease.Phase = "draining"
+	data, _ := json.Marshal(lease)
+	if err := f.a.replaceMetadata("etc/awf/stopped-lease.json", data, 0600, os.Getgid()); err != nil {
+		t.Fatal(err)
+	}
+	f.commands = nil
+	if err := f.a.stop(ctx); err == nil {
+		t.Fatal("offline draining lease inferred sealed")
+	}
+	for _, command := range f.commands {
+		if strings.Contains(command, "systemctl stop") {
+			t.Fatal("unverified seal crossed stop boundary")
+		}
+	}
+}
+
+func TestNativeFailedStartAttemptsOtherUnitAfterStopFailure(t *testing.T) {
+	f := newNativeFixture(t)
+	f.install(t)
+	ctx := context.Background()
+	if err := f.a.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.start(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	old := f.a.command
+	f.a.command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if len(args) == 2 && args[0] == "stop" && args[1] == "awf-host.service" {
+			return nil, errors.New("injected first stop failure")
+		}
+		return old(ctx, name, args...)
+	}
+	f.commands = nil
+	if err := f.a.failedStart(ctx, errors.New("injected health failure")); err == nil {
+		t.Fatal("cleanup failure accepted")
+	}
+	if f.states["awf-magpie.service"] || !f.states["awf-host.service"] {
+		t.Fatal("first stop failure abandoned other unit")
+	}
+}
+
+func TestNativeHealthRequiresCurrentServiceSocketOwnership(t *testing.T) {
+	for _, kind := range []string{"foreign-inode", "wrong-executable", "missing-main-cgroup", "exited"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newNativeFixture(t)
+			f.install(t)
+			ctx := context.Background()
+			if err := f.a.initialize(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.a.start(ctx, false); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "foreign-inode":
+				name := filepath.Join(f.dir, "proc/42/fd/3")
+				if err := os.Remove(name); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("socket:[999]", name); err != nil {
+					t.Fatal(err)
+				}
+			case "wrong-executable":
+				name := filepath.Join(f.dir, "proc/42/exe")
+				if err := os.Remove(name); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("/other/app", name); err != nil {
+					t.Fatal(err)
+				}
+			case "missing-main-cgroup":
+				if err := os.WriteFile(filepath.Join(f.dir, "sys/fs/cgroup/system.slice/awf-host.service/cgroup.procs"), nil, 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "exited":
+				f.states["awf-host.service"] = false
+			}
+			if err := f.a.loopbackListeners(ctx); err == nil {
+				t.Fatal("unrelated/stale listener accepted", kind)
+			}
+		})
+	}
+}
+
+func TestNativeMaintenanceCannotMutateForeignHostListener(t *testing.T) {
+	f := newNativeFixture(t)
+	f.install(t)
+	ctx := context.Background()
+	if err := f.a.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.start(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(f.dir, "proc/42/fd/3")
+	if err := os.Remove(name); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[999]", name); err != nil {
+		t.Fatal(err)
+	}
+	f.commands = nil
+	if err := f.a.stop(ctx); err == nil {
+		t.Fatal("unowned maintenance endpoint accepted")
+	}
+	if f.maintenance.Phase != "open" {
+		t.Fatal("foreign endpoint received maintenance mutation")
+	}
+	for _, command := range f.commands {
+		if strings.Contains(command, "systemctl stop") {
+			t.Fatal("unowned endpoint crossed shutdown boundary")
+		}
+	}
 }

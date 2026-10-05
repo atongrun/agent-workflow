@@ -67,7 +67,8 @@ receipts also never establish native installation.
 | Root-owned configuration and install evidence | `/etc/awf` |
 | Dedicated service state and cache | `/var/lib/awf`, `/var/cache/awf` |
 | Service Pi agent directory | `/var/lib/awf/pi-agent` |
-| Service Magpie config | `/var/lib/awf/magpie-config/magpie/settings.json` |
+| Service Magpie mutable settings / provider files | `/var/lib/awf/magpie-config/magpie` |
+| Root-owned Magpie settings snapshot | `/etc/awf/magpie-settings.json` (0640, root:awf) |
 | Fixed systemd units | `awf-host.service`, `awf-magpie.service` |
 
 Programs are root-owned and service-read-only. The `awf` account is a non-root
@@ -85,20 +86,43 @@ installer overrides, and uses Node's `execve` to preserve PID and stdio. It adds
 no AWF extension to ordinary root Pi; the Host passes its own extension explicitly.
 
 Units use `KillMode=control-group`, a dedicated account, private temporary files,
-`ProtectHome`, `ProtectSystem=strict`, and only service state/cache write access.
-Native start requires the exact unit files, root fragment paths, no drop-ins,
-`system.slice` and the dedicated account. It also requires active MainPIDs in the
-fixed control groups, exact running Host identity and actual IPv4 loopback
-listeners on 7070 and 3425. These checks are implemented; real systemd behavior
-and socket ownership still require native acceptance.
+`ProtectHome` and `ProtectSystem=strict`. Native lifecycle checks require regular
+root-owned 0644 literal unit files, trusted parents, fixed root fragment paths,
+no drop-ins, `system.slice` and the dedicated account. Fresh preflight also checks
+loaded manager state and systemd vendor/runtime definitions, aliases, dependency
+links and applicable drop-ins before modifying programs or accounts. Occupied
+7070/3425 ports are refused without stopping other applications.
 
-Magpie is configured with explicit `lan: false`, `noAutoUpdate: true` and
-`noStats: true`, independent HOME/XDG roots and `MAGPIE_ADDR=127.0.0.1:3425`.
-The inspected upstream source gives LAN mode precedence over that environment
-address, so native start reads and checks the service settings before activation,
-refuses portable markers beside the binary, and checks kernel listeners afterward.
-A failed startup or health check stops both units and verifies process exit;
-unknown cleanup remains a failure. No public listen or firewall change is needed.
+Host runs a read-only configuration guard on **every** systemd activation,
+including boot and automatic restart. Magpie runs a corresponding snapshot/mount
+guard. Its unit binds `/etc/awf/magpie-settings.json` read-only over the service
+settings file, makes state ancestors read-only, and permits writes only inside
+the mounted Magpie app directory and service cache. Provider/auth files remain
+writable; the process cannot replace the settings bind or rename its ancestors.
+The guard checks the bound inode and the kernel read-only mount record. These
+unit directives and guards are covered locally; real mounts and account isolation
+still need native acceptance.
+
+The snapshot fixes `lan: false`, `noAutoUpdate: true`, `noStats: true` and uses
+independent HOME/XDG roots plus `MAGPIE_ADDR=127.0.0.1:3425`. Upstream LAN overrides
+the environment address, so the immutable settings bind is necessary. While both
+units are stopped, `awf start` copies valid private service settings into the root
+snapshot and forces the safety fields. Omitted `lan` is accepted as upstream's
+default false; explicit true, null or non-boolean values are refused. Other
+settings are retained. Changes made by a separate administrative Magpie CLI take
+effect after `awf stop`/`awf start`; boot/restart retains the last root snapshot.
+Portable markers beside the binary are refused.
+
+Health requires exact Host build identity and read-only Magpie root identity and
+version, active fixed-unit MainPIDs with exact executable paths, main-process
+cgroup membership, and actual IPv4 loopback listeners on 7070/3425. Socket inodes
+must occur in descriptors owned by the corresponding unit's cgroup processes;
+unrelated listeners cannot satisfy health. Unit/process/socket checks repeat at
+health completion before any maintenance lease is released. Maintenance mutations
+also require the owned Host listener. A failed startup attempts stop and process
+verification for **each** trusted unit even if another unit's stop fails; unknown
+cleanup remains a failure. No public listen or firewall change is needed.
+
 Service Magpie authentication and a real Pi model catalog must be configured
 explicitly later; startup is not proof that model-backed work is ready.
 
@@ -209,10 +233,14 @@ not acceptance or provider readiness.
 Stop/update use the existing opt-in durable Host maintenance API at
 `/v1/maintenance`: begin freezes admissions, seal requires settled native work,
 and end requires the original owner plus compare-and-swap revision. The local
-owner/target evidence is persisted before seal. A busy seal leaves draining state
-and refuses systemctl stop; a later idle retry uses the same owner. After seal,
-both units must be inactive with MainPID zero and empty descendant cgroup.procs.
-Shutdown failures retain the lease and do not permit program replacement.
+owner/target evidence is file- and parent-directory-synced before seal. A busy
+seal leaves draining state and refuses systemctl stop; a later idle retry uses
+the same owner. The returned sealed lease is atomically replaced and synced before
+any systemctl stop. Both units must be inactive with MainPID zero and empty
+descendant cgroup.procs. If Host stopped before the other unit failed, retry uses
+that persisted sealed owner/target plus verified inactive Host/empty cgroup;
+an offline draining lease cannot authorize shutdown. Each trusted unit is stopped
+and checked independently. Failures retain the lease and prohibit replacement.
 
 AWF update prepares and checks the new executable before maintenance. Under the
 seal and verified stop it replaces Node/AWF/Magpie roots, retaining per-root
@@ -268,3 +296,64 @@ Review failure/interruption and reboot/autostart behavior there. The current
 Debian 13/PID1-tail executor does not meet that acceptance matrix. No production
 machine, account mutation, systemctl action, listening service, firewall,
 credentials or cloud purchase is authorized by these local checks.
+
+## Minimal approved Ubuntu acceptance run
+
+Use two **disposable, otherwise fresh** amd64 VMs, one Ubuntu 22.04 and one 24.04,
+with systemd as PID1, unified cgroup v2, glibc, root/sudo, Python 3, CA certificates,
+`useradd`/`getent`, and ordinary `/proc`/`/sys` mounts. A practical small VM is
+2 vCPU, 2 GiB RAM (4 GiB preferred), and at least 8 GiB free storage for the OS,
+verified preparation, copies and retained update backups. This is a test sizing
+recommendation, not a measured runtime minimum. The runtime does not need a Go
+compiler; packaging requires Go 1.25+. Allow outbound HTTPS to the manifest's
+official GitHub/CDN, Node and npm sources. No inbound port or firewall rule is
+required. Do not attach production volumes, credentials, model accounts or keys.
+
+Full bootstrap acceptance additionally needs separately approved **Linux candidate
+release assets/tag** matching this candidate commit and canonical manifest URLs.
+The default channel is unpublished, and supplying only a local Host archive does
+not bypass Go's public tag and remaining asset checks. VM authorization does not
+authorize publishing those assets. Until the candidate artifact route is approved,
+only the local preparation/adapter fixtures can run; they are not bootstrap E2E.
+
+Take a VM snapshot before testing. On each approved VM, with the reviewed script,
+manifest and verified Host archive present, run the commands in the first section:
+install, init, start, stop, start, and the separately reviewed next-manifest update.
+Verify `/etc/awf/install.json`, exact command links/prefix, root ownership of all
+programs and units, private service ownership, root's independent `~/.pi/agent`,
+and the service's `/var/lib/awf/pi-agent`. Check both units with:
+
+```sh
+sudo systemctl show awf-host.service awf-magpie.service -p FragmentPath -p DropInPaths -p User -p Group -p ActiveState -p MainPID -p ControlGroup -p KillMode
+sudo ss -ltnp 'sport = :7070 or sport = :3425'
+curl --fail --silent http://127.0.0.1:3425/
+```
+
+Inspect Magpie's service mount namespace: the settings target must bind the root
+snapshot read-only, settings ancestors must remain read-only, and provider files
+must remain writable as `awf`. Change the mutable settings outside the service to
+`lan:true`, then exercise systemd restart/reboot: the immutable snapshot must keep
+3425 loopback. `awf start` after a verified stop must refuse that unsafe setting;
+restore false or omit it before continuing. Exercise failure of one stop, retry
+with Host already offline, busy draining and incomplete child-cgroup exit. Retain
+original owner/revision evidence across these cases; never manually reopen a seal.
+A harmless test process may be placed in the service cgroup only within this
+explicitly approved disposable test; verify it and every descendant exit on stop.
+
+For `pi update`, stop both units, record the prefix/package/version, run ordinary
+root `pi update`, and verify the same prefix, stable launcher, no second install,
+root ownership and scripts-disabled upstream command. Start and verify health;
+AWF replacement must preserve that current Pi version. Enable autostart only for
+the reboot case. Provider authentication, catalog/model compatibility and any
+model-backed call require their own approval; basic process/loopback checks do not
+require credentials or a model call.
+
+Exact machine changes are limited to `/opt/{node,pi-cli,awf,magpie}`, six command
+links under `/usr/local/bin`, the `awf` system account/group, `/etc/awf`, private
+`/var/lib/awf` and `/var/cache/awf`, `/var/cache/awf-installer`, and two literal units
+under `/etc/systemd/system` (plus enablement links only with `--enable`). Downloads
+and preparation use private temporary directories; failed updates retain named
+program backups and pending/lease evidence. The simplest rollback is restoring
+the pre-test VM snapshot or destroying/recreating the disposable VM. There is no
+automatic multi-root rollback, and manual deletion of partial state is not treated
+as a safe retry mechanism. Preserve test logs/evidence before discarding the VM.

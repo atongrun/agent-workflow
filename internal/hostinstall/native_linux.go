@@ -172,7 +172,55 @@ func (a *nativeAdapter) writeNew(name string, data []byte, mode os.FileMode) err
 	if err = f.Chmod(mode); err != nil {
 		return err
 	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return a.syncParent(name)
+}
+
+func (a *nativeAdapter) syncParent(name string) error {
+	f, err := a.root.Open(path.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 	return f.Sync()
+}
+
+// Replace only trusted native metadata, with the same-directory temporary file
+// and both file/directory syncs before callers act on the durable result.
+func (a *nativeAdapter) replaceMetadata(name string, data []byte, mode os.FileMode, gid int) error {
+	if err := a.parents(name); err != nil {
+		return err
+	}
+	if err := a.trusted(name, false); err != nil {
+		return err
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	tmp := name + ".tmp-" + hex.EncodeToString(nonce[:])
+	defer a.root.Remove(tmp)
+	if err := a.writeNew(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := a.chown(tmp, a.owner, gid); err != nil {
+		return err
+	}
+	f, err := a.root.Open(tmp)
+	if err != nil {
+		return err
+	}
+	err = f.Sync()
+	f.Close()
+	if err != nil {
+		return err
+	}
+	if err := a.root.Rename(tmp, name); err != nil {
+		return err
+	}
+	return a.syncParent(name)
 }
 func (a *nativeAdapter) read(name string, out any) error {
 	if err := a.parents(name); err != nil {
@@ -220,6 +268,12 @@ func (a *nativeAdapter) lock() (*os.File, error) {
 }
 
 func (a *nativeAdapter) fresh() error {
+	if err := a.freshUnits(context.Background()); err != nil {
+		return err
+	}
+	if err := a.unoccupiedPorts(); err != nil {
+		return err
+	}
 	for _, name := range []string{"awf", "pi", "node", "npm", "npx", "magpie"} {
 		if _, err := a.lookPath(name); err == nil {
 			return fmt.Errorf("existing %s command requires inspection; fresh installation does not adopt programs", name)
@@ -549,7 +603,7 @@ func (a *nativeAdapter) initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range []string{"etc/awf/host.json", "etc/awf/host.env", "etc/awf/native-initialized.json", "etc/awf/native-magpie-loopback.json"} {
+	for _, name := range []string{"etc/awf/host.json", "etc/awf/host.env", "etc/awf/magpie-settings.json", "etc/awf/native-initialized.json", "etc/awf/native-magpie-loopback.json"} {
 		if err := a.absent(name); err != nil {
 			return err
 		}
@@ -616,6 +670,12 @@ func (a *nativeAdapter) initialize(ctx context.Context) error {
 		}
 		f.Close()
 		if err != nil {
+			return err
+		}
+		if err := a.writeNew("etc/awf/magpie-settings.json", settings, 0640); err != nil {
+			return err
+		}
+		if err := a.chown("etc/awf/magpie-settings.json", a.owner, gid); err != nil {
 			return err
 		}
 		var token [64]byte
@@ -718,22 +778,56 @@ func (a *nativeAdapter) stopFor(ctx context.Context, target string) error {
 	if target == "" {
 		target = manifestDigest(r.Manifest)
 	}
-	s, err := a.maintenance(ctx, "", nil)
-	if err != nil {
-		return err
-	}
-	if !s.Build.Available || s.Build.Version != r.Manifest.Version || s.Build.SourceCommit != r.Manifest.SourceCommit {
-		return errors.New("running Host build does not match installed identity")
+	// Refuse changed definitions before interacting with a running maintenance
+	// endpoint. Only these exact trusted units may ever be stopped.
+	for _, unit := range nativeUnits {
+		if err := a.unit(ctx, unit); err != nil {
+			return err
+		}
 	}
 	var lease core.Maintenance
+	hasLease := false
 	if _, err := a.root.Lstat("etc/awf/stopped-lease.json"); err == nil {
 		if err := a.read("etc/awf/stopped-lease.json", &lease); err != nil {
 			return err
 		}
-		if core.ValidateMaintenance(&lease) != nil || lease.OwnerRequestID != s.Maintenance.OwnerRequestID || lease.TargetManifestSHA256 != target {
+		if core.ValidateMaintenance(&lease) != nil || lease.Phase == "open" || lease.TargetManifestSHA256 != target {
 			return errors.New("existing maintenance lease requires its explicit owner/target")
 		}
-	} else if os.IsNotExist(err) {
+		hasLease = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := a.hostListenerOwned(ctx); err != nil {
+		if !hasLease || lease.Phase != "sealed" {
+			return err
+		}
+		if err := a.stopped(ctx, "awf-host.service"); err != nil {
+			return err
+		}
+		return a.phase("bundle", "service-stop-retry", func() error { return a.stopUnits(ctx) })
+	}
+	s, err := a.maintenance(ctx, "", nil)
+	if err != nil {
+		// An interrupted shutdown may already have stopped Host. Offline retry
+		// requires the previously synced sealed lease AND a verified empty Host
+		// cgroup; never infer a seal from an unavailable endpoint alone.
+		if !hasLease || lease.Phase != "sealed" {
+			return err
+		}
+		if err := a.stopped(ctx, "awf-host.service"); err != nil {
+			return err
+		}
+		return a.phase("bundle", "service-stop-retry", func() error { return a.stopUnits(ctx) })
+	}
+	if !s.Build.Available || s.Build.Version != r.Manifest.Version || s.Build.SourceCommit != r.Manifest.SourceCommit {
+		return errors.New("running Host build does not match installed identity")
+	}
+	if hasLease {
+		if lease.OwnerRequestID != s.Maintenance.OwnerRequestID || lease.TargetManifestSHA256 != s.Maintenance.TargetManifestSHA256 {
+			return errors.New("existing maintenance lease requires its explicit owner/target")
+		}
+	} else {
 		if s.Maintenance.Phase != "open" {
 			return errors.New("existing maintenance lease requires its explicit owner")
 		}
@@ -747,15 +841,13 @@ func (a *nativeAdapter) stopFor(ctx context.Context, target string) error {
 			return err
 		}
 		lease = s.Maintenance
-		if core.ValidateMaintenance(&lease) != nil || lease.OwnerRequestID != owner || lease.TargetManifestSHA256 != target {
+		if core.ValidateMaintenance(&lease) != nil || lease.OwnerRequestID != owner || lease.TargetManifestSHA256 != target || lease.Phase != "draining" {
 			return errors.New("invalid owned maintenance response")
 		}
 		data, _ := json.Marshal(lease)
 		if err := a.writeNew("etc/awf/stopped-lease.json", data, 0600); err != nil {
 			return err
 		}
-	} else {
-		return err
 	}
 	owner := lease.OwnerRequestID
 	if s.Maintenance.Phase == "draining" {
@@ -764,27 +856,14 @@ func (a *nativeAdapter) stopFor(ctx context.Context, target string) error {
 			return err
 		}
 	}
-	if s.Maintenance.Phase != "sealed" || s.Maintenance.OwnerRequestID != owner {
+	if core.ValidateMaintenance(&s.Maintenance) != nil || s.Maintenance.Phase != "sealed" || s.Maintenance.OwnerRequestID != owner || s.Maintenance.TargetManifestSHA256 != target {
 		return errors.New("Host did not establish the owned seal")
 	}
-	return a.phase("bundle", "service-stop", func() error {
-		for _, unit := range nativeUnits {
-			if err := a.unit(ctx, unit); err != nil {
-				return err
-			}
-		}
-		for _, unit := range nativeUnits {
-			if _, err := a.command(ctx, "/usr/bin/systemctl", "stop", unit); err != nil {
-				return err
-			}
-		}
-		for _, unit := range nativeUnits {
-			if err := a.stopped(ctx, unit); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	data, _ := json.Marshal(s.Maintenance)
+	if err := a.replaceMetadata("etc/awf/stopped-lease.json", data, 0600, a.owner); err != nil {
+		return err
+	}
+	return a.phase("bundle", "service-stop", func() error { return a.stopUnits(ctx) })
 }
 func (a *nativeAdapter) stopped(ctx context.Context, unit string) error {
 	out, err := a.command(ctx, "/usr/bin/systemctl", "show", unit, "--property=ActiveState,MainPID,KillMode", "--no-pager")
@@ -832,52 +911,40 @@ func (a *nativeAdapter) start(ctx context.Context, enable bool) error {
 	if err := a.read("etc/awf/native-initialized.json", &initialized); err != nil || initialized.Schema != 1 || !initialized.Initialized {
 		return errors.New("run awf init before start")
 	}
-	var config host.Config
-	if err := a.read("etc/awf/host.json", &config); err != nil {
+	if err := a.hostConfiguration(); err != nil {
 		return err
-	}
-	if config.Listen != "127.0.0.1:7070" || config.InternalURL != "http://127.0.0.1:7070" || config.DataDir != "/var/lib/awf" || config.PiAgentDir != "/var/lib/awf/pi-agent" || config.PiBinary != "/opt/pi-cli/awf-launcher.mjs" || config.PiExtension != "/opt/awf/extensions/awf.ts" || !config.EnableMaintenance || config.TokenEnv != "AWF_HOST_TOKEN" || config.ExtensionTokenEnv != "AWF_EXTENSION_TOKEN" {
-		return errors.New("Host native paths, loopback and maintenance configuration must be retained")
-	}
-	var settings struct {
-		LAN *bool `json:"lan"`
-	}
-	state, err := os.OpenRoot(filepath.Join(a.root.Name(), "var/lib/awf"))
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	f, err := state.Open("magpie-config/magpie/settings.json")
-	if err != nil {
-		return err
-	}
-	b, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
-	f.Close()
-	if err != nil || len(b) > 1<<20 || uniqueJSON(b) != nil || json.Unmarshal(b, &settings) != nil || settings.LAN == nil || *settings.LAN {
-		return errors.New("Magpie service configuration must retain LAN=false")
-	}
-	for _, name := range []string{"opt/magpie/.portable", "opt/magpie/data"} {
-		if _, err := a.root.Lstat(name); !os.IsNotExist(err) {
-			return errors.New("Magpie portable configuration requires inspection")
-		}
 	}
 	for _, unit := range nativeUnits {
 		if err := a.unit(ctx, unit); err != nil {
 			return err
 		}
-		expected := hostUnitProposal
-		if unit == "awf-magpie.service" {
-			expected = magpieUnitProposal
+	}
+	// Refresh the administrator snapshot only while both units are stopped.
+	// An already running pair may be verified without replacing its mount.
+	active := 0
+	for _, unit := range nativeUnits {
+		if _, err := a.activePID(ctx, unit); err == nil {
+			active++
 		}
-		f, err := a.root.Open("etc/systemd/system/" + unit)
-		if err != nil {
+	}
+	if active == 1 {
+		return errors.New("partially running service pair requires awf stop before start")
+	}
+	if active == 0 {
+		for _, unit := range nativeUnits {
+			if err := a.stopped(ctx, unit); err != nil {
+				return err
+			}
+		}
+		if err := a.unoccupiedPorts(); err != nil {
 			return err
 		}
-		b, err := io.ReadAll(io.LimitReader(f, int64(len(expected))+1))
-		f.Close()
-		if err != nil || string(b) != expected {
-			return errors.New("installed systemd unit changed; inspect before start")
+		if err := a.snapshotMagpie(); err != nil {
+			return err
 		}
+	}
+	if err := a.serviceCheck("magpie", false); err != nil {
+		return err
 	}
 	var lease core.Maintenance
 	hasLease := false
@@ -885,7 +952,7 @@ func (a *nativeAdapter) start(ctx context.Context, enable bool) error {
 		if err := a.read("etc/awf/stopped-lease.json", &lease); err != nil {
 			return err
 		}
-		if core.ValidateMaintenance(&lease) != nil || lease.TargetManifestSHA256 != manifestDigest(r.Manifest) {
+		if core.ValidateMaintenance(&lease) != nil || lease.Phase != "sealed" || lease.TargetManifestSHA256 != manifestDigest(r.Manifest) {
 			return errors.New("stopped maintenance target differs from installed receipt")
 		}
 		hasLease = true
@@ -893,6 +960,9 @@ func (a *nativeAdapter) start(ctx context.Context, enable bool) error {
 		return err
 	}
 	if err := a.phase("bundle", "service-start", func() error {
+		if active == 2 {
+			return nil
+		}
 		for _, unit := range []string{"awf-magpie.service", "awf-host.service"} {
 			if _, err := a.command(ctx, "/usr/bin/systemctl", "start", unit); err != nil {
 				return err
@@ -903,15 +973,19 @@ func (a *nativeAdapter) start(ctx context.Context, enable bool) error {
 		return a.failedStart(ctx, err)
 	}
 	if err := a.phase("awf-host", "health", func() error {
-		for _, unit := range nativeUnits {
-			if err := a.started(ctx, unit); err != nil {
-				return err
-			}
-		}
 		var s maintenanceStatus
 		var err error
 		for i := 0; i < 20; i++ {
 			s, err = a.maintenance(ctx, "", nil)
+			if err == nil && (!s.Build.Available || s.Build.Version != r.Manifest.Version || s.Build.SourceCommit != r.Manifest.SourceCommit) {
+				err = errors.New("started Host build identity differs")
+			}
+			if err == nil {
+				err = a.magpieHealth(ctx, r.Manifest)
+			}
+			if err == nil {
+				err = a.loopbackListeners(ctx)
+			}
 			if err == nil {
 				break
 			}
@@ -921,10 +995,12 @@ func (a *nativeAdapter) start(ctx context.Context, enable bool) error {
 			case <-time.After(250 * time.Millisecond):
 			}
 		}
-		if err != nil || !s.Build.Available || s.Build.Version != r.Manifest.Version || s.Build.SourceCommit != r.Manifest.SourceCommit {
-			return errors.New("started Host build/health not established; services require inspection")
+		if err != nil {
+			return err
 		}
-		if err := a.loopbackListeners(); err != nil {
+		// HTTP readiness may have waited while processes changed. Associate
+		// current listeners/processes again immediately before releasing a seal.
+		if err := a.loopbackListeners(ctx); err != nil {
 			return err
 		}
 		if hasLease {
@@ -935,7 +1011,10 @@ func (a *nativeAdapter) start(ctx context.Context, enable bool) error {
 			if err != nil {
 				return err
 			}
-			return a.root.Remove("etc/awf/stopped-lease.json")
+			if err := a.root.Remove("etc/awf/stopped-lease.json"); err != nil {
+				return err
+			}
+			return a.syncParent("etc/awf/stopped-lease.json")
 		}
 		if s.Maintenance.Phase != "open" {
 			return errors.New("existing maintenance lease requires explicit owner release")

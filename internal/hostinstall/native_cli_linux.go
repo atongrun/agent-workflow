@@ -33,6 +33,17 @@ func HandleNative(ctx context.Context, args []string, in io.Reader, out, progres
 		return true, nil
 	case "linux-build-identity":
 		return true, json.NewEncoder(out).Encode(NativeBuildIdentity())
+	case "linux-service-check":
+		if len(args) != 2 {
+			return true, errors.New("service check requires host or magpie")
+		}
+		r, err := os.OpenRoot("/")
+		if err != nil {
+			return true, err
+		}
+		defer r.Close()
+		a := &nativeAdapter{root: r, owner: 0}
+		return true, a.serviceCheck(args[1], true)
 	case "install", "init", "start", "stop", "update":
 	default:
 		return false, nil
