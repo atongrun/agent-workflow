@@ -60,7 +60,8 @@ def allowed_name(name):
         return True
     return bool(re.fullmatch(r'input/stage/(node|pi|awf-host|awf-extension|magpie)/[a-zA-Z0-9_.-]+', name)
                 or re.fullmatch(r'input/supplemental/registry-[a-z-]+\.json', name)
-                or re.fullmatch(r'input/cache/_cacache/(content-v2|index-v5)/[0-9a-f/]+', name))
+                or re.fullmatch(r'input/cache/_cacache/content-v2/sha512/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{124}', name)
+                or re.fullmatch(r'input/cache/_cacache/index-v5/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{60}', name))
 
 
 def pack(args):

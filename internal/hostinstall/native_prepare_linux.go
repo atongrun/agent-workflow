@@ -4,8 +4,6 @@ package hostinstall
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
@@ -167,24 +165,6 @@ func populateNativeCache(ctx context.Context, bootstrap, stage, cache string, o 
 			observe()
 		}
 	}
-}
-
-func verifyAuditedNode(name string) error {
-	f, err := os.Open(name)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() != 121674800 {
-		return errors.New("audited Node size/type changed")
-	}
-	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(f, 121674801))
-	if err != nil || n != 121674800 || hex.EncodeToString(h.Sum(nil)) != "596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9" {
-		return errors.New("audited Node bytes changed")
-	}
-	return nil
 }
 
 func nativeCacheBytes(cache string) (int64, error) {

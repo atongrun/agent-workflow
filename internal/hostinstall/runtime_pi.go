@@ -505,8 +505,7 @@ func preparePiRuntime(ctx context.Context, dest *os.Root, in RuntimeInput, plan 
 		}
 	}
 	node := path.Join(dest.Name(), "opt/node/bin/node")
-	data, err := os.ReadFile(node)
-	if err != nil || !pinHash(data, "596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9") {
+	if err := verifyAuditedNode(node); err != nil {
 		return nil, errors.New("audited Node executable required")
 	}
 	childCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -723,4 +722,22 @@ func auditedRuntimeManifest(m Manifest) bool {
 		}
 	}
 	return true
+}
+
+func verifyAuditedNode(name string) error {
+	f, err := os.Open(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() != 121674800 {
+		return errors.New("audited Node size/type changed")
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, 121674801))
+	if err != nil || n != 121674800 || hex.EncodeToString(h.Sum(nil)) != "596b5144ff242737f1c1be6a5f0ccb3907dbba2482344143cb1a6898633402a9" {
+		return errors.New("audited Node bytes changed")
+	}
+	return nil
 }

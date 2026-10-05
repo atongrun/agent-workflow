@@ -26,7 +26,7 @@ class PrivateKitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir='/tmp') as temporary:
             parent = Path(temporary)
             source, destination = parent / 'input.zip', parent / 'unpack'
-            digest = self.write(source)
+            digest = self.write(source, ('input/cache/_cacache/content-v2/sha512/ab/cd/' + 'e' * 124, 'input/cache/_cacache/index-v5/ab/cd/' + 'e' * 60))
             kit.extract(source, destination, digest)
             for path in destination.rglob('*'):
                 expected = 0o700 if path.is_dir() or path.parent.name == 'tools' else 0o600
