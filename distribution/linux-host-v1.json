@@ -1,0 +1,87 @@
+{
+  "arch": "amd64",
+  "channel": "linux-host-v1",
+  "components": [
+    {
+      "artifacts": [
+        {
+          "bytes": 54907188,
+          "format": "tar.gz",
+          "name": "node-v22.19.0-linux-x64.tar.gz",
+          "sha256": "d36e56998220085782c0ca965f9d51b7726335aed2f5fc7321c6c0ad233aa96d",
+          "url": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-linux-x64.tar.gz"
+        }
+      ],
+      "id": "node",
+      "version": "v22.19.0"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 317,
+          "format": "json",
+          "name": "package.json",
+          "sha256": "491cb1ec4fba98d9547b037cd9dea48ae0bba651a0a80d67dd1660705b60f1c5",
+          "url": "https://github.com/earendil-works/pi/releases/download/v1.0.2/pi-coding-agent-install-package.json"
+        },
+        {
+          "bytes": 63566,
+          "format": "json",
+          "name": "package-lock.json",
+          "sha256": "b8e9e6a191bcf1e6e3ff8dafe5c0c9042b48e0087cd6d6816dcaa051222ba680",
+          "url": "https://github.com/earendil-works/pi/releases/download/v1.0.2/pi-coding-agent-install-package-lock.json"
+        }
+      ],
+      "id": "pi",
+      "version": "1.0.2"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 3458263,
+          "format": "tar.gz",
+          "name": "awf_v1.0.2-rc.2_linux_amd64.tar.gz",
+          "sha256": "c72fbc8094575961c2a1c4d3f899f78bda5f170c40b819eca2623441def20b9e",
+          "url": "https://github.com/atongrun/agent-workflow/releases/download/v1.0.2-rc.2/awf_v1.0.2-rc.2_linux_amd64.tar.gz"
+        }
+      ],
+      "id": "awf-host",
+      "version": "v1.0.2-rc.2"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 2005,
+          "format": "tar.gz",
+          "name": "awf-extension_v1.0.2-rc.2.tar.gz",
+          "sha256": "4f0cf64d88c14472b18eaeceeffa225cdd4531610a599648afc67c44b4591331",
+          "url": "https://github.com/atongrun/agent-workflow/releases/download/v1.0.2-rc.2/awf-extension_v1.0.2-rc.2.tar.gz"
+        }
+      ],
+      "id": "awf-extension",
+      "version": "v1.0.2-rc.2"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 31375522,
+          "format": "elf",
+          "name": "magpie-cli-linux-amd64",
+          "sha256": "f79df4bd90aa81371eff4386740b1fdcb557cf272d395494948c15b9f4f8ff10",
+          "url": "https://github.com/yetone/magpie-releases/releases/download/v0.1.855/magpie-cli-linux-amd64"
+        }
+      ],
+      "id": "magpie",
+      "version": "0.1.855"
+    }
+  ],
+  "extensionProtocol": 1,
+  "hostProtocol": "v1",
+  "installerProtocol": 1,
+  "libc": "glibc",
+  "os": "linux",
+  "piRPCVersion": "1.0.2",
+  "schema": 1,
+  "sourceCommit": "77735d2a94d1bda3bcd0e979d71fac643709f2f4",
+  "version": "v1.0.2-rc.2"
+}

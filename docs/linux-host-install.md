@@ -1,13 +1,19 @@
 # Linux Host fresh-machine installer
 
 The thin bootstrap acquires verified public AWF bytes; Go owns native machine
-and service lifecycle. The immutable Linux TEST ONLY RC1 was published and
-installed on a real disposable GitHub Ubuntu24.04 amd64 systemd VM in run
-[37404774253](https://github.com/atongrun/agent-workflow/actions/runs/37404774253).
-Its install, version, init, two start/health/stop rounds and owned cleanup passed.
-This source adds the independent Linux update channel; its new release and
-actual upgrade results must be recorded separately and cannot inherit a pass
-merely from source fixtures. No production deployment is implied.
+and service lifecycle. These are Linux previews, requiring `--allow-prerelease`,
+not a stable release. Product source is
+`77735d2a94d1bda3bcd0e979d71fac643709f2f4`.
+On a disposable Ubuntu24.04 amd64 systemd VM, run
+[37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615)
+passed the release-specific v1.0.2-rc.1 fresh install, init/start/stop,
+official same-prefix Pi 1.0.2 to 1.0.4 update, and explicit AWF
+`update --version v1.0.2-rc.2 --yes`. Three health/production-extension RPC
+rounds and owned cleanup passed, with zero model calls. Both original parent
+modes and complete ACLs were restored. The channel manifest selects the exact
+existing rc.2 assets; default channel fresh install, bare cross-version
+`awf update`, and same-version bare update still require their own native
+acceptance. This document does not claim that acceptance in advance.
 
 The targets are Ubuntu 22.04/24.04 and Debian 12, glibc, systemd with unified
 cgroup v2, amd64. Root may install on an existing machine with fresh AWF paths
@@ -32,7 +38,8 @@ Unavailable/invalid metadata fails before program replacement. Initial preview
 installation explicitly permits future Linux previews; old receipts without
 that approval default to false. `--yes` alone never grants preview permission.
 
-After publication, the ordinary commands are:
+After publication of `awf/linux-v1` and successful default-entry acceptance,
+the preview commands are:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh | sudo sh -s -- --allow-prerelease
@@ -43,6 +50,21 @@ sudo awf stop
 sudo pi update
 sudo awf start
 ```
+
+The already accepted release-specific starting point remains:
+
+```sh
+curl -fsSL https://github.com/atongrun/agent-workflow/releases/download/v1.0.2-rc.1/install-linux.sh | sudo sh -s -- --allow-prerelease
+sudo awf init
+sudo awf start
+sudo awf update --version v1.0.2-rc.2
+```
+
+Channel publication reuses the existing rc.2 manifest byte for byte (SHA256
+`c83ebabaeca915545e4dea9cd484a1b1fc3514b10c1e3a91c039b0158cfb7eec`).
+It does not rebuild, replace or relabel either preview release. Preview consent
+also permits future previews on this Linux channel. A stable release would need
+its own stable version/build identity and separately published manifest.
 
 Optional administrator controls retain a reviewed local manifest/archive or an
 exact update version:
@@ -140,8 +162,8 @@ settings file, makes state ancestors read-only, and permits writes only inside
 the mounted Magpie app directory and service cache. Provider/auth files remain
 writable; the process cannot replace the settings bind or rename its ancestors.
 The guard checks the bound inode and the kernel read-only mount record. These
-unit directives and guards are covered locally; real mounts and account isolation
-still need native acceptance.
+unit directives and guards also passed real mounts and account isolation in the
+Ubuntu24.04 acceptance linked above.
 
 The snapshot fixes `lan: false`, `noAutoUpdate: true`, `noStats: true` and uses
 independent HOME/XDG roots plus `MAGPIE_ADDR=127.0.0.1:3425`. Upstream LAN overrides
@@ -199,7 +221,8 @@ transitive dependency pins**. Its current package and executable must agree, the
 prefix must stay root-owned and read-only to the service, and all links stay in
 the prefix; the initial hashes are provenance, not a lock that disables updates.
 The stable launcher and other fixed programs retain exact verification. Future
-Pi compatibility and actual native network updates remain acceptance gates.
+Pi compatibility beyond the observed 1.0.4 version remains version-specific.
+The official native network update to 1.0.4 passed the linked Ubuntu24.04 run.
 `awf update` replaces AWF/Node/Magpie, preserves the current Pi tree and original
 Pi evidence, and never silently restores Pi 1.0.2 over an upstream update.
 
