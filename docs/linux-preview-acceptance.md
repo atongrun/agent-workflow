@@ -73,7 +73,80 @@ workflow uploads the safe first report, then immediately performs owned cleanup,
 independent restoration of both original parent objects and a final report.
 It does not wait for channel publication or run a second default installation.
 The Linux channel remains unpublished pending actual public-product gates.
-This harness description is preparation, not evidence that the VM has run.
+
+## Completed additional diagnosis
+
+[Run 37415293853](https://github.com/atongrun/agent-workflow/actions/runs/37415293853)
+used harness `43cb358d7f92db125537ec8b9b87f355f2254d0f`, tree
+`21862f80aa0606b02513d2e5b3ff14a0d5604977`, on actual Ubuntu24.04.5. All 89
+harness boundary tests passed. The earlier `961587c` workflow was rejected at
+YAML validation with zero jobs and allocated no VM; the follow-up changed only
+the invalid job-level runner-context expression to a static evidence path and
+added its regression check. No further native machine or rerun is authorized.
+
+The public RC2 installation completed in 47.16 seconds; init, first start,
+native health/read-only RPC and owned stop passed. The real official bare
+`pi update` completed in 9.01 seconds, changing 1.0.2 to 1.0.4 in `/opt/pi-cli`.
+The next `awf start` failed in 2 seconds with the exact static error:
+
+```
+system path ownership, type or permissions require inspection
+```
+
+This is `nativeAdapter.trusted()` rejecting ownership/type/permissions before
+any service-start progress. Both approved parent directories and the other
+listed program/config roots passed their trust metadata checks. Unit literals,
+configuration, private Magpie settings and the sealed maintenance target also
+passed. The Pi package probe was unavailable while inspecting package JSON and
+its trusted ancestors. The report does not identify the particular rejected
+Pi inode or record the native caller's umask; those remain unobserved.
+
+The first artifact `11390713948` is 4146 ZIP bytes, SHA256
+`92d1ddb8c5fea01a14102150165469cc12945a9aeab49d508a869d1528315e53`;
+its report SHA256 is
+`4438b2a80efe3147c166feb123ab7cbb668fa0f6f4954f8d4a012c5c61d821b2`.
+The final artifact `11390888294` is 4242 ZIP bytes, SHA256
+`c4e69a9f787a6805c4167852fec78881e93803fdc1fe0c924f29bbe137eaa26c`;
+its report SHA256 is
+`7c485aa30fb018db6d0bc78b46fe7e5f24a229c5d90ae21ab2721f88ad84ebb9`.
+Both ZIPs contain only `upgrade-report.json`; downloaded bytes, hashes and
+cleanup evidence were independently checked. All 13 ledger-owned paths were
+removed, service processes exited, existing Node/npm/npx remained unchanged,
+both original root:root directory inodes/modes were restored to `0777`, and the
+private parent receipt was removed. Acceptance remains false and AWF upgrade
+was not executed.
+
+## Isolated minimum-fix assessment
+
+Two local, scripts-disabled, offline official npm upgrades began with the same
+1.0.2 package tree normalized to the installer's original modes. They used the
+verified Node22.19.0/npm10.9.3 and fixed official Pi1.0.4 package/dependencies
+from the existing cache. All paths were inside the development executor; no
+account, unit or fixed system path was changed.
+
+| Inherited process umask | Pi package JSON | Pi package directory | Unique group/other-write violations |
+| --- | --- | --- | --- |
+| `0002` | `0664` | `0775` | 16460 |
+| `0022` | `0644` | `0755` | 0 |
+
+Both official npm commands exited 0 and installed 1.0.4. In both cases the
+existing prefix, `lib` and `node_modules` stayed `0755`. Thus the `0002` case
+reproduces the same early trusted-path rejection while fixed parent checks
+still pass, matching the native report. This is strong local evidence for the
+inherited-umask explanation, not a native measurement of the exact failed path.
+
+The minimum product change to evaluate is a shared-program-friendly `0022`
+umask at the stable AWF-owned launcher's root `pi update` entry before execve,
+so the official npm updater inherits it. Preserve ordinary/service command
+masks, keep the official update command and sole prefix, leave scripts disabled,
+and retain the existing trust predicate. Changing only the CI test umask or
+accepting group-writable vendor files would not validate that product fix.
+No such application change or native verification was performed in this
+diagnosis. A new immutable candidate must review its launcher byte binding and
+receipt/update compatibility, then pass real post-Pi restart, AWF upgrade and
+default-update gates before channel promotion. Existing RC2/RC3 assets remain
+unchanged. Windows RC9, protected branches/tags and the cancelled CloudCone
+plan remain unchanged.
 
 ## Planned acceptance and promotion gates
 
