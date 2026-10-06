@@ -272,16 +272,26 @@ class ParentTests(unittest.TestCase):
                         else:actual_close(fd)
                     def previous(path,default):
                         return dict(default,cleanup={'passed':True},failure='stage failed: awf-update')
-                    with patch('sys.argv',['parent','--expected-release','24.04','--report',str(report_path),'--cleanup-only']), \
-                         patch.dict(parent.os.environ,{'GITHUB_SHA':'c'*40},clear=True), \
-                         patch.object(parent.native.probe,'ci_guard'),patch.object(parent.signal,'signal'), \
-                         patch.object(parent,'STATE',state),patch.object(parent.os.path,'lexists',return_value=True), \
-                         patch.object(parent,'load_state',return_value=self.pair),patch.object(parent,'protect_retry',return_value=[]), \
-                         patch.object(parent,'call_native',return_value=0),patch.object(parent,'remove_state') as remove, \
-                         patch.object(parent,'open_parent',side_effect=opened),patch.object(parent,'verify_parent',side_effect=verify), \
-                         patch.object(parent.acl,'snapshot',side_effect=snapshot),patch.object(parent.os,'fchmod',side_effect=chmod), \
-                         patch.object(parent.os,'close',side_effect=close),patch.object(parent.native,'previous_report',side_effect=previous), \
-                         contextlib.redirect_stdout(io.StringIO()):
+                    # Python 3.12 bounds compiler block nesting. Keep the same
+                    # ordered patches in one ExitStack, including unwind order.
+                    with contextlib.ExitStack() as stack:
+                        remove_patch = patch.object(parent,'remove_state')
+                        contexts = [
+                            patch('sys.argv',['parent','--expected-release','24.04','--report',str(report_path),'--cleanup-only']),
+                            patch.dict(parent.os.environ,{'GITHUB_SHA':'c'*40},clear=True),
+                            patch.object(parent.native.probe,'ci_guard'),patch.object(parent.signal,'signal'),
+                            patch.object(parent,'STATE',state),patch.object(parent.os.path,'lexists',return_value=True),
+                            patch.object(parent,'load_state',return_value=self.pair),patch.object(parent,'protect_retry',return_value=[]),
+                            patch.object(parent,'call_native',return_value=0),remove_patch,
+                            patch.object(parent,'open_parent',side_effect=opened),patch.object(parent,'verify_parent',side_effect=verify),
+                            patch.object(parent.acl,'snapshot',side_effect=snapshot),patch.object(parent.os,'fchmod',side_effect=chmod),
+                            patch.object(parent.os,'close',side_effect=close),patch.object(parent.native,'previous_report',side_effect=previous),
+                            contextlib.redirect_stdout(io.StringIO()),
+                        ]
+                        for context in contexts:
+                            entered = stack.enter_context(context)
+                            if context is remove_patch:
+                                remove = entered
                         self.assertEqual(parent.main(),1)
                     report=json.loads(report_path.read_text())
                     self.assertTrue(report['cleanup']['passed'])
