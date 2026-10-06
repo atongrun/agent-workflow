@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Artifact tampering and publication-boundary tests; no network or installation."""
 import copy
+import contextlib
+import io
+import os
+import sys
 import hashlib
 import json
 from pathlib import Path
@@ -104,6 +108,30 @@ class ReleaseBoundaryTests(unittest.TestCase):
 
     def resum(self):
         (self.root/'SHA256SUMS').write_text(''.join(package.digest_file(self.root/n)+'  '+n+'\n' for n in sorted(package.NAMES) if n!='SHA256SUMS'))
+
+    def test_main_separates_frozen_packaging_commit_and_actual_ci_head(self):
+        actual='2'*40
+        env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY=package.REPOSITORY,GITHUB_EVENT_NAME='push',GITHUB_REF='refs/heads/'+package.TEST_BRANCH,GITHUB_SHA=actual)
+        api=FakeGitHub()
+        output=io.StringIO()
+        with patch.dict(os.environ,env,clear=True),patch.object(sys,'argv',['publish','--version',package.VERSION,'--assets',str(self.root)]),patch.object(publisher,'packaging_identity',return_value=self.workflow),patch.object(publisher,'GitHub',return_value=api),contextlib.redirect_stdout(output):
+            publisher.main()
+            self.assertEqual(os.environ['GITHUB_SHA'],actual)
+        result=json.loads(output.getvalue())
+        self.assertEqual(result['workflowCommit'],self.workflow)
+        self.assertEqual(result['executionWorkflowCommit'],actual)
+        self.assertTrue(api.writes)
+
+    def test_main_rejects_wrong_packaging_or_ci_identity_without_api_writes(self):
+        env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY=package.REPOSITORY,GITHUB_EVENT_NAME='push',GITHUB_REF='refs/heads/'+package.TEST_BRANCH,GITHUB_SHA='2'*40)
+        for kind in ('packaging','pull-request','branch'):
+            current=dict(env)
+            if kind=='pull-request': current['GITHUB_EVENT_NAME']='pull_request'
+            if kind=='branch': current['GITHUB_REF']='refs/heads/unapproved'
+            api=FakeGitHub()
+            with patch.dict(os.environ,current,clear=True),patch.object(sys,'argv',['publish','--version',package.VERSION,'--assets',str(self.root)]),patch.object(publisher,'packaging_identity',return_value='3'*40 if kind=='packaging' else self.workflow),patch.object(publisher,'GitHub',return_value=api):
+                with self.assertRaises(ValueError): publisher.main()
+            self.assertEqual(api.writes,[])
 
     def test_existing_tag_or_release_causes_no_writes(self):
         api=FakeGitHub(existing=True)
