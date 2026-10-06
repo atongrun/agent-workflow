@@ -16,6 +16,7 @@ import shutil
 import signal
 import select
 import stat
+import sys
 import subprocess
 import tarfile
 import tempfile
@@ -361,14 +362,28 @@ class Acceptance:
         require(start+seconds<self.deadline,'overall native test deadline')
         print('AWF native test: '+name+' started',flush=True)
         log=CONTROL/(name+'.log')
+        bounded=name=='pi-update' and getattr(self,'pi_update_diagnostic',False)
         with log.open('xb') as out:
             os.chmod(log,0o600)
-            process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=out,stderr=out,env=environment or ENV,start_new_session=True)
+            process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE if bounded else out,stderr=subprocess.STDOUT if bounded else out,env=environment or ENV,start_new_session=True)
+            if bounded:os.set_blocking(process.stdout.fileno(),False)
+            def drain_output():
+                if not bounded:return True
+                while True:
+                    try:block=os.read(process.stdout.fileno(),65536)
+                    except BlockingIOError:return True
+                    if not block:return True
+                    remaining=max(0,(1<<20)-out.tell())
+                    out.write(block[:remaining])
+                    if len(block)>remaining:
+                        self.report.setdefault('piObservation',{}).setdefault('after',{})['outputLimitExceeded']=True
+                        return False
             if name=='pi-update':
                 self.report['piUpdateExecuted']=True
                 self.report['piUpdate']=dict(executionStarted=True,passed=False)
             try:
                 while process.poll() is None:
+                    require(drain_output(),'Pi update output limit')
                     self.observe()
                     self.resources()
                     if time.monotonic()-start>seconds:
@@ -388,8 +403,15 @@ class Acceptance:
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid,signal.SIGKILL)
                         process.wait(timeout=8)
-                self.observe()
-        self.report['stages'].append(dict(name=name,exitCode=process.returncode,elapsedSeconds=round(time.monotonic()-start,2)))
+                if bounded:
+                    drain_output();process.stdout.close()
+                    self.report['stages'].append(dict(name=name,exitCode=process.returncode,signal=-process.returncode if process.returncode is not None and process.returncode<0 else None,elapsedSeconds=round(time.monotonic()-start,2)))
+                primary=sys.exc_info()[0]
+                try:self.observe()
+                except Exception as error:
+                    if primary is None:raise
+                    if bounded:self.report.setdefault('piObservation',{}).setdefault('after',{})['finalObservationUnavailable']=type(error).__name__
+        if not bounded:self.report['stages'].append(dict(name=name,exitCode=process.returncode,elapsedSeconds=round(time.monotonic()-start,2)))
         print('AWF native test: '+name+' exit '+str(process.returncode),flush=True)
         if process.returncode and args[0]=='/usr/local/bin/awf':
             try:
@@ -443,7 +465,9 @@ class Acceptance:
                                   for u,text in source_units(downloads/package.NAMES[2]).items()}
         self.save()
         self.report['publicAssetsVerified']=len(PINS)
-        if probe.RELEASE != TARGET_VERSION:
+        if getattr(self,'pi_update_diagnostic',False):
+            pass
+        elif probe.RELEASE != TARGET_VERSION:
             target = downloads/'target'
             target.mkdir(mode=0o700)
             for name in ('linux-host-v1.json',):
@@ -453,6 +477,63 @@ class Acceptance:
             self.download_url(CHANNEL_BOOTSTRAP,downloads/'channel-install-linux.sh',*CHANNEL_BOOTSTRAP_PIN)
         self.current_version=probe.RELEASE
         return downloads
+
+    def verify_pi_update_diagnostic(self):
+        import native_pi_update_observation as observation
+        import native_startup_diagnostics as startup
+        self.verify_rpc('initial')
+        self.command('stop-for-pi',['/usr/local/bin/awf','stop'],120)
+        for unit in probe.UNITS: stopped(unit)
+        home=CONTROL/'pi-root-home';home.mkdir(mode=0o700)
+        trace=CONTROL/'pi-process-observation.jsonl';trace.touch(mode=0o600)
+        observer=CONTROL/'pi-observer.mjs'
+        observer.write_text(observation.observer_source(trace,Path.cwd()))
+        observer.chmod(0o600)
+        before=dict(objects=[observation.object_metadata(p) for p in observation.OBJECTS],
+                    packageVersion=observation.trusted_package_version(),cwd=observation.safe_path(str(Path.cwd())),
+                    uid=os.getuid(),gid=os.getgid(),prefixIdentity=identity('/opt/pi-cli'),
+                    launcherSHA256=package.digest_file('/opt/pi-cli/awf-launcher.mjs'),
+                    nodeSHA256=package.digest_file('/opt/node/bin/node'),
+                    npmCLISHA256=package.digest_file('/opt/node/lib/node_modules/npm/bin/npm-cli.js'))
+        npm=self.command('npm-version',['/opt/node/bin/node','/opt/node/lib/node_modules/npm/bin/npm-cli.js','--version'],30,True,dict(ENV,HOME=str(home)))
+        require(npm.strip()==b'10.9.3','private npm version differs')
+        before['npmVersion']='10.9.3';before['nodeVersion']='22.19.0'
+        self.report['piObservation']=dict(before=before,after={})
+        report_write(self.diagnostic_report_path,self.report)
+        environment=dict(ENV,HOME=str(home),NODE_OPTIONS='--import='+str(observer))
+        # The finally runs even for a failing child command or signal and writes
+        # observations before any version, mask, type or trust assertion.
+        try:
+            self.command('pi-update',['/bin/sh','-c',PI_UPDATE_SHELL],8*60,False,environment)
+        finally:
+            limited=self.report.get('piObservation',{}).get('after',{}).get('outputLimitExceeded',False)
+            after=dict(objects=[observation.object_metadata(p) for p in observation.OBJECTS],
+                       **observation.load_trace(trace),**observation.update_output(CONTROL/'pi-update.log'),
+                       **observation.trusted_package_version())
+            if limited:after.update(outputLimitExceeded=True,outputUnavailable='output_limit')
+            trust=startup.first_unsafe_pi_entry()
+            if isinstance(trust.get('path'),str):after['firstUnsafeObject']=observation.object_metadata(trust['path'])
+            self.report['piPermissionCheck']=trust
+            self.report['piObservation']['after']=after
+            self.report['piObservation']['updateStage']=next((s for s in reversed(self.report['stages']) if s['name']=='pi-update'),dict(unavailable=True))
+            self.report['piDiagnosticObserved']=bool(after.get('processObservations'))
+            report_write(self.diagnostic_report_path,self.report)
+        require(not after.get('outputLimitExceeded'),'Pi update output limit')
+        require(after.get('shellMaskMarkers')==[dict(point='BEFORE',umask='0002'),dict(point='AFTER',umask='0002')],'root updater shell umask changed')
+        spawns=[r for r in after.get('processObservations',[]) if r['kind']=='npm-spawn' and 'install' in r.get('argv',[])]
+        children=[r for r in after.get('processObservations',[]) if r['kind']=='node-start' and 'install' in r.get('argv',[])]
+        require(len(spawns)==1 and len(children)==1,'actual npm update spawn/child observation unavailable')
+        require(trust.get('passed') is True,'updated Pi prefix permissions unsafe')
+        require(after.get('installedPackageVersion') is not None,'updated Pi version unavailable from trusted physical package')
+        require(after['objects'][0].get('objectType')=='directory' and after['objects'][2].get('objectType')=='file','updated Pi package root or launcher type unsafe')
+        require(package.digest_file('/opt/pi-cli/awf-launcher.mjs')==before['launcherSHA256'],'stable Pi launcher changed')
+        require(same('/opt/pi-cli',before['prefixIdentity']),'sole Pi prefix inode changed')
+        version=self.command('pi-version-updated',['/usr/local/bin/pi','--version'],20,True,dict(ENV,HOME=str(home))).decode().strip()
+        require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version) and version==after['installedPackageVersion'] and tuple(map(int,version.split('.')))>(1,0,2),'trusted updated Pi versions disagree')
+        require(after.get('updaterReportedVersion')==version,'updater and trusted installed version disagree')
+        self.report['piUpdate'].update(passed=True,initialVersion='1.0.2',actualVersion=version,prefixPermissionsPassed=True)
+        self.command('start-after-pi',['/usr/local/bin/awf','start'],120)
+        self.health(2);self.verify_rpc('after-pi')
 
     def verify_install(self):
         require(json.loads(self.command('build-identity',['/opt/awf/awf','linux-build-identity'],20,True))==
@@ -880,7 +961,8 @@ def previous_report(path, default):
                  'modelCalls','providerAuthenticationPerformed','piUpdateExecuted','CloudConeAcceptance',
                  'preflight','failure','publicAssetsVerified','preinstalledRuntimePreserved','resources',
                  'parentPreparation','parentRestoration','piUpdate','awfUpdate','businessStatePreserved','rpcCompatibility','publicBootstrap','noOp','mode','awfFailureDiagnostic',
-                 'retainedForDiagnosis','firstAttemptFailure','piPermissionCheck','failureDetails'}
+                 'retainedForDiagnosis','firstAttemptFailure','piPermissionCheck','failureDetails',
+                 'piObservation','piDiagnosticObserved','piDiagnosticPassed'}
         default.update({key:value for key,value in payload.items() if key in allowed})
     except Exception:
         default['failure']='previous public report unavailable; cleanup uses private ledger only'
@@ -903,8 +985,12 @@ def main():
     parser.add_argument('--cleanup-only',action='store_true')
     parser.add_argument('--diagnostic-only',action='store_true')
     parser.add_argument('--retain-post-pi-failure',action='store_true')
+    parser.add_argument('--pi-update-diagnostic',action='store_true')
     args=parser.parse_args()
     probe.ci_guard(os.environ,os.getuid(),os.geteuid())
+    require(args.cleanup_only or args.diagnostic_only or args.pi_update_diagnostic,'approved Pi diagnostic slice flag required')
+    if args.pi_update_diagnostic:
+        require(args.phase!='default' and not args.diagnostic_only and not args.retain_post_pi_failure,'Pi diagnostic mode only; no default or retention phase')
     if args.retain_post_pi_failure:
         require(os.environ.get('GITHUB_REF')=='refs/heads/'+probe.POST_PI_BRANCH and args.phase!='default' and not args.cleanup_only and not args.diagnostic_only,
                 'retention requires the separately approved post-Pi diagnostic VM')
@@ -965,6 +1051,8 @@ def main():
     CONTROL.mkdir(mode=0o700)
     try:
         runner=Acceptance(report,initial_runtime)
+        runner.pi_update_diagnostic=args.pi_update_diagnostic
+        runner.diagnostic_report_path=args.report
     except Exception:
         report['failure']='private ledger initialization failed before any native command'
         # A failure may have persisted only ledger metadata. We do not guess
@@ -984,18 +1072,21 @@ def main():
         runner.command('install',install_args(assets),8*60)
         runner.verify_install()
         runner.command('init',['/usr/local/bin/awf','init','--yes'],60)
-        report['mode']='default' if probe.RELEASE==TARGET_VERSION else 'upgrade'
+        report['mode']='pi-update-diagnostic' if args.pi_update_diagnostic else 'default' if probe.RELEASE==TARGET_VERSION else 'upgrade'
         report['publicBootstrap']=dict(passed=True,localManifestOverride=False,localArchiveOverride=False,source='channel' if probe.RELEASE==TARGET_VERSION else 'release')
         runner.command('start-1',['/usr/local/bin/awf','start'],120)
         runner.health(1)
-        if probe.RELEASE==TARGET_VERSION:
+        if args.pi_update_diagnostic:
+            runner.verify_pi_update_diagnostic()
+        elif probe.RELEASE==TARGET_VERSION:
             runner.verify_default_noop()
         else:
             runner.verify_upgrades(assets)
         runner.command('stop-final',['/usr/local/bin/awf','stop'],120)
         for unit in probe.UNITS:
             stopped(unit)
-        report['acceptancePassed']=True
+        if args.pi_update_diagnostic:report['piDiagnosticPassed']=True
+        else:report['acceptancePassed']=True
     except Exception as error:
         # Only our controlled TestFailure strings are public. Upstream exception
         # details, output and HTTP bodies remain private, including credentials.
@@ -1019,7 +1110,7 @@ def main():
         if report['cleanup']['passed']:
             shutil.rmtree(CONTROL)
     print('AWF native test: acceptance '+str(report['acceptancePassed'])+', cleanup '+str(report['cleanup']['passed']),flush=True)
-    return 0 if report['acceptancePassed'] and report['cleanup']['passed'] else 1
+    return 0 if (report.get('piDiagnosticPassed') if args.pi_update_diagnostic else report['acceptancePassed']) and report['cleanup']['passed'] else 1
 
 
 if __name__=='__main__':

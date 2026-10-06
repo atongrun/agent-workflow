@@ -18,7 +18,7 @@ import subprocess
 import time
 
 REPOSITORY = 'atongrun/agent-workflow'
-BRANCH = 'awf/linux-pi-umask-native-ci-v1'
+BRANCH = 'awf/linux-pi-update-diagnostic-ci-v2'
 DEFAULT_BRANCH = 'awf/linux-default-ci-v1'
 POST_PI_BRANCH = 'awf/linux-post-pi-diagnostic-ci-v1'
 SOURCE = '3c5ffcca9b432d71bf61739089646ac8856a8702'

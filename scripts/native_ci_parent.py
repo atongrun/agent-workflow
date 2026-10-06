@@ -164,6 +164,8 @@ def call_native(args):
         sys.argv.extend(['--phase',args.phase])
     if getattr(args,'retain_post_pi_failure',False):
         sys.argv.append('--retain-post-pi-failure')
+    if getattr(args,'pi_update_diagnostic',False):
+        sys.argv.append('--pi-update-diagnostic')
     if args.cleanup_only:
         sys.argv.append('--cleanup-only')
     try:
@@ -178,11 +180,13 @@ def main():
     parser.add_argument('--report',required=True,type=Path)
     parser.add_argument('--phase',choices=('upgrade','default'))
     parser.add_argument('--retain-post-pi-failure',action='store_true')
+    parser.add_argument('--pi-update-diagnostic',action='store_true')
     modes=parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare-ci-parents',action='store_true')
     modes.add_argument('--cleanup-only',action='store_true')
     args=parser.parse_args()
     native.probe.ci_guard(os.environ,os.getuid(),os.geteuid())
+    native.require(args.cleanup_only or (args.pi_update_diagnostic and args.phase is None and not args.retain_post_pi_failure),'approved Pi diagnostic slice flag required')
     if args.retain_post_pi_failure:
         native.require(not args.cleanup_only and args.phase!='default' and os.environ.get('GITHUB_REF')=='refs/heads/'+native.probe.POST_PI_BRANCH,
                        'retention requires the separately approved post-Pi diagnostic VM')

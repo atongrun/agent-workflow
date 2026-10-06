@@ -182,7 +182,7 @@ class ParentTests(unittest.TestCase):
                 events.append('restore')
                 return self.restored
             with self.subTest(outcome=outcome), \
-                 patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents']), \
+                 patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents','--pi-update-diagnostic']), \
                  patch.dict(parent.os.environ,{'GITHUB_SHA':'c'*40},clear=True), \
                  patch.object(parent.native.probe,'ci_guard'),patch.object(parent.signal,'signal'), \
                  patch.object(parent,'prepare',side_effect=prepare),patch.object(parent,'call_native',side_effect=native), \
@@ -270,7 +270,7 @@ class ParentTests(unittest.TestCase):
         def prepare(context):
             context['stateCreated']=True
             raise parent.native.TestFailure('approved native test cancelled')
-        with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents']), \
+        with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents','--pi-update-diagnostic']), \
              patch.dict(parent.os.environ,{'GITHUB_SHA':'c'*40},clear=True), \
              patch.object(parent.native.probe,'ci_guard'),patch.object(parent.signal,'signal'), \
              patch.object(parent,'prepare',side_effect=prepare),patch.object(parent,'call_native') as native, \
@@ -288,7 +288,7 @@ class ParentTests(unittest.TestCase):
         def prepare(context):
             context['stateCreated']=True; return self.pair
         restored=dict(passed=False,parents=[dict(path='/opt',passed=False),self.restored['parents'][1]])
-        with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents']), \
+        with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents','--pi-update-diagnostic']), \
              patch.dict(parent.os.environ,{'GITHUB_SHA':'c'*40},clear=True), \
              patch.object(parent.native.probe,'ci_guard'),patch.object(parent.signal,'signal'), \
              patch.object(parent,'prepare',side_effect=prepare),patch.object(parent,'call_native',return_value=0), \
@@ -303,50 +303,24 @@ class ParentTests(unittest.TestCase):
                  '--prepare-ci-parents','--retain-post-pi-failure']), \
              patch.dict(parent.os.environ,{'GITHUB_REF':'refs/heads/'+parent.native.probe.BRANCH}), \
              patch.object(parent.native.probe,'ci_guard'),patch.object(parent,'prepare') as prepare:
-            with self.assertRaisesRegex(parent.native.TestFailure,'separately approved'):
+            with self.assertRaisesRegex(parent.native.TestFailure,'approved Pi diagnostic slice'):
                 parent.main()
             prepare.assert_not_called()
 
-    def test_retained_parent_verification_failure_attempts_both_restorations(self):
-        def prepare(context):
-            context['stateCreated']=True; return self.pair
-        def previous(path,report):
-            report['retainedForDiagnosis']=True
-            return report
-        with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json',
-                 '--prepare-ci-parents','--retain-post-pi-failure']), \
-             patch.dict(parent.os.environ,{'GITHUB_REF':'refs/heads/'+parent.native.probe.POST_PI_BRANCH,'GITHUB_SHA':'c'*40}), \
-             patch.object(parent.native.probe,'ci_guard'),patch.object(parent.signal,'signal'), \
-             patch.object(parent,'prepare',side_effect=prepare),patch.object(parent,'call_native',return_value=1), \
-             patch.object(parent,'load_state',return_value=self.pair), \
-             patch.object(parent,'open_parent',side_effect=parent.native.TestFailure('changed')), \
-             patch.object(parent,'restore',return_value=self.restored) as restore, \
-             patch.object(parent.native,'previous_report',side_effect=previous), \
-             patch.object(parent.native,'report_write') as save,contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(parent.main(),1)
-            restore.assert_called_once_with(self.pair)
-            self.assertFalse(save.call_args.args[1]['retainedForDiagnosis'])
-            self.assertTrue(save.call_args.args[1]['parentRestoration']['passed'])
+    def test_retention_is_refused_before_parent_preparation(self):
+        for extras in (['--retain-post-pi-failure'],['--pi-update-diagnostic','--retain-post-pi-failure'],['--pi-update-diagnostic','--phase','default']):
+            with self.subTest(extras=extras),patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents']+extras), \
+                 patch.object(parent.native.probe,'ci_guard'),patch.object(parent,'prepare') as prepare:
+                with self.assertRaisesRegex(parent.native.TestFailure,'approved Pi diagnostic slice'):
+                    parent.main()
+                prepare.assert_not_called()
 
-    def test_valid_retention_preserves_original_parent_receipt_without_restore(self):
-        def prepare(context):
-            context['stateCreated']=True; return self.pair
-        def previous(path,report):
-            report['retainedForDiagnosis']=True
-            return report
-        with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json',
-                 '--prepare-ci-parents','--retain-post-pi-failure']), \
-             patch.dict(parent.os.environ,{'GITHUB_REF':'refs/heads/'+parent.native.probe.POST_PI_BRANCH,'GITHUB_SHA':'c'*40}), \
-             patch.object(parent.native.probe,'ci_guard'),patch.object(parent.signal,'signal'), \
-             patch.object(parent,'prepare',side_effect=prepare),patch.object(parent,'call_native',return_value=1), \
-             patch.object(parent,'load_state',return_value=self.pair),patch.object(parent,'open_parent',return_value=(7,info(mode=0o755))), \
-             patch.object(parent,'verify_parent'),patch.object(parent.os,'close'), \
-             patch.object(parent,'restore') as restore,patch.object(parent,'remove_state') as remove, \
-             patch.object(parent.native,'previous_report',side_effect=previous), \
-             patch.object(parent.native,'report_write') as save,contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(parent.main(),1)
-            restore.assert_not_called(); remove.assert_not_called()
-            self.assertTrue(save.call_args.args[1]['parentRestoration']['pending'])
+    def test_missing_diagnostic_flag_refuses_before_parent_preparation(self):
+        with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents']), \
+             patch.object(parent.native.probe,'ci_guard'),patch.object(parent,'prepare') as prepare:
+            with self.assertRaisesRegex(parent.native.TestFailure,'approved Pi diagnostic slice'):
+                parent.main()
+            prepare.assert_not_called()
 
 
 if __name__=='__main__':
