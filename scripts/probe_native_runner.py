@@ -18,7 +18,7 @@ import subprocess
 import time
 
 REPOSITORY = 'atongrun/agent-workflow'
-BRANCH = 'awf/linux-acl-native-once-20261006'
+BRANCH = 'awf/linux-default-native-once-20261006'
 DEFAULT_BRANCH = 'awf/linux-default-ci-v1'
 POST_PI_BRANCH = 'awf/linux-post-pi-diagnostic-ci-v1'
 SOURCE = '77735d2a94d1bda3bcd0e979d71fac643709f2f4'

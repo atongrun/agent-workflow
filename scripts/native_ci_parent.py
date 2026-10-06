@@ -177,6 +177,8 @@ def call_native(args):
         sys.argv.append('--pi-update-diagnostic')
     if getattr(args,'acl_full_acceptance',False):
         sys.argv.append('--acl-full-acceptance')
+    if getattr(args,'default_entry_acceptance',False):
+        sys.argv.append('--default-entry-acceptance')
     if args.cleanup_only:
         sys.argv.append('--cleanup-only')
     try:
@@ -193,12 +195,16 @@ def main():
     parser.add_argument('--retain-post-pi-failure',action='store_true')
     parser.add_argument('--pi-update-diagnostic',action='store_true')
     parser.add_argument('--acl-full-acceptance',action='store_true')
+    parser.add_argument('--default-entry-acceptance',action='store_true')
     modes=parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare-ci-parents',action='store_true')
     modes.add_argument('--cleanup-only',action='store_true')
     args=parser.parse_args()
     native.probe.ci_guard(os.environ,os.getuid(),os.geteuid())
-    native.require(args.cleanup_only or ((args.acl_full_acceptance or args.pi_update_diagnostic) and args.phase is None and not args.retain_post_pi_failure and not (args.acl_full_acceptance and args.pi_update_diagnostic)),'approved Pi diagnostic slice flag or ACL full acceptance required')
+    default_mode=args.default_entry_acceptance and args.phase in ('upgrade','default') and not any((args.acl_full_acceptance,args.pi_update_diagnostic,args.retain_post_pi_failure))
+    if args.default_entry_acceptance:
+        native.require(default_mode,'default-entry acceptance requires one exact phase')
+    native.require(args.cleanup_only or default_mode or ((args.acl_full_acceptance or args.pi_update_diagnostic) and args.phase is None and not args.retain_post_pi_failure and not (args.acl_full_acceptance and args.pi_update_diagnostic)),'approved native acceptance mode required')
     if args.retain_post_pi_failure:
         native.require(not args.cleanup_only and args.phase!='default' and os.environ.get('GITHUB_REF')=='refs/heads/'+native.probe.POST_PI_BRANCH,
                        'retention requires the separately approved post-Pi diagnostic VM')

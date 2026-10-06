@@ -1,0 +1,132 @@
+name: One Ubuntu VM for frozen Linux preview default entries
+
+on:
+  push:
+    branches: [awf/linux-default-native-once-20261006]
+
+permissions: {}
+concurrency:
+  group: awf-linux-default-native-once-20261006
+  cancel-in-progress: false
+
+jobs:
+  native:
+    if: github.repository == 'atongrun/agent-workflow' && github.event_name == 'push' && github.ref == 'refs/heads/awf/linux-default-native-once-20261006' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      EVIDENCE: /tmp/awf-linux-default-native-evidence
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Require target Python and set whole-job deadline
+        run: |
+          python3 - <<'PY'
+          import os,sys,time
+          print(sys.version)
+          assert sys.version_info[:3] == (3,12,3)
+          open(os.environ['GITHUB_ENV'],'a').write('AWF_NATIVE_DEADLINE_EPOCH='+str(int(time.time())+28*60)+'\n')
+          PY
+      - name: Require frozen channel ref and existing eighteen assets
+        run: |
+          set -eu
+          test "$(git ls-remote --refs origin refs/heads/awf/linux-v1)" = "$(printf '%s\t%s' d0e1cae121921bc718c93c56941e6ef8ccef658b refs/heads/awf/linux-v1)"
+          python3 - "$RUNNER_TEMP/awf-default-assets" <<'PY'
+          import pathlib,sys
+          sys.path.insert(0,'scripts')
+          import native_acceptance as n
+          base=pathlib.Path(sys.argv[1]);base.mkdir()
+          for version,pins in n.PINS_BY_VERSION.items():
+              out=base/version;out.mkdir()
+              for name,(size,sha) in pins.items():
+                  url='https://github.com/'+n.probe.REPOSITORY+'/releases/download/'+version+'/'+name
+                  n.Acceptance.download_url(None,url,out/name,size,sha)
+              n.package.configure(version);n.package.verify(out,n.PACKAGING_COMMIT)
+          PY
+      - name: Compile all Python and exercise actual offline entries
+        run: |
+          set -eu
+          python3 -m compileall -q scripts internal/lifecycle
+          python3 scripts/test_native_runner_probe.py
+          python3 scripts/test_native_acceptance.py
+          python3 scripts/test_native_ci_parent.py
+          python3 scripts/test_native_acl_observation.py
+          python3 scripts/test_native_entry_offline.py --assets-root "$RUNNER_TEMP/awf-default-assets"
+          python3 scripts/test_native_default_entry_offline.py --assets-root "$RUNNER_TEMP/awf-default-assets" --channel-source scripts/install-linux.sh
+      - name: Bound both native phases to one shared twenty-two-minute budget
+        run: |
+          python3 - <<'PY'
+          import os,time
+          end=min(int(os.environ['AWF_NATIVE_DEADLINE_EPOCH']),int(time.time())+25*60)
+          open(os.environ['GITHUB_ENV'],'a').write('AWF_NATIVE_DEADLINE_EPOCH='+str(end)+'\n')
+          PY
+          mkdir "$EVIDENCE"
+      - name: Release rc1 fresh install and bare channel upgrade to rc2 plus no-op
+        id: upgrade
+        continue-on-error: true
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            AWF_NATIVE_DEADLINE_EPOCH="$AWF_NATIVE_DEADLINE_EPOCH" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/upgrade-report.json" --prepare-ci-parents --default-entry-acceptance --phase upgrade
+      - name: Finish first owned cleanup and restore original parent ACLs
+        id: upgrade_cleanup
+        if: always() && steps.upgrade.outcome != 'skipped'
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/upgrade-report.json" --cleanup-only
+      - name: Require first phase before entering fresh default phase
+        id: upgrade_gate
+        if: steps.upgrade.outcome == 'success' && steps.upgrade_cleanup.outcome == 'success'
+        run: |
+          python3 scripts/test_native_default_entry_offline.py --verify-report "$EVIDENCE/upgrade-report.json" --phase upgrade
+      - name: Fresh default channel bootstrap selects rc2 then bare no-op
+        id: default
+        if: steps.upgrade_gate.outcome == 'success'
+        continue-on-error: true
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            AWF_NATIVE_DEADLINE_EPOCH="$AWF_NATIVE_DEADLINE_EPOCH" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/default-report.json" --prepare-ci-parents --default-entry-acceptance --phase default
+      - name: Always finish default owned cleanup and restore original parent ACLs
+        id: default_cleanup
+        if: always() && steps.default.outcome != 'skipped'
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/default-report.json" --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: report
+        if: always() && steps.upgrade.outcome != 'skipped'
+        with:
+          name: linux-default-native-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}/*-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require both actual entries complete cleanup and frozen channel
+        if: always()
+        run: |
+          set -eu
+          test '${{ steps.upgrade.outcome }}' = success
+          test '${{ steps.upgrade_cleanup.outcome }}' = success
+          test '${{ steps.upgrade_gate.outcome }}' = success
+          test '${{ steps.default.outcome }}' = success
+          test '${{ steps.default_cleanup.outcome }}' = success
+          test '${{ steps.report.outcome }}' = success
+          test "$(git ls-remote --refs origin refs/heads/awf/linux-v1)" = "$(printf '%s\t%s' d0e1cae121921bc718c93c56941e6ef8ccef658b refs/heads/awf/linux-v1)"
+          python3 scripts/test_native_default_entry_offline.py --verify-report "$EVIDENCE/upgrade-report.json" --phase upgrade
+          python3 scripts/test_native_default_entry_offline.py --verify-report "$EVIDENCE/default-report.json" --phase default

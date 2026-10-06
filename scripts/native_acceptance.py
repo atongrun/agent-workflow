@@ -119,6 +119,8 @@ PACKAGING_COMMIT = '8f7f06defad8b61c7ac215d2319d6b1aadfe230e'
 PINS = PINS_BY_VERSION.get(probe.RELEASE, {})
 TARGET_VERSION = 'v1.0.2-rc.2'
 CHANNEL_BOOTSTRAP = 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh'
+CHANNEL_MANIFEST = 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/distribution/linux-host-v1.json'
+CHANNEL_COMMIT = 'd0e1cae121921bc718c93c56941e6ef8ccef658b'
 CHANNEL_BOOTSTRAP_PIN = [11377, '0e295c8458a728c26dfd54dad70b2839e0d5e4431d59d3c3f85b1218fdb3f158']
 PI_UPDATE_SHELL = 'umask 0002; printf "AWF_PI_MASK_BEFORE=%s\\n" "$(umask)"; /usr/local/bin/pi update; result=$?; printf "AWF_PI_MASK_AFTER=%s\\n" "$(umask)"; exit "$result"'
 
@@ -357,7 +359,7 @@ class Acceptance:
         self.low_available=getattr(self,'low_available',0)+1 if data['availableBytes']<192<<20 else 0
         require(self.low_available<3,'host resource abort; not an installer code failure')
 
-    def command(self, name, args, seconds, capture=False, environment=None):
+    def command(self, name, args, seconds, capture=False, environment=None, input_data=None):
         start=time.monotonic()
         require(start+seconds<self.deadline,'overall native test deadline')
         print('AWF native test: '+name+' started',flush=True)
@@ -365,7 +367,8 @@ class Acceptance:
         bounded=name=='pi-update' and (getattr(self,'pi_update_diagnostic',False) or getattr(self,'acl_full_acceptance',False))
         with log.open('xb') as out:
             os.chmod(log,0o600)
-            process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE if bounded else out,stderr=subprocess.STDOUT if bounded else out,env=environment or ENV,start_new_session=True)
+            require(input_data is None or input_data==b'y\n','unexpected native command input')
+            process=subprocess.Popen(args,stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,stdout=subprocess.PIPE if bounded else out,stderr=subprocess.STDOUT if bounded else out,env=environment or ENV,start_new_session=True)
             if bounded:os.set_blocking(process.stdout.fileno(),False)
             def drain_output():
                 if not bounded:return True
@@ -382,6 +385,12 @@ class Acceptance:
                 self.report['piUpdateExecuted']=True
                 self.report['piUpdate']=dict(executionStarted=True,passed=False)
             try:
+                if input_data is not None:
+                    try:
+                        process.stdin.write(input_data)
+                        process.stdin.close()
+                    except BrokenPipeError:
+                        pass  # Preserve the actual early child exit as the failure.
                 while process.poll() is None:
                     require(drain_output(),'Pi update output limit')
                     self.observe()
@@ -396,6 +405,11 @@ class Acceptance:
                         raise TestFailure('stage timeout: '+name)
                     time.sleep(0.5)
             finally:
+                if input_data is not None and not process.stdin.closed:
+                    try:
+                        process.stdin.close()
+                    except BrokenPipeError:
+                        pass
                 if process.poll() is None:
                     os.killpg(process.pid,signal.SIGTERM)
                     try:
@@ -475,8 +489,16 @@ class Acceptance:
         else:
             require(CHANNEL_BOOTSTRAP_PIN is not None,'channel bootstrap pin absent')
             self.download_url(CHANNEL_BOOTSTRAP,downloads/'channel-install-linux.sh',*CHANNEL_BOOTSTRAP_PIN)
+        if getattr(self,'default_entry_acceptance',False):
+            self.verify_channel_manifest('before')
         self.current_version=probe.RELEASE
         return downloads
+
+    def verify_channel_manifest(self,stage):
+        require(stage in ('before','after'),'invalid channel observation stage')
+        size,sha=PINS_BY_VERSION[TARGET_VERSION]['linux-host-v1.json']
+        self.download_url(CHANNEL_MANIFEST,CONTROL/('channel-'+stage+'.json'),size,sha)
+        self.report.setdefault('channelManifest',dict(expectedCommit=CHANNEL_COMMIT,version=TARGET_VERSION,sha256=sha))[stage+'Verified']=True
 
     def verify_pi_update_diagnostic(self):
         import native_pi_update_observation as observation
@@ -709,21 +731,27 @@ class Acceptance:
                         os.killpg(process.pid,signal.SIGKILL)
                         process.wait(timeout=8)
 
-    def verify_upgrades(self,assets):
+    def verify_upgrades(self,assets,default_entry=False):
         fixture=self.local_api('/v1/tasks',dict(requestId='linux-native-upgrade-fixture',title='Synthetic installer persistence fixture; no model turn'))['task']
         task_path='/v1/tasks/'+fixture['id']
         snapshot=self.local_api(task_path)['task']
         preserved={path:package.digest_file(Path(path)) for path in
             ('/etc/awf/host.env','/etc/awf/host.json','/etc/awf/magpie-settings.json')}
         agent_identity=identity('/var/lib/awf/pi-agent')
-        self.verify_pi_update_diagnostic()
+        if default_entry:
+            self.verify_rpc('initial')
+        else:
+            self.verify_pi_update_diagnostic()
         pi_tree=tree_fingerprint('/opt/pi-cli')
         home=CONTROL/'pi-root-home'
         agent=self.command('pi-root-agent-default',['/opt/node/bin/node','--input-type=module','-e','import {getAgentDir} from "file:///opt/pi-cli/lib/node_modules/@earendil-works/pi-coding-agent/dist/config.js"; process.stdout.write(getAgentDir());'],20,True,dict(ENV,HOME=str(home))).decode()
         require(agent==str(home/'.pi/agent') and not os.path.lexists('/root/.pi/agent'),'ordinary root Pi default HOME state isolation')
         target=json.loads((assets/'target/linux-host-v1.json').read_text())
         self.begin_replacement(target)
-        self.command('awf-update',['/usr/local/bin/awf','update','--version',TARGET_VERSION,'--yes'],8*60)
+        if default_entry:
+            self.command('awf-update',['/usr/local/bin/awf','update'],8*60,True,input_data=b'y\n')
+        else:
+            self.command('awf-update',['/usr/local/bin/awf','update','--version',TARGET_VERSION,'--yes'],8*60)
         self.finish_replacement()
         self.current_version=TARGET_VERSION
         self.health(3)
@@ -734,8 +762,10 @@ class Acceptance:
         require(capture_existing_runtime()==self.ledger['initialRuntime'],'upgrades changed preinstalled runtime')
         import native_acl_observation as acl
         self.report['aclEvidence']=dict(afterAWF=acl.collect())
-        self.report['awfUpdate']=dict(passed=True,fromVersion=probe.RELEASE,toVersion=TARGET_VERSION,explicitImmutableVersion=True,retainedBackupCount=3,currentPiTreePreserved=True)
+        self.report['awfUpdate']=dict(passed=True,fromVersion=probe.RELEASE,toVersion=TARGET_VERSION,explicitImmutableVersion=not default_entry,defaultChannelSelection=default_entry,retainedBackupCount=3,currentPiTreePreserved=True)
         self.report['businessStatePreserved']=dict(passed=True,config=True,credentials=True,syntheticTask=True,serviceAgentRoot=True,modelRequests=0)
+        if default_entry:
+            self.verify_default_noop()
 
     def verify_default_noop(self):
         paths=('/opt/node','/opt/pi-cli','/opt/awf','/opt/magpie','/etc/awf/install.json')
@@ -941,7 +971,7 @@ def previous_report(path, default):
                  'preflight','failure','publicAssetsVerified','preinstalledRuntimePreserved','resources',
                  'parentPreparation','parentRestoration','piUpdate','awfUpdate','businessStatePreserved','rpcCompatibility','publicBootstrap','noOp','mode','awfFailureDiagnostic','aclEvidence',
                  'retainedForDiagnosis','firstAttemptFailure','piPermissionCheck','failureDetails',
-                 'piObservation','piDiagnosticObserved','piDiagnosticPassed'}
+                 'piObservation','piDiagnosticObserved','piDiagnosticPassed','channelManifest','defaultEntryAcceptance'}
         default.update({key:value for key,value in payload.items() if key in allowed})
     except Exception:
         default['failure']='previous public report unavailable; cleanup uses private ledger only'
@@ -966,9 +996,12 @@ def main():
     parser.add_argument('--retain-post-pi-failure',action='store_true')
     parser.add_argument('--pi-update-diagnostic',action='store_true')
     parser.add_argument('--acl-full-acceptance',action='store_true')
+    parser.add_argument('--default-entry-acceptance',action='store_true')
     args=parser.parse_args()
     probe.ci_guard(os.environ,os.getuid(),os.geteuid())
-    require(args.cleanup_only or args.diagnostic_only or args.pi_update_diagnostic or args.acl_full_acceptance,'approved Pi diagnostic slice flag or ACL full acceptance required')
+    require(args.cleanup_only or args.diagnostic_only or args.pi_update_diagnostic or args.acl_full_acceptance or args.default_entry_acceptance,'approved native acceptance mode required')
+    if args.default_entry_acceptance:
+        require(args.phase in ('upgrade','default') and not any((args.diagnostic_only,args.pi_update_diagnostic,args.acl_full_acceptance,args.retain_post_pi_failure)),'default-entry acceptance requires one exact phase')
     require(not args.acl_full_acceptance or (not args.phase and not args.diagnostic_only and not args.pi_update_diagnostic and not args.retain_post_pi_failure), 'one ACL full upgrade phase only')
     if args.pi_update_diagnostic:
         require(args.phase!='default' and not args.diagnostic_only and not args.retain_post_pi_failure,'Pi diagnostic mode only; no default or retention phase')
@@ -1034,6 +1067,7 @@ def main():
         runner=Acceptance(report,initial_runtime)
         runner.pi_update_diagnostic=args.pi_update_diagnostic
         runner.acl_full_acceptance=args.acl_full_acceptance
+        runner.default_entry_acceptance=args.default_entry_acceptance
         runner.diagnostic_report_path=args.report
     except Exception:
         report['failure']='private ledger initialization failed before any native command'
@@ -1055,15 +1089,20 @@ def main():
         runner.verify_install()
         runner.command('init',['/usr/local/bin/awf','init','--yes'],60)
         report['mode']='pi-update-diagnostic' if args.pi_update_diagnostic else 'default' if probe.RELEASE==TARGET_VERSION else 'upgrade'
+        if args.default_entry_acceptance:
+            report['defaultEntryAcceptance']=True
         report['publicBootstrap']=dict(passed=True,localManifestOverride=False,localArchiveOverride=False,source='channel' if probe.RELEASE==TARGET_VERSION else 'release')
         runner.command('start-1',['/usr/local/bin/awf','start'],120)
         runner.health(1)
         if args.pi_update_diagnostic:
             runner.verify_pi_update_diagnostic()
         elif probe.RELEASE==TARGET_VERSION:
+            runner.verify_rpc('default')
             runner.verify_default_noop()
         else:
-            runner.verify_upgrades(assets)
+            runner.verify_upgrades(assets,default_entry=args.default_entry_acceptance)
+        if args.default_entry_acceptance:
+            runner.verify_channel_manifest('after')
         runner.command('stop-final',['/usr/local/bin/awf','stop'],120)
         for unit in probe.UNITS:
             stopped(unit)

@@ -403,7 +403,7 @@ class ParentTests(unittest.TestCase):
                  '--prepare-ci-parents','--retain-post-pi-failure']), \
              patch.dict(parent.os.environ,{'GITHUB_REF':'refs/heads/'+parent.native.probe.BRANCH}), \
              patch.object(parent.native.probe,'ci_guard'),patch.object(parent,'prepare') as prepare:
-            with self.assertRaisesRegex(parent.native.TestFailure,'approved Pi diagnostic slice'):
+            with self.assertRaisesRegex(parent.native.TestFailure,'approved native acceptance mode'):
                 parent.main()
             prepare.assert_not_called()
 
@@ -411,14 +411,14 @@ class ParentTests(unittest.TestCase):
         for extras in (['--retain-post-pi-failure'],['--pi-update-diagnostic','--retain-post-pi-failure'],['--pi-update-diagnostic','--phase','default']):
             with self.subTest(extras=extras),patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents']+extras), \
                  patch.object(parent.native.probe,'ci_guard'),patch.object(parent,'prepare') as prepare:
-                with self.assertRaisesRegex(parent.native.TestFailure,'approved Pi diagnostic slice'):
+                with self.assertRaisesRegex(parent.native.TestFailure,'approved native acceptance mode'):
                     parent.main()
                 prepare.assert_not_called()
 
     def test_missing_diagnostic_flag_refuses_before_parent_preparation(self):
         with patch('sys.argv',['parent','--expected-release','24.04','--report','/tmp/report.json','--prepare-ci-parents']), \
              patch.object(parent.native.probe,'ci_guard'),patch.object(parent,'prepare') as prepare:
-            with self.assertRaisesRegex(parent.native.TestFailure,'approved Pi diagnostic slice'):
+            with self.assertRaisesRegex(parent.native.TestFailure,'approved native acceptance mode'):
                 parent.main()
             prepare.assert_not_called()
 
