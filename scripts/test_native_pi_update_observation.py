@@ -74,6 +74,11 @@ class ObservationTests(unittest.TestCase):
                 runner.report=dict(stages=[]);runner.diagnostic_report_path=root/'report.json'
                 runner.verify_rpc=lambda phase:None
                 calls=[];saved=[]
+                hash_input=root/'hash-input';hash_input.write_bytes(b'contract fixture')
+                real_digest=native.package.digest_file
+                def digest(path):
+                    self.assertIsInstance(path,Path)
+                    return real_digest(hash_input)
                 metadata=lambda p:dict(path=p,objectType='symlink' if p==obs.PACKAGE else 'file',mode='0777',uid=0,gid=0,ino=1,dev=1,readlink='../../outside',realpath='/tmp/outside',realpathInsidePrefix=False)
                 def command(name,args,seconds,capture=False,environment=None):
                     calls.append(name)
@@ -90,7 +95,7 @@ class ObservationTests(unittest.TestCase):
                 def save(path,report):
                     saved.append(copy.deepcopy(report));private(path,json.dumps(report))
                 with patch.object(native,'CONTROL',root),patch.object(native,'stopped'),patch.object(native,'identity',return_value={'ino':1}), \
-                     patch.object(native.package,'digest_file',return_value='a'*64),patch.object(obs,'object_metadata',side_effect=metadata), \
+                     patch.object(native.package,'digest_file',side_effect=digest),patch.object(obs,'object_metadata',side_effect=metadata), \
                      patch.object(obs,'trusted_package_version',return_value={'installedVersionUnavailable':'untrusted_physical_parent'}), \
                      patch.object(startup,'first_unsafe_pi_entry',return_value=dict(passed=False,path=obs.PACKAGE,mode='0777')),patch.object(native,'report_write',side_effect=save):
                     with self.assertRaisesRegex(native.TestFailure,'stage failed: pi-update' if child_fails else 'Pi update output limit' if limited else 'updated Pi prefix permissions unsafe'):
@@ -117,6 +122,37 @@ class ObservationTests(unittest.TestCase):
             self.assertEqual((Path(tmp)/'pi-update.log').stat().st_size,obs.MAX_OUTPUT)
             self.assertTrue(runner.report['piObservation']['after']['outputLimitExceeded'])
             self.assertEqual(runner.report['stages'][-1]['exitCode'],0)
+
+    def test_substituted_success_path_uses_real_hash_api_before_and_after_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);fixture=root/'hash-fixture';fixture.write_bytes(b'fixture')
+            runner=native.Acceptance.__new__(native.Acceptance)
+            runner.report=dict(stages=[]);runner.diagnostic_report_path=root/'report.json'
+            phases=[];runner.verify_rpc=phases.append;runner.health=lambda _:None
+            calls=[];hash_paths=[];real_digest=native.package.digest_file
+            def digest(path):
+                self.assertIsInstance(path,Path);hash_paths.append(str(path))
+                return real_digest(fixture)
+            def command(name,args,seconds,capture=False,environment=None):
+                calls.append(name)
+                if name=='npm-version':return b'10.9.3\n'
+                if name=='pi-version-updated':return b'1.0.4\n'
+                if name=='pi-update':
+                    private(root/'pi-update.log','AWF_PI_MASK_BEFORE=0002\nUpdated pi from 1.0.2 to 1.0.4\nAWF_PI_MASK_AFTER=0002\n')
+                    private(root/'pi-process-observation.jsonl','\n'.join(json.dumps(r) for r in trace_rows(Path.cwd())))
+                    runner.report['stages'].append(dict(name=name,exitCode=0))
+                    runner.report['piUpdate']=dict(executionStarted=True,passed=False)
+            runner.command=command
+            def metadata(p):return dict(path=p,objectType='directory' if p==obs.PACKAGE else 'file',mode='0755')
+            with patch.object(native,'CONTROL',root),patch.object(native,'stopped'),patch.object(native,'identity',return_value={'ino':1}), \
+                 patch.object(native,'same',return_value=True),patch.object(native.package,'digest_file',side_effect=digest), \
+                 patch.object(obs,'object_metadata',side_effect=metadata),patch.object(obs,'trusted_package_version',side_effect=[{'installedPackageVersion':'1.0.2'},{'installedPackageVersion':'1.0.4'}]), \
+                 patch.object(startup,'first_unsafe_pi_entry',return_value=dict(passed=True)),patch.object(native,'report_write',side_effect=lambda p,r:private(p,json.dumps(r))):
+                runner.verify_pi_update_diagnostic()
+            self.assertEqual(hash_paths,['/opt/pi-cli/awf-launcher.mjs','/opt/node/bin/node','/opt/node/lib/node_modules/npm/bin/npm-cli.js','/opt/pi-cli/awf-launcher.mjs'])
+            self.assertTrue(runner.report['piUpdate']['passed'])
+            self.assertEqual(phases,['initial','after-pi'])
+            self.assertEqual(calls[-2:],['pi-version-updated','start-after-pi'])
 
     def test_actual_local_child_failure_output_cap_and_timeout_keep_stages(self):
         cases=[('import sys;sys.exit(7)',3,'stage failed: pi-update',7),

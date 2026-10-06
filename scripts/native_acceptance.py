@@ -492,9 +492,9 @@ class Acceptance:
         before=dict(objects=[observation.object_metadata(p) for p in observation.OBJECTS],
                     packageVersion=observation.trusted_package_version(),cwd=observation.safe_path(str(Path.cwd())),
                     uid=os.getuid(),gid=os.getgid(),prefixIdentity=identity('/opt/pi-cli'),
-                    launcherSHA256=package.digest_file('/opt/pi-cli/awf-launcher.mjs'),
-                    nodeSHA256=package.digest_file('/opt/node/bin/node'),
-                    npmCLISHA256=package.digest_file('/opt/node/lib/node_modules/npm/bin/npm-cli.js'))
+                    launcherSHA256=package.digest_file(Path('/opt/pi-cli/awf-launcher.mjs')),
+                    nodeSHA256=package.digest_file(Path('/opt/node/bin/node')),
+                    npmCLISHA256=package.digest_file(Path('/opt/node/lib/node_modules/npm/bin/npm-cli.js')))
         npm=self.command('npm-version',['/opt/node/bin/node','/opt/node/lib/node_modules/npm/bin/npm-cli.js','--version'],30,True,dict(ENV,HOME=str(home)))
         require(npm.strip()==b'10.9.3','private npm version differs')
         before['npmVersion']='10.9.3';before['nodeVersion']='22.19.0'
@@ -526,7 +526,7 @@ class Acceptance:
         require(trust.get('passed') is True,'updated Pi prefix permissions unsafe')
         require(after.get('installedPackageVersion') is not None,'updated Pi version unavailable from trusted physical package')
         require(after['objects'][0].get('objectType')=='directory' and after['objects'][2].get('objectType')=='file','updated Pi package root or launcher type unsafe')
-        require(package.digest_file('/opt/pi-cli/awf-launcher.mjs')==before['launcherSHA256'],'stable Pi launcher changed')
+        require(package.digest_file(Path('/opt/pi-cli/awf-launcher.mjs'))==before['launcherSHA256'],'stable Pi launcher changed')
         require(same('/opt/pi-cli',before['prefixIdentity']),'sole Pi prefix inode changed')
         version=self.command('pi-version-updated',['/usr/local/bin/pi','--version'],20,True,dict(ENV,HOME=str(home))).decode().strip()
         require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version) and version==after['installedPackageVersion'] and tuple(map(int,version.split('.')))>(1,0,2),'trusted updated Pi versions disagree')
