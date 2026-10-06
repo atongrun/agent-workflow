@@ -22,9 +22,25 @@ func (a *nativeAdapter) update(ctx context.Context, m Manifest) error {
 	if err := a.absent("etc/awf/update-pending.json"); err != nil {
 		return err
 	}
+	if err := validateUpdateTarget(m, old.Manifest); err != nil {
+		return err
+	}
 	if manifestDigest(old.Manifest) == manifestDigest(m) {
+		if a.allowPrerelease && !old.AllowPrerelease {
+			old.AllowPrerelease = true
+			data, err := json.Marshal(old)
+			if err != nil {
+				return err
+			}
+			if err := a.replaceMetadata("etc/awf/install.json", data, 0600, a.owner); err != nil {
+				return err
+			}
+		}
 		a.event("bundle", "verify-current", "completed")
 		return nil
+	}
+	if err := a.preflightReplacement(m); err != nil {
+		return err
 	}
 	generation, r, cleanup, err := prepareNativeRuntime(ctx, m, a.observer)
 	if err != nil {
@@ -54,6 +70,9 @@ func (a *nativeAdapter) replacePrepared(ctx context.Context, m Manifest, generat
 	b, _ := json.Marshal(r)
 	if r.Schema != 2 || r.PiRuntime == nil || r.ManifestSHA256 != manifestDigest(m) || verifyGeneration(generation, r, b) != nil {
 		return errors.New("new verified runtime preparation required")
+	}
+	if err := a.preflightReplacement(m); err != nil {
+		return err
 	}
 	work, err := os.MkdirTemp(filepath.Join(a.root.Name(), "opt"), ".awf-update-")
 	if err != nil {
@@ -146,7 +165,7 @@ func (a *nativeAdapter) replacePrepared(ctx context.Context, m Manifest, generat
 		}
 	}
 	r.PiRuntime = old.Preparation.PiRuntime
-	next := nativeReceipt{1, "linux-host-native-v1", m, r, true, false}
+	next := nativeReceipt{Schema: 1, Mode: "linux-host-native-v1", Manifest: m, Preparation: r, ProgramsInstalled: true, AllowPrerelease: old.AllowPrerelease || a.allowPrerelease}
 	data, _ := json.Marshal(next)
 	if err := a.writeNew("etc/awf/install-next.json", data, 0600); err != nil {
 		return err
@@ -155,4 +174,17 @@ func (a *nativeAdapter) replacePrepared(ctx context.Context, m Manifest, generat
 		return err
 	}
 	return syncDirectory(filepath.Join(a.root.Name(), "etc/awf"))
+}
+
+func (a *nativeAdapter) preflightReplacement(m Manifest) error {
+	// Refuse all known conflicts before the first program-root rename.
+	for _, name := range []string{"opt/node", "opt/awf", "opt/magpie"} {
+		if err := a.absent(name + ".before-" + manifestDigest(m)); err != nil {
+			return err
+		}
+		if err := a.trusted(name, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }

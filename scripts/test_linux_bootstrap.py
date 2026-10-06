@@ -4,6 +4,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import urllib.request
 
 script = Path(__file__).with_name('install-linux.sh').read_text()
@@ -71,6 +72,37 @@ class BootstrapTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         api['extract_host'](archive, directory, manifest)
                 self.assertFalse((directory.parent / 'escape').exists())
+
+    def test_channel_drift_refused_before_archive_or_execution(self):
+        manifest = self.fixture()
+        calls = []
+        def download(url, target, *_):
+            calls.append(url)
+            changed = dict(manifest)
+            if len(calls) == 2:
+                changed['sourceCommit'] = 'c' * 40
+            target.write_bytes(json.dumps(changed).encode())
+        with mock.patch.dict(api, download=download, supported_distribution=lambda _: True), mock.patch.object(api['os'], 'geteuid', return_value=0), mock.patch.object(api['os'], 'umask'), mock.patch.object(api['platform'], 'system', return_value='Linux'), mock.patch.object(api['platform'], 'machine', return_value='x86_64'), mock.patch.object(Path, 'is_dir', return_value=True), mock.patch.object(Path, 'is_file', return_value=True), mock.patch.object(api['sys'], 'argv', ['bootstrap', '--allow-prerelease']), mock.patch.object(api['subprocess'], 'run') as run, mock.patch.object(api['subprocess'], 'check_output') as execute:
+            with self.assertRaisesRegex(ValueError, 'channel and immutable release manifest disagree'):
+                api['main']()
+        self.assertEqual(calls, [api['CHANNEL'], 'https://github.com/atongrun/agent-workflow/releases/download/' + manifest['version'] + '/linux-host-v1.json'])
+        run.assert_not_called()
+        execute.assert_not_called()
+
+    def test_release_bound_bootstrap_uses_only_its_release(self):
+        manifest = self.fixture()
+        channel = 'https://github.com/atongrun/agent-workflow/releases/download/' + manifest['version'] + '/linux-host-v1.json'
+        calls = []
+        def download(url, target, *_):
+            calls.append(url)
+            target.write_bytes(json.dumps(manifest).encode() if url == channel else b'fixture')
+        def stop_at_extract(*_):
+            raise RuntimeError('fixture reached extraction')
+        with mock.patch.dict(api, CHANNEL=channel, download=download, extract_host=stop_at_extract, supported_distribution=lambda _: True), mock.patch.object(api['os'], 'geteuid', return_value=0), mock.patch.object(api['os'], 'umask'), mock.patch.object(api['platform'], 'system', return_value='Linux'), mock.patch.object(api['platform'], 'machine', return_value='x86_64'), mock.patch.object(Path, 'is_dir', return_value=True), mock.patch.object(Path, 'is_file', return_value=True), mock.patch.object(api['sys'], 'argv', ['bootstrap', '--allow-prerelease']), mock.patch.object(api['subprocess'], 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'fixture reached extraction'):
+                api['main']()
+        self.assertEqual(calls, [channel, manifest['components'][0]['artifacts'][0]['url']])
+        run.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

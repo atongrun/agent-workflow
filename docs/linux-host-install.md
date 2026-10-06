@@ -1,9 +1,13 @@
 # Linux Host fresh-machine installer
 
-This is a complete **local source candidate**, with a thin bootstrap and a Go
-native adapter. No Linux release assets or channel have been published. It has
-not installed a real machine or activated real services. Native acceptance and
-publication require separately approved environments and actions.
+The thin bootstrap acquires verified public AWF bytes; Go owns native machine
+and service lifecycle. The immutable Linux TEST ONLY RC1 was published and
+installed on a real disposable GitHub Ubuntu24.04 amd64 systemd VM in run
+[37404774253](https://github.com/atongrun/agent-workflow/actions/runs/37404774253).
+Its install, version, init, two start/health/stop rounds and owned cleanup passed.
+This source adds the independent Linux update channel; its new release and
+actual upgrade results must be recorded separately and cannot inherit a pass
+merely from source fixtures. No production deployment is implied.
 
 The targets are Ubuntu 22.04/24.04 and Debian 12, glibc, systemd with unified
 cgroup v2, amd64. Root may install on an existing machine with fresh AWF paths
@@ -18,11 +22,30 @@ There is one official Pi package installation, at `/opt/pi-cli`.
 
 ## Commands and publication boundary
 
-The candidate bootstrap is `scripts/install-linux.sh`. After release review and
-publication it will acquire a verified Go executable from an independent Linux
-manifest and invoke the native installer. Its default channel path is currently
-unpublished; it must fail rather than substitute the Windows channel or guess
-release hashes. A reviewed local manifest and Host archive can be supplied:
+The default bootstrap and bare `awf update` use the fixed independent URL
+`https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/distribution/linux-host-v1.json`.
+The channel selects an exact release. Its complete manifest must agree with that
+release's canonical immutable manifest. Download length/hash, public tag/source
+and executable build identity are verified before placement. There is no
+Windows-channel fallback, guessed mirror or repository-wide latest selector.
+Unavailable/invalid metadata fails before program replacement. Initial preview
+installation explicitly permits future Linux previews; old receipts without
+that approval default to false. `--yes` alone never grants preview permission.
+
+After publication, the ordinary commands are:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh | sudo sh -s -- --allow-prerelease
+sudo awf init
+sudo awf start
+sudo awf update
+sudo awf stop
+sudo pi update
+sudo awf start
+```
+
+Optional administrator controls retain a reviewed local manifest/archive or an
+exact update version:
 
 ```sh
 sudo sh scripts/install-linux.sh --manifest /path/to/reviewed-linux-manifest.json --archive /path/to/verified-host.tar.gz --allow-prerelease
@@ -31,14 +54,23 @@ sudo awf start
 sudo awf stop
 sudo awf start
 sudo awf update --manifest /path/to/reviewed-next-linux-manifest.json --allow-prerelease
+sudo awf update --version v1.0.1-rc.3 --allow-prerelease
 ```
 
-These are future native acceptance commands, not evidence they ran here. Install
-and init request confirmation; `--yes` permits unattended execution. The
+The release evidence records which exact commands actually ran. Install, init
+and a changing update request confirmation; `--yes` permits unattended execution. The
 bootstrap invokes install with `--yes`. Install prepares programs, the account
 and units; init creates service state and local tokens. Neither starts services.
 `start --enable` separately enables boot autostart after health verification.
 There is no public system-root override or environment override for native writes.
+
+Default updates and same-version no-ops verify the published source. Downgrades
+and different source/payload under the same version are refused. All three
+replacement backup conflicts are checked before the first rename. Program roots
+are replaced individually under a durable maintenance seal; interrupted updates
+retain the seal, marker and exact backups for inspection. This is not automatic
+whole-bundle rollback. Current configuration, local credentials, user task state,
+service Pi directory and the current official Pi package tree are retained.
 
 The bootstrap needs Python 3 already on the target system. It checks root, platform,
 glibc and running systemd, downloads to a private `/tmp` directory, reports real
@@ -299,15 +331,13 @@ and rechecks the actual full official program inventory beneath a temporary root
 with synthetic Host bytes and substituted machine commands; it also cannot prove
 native installation or operating-system service ownership.
 
-Before publishing, use separately approved Ubuntu 22.04/24.04 and Debian 12 amd64
-systemd machines to verify the real bootstrap, permissions/account separation,
-notice completeness, install/init/start/stop, both entire process groups exiting,
-exact actual Magpie settings and loopback sockets, genuine `pi update` on the
-same prefix, extension/model catalog and an explicitly approved model-backed E2E.
-Review failure/interruption and reboot/autostart behavior there. The current
-Debian 13/PID1-tail executor does not meet that acceptance matrix. No production
-machine, account mutation, systemctl action, listening service, firewall,
-credentials or cloud purchase is authorized by these local checks.
+The next Ubuntu24.04 preview must verify its public bootstrap, cross-version AWF
+update, actual official same-prefix Pi update and read-only production-extension
+RPC compatibility, lifecycle and owned cleanup in the separately approved
+disposable GitHub environment. Ubuntu22.04/Debian12, provider/model-backed work
+and reboot/autostart are not claimed as accepted by that slice. Low-memory and
+CloudCone acceptance are cancelled and are not release gates. Local fixtures
+grant no production machine, credential, firewall or cloud-purchase authority.
 
 ## Native acceptance routes
 

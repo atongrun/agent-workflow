@@ -42,20 +42,22 @@ type nativeReceipt struct {
 	Preparation       InstallReceipt `json:"preparation"`
 	ProgramsInstalled bool           `json:"programsInstalled"`
 	NativeAcceptance  bool           `json:"nativeAcceptance"`
+	AllowPrerelease   bool           `json:"allowPrerelease"`
 }
 
 // Internal dependency injection only. The public entry point always opens /;
 // no environment variable or flag can redirect system writes to another root.
 type nativeAdapter struct {
-	root        *os.Root
-	owner       int
-	command     func(context.Context, string, ...string) ([]byte, error)
-	lookup      func(string) (*user.User, error)
-	lookupGroup func(string) (*user.Group, error)
-	lookPath    func(string) (string, error)
-	chown       func(string, int, int) error
-	client      *http.Client
-	observer    Observer
+	root            *os.Root
+	owner           int
+	command         func(context.Context, string, ...string) ([]byte, error)
+	lookup          func(string) (*user.User, error)
+	lookupGroup     func(string) (*user.Group, error)
+	lookPath        func(string) (string, error)
+	chown           func(string, int, int) error
+	client          *http.Client
+	observer        Observer
+	allowPrerelease bool
 }
 
 func openNative(o Observer) (*nativeAdapter, error) {
@@ -493,7 +495,7 @@ func (a *nativeAdapter) installPrepared(ctx context.Context, m Manifest, generat
 	if err := a.phase("awf-host", "unit-reload", func() error { _, err := a.command(ctx, "/usr/bin/systemctl", "daemon-reload"); return err }); err != nil {
 		return err
 	}
-	nr := nativeReceipt{1, "linux-host-native-v1", m, r, true, false}
+	nr := nativeReceipt{Schema: 1, Mode: "linux-host-native-v1", Manifest: m, Preparation: r, ProgramsInstalled: true, AllowPrerelease: a.allowPrerelease}
 	data, _ := json.Marshal(nr)
 	return a.phase("bundle", "install-receipt", func() error { return a.writeNew("etc/awf/install.json", data, 0600) })
 }
