@@ -1,0 +1,57 @@
+name: Linux public bootstrap and official update acceptance
+
+on:
+  push:
+    branches: [awf/linux-upgrade-ci-v1, awf/linux-default-ci-v1]
+
+permissions: {}
+concurrency:
+  group: awf-linux-upgrade-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    if: github.repository == 'atongrun/agent-workflow' && github.event_name == 'push' && (github.ref == 'refs/heads/awf/linux-upgrade-ci-v1' || github.ref == 'refs/heads/awf/linux-default-ci-v1')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify harness boundaries without machine mutation
+        run: |
+          set -eu
+          python3 scripts/test_native_runner_probe.py
+          python3 scripts/test_native_acceptance.py
+          python3 scripts/test_native_ci_parent.py
+      - name: Approved ephemeral VM public install and update verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/awf-linux-upgrade"
+          mkdir "$evidence_dir"
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$evidence_dir/report.json" --prepare-ci-parents
+      - name: Retry owned cleanup and independently restore both VM parents
+        if: always()
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$RUNNER_TEMP/awf-linux-upgrade/report.json" --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: linux-upgrade-ubuntu24-${{ github.ref_name }}-${{ github.sha }}
+          path: ${{ runner.temp }}/awf-linux-upgrade/report.json
+          if-no-files-found: warn
+          retention-days: 7

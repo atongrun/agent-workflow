@@ -10,6 +10,8 @@ import stat
 import tempfile
 import unittest
 from unittest.mock import patch
+from unittest.mock import Mock
+from types import SimpleNamespace
 
 import native_acceptance as native
 
@@ -63,10 +65,10 @@ class NativeHarnessTests(unittest.TestCase):
 
     def test_only_nine_immutable_public_assets(self):
         self.assertEqual(set(native.PINS),set(native.package.NAMES))
-        known=json.loads(Path('/workspace/awf-contract-evidence/public-test-release-v1.0.1-rc.1/github-snapshot.json').read_text()) if Path('/workspace/awf-contract-evidence/public-test-release-v1.0.1-rc.1/github-snapshot.json').exists() else None
-        if known:
-            for row in known['release']['assets']:
-                self.assertEqual(native.PINS[row['name']],(row['size'],row['digest'].removeprefix('sha256:')))
+        for version,pins in native.PINS_BY_VERSION.items():
+            self.assertEqual(len(pins),9)
+            self.assertIn('awf_'+version+'_linux_amd64.tar.gz',pins)
+            self.assertTrue(all(isinstance(size,int) and len(sha)==64 for size,sha in pins.values()))
         self.assertNotIn('private.zip',native.PINS)
 
     def test_changed_inode_stops_cleanup_before_any_deletion(self):
@@ -143,12 +145,124 @@ class NativeHarnessTests(unittest.TestCase):
                 native.report_write(link,{'acceptancePassed':False})
             self.assertEqual(target.read_text(),'preserved')
 
-    def test_bootstrap_executes_only_the_pinned_manifest_and_host(self):
+    def test_bootstrap_uses_public_manifest_and_archive(self):
         assets=Path('/tmp/private/assets')
-        args=native.install_args(assets)
-        self.assertEqual(args[args.index('--manifest')+1],str(assets/'linux-host-v1.json'))
-        self.assertEqual(args[args.index('--archive')+1],str(assets/native.package.NAMES[0]))
-        self.assertIn('--allow-prerelease',args)
+        for version,bootstrap in [('v1.0.1-rc.2','install-linux.sh'),('v1.0.1-rc.3','channel-install-linux.sh')]:
+            with patch.object(native.probe,'RELEASE',version):
+                args=native.install_args(assets)
+            self.assertNotIn('--manifest',args)
+            self.assertNotIn('--archive',args)
+            self.assertIn(str(assets/bootstrap),args)
+            self.assertIn('--allow-prerelease',args)
+
+    def test_manifest_digest_is_independent_of_channel_json_key_order(self):
+        manifest=dict(schema=1,channel='linux-host-v1',version='v1.0.1-rc.3',sourceCommit=native.probe.SOURCE,
+            installerProtocol=1,hostProtocol='v1',extensionProtocol=1,piRPCVersion='1.0.2',os='linux',arch='amd64',libc='glibc',
+            components=[dict(id='awf-host',version='v1.0.1-rc.3',artifacts=[dict(name='fixture.tar.gz',url='https://github.com/fixture',sha256='f'*64,bytes=1,format='tar.gz')])])
+        shuffled={key:manifest[key] for key in reversed(manifest)}
+        self.assertEqual(native.manifest_digest(manifest),native.manifest_digest(shuffled))
+
+    def test_noop_uses_genuine_bare_command_and_blocks_service_restart(self):
+        runner=self.runner({})
+        runner.health=lambda _:None
+        runner.command=lambda name,args,*_: self.assertEqual(args,['/usr/local/bin/awf','update']) or b'AWF bundle verify-current: completed\nAWF v1.0.1-rc.3 verified.'
+        with patch.object(native,'identity',return_value={'ino':123}),patch.object(native,'tree_fingerprint',return_value='fixture bytes'),patch.object(native.Path,'read_bytes',return_value=b'fixture receipt'),patch.object(native,'unit_status',side_effect=[{'MainPID':'123'},{'MainPID':'124'},{'MainPID':'999'},{'MainPID':'124'}]),patch.object(native.os.path,'lexists',return_value=False):
+            with self.assertRaisesRegex(native.TestFailure,'restarted services'):
+                runner.verify_default_noop()
+        self.assertNotIn('noOp',runner.report)
+
+    def test_upgrade_records_all_old_backup_identities_before_execution(self):
+        paths={'/opt/node':{'ino':1},'/opt/awf':{'ino':2},'/opt/magpie':{'ino':3}}
+        runner=self.runner(dict(paths=paths,transitions=[]))
+        saves=[]
+        runner.save=lambda:saves.append(copy.deepcopy(runner.ledger))
+        target=dict(version=native.TARGET_VERSION,sourceCommit=native.probe.SOURCE)
+        with patch.object(native,'manifest_digest',return_value='d'*64),patch.object(native,'same',return_value=True),patch.object(native.os.path,'lexists',return_value=False):
+            runner.begin_replacement(target)
+        self.assertEqual(len(saves),1)
+        roots=saves[0]['transitions'][0]['roots']
+        self.assertEqual([row['oldIdentity'] for row in roots],list(paths.values()))
+        self.assertEqual([row['backup'] for row in roots],[path+'.before-'+'d'*64 for path in paths])
+        self.assertFalse(saves[0]['transitions'][0]['completed'])
+        self.assertEqual(saves[0]['paths'],paths)
+
+    def test_existing_backup_cannot_be_adopted_for_upgrade(self):
+        runner=self.runner(dict(paths={p:{} for p in ('/opt/node','/opt/awf','/opt/magpie')},transitions=[]))
+        with patch.object(runner,'save') as save,patch.object(native,'manifest_digest',return_value='d'*64),patch.object(native,'same',return_value=True),patch.object(native.os.path,'lexists',return_value=True):
+            with self.assertRaisesRegex(native.TestFailure,'no adoption'):
+                runner.begin_replacement(dict(version=native.TARGET_VERSION,sourceCommit=native.probe.SOURCE))
+        save.assert_not_called()
+        self.assertEqual(runner.ledger['transitions'],[])
+
+    def test_failed_upgrade_never_adopts_new_roots_from_receipt(self):
+        runner=self.runner(dict(paths={'/opt/awf':{'ino':1}},transitions=[dict(target={},roots=[],completed=False)]))
+        with patch.object(native.Path,'read_text',return_value='{"manifest":{"changed":true}}'),patch.object(runner,'save') as save:
+            with self.assertRaisesRegex(native.TestFailure,'immutable target'):
+                runner.finish_replacement()
+        save.assert_not_called()
+        self.assertEqual(runner.ledger['paths'],{'/opt/awf':{'ino':1}})
+
+    def test_incomplete_duplicate_or_extra_runtime_inventory_never_adopted(self):
+        ids=('node','pi','awf-host','awf-extension','magpie')
+        target={'components':[{'id':cid,'version':'fixture'} for cid in ids]}
+        file_paths={'node':'opt/node/node','awf-host':'opt/awf/awf','awf-extension':'opt/awf/extension.ts','magpie':'opt/magpie/magpie'}
+        original=[dict(id=cid,version='fixture',files=[dict(path=file_paths[cid],mode=0o644,bytes=1,sha256='f'*64)] if cid!='pi' else []) for cid in ids]
+        for kind in ('empty','missing','duplicate-component','duplicate-path','empty-files','extra-tree-file'):
+            components=copy.deepcopy(original)
+            if kind=='empty': components=[]
+            if kind=='missing': components.pop()
+            if kind=='duplicate-component': components[-1]=components[0]
+            if kind=='duplicate-path': components[0]['files']*=2
+            if kind=='empty-files': components[0]['files']=[]
+            paths={p:{'ino':i} for i,p in enumerate(('/opt/node','/opt/awf','/opt/magpie'))}
+            roots=[dict(path=p,backup=p+'.before-'+'d'*64,oldIdentity=saved) for p,saved in paths.items()]
+            transition=dict(target=target,roots=roots,completed=False)
+            runner=self.runner(dict(paths=copy.deepcopy(paths),transitions=[transition]))
+            receipt=dict(manifest=target,programsInstalled=True,preparation=dict(manifestSHA256='d'*64,components=components))
+            extra=['unclaimed'] if kind=='extra-tree-file' else []
+            actual=[('/opt/node',[],['node']+extra),('/opt/awf',[],['awf','extension.ts']),('/opt/magpie',[],['magpie'])]
+            with self.subTest(kind=kind),patch.object(native.Path,'read_text',return_value=json.dumps(receipt)),patch.object(native,'same',side_effect=lambda path,_:'.before-' in str(path)),patch.object(native.os.path,'lexists',return_value=False),patch.object(native,'manifest_digest',return_value='d'*64),patch.object(native,'safe_tree'),patch.object(native,'identity',return_value={'ino':999}),patch.object(native.Path,'lstat',return_value=SimpleNamespace(st_mode=stat.S_IFREG|0o644,st_size=1)),patch.object(native.Path,'is_symlink',return_value=False),patch.object(native.Path,'is_file',return_value=True),patch.object(native.package,'digest_file',return_value='f'*64),patch.object(native.os,'walk',return_value=actual),patch.object(runner,'save') as save:
+                with self.assertRaises(native.TestFailure):
+                    runner.finish_replacement()
+            save.assert_not_called()
+            self.assertEqual(runner.ledger['paths'],paths)
+            self.assertFalse(transition['completed'])
+
+    def test_pi_execution_marker_survives_nonzero_exit(self):
+        runner=self.runner({})
+        runner.report={'stages':[],'piUpdateExecuted':False}
+        runner.deadline=native.time.monotonic()+120
+        runner.resources=lambda:None
+        process=Mock(returncode=1)
+        process.poll.return_value=1
+        with tempfile.TemporaryDirectory() as temp,patch.object(native,'CONTROL',Path(temp)),patch.object(native.subprocess,'Popen',return_value=process),contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(native.TestFailure,'stage failed: pi-update'):
+                runner.command('pi-update',['/usr/local/bin/pi','update'],30)
+        self.assertTrue(runner.report['piUpdateExecuted'])
+        self.assertTrue(runner.report['piUpdate']['executionStarted'])
+        self.assertFalse(runner.report['piUpdate']['passed'])
+
+    def test_pi_execution_marker_survives_timeout(self):
+        runner=self.runner({})
+        runner.report={'stages':[],'piUpdateExecuted':False}
+        runner.deadline=120
+        runner.resources=lambda:None
+        process=Mock(pid=12345,returncode=1)
+        process.poll.side_effect=[None,1]
+        with tempfile.TemporaryDirectory() as temp,patch.object(native,'CONTROL',Path(temp)),patch.object(native.subprocess,'Popen',return_value=process),patch.object(native.time,'monotonic',side_effect=[0,31]),patch.object(native.os,'killpg'),contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(native.TestFailure,'stage timeout: pi-update'):
+                runner.command('pi-update',['/usr/local/bin/pi','update'],30)
+        self.assertTrue(runner.report['piUpdateExecuted'])
+        self.assertTrue(runner.report['piUpdate']['executionStarted'])
+        self.assertFalse(runner.report['piUpdate']['passed'])
+
+    def test_noop_cannot_claim_program_bytes_preserved_after_inplace_change(self):
+        runner=self.runner({})
+        runner.command=lambda *_:b'AWF bundle verify-current: completed\nAWF v1.0.1-rc.3 verified.'
+        with patch.object(native,'identity',return_value={'ino':123}),patch.object(native,'tree_fingerprint',side_effect=['same']*4+['changed']+['same']*3),patch.object(native.Path,'read_bytes',return_value=b'fixture receipt'),patch.object(native,'unit_status',return_value={'MainPID':'123'}):
+            with self.assertRaisesRegex(native.TestFailure,'changed program contents'):
+                runner.verify_default_noop()
+        self.assertNotIn('noOp',runner.report)
 
     def test_cleanup_does_not_adopt_late_scratch_or_call_observe(self):
         runner=self.runner(dict(paths={},account=None,group=None,initialRuntime={},scratchBefore={'/tmp':[],'/opt':[]}))

@@ -14,6 +14,7 @@ import grp
 import re
 import shutil
 import signal
+import select
 import stat
 import subprocess
 import tarfile
@@ -21,8 +22,9 @@ import tempfile
 import time
 import urllib.request
 
-import package_linux as package
+import package_linux_preview as package
 import probe_native_runner as probe
+package.configure(probe.RELEASE)
 
 ROOTS = ['/opt/node','/opt/pi-cli','/opt/awf','/opt/magpie','/etc/awf',
          '/var/lib/awf','/var/cache/awf','/var/cache/awf-installer']
@@ -33,17 +35,90 @@ UNIT_FILES = ['/etc/systemd/system/'+u for u in probe.UNITS]
 SCOPE = 'awf-native-ci-install.scope'
 CONTROL = Path('/tmp/awf-native-ci-'+os.environ.get('GITHUB_SHA','invalid'))
 ENV = {'PATH':'/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','LC_ALL':'C'}
-PINS = {
-    'awf_v1.0.1-rc.1_linux_amd64.tar.gz': (3449900,'0672f51ec3dd81bcda81970676bcfa6be3ecb0be65586aa8dc11e0bb526f8a7a'),
-    'awf-extension_v1.0.1-rc.1.tar.gz': (2006,'7b0fac2b7965c7c6c564aedcd06c9729f36e920d60239f9b2ad8877b3d8a978a'),
-    'awf-source_v1.0.1-rc.1.tar.gz': (411428,'209629500b981b0bd7b69ab97d570aef995b359a012a77aa57a5b47adc844a09'),
-    'install-linux.sh': (10709,'67db0155da6b5d86ea86d0bff4a7b8f860615aebe88602ea37ad0a1ea34c0b5b'),
-    'linux-host-v1.json': (2737,'5ea01d9872a25edfe8c87d7a626ce150f87f163f53764d262a7481ac830c2971'),
-    'PROVENANCE.json': (2269,'bac5fcfe6f9e6b6a9373b6b2e8fe282c7577baf56cd382c34c1c508393d5a59d'),
-    'SHA256SUMS': (716,'8e911196dfea4ee19de27b1c17175c95f53651e4ea45ab6fb8abb18e1590ecfd'),
-    'TEST_ONLY.txt': (339,'ac0a96700dccf4292ff3ffb90638bdf7ba78906515667b975773d8e890de1b29'),
-    'THIRD_PARTY_NOTICES.txt': (16007,'f042097d5f0b7cb89fd3997ecc9abb469770d4e15e4dadaaf59f1f0eb143e41a'),
+# Filled from independently verified published metadata before any VM trigger.
+PINS_BY_VERSION = {
+    "v1.0.1-rc.2": {
+        "awf-extension_v1.0.1-rc.2.tar.gz": [
+            2007,
+            "32da337f7f671cf00530c780a01720bc3405111ea92902865efcea7658c2729a"
+        ],
+        "awf-source_v1.0.1-rc.2.tar.gz": [
+            417201,
+            "0afcabb379a2fc8616447b3e16ed4268fdb777b1b310f0b46a9a06ff16801903"
+        ],
+        "awf_v1.0.1-rc.2_linux_amd64.tar.gz": [
+            3457231,
+            "73ff26bb5421b0a4b323153b9a0354ea4c68107d82c5f2f721d7ccc407b1a092"
+        ],
+        "install-linux.sh": [
+            11366,
+            "0913583457b7210dd25e99625190037178790b2f061bde334b1d5adc775ae77a"
+        ],
+        "linux-host-v1.json": [
+            2737,
+            "2f3baf8593d71782afa42e450902b556c61891f855fc125d75b1d91827e5cd22"
+        ],
+        "PREVIEW.txt": [
+            294,
+            "6c97253b41c9b47bf1f6b44708c57076eaf0ab987a4237ee6c8aeab52f41ec3f"
+        ],
+        "PROVENANCE.json": [
+            2272,
+            "f340d2b9be6632a50d1ee7ae44b4bbe234d91b86844f166f832e09a7bfd8ce03"
+        ],
+        "SHA256SUMS": [
+            714,
+            "7a164ac8a81cea5bd9f8f2270e2e8798d7852d5de349b7a5c4e728b8d6e37279"
+        ],
+        "THIRD_PARTY_NOTICES.txt": [
+            16007,
+            "f042097d5f0b7cb89fd3997ecc9abb469770d4e15e4dadaaf59f1f0eb143e41a"
+        ]
+    },
+    "v1.0.1-rc.3": {
+        "awf-extension_v1.0.1-rc.3.tar.gz": [
+            2008,
+            "bb1cdd94fe2bcb63ff856e597c14a27a4893581739f59020eb01f7155254d83b"
+        ],
+        "awf-source_v1.0.1-rc.3.tar.gz": [
+            417201,
+            "0afcabb379a2fc8616447b3e16ed4268fdb777b1b310f0b46a9a06ff16801903"
+        ],
+        "awf_v1.0.1-rc.3_linux_amd64.tar.gz": [
+            3457227,
+            "05ddcaafbb8f20d1232f175d289f1d713761eb95f6d39f71fecac68e8489ec20"
+        ],
+        "install-linux.sh": [
+            11366,
+            "36edfa9fb90d94320f1e13cb03e0890e2b4ba9ad80f377b8c18bb0f25c2ba2d9"
+        ],
+        "linux-host-v1.json": [
+            2737,
+            "1e431c185859664aecf5d6f04a560dd67ac8137a4f2a7b05c0784aa4c86d31d5"
+        ],
+        "PREVIEW.txt": [
+            294,
+            "6c97253b41c9b47bf1f6b44708c57076eaf0ab987a4237ee6c8aeab52f41ec3f"
+        ],
+        "PROVENANCE.json": [
+            2272,
+            "d9dd1c18b4170919c56487242602c04245cad35ec8c1abe0f11aa7a1eb100260"
+        ],
+        "SHA256SUMS": [
+            714,
+            "4b59457eb770402c182594bf3fb1464ddb9ed06ad0ca29e78f1b00ec24c01391"
+        ],
+        "THIRD_PARTY_NOTICES.txt": [
+            16007,
+            "f042097d5f0b7cb89fd3997ecc9abb469770d4e15e4dadaaf59f1f0eb143e41a"
+        ]
+    }
 }
+PACKAGING_COMMIT = 'e520c8c6f09719ee11551124e3443869d21a7c61'
+PINS = PINS_BY_VERSION.get(probe.RELEASE, {})
+TARGET_VERSION = 'v1.0.1-rc.3'
+CHANNEL_BOOTSTRAP = 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh'
+CHANNEL_BOOTSTRAP_PIN = [11377, '0e295c8458a728c26dfd54dad70b2839e0d5e4431d59d3c3f85b1218fdb3f158']
 
 
 class TestFailure(Exception):
@@ -53,6 +128,32 @@ class TestFailure(Exception):
 def require(value, message):
     if not value:
         raise TestFailure(message)
+
+
+def manifest_digest(manifest):
+    # Exact Go struct field order; all manifest strings are fixed ASCII.
+    keys = ('schema','channel','version','sourceCommit','installerProtocol','hostProtocol','extensionProtocol','piRPCVersion','os','arch','libc','components')
+    result = {key:manifest[key] for key in keys}
+    result['components'] = [dict(id=c['id'], version=c['version'], artifacts=[{key:a[key] for key in ('name','url','sha256','bytes','format')} for a in c['artifacts']]) for c in manifest['components']]
+    return hashlib.sha256(json.dumps(result,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
+
+
+def tree_fingerprint(path):
+    base = Path(path)
+    require(base.is_dir() and not base.is_symlink(),'runtime fingerprint requires a physical program root')
+    rows = []
+    for root,dirs,files in os.walk(base,followlinks=False):
+        for entry in [Path(root)]+[Path(root)/n for n in dirs+files]:
+            info = entry.lstat()
+            row = [str(entry.relative_to(base)),info.st_mode,info.st_uid,info.st_gid]
+            if stat.S_ISREG(info.st_mode):
+                row += [info.st_size,package.digest_file(entry)]
+            elif stat.S_ISLNK(info.st_mode):
+                row += [os.readlink(entry)]
+            elif not stat.S_ISDIR(info.st_mode):
+                raise TestFailure('special file in Pi runtime')
+            rows.append(row)
+    return hashlib.sha256(json.dumps(sorted(rows),separators=(',',':')).encode()).hexdigest()
 
 
 def identity(path):
@@ -142,10 +243,10 @@ def source_units(archive):
 class Acceptance:
     def __init__(self, report, initial_runtime):
         self.report=report
-        self.ledger=dict(paths={},account=None,group=None,unitHashes={},initialRuntime=initial_runtime)
+        self.ledger=dict(paths={},transitions=[],account=None,group=None,unitHashes={},initialRuntime=initial_runtime)
         self.deadline=time.monotonic()+22*60
         self.ledger['scratchBefore']={parent:sorted(p.name for pattern in patterns for p in Path(parent).glob(pattern))
-            for parent,patterns in [('/tmp',('awf-bootstrap-*','awf-linux-install-*')),('/opt',('.awf-install-*',))]}
+            for parent,patterns in [('/tmp',('awf-bootstrap-*','awf-linux-install-*')),('/opt',('.awf-install-*','.awf-update-*'))]}
         self.ledger['controlIdentity']=identity(CONTROL)
         self.save()
 
@@ -202,14 +303,17 @@ class Acceptance:
         self.low_available=getattr(self,'low_available',0)+1 if data['availableBytes']<192<<20 else 0
         require(self.low_available<3,'host resource abort; not an installer code failure')
 
-    def command(self, name, args, seconds, capture=False):
+    def command(self, name, args, seconds, capture=False, environment=None):
         start=time.monotonic()
         require(start+seconds<self.deadline,'overall native test deadline')
         print('AWF native test: '+name+' started',flush=True)
         log=CONTROL/(name+'.log')
         with log.open('xb') as out:
             os.chmod(log,0o600)
-            process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=out,stderr=out,env=ENV,start_new_session=True)
+            process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=out,stderr=out,env=environment or ENV,start_new_session=True)
+            if name=='pi-update':
+                self.report['piUpdateExecuted']=True
+                self.report['piUpdate']=dict(executionStarted=True,passed=False)
             try:
                 while process.poll() is None:
                     self.observe()
@@ -251,17 +355,26 @@ class Acceptance:
                     require(received<=size,'public asset size limit')
                     out.write(block)
             require(received==size and package.digest_file(path)==sha,'immutable public asset mismatch')
-        package.verify(downloads,'ced23b8baa3a5096caf64daa3396c648d936ab3d')
+        package.verify(downloads,PACKAGING_COMMIT)
         self.ledger['unitHashes']={u:hashlib.sha256(text.encode()).hexdigest()
                                   for u,text in source_units(downloads/package.NAMES[2]).items()}
         self.save()
         self.report['publicAssetsVerified']=len(PINS)
+        if probe.RELEASE != TARGET_VERSION:
+            target = downloads/'target'
+            target.mkdir(mode=0o700)
+            for name in ('linux-host-v1.json',):
+                self.download_pinned(TARGET_VERSION,name,target/name)
+        else:
+            require(CHANNEL_BOOTSTRAP_PIN is not None,'channel bootstrap pin absent')
+            self.download_url(CHANNEL_BOOTSTRAP,downloads/'channel-install-linux.sh',*CHANNEL_BOOTSTRAP_PIN)
+        self.current_version=probe.RELEASE
         return downloads
 
     def verify_install(self):
         require(json.loads(self.command('build-identity',['/opt/awf/awf','linux-build-identity'],20,True))==
-                dict(schema=1,version=probe.RELEASE,sourceCommit=probe.SOURCE,os='linux',arch='amd64',hostProtocol='v1'),'installed Host identity differs')
-        require(self.command('version',['/usr/local/bin/awf','version'],20,True).decode().strip()==probe.RELEASE,'AWF version differs')
+                dict(schema=1,version=self.current_version,sourceCommit=probe.SOURCE,os='linux',arch='amd64',hostProtocol='v1'),'installed Host identity differs')
+        require(self.command('version',['/usr/local/bin/awf','version'],20,True).decode().strip()==self.current_version,'AWF version differs')
         require(self.command('pi-version',['/usr/local/bin/pi','--version'],20,True).decode().strip()=='1.0.2','Pi version differs')
         require(self.command('node-version',['/opt/node/bin/node','--version'],20,True).decode().strip()=='v22.19.0','Node version differs')
         require(capture_existing_runtime()==self.ledger['initialRuntime'],'preinstalled Node/npm/npx changed')
@@ -269,6 +382,231 @@ class Acceptance:
             require(Path(path).is_symlink() and os.readlink(path)==target,'installed command link differs')
         require(not os.path.lexists('/root/.pi/agent'),'ordinary root Pi agent directory modified')
         self.report['preinstalledRuntimePreserved']=True
+
+    def download_url(self,url,target,size,sha):
+        require(isinstance(size,int) and 0<size<256<<20 and re.fullmatch('[0-9a-f]{64}',sha),'public pin missing')
+        opener=urllib.request.build_opener(package.OfficialRedirects())
+        with opener.open(url,timeout=45) as response,target.open('xb') as out:
+            received=0
+            while block:=response.read(1<<20):
+                received+=len(block)
+                require(received<=size,'public download exceeded pin')
+                out.write(block)
+        require(received==size and package.digest_file(target)==sha,'public bytes differ from pin')
+
+    def download_pinned(self,version,name,target):
+        require(version in PINS_BY_VERSION and name in PINS_BY_VERSION[version],'unapproved candidate asset')
+        self.download_url('https://github.com/'+probe.REPOSITORY+'/releases/download/'+version+'/'+name,
+                          target,*PINS_BY_VERSION[version][name])
+
+    def local_api(self,path,body=None):
+        credentials=probe.properties(Path('/etc/awf/host.env').read_text())
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        request=urllib.request.Request('http://127.0.0.1:7070'+path,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={'Authorization':'Bearer '+credentials['AWF_HOST_TOKEN'],'Content-Type':'application/json'})
+        with opener.open(request,timeout=5) as response:
+            data=response.read(1<<20)
+            require(not response.read(1),'local fixture API size limit')
+        return json.loads(data)
+
+    def begin_replacement(self,target):
+        require(target['version']==TARGET_VERSION and target['sourceCommit']==probe.SOURCE,'upgrade target identity differs')
+        roots=[]
+        for path in ('/opt/node','/opt/awf','/opt/magpie'):
+            require(path in self.ledger['paths'] and same(path,self.ledger['paths'][path]),'old program identity changed before upgrade')
+            backup=path+'.before-'+manifest_digest(target)
+            require(not os.path.lexists(backup),'existing upgrade backup; no adoption')
+            roots.append(dict(path=path,backup=backup,oldIdentity=self.ledger['paths'][path]))
+        # Persist every old inode and exact destination before the first rename.
+        self.ledger['transitions'].append(dict(target=target,roots=roots,completed=False))
+        self.save()
+
+    def finish_replacement(self):
+        transition=self.ledger['transitions'][-1]
+        receipt=json.loads(Path('/etc/awf/install.json').read_text())
+        require(receipt['manifest']==transition['target'] and receipt['programsInstalled'] is True and
+                receipt['preparation']['manifestSHA256']==manifest_digest(transition['target']),
+                'updated receipt differs from the verified immutable target')
+        require(not os.path.lexists('/etc/awf/update-pending.json'),'upgrade still pending')
+        replacement={}
+        for row in transition['roots']:
+            require(same(row['backup'],row['oldIdentity']),'retained backup is not the recorded old root')
+            require(not same(row['path'],row['oldIdentity']),'program root was not replaced')
+            for path in (row['path'],row['backup']):
+                safe_tree(path,{0:0})
+            replacement[row['path']]=identity(row['path'])
+            replacement[row['backup']]=row['oldIdentity']
+        # Validate the complete new receipt inventory before recording new roots.
+        components=receipt['preparation']['components']
+        expected={c['id']:c['version'] for c in transition['target']['components']}
+        require(len(components)==5 and {c['id'] for c in components}==set(expected) and
+                all(c['version']==expected[c['id']] for c in components),'updated component inventory incomplete')
+        prefixes={'node':'/opt/node/','awf-host':'/opt/awf/','awf-extension':'/opt/awf/','magpie':'/opt/magpie/'}
+        files=set()
+        directories={'/opt/node','/opt/awf','/opt/magpie'}
+        for component in components:
+            if component['id']=='pi':
+                continue
+            require(bool(component['files']),'updated component file inventory empty')
+            for file in component['files']:
+                path=Path('/'+file['path'])
+                require(str(path).startswith(prefixes[component['id']]) and '..' not in path.parts and
+                        str(path) not in files,'unexpected or duplicate upgrade receipt path')
+                files.add(str(path))
+                parent=path.parent
+                while str(parent) not in ('/opt','/'):
+                    directories.add(str(parent))
+                    parent=parent.parent
+                info=path.lstat()
+                if file.get('linkTarget'):
+                    require(path.is_symlink() and os.readlink(path)==file['linkTarget'],'updated link differs from receipt')
+                else:
+                    require(stat.S_ISREG(info.st_mode) and info.st_size==file['bytes'] and
+                            stat.S_IMODE(info.st_mode)==file['mode'] and package.digest_file(path)==file['sha256'],
+                            'updated runtime inventory differs from receipt')
+        actual_files=set()
+        actual_directories=set()
+        for root in ('/opt/node','/opt/awf','/opt/magpie'):
+            for current,dirs,leaves in os.walk(root,followlinks=False):
+                actual_directories.add(current)
+                for name in dirs+leaves:
+                    path=Path(current)/name
+                    if path.is_symlink() or path.is_file():
+                        actual_files.add(str(path))
+                    elif path.is_dir():
+                        actual_directories.add(str(path))
+        require(actual_files==files and actual_directories==directories,'new program trees differ from the complete receipt inventory')
+        self.ledger['paths'].update(replacement)
+        transition['completed']=True
+        self.save()
+
+    def verify_rpc(self,phase):
+        account=self.ledger['account']
+        directory=Path('/var/lib/awf/native-ci-rpc')
+        if not directory.exists():
+            directory.mkdir(mode=0o700)
+            os.chown(directory,account['uid'],account['gid'])
+            diagnostic=directory/'diagnostic.mjs'
+            diagnostic.write_text('import {writeFileSync} from "node:fs";\nexport default function(pi){pi.on("session_start",async()=>{writeFileSync(process.env.NATIVE_PI_DIAGNOSTIC_FILE,JSON.stringify({tools:pi.getAllTools().map(t=>t.name).filter(n=>n.startsWith("awf_")).sort(),activeTools:pi.getActiveTools().sort()}),{mode:0o600});});}\n')
+            diagnostic.chmod(0o600)
+            os.chown(diagnostic,account['uid'],account['gid'])
+        diagnostic=directory/'diagnostic.mjs'
+        result=directory/(phase+'.json')
+        args=['/usr/sbin/runuser','--user','awf','--','/usr/bin/env','-i',
+            'PATH='+ENV['PATH'],'LC_ALL=C','HOME=/var/lib/awf','PI_CODING_AGENT_DIR=/var/lib/awf/pi-agent',
+            'AWF_HOST_URL=http://127.0.0.1:7070','AWF_EXTENSION_TOKEN=synthetic-unused-tool-token',
+            'AWF_TASK_ID=native-ci-rpc-fixture','AWF_ROLE=architect','AWF_LIFECYCLE_REVISION=0',
+            'NATIVE_PI_DIAGNOSTIC_FILE='+str(result),'/usr/local/bin/pi','--offline','--mode','rpc',
+            '--session-dir',str(directory),'--session-id','11111111-1111-4111-8111-111111111111',
+            '--no-extensions','--no-skills','--no-prompt-templates','--no-context-files','--no-approve',
+            '--tools','awf_task,awf_plan,awf_execution,awf_finish',
+            '--extension','/opt/awf/extensions/awf.ts','--extension',str(diagnostic)]
+        with (CONTROL/('rpc-'+phase+'.log')).open('xb') as err:
+            process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=err,env=ENV,cwd=directory,start_new_session=True)
+            try:
+                process.stdin.write(b'{"type":"get_state","id":"native-state"}\n{"type":"get_commands","id":"native-commands"}\n')
+                process.stdin.flush()
+                responses={}
+                deadline=time.monotonic()+45
+                buffer=b''
+                while len(responses)<2 and time.monotonic()<deadline:
+                    ready,_,_=select.select([process.stdout],[],[],1)
+                    if not ready:
+                        require(process.poll() is None,'official Pi RPC exited before read-only responses')
+                        continue
+                    chunk=os.read(process.stdout.fileno(),65536)
+                    require(bool(chunk) and len(buffer)+len(chunk)<1<<20,'official Pi RPC response bound')
+                    buffer+=chunk
+                    while b'\n' in buffer:
+                        line,buffer=buffer.split(b'\n',1)
+                        data=json.loads(line)
+                        if data.get('type')=='response' and data.get('id') in ('native-state','native-commands'):
+                            require(data.get('success') is True,'official Pi read-only RPC refused')
+                            responses[data['id']]=data
+                require(len(responses)==2 and result.is_file(),'official Pi RPC or production tool diagnostic missing')
+                tools=json.loads(result.read_text())
+                expected=['awf_execution','awf_finish','awf_plan','awf_task']
+                require(tools['tools']==expected and sorted(tools['activeTools'])==expected,'production AWF extension tools differ')
+                self.report.setdefault('rpcCompatibility',[]).append(dict(phase=phase,passed=True,productionExtensionLoaded=True,toolNames=expected,readOnlyCommands=['get_state','get_commands'],modelRequests=0))
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid,signal.SIGTERM)
+                    try:
+                        process.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid,signal.SIGKILL)
+                        process.wait(timeout=8)
+
+    def verify_upgrades(self,assets):
+        fixture=self.local_api('/v1/tasks',dict(requestId='linux-native-upgrade-fixture',title='Synthetic installer persistence fixture; no model turn'))['task']
+        task_path='/v1/tasks/'+fixture['id']
+        snapshot=self.local_api(task_path)['task']
+        preserved={path:package.digest_file(Path(path)) for path in
+            ('/etc/awf/host.env','/etc/awf/host.json','/etc/awf/magpie-settings.json')}
+        agent_identity=identity('/var/lib/awf/pi-agent')
+        self.verify_rpc('initial')
+        self.command('stop-for-pi',['/usr/local/bin/awf','stop'],120)
+        for unit in probe.UNITS:
+            stopped(unit)
+        url='https://pi.dev/api/latest-version'
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url,timeout=30) as response:
+            latest=json.loads(response.read(65536))
+        require(latest.get('packageName')=='@earendil-works/pi-coding-agent' and
+                re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',latest.get('version','')),'official Pi update selector differs')
+        home=CONTROL/'pi-root-home'
+        home.mkdir(mode=0o700)
+        environment=dict(ENV,HOME=str(home))
+        contract=self.command('pi-official-update-contract',['/opt/node/bin/node','--input-type=module','-e',
+            'import {getSelfUpdateCommand} from "file:///opt/pi-cli/lib/node_modules/@earendil-works/pi-coding-agent/dist/config.js"; process.stdout.write(JSON.stringify(getSelfUpdateCommand("@earendil-works/pi-coding-agent")));'],
+            30,True,dict(environment,PATH='/opt/node/bin:'+ENV['PATH']))
+        contract=json.loads(contract)
+        require(contract['command']=='npm' and contract['args'][:2]==['--prefix','/opt/pi-cli'] and
+                '--ignore-scripts' in contract['args'] and '-g' in contract['args'],'official updater is not the sole-prefix scripts-disabled npm contract')
+        update_output=self.command('pi-update',['/usr/local/bin/pi','update'],8*60,True,environment)
+        version=self.command('pi-version-updated',['/usr/local/bin/pi','--version'],20,True,environment).decode().strip()
+        require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version) and tuple(map(int,version.split('.')))>(1,0,2),
+                'actual Pi version did not increase')
+        require(('Updated pi from 1.0.2 to '+version).encode() in update_output,'actual official updater completion version missing')
+        metadata=json.loads(Path('/opt/pi-cli/lib/node_modules/@earendil-works/pi-coding-agent/package.json').read_text())
+        require(metadata['name']=='@earendil-works/pi-coding-agent' and metadata['version']==version,'single-prefix Pi package differs')
+        agent=self.command('pi-root-agent-default',['/opt/node/bin/node','--input-type=module','-e',
+            'import {getAgentDir} from "file:///opt/pi-cli/lib/node_modules/@earendil-works/pi-coding-agent/dist/config.js"; process.stdout.write(getAgentDir());'],20,True,environment).decode()
+        require(agent==str(home/'.pi/agent') and not os.path.lexists('/root/.pi/agent'),'ordinary root Pi default HOME state isolation')
+        pi_tree=tree_fingerprint('/opt/pi-cli')
+        require(same('/opt/pi-cli',self.ledger['paths']['/opt/pi-cli']),'official update replaced sole prefix root')
+        self.report['piUpdate']=dict(executionStarted=True,passed=True,initialVersion='1.0.2',selectorVersion=latest['version'],actualVersion=version,officialCommand='pi update',solePrefix='/opt/pi-cli',ordinaryRootDefaultAgent=True,postinstallScriptsEnabled=False)
+        self.command('start-after-pi',['/usr/local/bin/awf','start'],120)
+        self.health(2)
+        self.verify_rpc('after-pi')
+        target=json.loads((assets/'target/linux-host-v1.json').read_text())
+        self.begin_replacement(target)
+        self.command('awf-update',['/usr/local/bin/awf','update','--version',TARGET_VERSION,'--yes'],8*60)
+        self.finish_replacement()
+        self.current_version=TARGET_VERSION
+        self.health(3)
+        self.verify_rpc('after-awf')
+        require(tree_fingerprint('/opt/pi-cli')==pi_tree and same('/var/lib/awf/pi-agent',agent_identity),'AWF upgrade modified current Pi or service agent root')
+        require(all(package.digest_file(Path(path))==digest for path,digest in preserved.items()),'upgrade changed config or generated credentials')
+        require(self.local_api(task_path)['task']==snapshot,'upgrade changed persisted fixture task')
+        require(capture_existing_runtime()==self.ledger['initialRuntime'],'upgrades changed preinstalled runtime')
+        self.report['awfUpdate']=dict(passed=True,fromVersion=probe.RELEASE,toVersion=TARGET_VERSION,explicitImmutableVersion=True,retainedBackupCount=3,currentPiTreePreserved=True)
+        self.report['businessStatePreserved']=dict(passed=True,config=True,credentials=True,syntheticTask=True,serviceAgentRoot=True,modelRequests=0)
+
+    def verify_default_noop(self):
+        paths=('/opt/node','/opt/pi-cli','/opt/awf','/opt/magpie','/etc/awf/install.json')
+        before={path:identity(path) for path in paths}
+        program_bytes={path:tree_fingerprint(path) for path in paths[:-1]}
+        receipt=Path('/etc/awf/install.json').read_bytes()
+        pids={unit:unit_status(unit)['MainPID'] for unit in probe.UNITS}
+        output=self.command('awf-default-update',['/usr/local/bin/awf','update'],90,True)
+        require(b'AWF bundle verify-current: completed' in output and ('AWF '+TARGET_VERSION+' verified.').encode() in output,'bare update did not report current release')
+        require(before=={path:identity(path) for path in paths} and Path('/etc/awf/install.json').read_bytes()==receipt,'default no-op replaced programs or receipt')
+        require(program_bytes=={path:tree_fingerprint(path) for path in paths[:-1]},'default no-op changed program contents')
+        require(pids=={unit:unit_status(unit)['MainPID'] for unit in probe.UNITS},'default no-op restarted services')
+        require(not os.path.lexists('/etc/awf/update-pending.json'),'default no-op created pending update')
+        self.health(2)
+        self.report['noOp']=dict(passed=True,command='awf update',version=TARGET_VERSION,programRootsPreserved=True,receiptPreserved=True,servicePIDsPreserved=True)
 
     def health(self, round_number):
         tokens=probe.properties(Path('/etc/awf/host.env').read_text())
@@ -279,7 +617,7 @@ class Acceptance:
         request=urllib.request.Request('http://127.0.0.1:7070/v1/maintenance',headers={'Authorization':'Bearer '+tokens['AWF_HOST_TOKEN']})
         with opener.open(request,timeout=5) as response:
             status=json.loads(response.read(1<<20))
-        require(status['build']['version']==probe.RELEASE and status['build']['sourceCommit']==probe.SOURCE and status['maintenance']['phase']=='open','Host identity/maintenance health')
+        require(status['build']['version']==self.current_version and status['build']['sourceCommit']==probe.SOURCE and status['maintenance']['phase']=='open','Host identity/maintenance health')
         with opener.open('http://127.0.0.1:3425/',timeout=5) as response:
             magpie=json.loads(response.read(65536))
         require(magpie['name']=='magpie' and magpie['version'].lstrip('v')=='0.1.855','Magpie identity health')
@@ -378,7 +716,7 @@ class Acceptance:
             elif path in UNIT_FILES:
                 continue
             else:
-                require(path in ROOTS,'cleanup path outside ledger scope')
+                require(path in ROOTS or any(path==row['backup'] for transition in self.ledger.get('transitions',[]) for row in transition['roots']),'cleanup path outside ledger scope')
                 safe_tree(path,owners)
         if self.ledger['group']:
             try:
@@ -404,12 +742,12 @@ class Acceptance:
                 pass  # userdel may remove the private empty group itself.
             else:
                 probe.run('/usr/sbin/groupdel','awf')
-        require(all(not os.path.lexists(p) for p in ROOTS+list(LINKS)+UNIT_FILES),'owned cleanup left fixed paths')
+        require(all(not os.path.lexists(p) for p in ROOTS+list(LINKS)+UNIT_FILES+[row['backup'] for transition in self.ledger.get('transitions',[]) for row in transition['roots']]),'owned cleanup left fixed paths')
         require(capture_existing_runtime()==self.ledger['initialRuntime'],'cleanup changed existing Node/npm/npx')
         # Immutable installer hardcodes these temporary roots. Its own defers
         # should remove them; name/UID alone cannot prove they are ours. Residue
         # is reported as unknown cleanup, never recursively removed by glob.
-        for parent,patterns in [('/tmp',('awf-bootstrap-*','awf-linux-install-*')),('/opt',('.awf-install-*',))]:
+        for parent,patterns in [('/tmp',('awf-bootstrap-*','awf-linux-install-*')),('/opt',('.awf-install-*','.awf-update-*'))]:
             require(all(p.name in self.ledger['scratchBefore'][parent] for pattern in patterns for p in Path(parent).glob(pattern)),
                     'unverified installer scratch remains; no glob cleanup')
         self.report['cleanup']=dict(passed=True,ledgerOwnedPathsRemoved=len(paths),serviceProcessesGone=True,preinstalledRuntimePreserved=True)
@@ -444,7 +782,7 @@ def previous_report(path, default):
         allowed={'schema','sourceCommit','version','workflowCommit','stages','healthRounds','acceptancePassed','cleanup',
                  'modelCalls','providerAuthenticationPerformed','piUpdateExecuted','CloudConeAcceptance',
                  'preflight','failure','publicAssetsVerified','preinstalledRuntimePreserved','resources',
-                 'parentPreparation','parentRestoration'}
+                 'parentPreparation','parentRestoration','piUpdate','awfUpdate','businessStatePreserved','rpcCompatibility','publicBootstrap','noOp','mode'}
         default.update({key:value for key,value in payload.items() if key in allowed})
     except Exception:
         default['failure']='previous public report unavailable; cleanup uses private ledger only'
@@ -452,11 +790,11 @@ def previous_report(path, default):
 
 
 def install_args(assets):
+    bootstrap=assets/('channel-install-linux.sh' if probe.RELEASE==TARGET_VERSION else 'install-linux.sh')
+    # No local manifest or archive override: both public downloads execute.
     return ['/usr/bin/systemd-run','--scope','--unit='+SCOPE,
             '-p','MemoryHigh=1G','-p','MemoryMax=2G','-p','MemorySwapMax=256M','-p','TasksMax=256','-p','CPUQuota=200%',
-            '/bin/sh',str(assets/'install-linux.sh'),
-            '--manifest',str(assets/'linux-host-v1.json'),
-            '--archive',str(assets/package.NAMES[0]),'--allow-prerelease']
+            '/bin/sh',str(bootstrap),'--allow-prerelease']
 
 
 def main():
@@ -535,12 +873,17 @@ def main():
         runner.command('install',install_args(assets),8*60)
         runner.verify_install()
         runner.command('init',['/usr/local/bin/awf','init','--yes'],60)
-        for i in (1,2):
-            runner.command('start-'+str(i),['/usr/local/bin/awf','start'],120)
-            runner.health(i)
-            runner.command('stop-'+str(i),['/usr/local/bin/awf','stop'],120)
-            for unit in probe.UNITS:
-                stopped(unit)
+        report['mode']='default' if probe.RELEASE==TARGET_VERSION else 'upgrade'
+        report['publicBootstrap']=dict(passed=True,localManifestOverride=False,localArchiveOverride=False,source='channel' if probe.RELEASE==TARGET_VERSION else 'release')
+        runner.command('start-1',['/usr/local/bin/awf','start'],120)
+        runner.health(1)
+        if probe.RELEASE==TARGET_VERSION:
+            runner.verify_default_noop()
+        else:
+            runner.verify_upgrades(assets)
+        runner.command('stop-final',['/usr/local/bin/awf','stop'],120)
+        for unit in probe.UNITS:
+            stopped(unit)
         report['acceptancePassed']=True
     except Exception as error:
         # Only our controlled TestFailure strings are public. Upstream exception

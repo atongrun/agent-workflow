@@ -18,9 +18,10 @@ import subprocess
 import time
 
 REPOSITORY = 'atongrun/agent-workflow'
-BRANCH = 'awf/linux-native-ci-test-v1'
-SOURCE = 'f0a2f98bbab111aed4cc612667e7387af5e4c7bf'
-RELEASE = 'v1.0.1-rc.1'
+BRANCH = 'awf/linux-upgrade-ci-v1'
+DEFAULT_BRANCH = 'awf/linux-default-ci-v1'
+SOURCE = '510e6b893c6524873297b972edc72e801b870b0d'
+RELEASE = 'v1.0.1-rc.3' if os.environ.get('GITHUB_REF') == 'refs/heads/'+DEFAULT_BRANCH else 'v1.0.1-rc.2'
 MIN_AVAILABLE_BYTES = 512 << 20
 MIN_DISK_BYTES = 4 << 30
 RESOURCE_SAMPLES = 31
@@ -46,9 +47,10 @@ UNIT_PATHS = (
 
 
 def ci_guard(env, uid, euid):
+    branch = DEFAULT_BRANCH if env.get('GITHUB_REF') == 'refs/heads/'+DEFAULT_BRANCH else BRANCH
     expected = dict(GITHUB_ACTIONS='true', RUNNER_ENVIRONMENT='github-hosted',
                     RUNNER_OS='Linux', GITHUB_REPOSITORY=REPOSITORY,
-                    GITHUB_REF='refs/heads/'+BRANCH, GITHUB_EVENT_NAME='push')
+                    GITHUB_REF='refs/heads/'+branch, GITHUB_EVENT_NAME='push')
     if uid != 0 or euid != 0 or any(env.get(k) != v for k, v in expected.items()):
         raise ValueError('approved GitHub-hosted Linux push and root test required')
     if not re.fullmatch('[0-9a-f]{40}', env.get('GITHUB_SHA', '')):
