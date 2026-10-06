@@ -39,10 +39,9 @@ root, external Node/npm/npx and real native lifecycle. Three exact owned backups
 are included in cleanup; no glob removal occurs. Unknown residue is reported.
 
 Only after this VM succeeds may the independent `awf/linux-v1` channel select
-the immutable RC3 manifest. A second standard ephemeral VM then executes the
+the immutable RC3 manifest. After the first VM failed before Pi update, the remaining approved VM runs both phases serially: upgrade, complete owned cleanup and parent restoration, verified external channel promotion, then the
 public channel bootstrap and genuine bare `awf update`. Same-version success
-must preserve program/receipt inodes and bytes and service PIDs. This is a
-separate branch push, so the first native test is not automatically rerun.
+must preserve program/receipt inodes and bytes and service PIDs. The default phase reuses the same second VM after complete owned AWF cleanup; it is not a third machine or a new image. Both phases independently record and restore only the same approved two parent directories. A bounded read-only wait precedes the default phase; no channel is promoted by the native job.
 
 Each new VM requires an explicit bounded approval for the two physical,
 root-owned, root-group-owned `/opt` and `/usr/local/bin` directories whose exact

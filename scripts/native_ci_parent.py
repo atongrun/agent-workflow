@@ -160,6 +160,8 @@ def remove_state(record):
 def call_native(args):
     previous=sys.argv
     sys.argv=['native_acceptance','--expected-release',args.expected_release,'--report',str(args.report)]
+    if getattr(args,'phase',None):
+        sys.argv.extend(['--phase',args.phase])
     if args.cleanup_only:
         sys.argv.append('--cleanup-only')
     try:
@@ -172,6 +174,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expected-release',required=True,choices=('24.04',))
     parser.add_argument('--report',required=True,type=Path)
+    parser.add_argument('--phase',choices=('upgrade','default'))
     modes=parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare-ci-parents',action='store_true')
     modes.add_argument('--cleanup-only',action='store_true')

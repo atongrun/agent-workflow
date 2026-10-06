@@ -18,6 +18,21 @@ def info(mode=0o777,uid=0,gid=0,ino=123):
 
 
 class ParentTests(unittest.TestCase):
+    def test_phase_forwarding_preserves_real_branch_and_system_paths(self):
+        from types import SimpleNamespace
+        import sys
+        arguments=SimpleNamespace(expected_release='24.04',report=Path('/tmp/report.json'),cleanup_only=False,phase='default')
+        branch='refs/heads/awf/linux-upgrade-ci-v1'
+        seen=[]
+        def capture():
+            seen.extend(sys.argv)
+            self.assertEqual(parent.os.environ['GITHUB_REF'],branch)
+            return 0
+        with patch.dict(parent.os.environ,{'GITHUB_REF':branch}),patch.object(parent.native,'main',side_effect=capture):
+            self.assertEqual(parent.call_native(arguments),0)
+        self.assertEqual(seen[-2:],['--phase','default'])
+        self.assertEqual(parent.PARENTS,('/opt','/usr/local/bin'))
+
     def setUp(self):
         self.record=dict(schema=1,path='/opt',workflowCommit='c'*40,
             controlIdentity={'dev':7,'ino':456,'type':stat.S_IFDIR},

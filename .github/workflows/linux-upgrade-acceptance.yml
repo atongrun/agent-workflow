@@ -26,7 +26,9 @@ jobs:
           python3 scripts/test_native_runner_probe.py
           python3 scripts/test_native_acceptance.py
           python3 scripts/test_native_ci_parent.py
-      - name: Approved ephemeral VM public install and update verification
+          python3 scripts/test_linux_channel_gate.py
+      - name: Approved remaining VM public installation and actual updates
+        id: upgrade
         shell: bash
         run: |
           set -euo pipefail
@@ -37,8 +39,9 @@ jobs:
             GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" \
             GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
             /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
-            --expected-release 24.04 --report "$evidence_dir/report.json" --prepare-ci-parents
-      - name: Retry owned cleanup and independently restore both VM parents
+            --expected-release 24.04 --report "$evidence_dir/upgrade-report.json" --phase upgrade --prepare-ci-parents
+      - name: Complete upgrade cleanup and independently restore both VM parents
+        id: upgrade_cleanup
         if: always()
         shell: bash
         run: |
@@ -47,11 +50,46 @@ jobs:
             GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" \
             GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
             /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
-            --expected-release 24.04 --report "$RUNNER_TEMP/awf-linux-upgrade/report.json" --cleanup-only
+            --expected-release 24.04 --report "$RUNNER_TEMP/awf-linux-upgrade/upgrade-report.json" --phase upgrade --cleanup-only
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: upgrade_report
         if: always()
         with:
-          name: linux-upgrade-ubuntu24-${{ github.ref_name }}-${{ github.sha }}
-          path: ${{ runner.temp }}/awf-linux-upgrade/report.json
-          if-no-files-found: warn
+          name: linux-upgrade-phase1-${{ github.sha }}
+          path: ${{ runner.temp }}/awf-linux-upgrade/upgrade-report.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Wait for external verified channel publication
+        id: channel
+        if: steps.upgrade.outcome == 'success' && steps.upgrade_cleanup.outcome == 'success' && steps.upgrade_report.outcome == 'success'
+        run: python3 scripts/wait_linux_channel.py
+      - name: Default public installation after complete owned cleanup in this VM
+        id: default
+        if: steps.channel.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --phase default --report "$RUNNER_TEMP/awf-linux-upgrade/default-report.json" --prepare-ci-parents
+      - name: Default cleanup and independent parent restoration
+        if: always() && steps.default.outcome != 'skipped'
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --phase default --report "$RUNNER_TEMP/awf-linux-upgrade/default-report.json" --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.default.outcome != 'skipped'
+        with:
+          name: linux-default-phase2-${{ github.sha }}
+          path: ${{ runner.temp }}/awf-linux-upgrade/default-report.json
+          if-no-files-found: error
           retention-days: 7

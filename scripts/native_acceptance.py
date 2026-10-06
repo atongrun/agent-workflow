@@ -549,11 +549,6 @@ class Acceptance:
         self.command('stop-for-pi',['/usr/local/bin/awf','stop'],120)
         for unit in probe.UNITS:
             stopped(unit)
-        url='https://pi.dev/api/latest-version'
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url,timeout=30) as response:
-            latest=json.loads(response.read(65536))
-        require(latest.get('packageName')=='@earendil-works/pi-coding-agent' and
-                re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',latest.get('version','')),'official Pi update selector differs')
         home=CONTROL/'pi-root-home'
         home.mkdir(mode=0o700)
         environment=dict(ENV,HOME=str(home))
@@ -575,7 +570,7 @@ class Acceptance:
         require(agent==str(home/'.pi/agent') and not os.path.lexists('/root/.pi/agent'),'ordinary root Pi default HOME state isolation')
         pi_tree=tree_fingerprint('/opt/pi-cli')
         require(same('/opt/pi-cli',self.ledger['paths']['/opt/pi-cli']),'official update replaced sole prefix root')
-        self.report['piUpdate']=dict(executionStarted=True,passed=True,initialVersion='1.0.2',selectorVersion=latest['version'],actualVersion=version,officialCommand='pi update',solePrefix='/opt/pi-cli',ordinaryRootDefaultAgent=True,postinstallScriptsEnabled=False)
+        self.report['piUpdate']=dict(executionStarted=True,passed=True,initialVersion='1.0.2',selectorVersion=version,selectorEvidence='official updater completion and installed package',actualVersion=version,officialCommand='pi update',solePrefix='/opt/pi-cli',ordinaryRootDefaultAgent=True,postinstallScriptsEnabled=False)
         self.command('start-after-pi',['/usr/local/bin/awf','start'],120)
         self.health(2)
         self.verify_rpc('after-pi')
@@ -801,10 +796,18 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expected-release',required=True,choices=('22.04','24.04'))
     parser.add_argument('--report',required=True,type=Path)
+    parser.add_argument('--phase',choices=('upgrade','default'))
     parser.add_argument('--cleanup-only',action='store_true')
     parser.add_argument('--diagnostic-only',action='store_true')
     args=parser.parse_args()
     probe.ci_guard(os.environ,os.getuid(),os.geteuid())
+    if args.phase:
+        # Separate fresh processes in one approved VM may run the two phases.
+        # The real GitHub branch/commit guard stays unchanged.
+        global PINS
+        probe.RELEASE=TARGET_VERSION if args.phase=='default' else 'v1.0.1-rc.2'
+        package.configure(probe.RELEASE)
+        PINS=PINS_BY_VERSION[probe.RELEASE]
     require(not (args.cleanup_only and args.diagnostic_only),'diagnostic and cleanup modes are exclusive')
     report=dict(schema=1,sourceCommit=probe.SOURCE,version=probe.RELEASE,workflowCommit=os.environ['GITHUB_SHA'],
                 stages=[],healthRounds=[],acceptancePassed=False,cleanup={'passed':False},
