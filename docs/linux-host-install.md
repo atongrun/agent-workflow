@@ -183,6 +183,12 @@ npm replacement fail; the stable AWF launcher lives outside `bin` and remains
 unchanged by npm. There is no managed marker, managed installer API override,
 custom upstream updater or permanent self-update refusal. Use the administrative
 root shell for `pi update`; the service account cannot modify program roots.
+When root's first CLI argument is exactly `update`, the launcher sets its own
+process umask to `0022` before execve. Official Pi and its npm child inherit that
+mask, so newly created shared package files remain readable without group/other
+write access. The parent shell, non-root users and other Pi commands retain their
+umask. Existing file modes are not repaired. This behavior is for fresh installs;
+old preview launchers remain subject to exact byte verification.
 For a working Host, first `awf stop`, then `pi update`, then `awf start`, so both
 service process groups have exited before shared Pi packages change. Do not run
 plain npm installs over the prefix while services are active.
@@ -317,13 +323,21 @@ directories; default tests skip them explicitly:
 
 ```sh
 AWF_PUBLIC_AUDIT_FIXTURE_DIR=/tmp/approved-audit AWF_PI_INSTALLED_FIXTURE_DIR=/tmp/approved-pi go test ./internal/hostinstall -run 'TestOfficialPreparationEvidence|TestRuntimeOfficialOfflineFixture|TestPiInstalledOfflineFixture|TestNativeOfficialInventoryFixture' -v
+AWF_PI_INSTALLED_FIXTURE_DIR=/tmp/approved-pi AWF_PI_UPDATE_NPM_CACHE_DIR=/tmp/approved-update-cache go test ./internal/hostinstall -run '^TestPiLauncher' -v
 ```
 
 This cloud task reproduced actual Node22/npm10/Pi1.0.2 offline version/import
 checks, AWF extension tool registration, launcher PID/stdio, read-only `get_state`
 and same-prefix upstream update selection. A cooperative JavaScript network guard
 observed zero network attempts; it is not kernel isolation. No model call or
-actual updater ran. Adapter tests substitute account/systemctl/HTTP commands and
+actual network updater ran in those initial fixtures. The additional launcher
+fixtures execute official Pi 1.0.2 and its npm updater offline to cached 1.0.4,
+with a fixed latest-version response and only a simulated JavaScript root UID.
+They check inherited `0002` becomes `0022` only for root's `update`, parent mask
+isolation, all updated prefix permissions, and updated Pi's read-only RPC/tool
+registration. They cannot prove actual root or native service acceptance. See
+[candidate evidence and the next single-VM plan](linux-pi-update-umask-candidate.md).
+Adapter tests substitute account/systemctl/HTTP commands and
 use synthetic program bytes in confined directories; they prove refusal and
 state transitions, not root ownership, OS account creation or native services.
 They run as a non-root fixture user. The optional native inventory fixture copies

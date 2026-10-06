@@ -380,6 +380,57 @@ func TestNativePiUpdateDriftPreservedAcrossAWFReplacement(t *testing.T) {
 	}
 }
 
+func TestNativePiUpdateRetainsStrictPermissionAndLauncherChecks(t *testing.T) {
+	for _, bad := range []string{"package-write", "directory-write", "deep-file-write", "launcher-write", "launcher-change"} {
+		t.Run(bad, func(t *testing.T) {
+			f := newNativeFixture(t)
+			f.install(t)
+			ctx := context.Background()
+			if err := f.a.initialize(ctx); err != nil {
+				t.Fatal(err)
+			}
+			pkg := filepath.Join(f.dir, "opt/pi-cli/lib/node_modules/@earendil-works/pi-coding-agent")
+			launcher := filepath.Join(f.dir, "opt/pi-cli/awf-launcher.mjs")
+			var err error
+			switch bad {
+			case "package-write":
+				err = os.Chmod(filepath.Join(pkg, "package.json"), 0664)
+			case "directory-write":
+				err = os.Chmod(pkg, 0775)
+			case "deep-file-write":
+				name := filepath.Join(pkg, "dist/bundle/extra.js")
+				err = os.WriteFile(name, []byte("upstream update fixture"), 0644)
+				if err == nil {
+					err = os.Chmod(name, 0664)
+				}
+			case "launcher-write":
+				err = os.Chmod(launcher, 0775)
+			case "launcher-change":
+				err = os.WriteFile(launcher, []byte(sharedPiLauncher+"// changed\n"), 0755)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt := filepath.Join(f.dir, "etc/awf/install.json")
+			before, err := os.ReadFile(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.commands = nil
+			if err := f.a.start(ctx, false); err == nil {
+				t.Fatal("unsafe updated Pi prefix admitted")
+			}
+			if len(f.commands) != 0 {
+				t.Fatal("untrusted Pi triggered machine commands", f.commands)
+			}
+			after, err := os.ReadFile(receipt)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("refusal changed receipt", err)
+			}
+		})
+	}
+}
+
 func TestNativeRefusesLinkedParentsAndIncompleteServiceExit(t *testing.T) {
 	f := newNativeFixture(t)
 	if err := os.RemoveAll(filepath.Join(f.dir, "usr/local/bin")); err != nil {

@@ -690,6 +690,8 @@ delete env.PI_MANAGED_INSTALL_ROOT;
 delete env.PI_PACKAGE_DIR;
 delete env.PI_INSTALLER_API_BASE;
 if(typeof process.execve!=="function")throw new Error("Pinned Node execve support required");
+// Root's official update must leave the shared prefix readable and not writable by the service.
+if(process.getuid()===0&&process.argv[2]==="update")process.umask(0o022);
 process.execve(node,[node,cli,...process.argv.slice(2)],env);
 `
 

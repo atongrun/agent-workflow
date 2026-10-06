@@ -49,6 +49,10 @@ func TestPiInstalledOfflineFixture(t *testing.T) {
 }
 
 func checkPiOffline(t *testing.T, dir, node, cli string, preparedExtension ...string) {
+	checkPiOfflineVersion(t, dir, node, cli, "1.0.2", preparedExtension...)
+}
+
+func checkPiOfflineVersion(t *testing.T, dir, node, cli, wantVersion string, preparedExtension ...string) {
 	t.Helper()
 	work, err := os.MkdirTemp(dir, "offline-check-")
 	if err != nil {
@@ -85,7 +89,7 @@ func checkPiOffline(t *testing.T, dir, node, cli string, preparedExtension ...st
 	version.Dir = work
 	var versionStderr bytes.Buffer
 	version.Stderr = &versionStderr
-	if out, err := version.Output(); err != nil || strings.TrimSpace(string(out)) != "1.0.2" {
+	if out, err := version.Output(); err != nil || strings.TrimSpace(string(out)) != wantVersion {
 		t.Fatal("Pi version", string(out), err)
 	}
 	if strings.Contains(versionStderr.String(), "awf_network_denied") || !strings.Contains(versionStderr.String(), `"blockedNetworkCalls":0`) {
