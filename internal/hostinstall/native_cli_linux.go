@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 )
 
@@ -53,8 +52,9 @@ func HandleNative(ctx context.Context, args []string, in io.Reader, out, progres
 	f := flag.NewFlagSet("awf "+args[0], flag.ContinueOnError)
 	f.SetOutput(progress)
 	manifest := f.String("manifest", "", "explicit reviewed Linux release manifest")
+	version := f.String("version", "", "optional exact Linux update tag; otherwise use linux-host-v1")
 	yes := f.Bool("yes", false, "approve installation or initialization")
-	preview := f.Bool("allow-prerelease", false, "approve a Linux prerelease")
+	preview := f.Bool("allow-prerelease", false, "approve this Linux preview and future linux-host-v1 previews")
 	enable := f.Bool("enable", false, "enable service autostart with start")
 	if err := f.Parse(args[1:]); err != nil {
 		return true, err
@@ -64,6 +64,9 @@ func HandleNative(ctx context.Context, args []string, in io.Reader, out, progres
 	}
 	if args[0] != "install" && args[0] != "update" && (*manifest != "" || *preview) {
 		return true, errors.New("manifest and prerelease options belong to install/update")
+	}
+	if args[0] != "update" && *version != "" {
+		return true, errors.New("--version belongs to update")
 	}
 	if args[0] != "start" && *enable {
 		return true, errors.New("--enable belongs to start")
@@ -75,9 +78,25 @@ func HandleNative(ctx context.Context, args []string, in io.Reader, out, progres
 	}
 	defer a.root.Close()
 	var m Manifest
-	if args[0] == "install" || args[0] == "update" {
+	var current nativeReceipt
+	unchanged := false
+	if args[0] == "update" {
+		current, err = a.installed(ctx)
+		if err != nil {
+			return true, err
+		}
+		m, err = readUpdateManifest(ctx, *manifest, *version, nil, o)
+		if err != nil {
+			return true, err
+		}
+		if err := validateUpdateTarget(m, current.Manifest); err != nil {
+			return true, err
+		}
+		unchanged = manifestDigest(m) == manifestDigest(current.Manifest)
+		fmt.Fprintf(out, "AWF Linux update: %s -> %s\n", current.Manifest.Version, m.Version)
+	} else if args[0] == "install" {
 		if *manifest == "" {
-			return true, errors.New("an explicit reviewed Linux manifest is required; no channel is published")
+			return true, errors.New("install requires --manifest; use the public Linux bootstrap")
 		}
 		file, err := os.Open(*manifest)
 		if err != nil {
@@ -92,12 +111,15 @@ func HandleNative(ctx context.Context, args []string, in io.Reader, out, progres
 		if err != nil {
 			return true, err
 		}
-		if strings.Contains(m.Version, "-rc.") && !*preview {
-			return true, errors.New("Linux prerelease requires --allow-prerelease")
+	}
+	if args[0] == "install" || args[0] == "update" {
+		a.allowPrerelease, err = approveLinuxPreview(m.Version, *preview || current.AllowPrerelease, *yes, in, out)
+		if err != nil {
+			return true, err
 		}
 	}
 	if args[0] == "install" || args[0] == "init" || args[0] == "update" {
-		if !*yes {
+		if !*yes && !unchanged {
 			fmt.Fprintf(out, "AWF %s changes this machine's fixed AWF paths. Continue? [y/N] ", args[0])
 			var answer string
 			if _, err := fmt.Fscanln(in, &answer); err != nil || (answer != "y" && answer != "Y") {
@@ -137,9 +159,12 @@ func HandleNative(ctx context.Context, args []string, in io.Reader, out, progres
 	case "stop":
 		return true, a.stop(ctx)
 	case "update":
-		return true, a.update(ctx, m)
+		if err := a.update(ctx, m); err != nil {
+			return true, err
+		}
+		fmt.Fprintf(out, "AWF %s verified. Current Pi, configuration, credentials and task state retained.\n", m.Version)
 	}
 	return true, nil
 }
 
-const nativeUsage = "usage: awf install|update --manifest FILE [--yes] [--allow-prerelease] | awf init [--yes] | awf start [--enable] | awf stop | awf version | awf host-install plan|doctor --manifest FILE [--json] | awf host --config FILE"
+const nativeUsage = "usage: awf install --manifest FILE [--yes] [--allow-prerelease] | awf update [--version TAG | --manifest FILE] [--yes] [--allow-prerelease] | awf init [--yes] | awf start [--enable] | awf stop | awf version | awf host-install plan|doctor --manifest FILE [--json] | awf host --config FILE"

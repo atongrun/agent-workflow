@@ -13,7 +13,7 @@ import (
 // Run exposes only read-only planning and diagnosis. There is no install command.
 func Run(args []string, out io.Writer) error {
 	if len(args) == 0 || (args[0] != "plan" && args[0] != "doctor") {
-		return errors.New("usage: awf host-install plan|doctor --manifest FILE [--json]; installation is not implemented")
+		return errors.New("usage: awf host-install plan|doctor --manifest FILE [--json]")
 	}
 	f := flag.NewFlagSet("host-install", flag.ContinueOnError)
 	f.SetOutput(out)
@@ -23,7 +23,7 @@ func Run(args []string, out io.Writer) error {
 		return err
 	}
 	if *file == "" || f.NArg() != 0 {
-		return errors.New("an explicit local manifest is required; no Linux channel is published")
+		return errors.New("read-only planning requires an explicit local manifest")
 	}
 	if runtime.GOOS != "linux" {
 		return errors.New("this slice plans Linux Host only")

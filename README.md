@@ -59,18 +59,37 @@ and [the Windows CLI contract](docs/windows-cli.md).
 
 ## Linux Host fresh installation
 
-The local Linux candidate adds a bootstrap and root-only Go install/init/start/stop/update
-adapter for Ubuntu 22.04/24.04 and Debian 12 glibc systemd amd64 machines with
-fresh AWF paths/accounts. It installs a private Node runtime while preserving
-existing system Node/npm/npx commands,
-one official Pi npm prefix at `/opt/pi-cli`, the Go Host, AWF Pi extension and Magpie,
-with observed download/install progress. Ordinary root Pi keeps `~/.pi/agent`;
-the service uses independent `/var/lib/awf/pi-agent`. Official `pi update` selects
-that same prefix; AWF updates preserve the current Pi tree.
+The Linux bootstrap installs the Go Host, private Node22.19.0/npm, official
+Pi1.0.2, AWF Pi extension and Magpie0.1.855 with observed download/install
+progress. There is one Pi installation at `/opt/pi-cli`. Ordinary root Pi keeps
+`~/.pi/agent`; the service uses independent `/var/lib/awf/pi-agent`. System
+Node/npm/npx are preserved. Install and init do not activate services.
 
-**Local source only: no Linux channel/release is published and native acceptance
-on all three distributions is pending.** Install and init do not activate services. See the
-[Linux installer, Pi update contract and acceptance gates](docs/linux-host-install.md).
+The independent Linux channel is `awf/linux-v1/distribution/linux-host-v1.json`.
+After its preview is published, install with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh | sudo sh -s -- --allow-prerelease
+sudo awf init
+sudo awf start
+sudo awf update
+sudo awf stop
+sudo pi update
+sudo awf start
+```
+
+`--allow-prerelease` explicitly permits this and future Linux channel previews.
+`awf update` selects and verifies the channel release without a manual manifest;
+`--version TAG` and `--manifest FILE` remain optional administrator controls.
+AWF updates retain the current Pi, configuration, credentials and task state.
+Official `pi update` owns that same Pi prefix; stop AWF before using it.
+
+Ubuntu24.04 glibc systemd amd64 is the native preview target. The original RC1
+install/lifecycle passed real GitHub Ubuntu24.04 acceptance; this source's new
+default updater and actual Pi upgrade require their separate release evidence.
+Ubuntu22.04 and Debian12 code paths remain unaccepted. Low-memory/CloudCone
+acceptance was cancelled by the user and is not a publication gate. See the
+[Linux installer and update contract](docs/linux-host-install.md).
 Read-only `awf host-install plan|doctor --manifest FILE [--json]` remains available.
 
 A precompiled private offline runner and an existing-machine acceptance scope are

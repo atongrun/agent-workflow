@@ -1,5 +1,5 @@
 #!/bin/sh
-# Local candidate. The default Linux channel URL is intentionally unpublished.
+# Linux bootstrap. The Linux channel is independent of Windows go-v1.
 # Shell/Python acquire the verified Go executable; Go owns all machine writes.
 set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -22,7 +22,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 
-CHANNEL = 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/go-v1/distribution/linux-host-v1.json'
+CHANNEL = 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/distribution/linux-host-v1.json'
 
 def progress(stage, state):
     print('AWF bootstrap ' + stage + ': ' + state, file=sys.stderr, flush=True)
@@ -151,10 +151,10 @@ def supported_distribution(release):
     return (distro == 'ubuntu' and version in ('22.04', '24.04')) or (distro == 'debian' and version == '12')
 
 def main():
-    parser = argparse.ArgumentParser(description='AWF Linux bootstrap local candidate; default channel is unpublished')
+    parser = argparse.ArgumentParser(description='AWF Linux bootstrap')
     parser.add_argument('--manifest', help='explicit local reviewed Linux manifest')
     parser.add_argument('--archive', help='explicit local archive verified against that manifest')
-    parser.add_argument('--allow-prerelease', action='store_true')
+    parser.add_argument('--allow-prerelease', action='store_true', help='approve this Linux preview and future linux-host-v1 preview updates')
     options = parser.parse_args()
     if options.archive and not options.manifest:
         raise ValueError('local archive requires an explicit manifest')
@@ -176,6 +176,13 @@ def main():
             download(CHANNEL, local_manifest, 64 * 1024)
             raw = local_manifest.read_bytes()
         manifest, artifact = select_host(raw)
+        if not options.manifest and CHANNEL == 'https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/distribution/linux-host-v1.json':
+            published_path = directory / 'published-manifest.json'
+            published_url = 'https://github.com/atongrun/agent-workflow/releases/download/' + manifest['version'] + '/linux-host-v1.json'
+            download(published_url, published_path, 64 * 1024)
+            published, _ = select_host(published_path.read_bytes())
+            if published != manifest:
+                raise ValueError('Linux channel and immutable release manifest disagree')
         if '-rc.' in manifest['version'] and not options.allow_prerelease:
             raise ValueError('Linux prerelease requires --allow-prerelease')
         archive = directory / 'host.tar.gz'
@@ -203,6 +210,6 @@ if __name__ == '__main__':
     try:
         main()
     except Exception:
-        progress('failed', 'verified bootstrap/install did not complete; inspect reported Go stages or unavailable unpublished channel')
+        progress('failed', 'verified bootstrap/install did not complete; inspect reported Go stages or unavailable release input')
         sys.exit(1)
 AWF_BOOTSTRAP_PY
