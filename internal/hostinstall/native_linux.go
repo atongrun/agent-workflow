@@ -379,6 +379,9 @@ func (a *nativeAdapter) installPrepared(ctx context.Context, m Manifest, generat
 		return err
 	}
 	defer dest.Close()
+	if err := isolateProgramStage(dest); err != nil {
+		return err
+	}
 	if err := a.phase("bundle", "prepare-system-programs", func() error {
 		var links []InstalledFile
 		for _, c := range r.Components {

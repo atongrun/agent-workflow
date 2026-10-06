@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -109,12 +110,13 @@ func TestPiLauncherOfficialUpdateOfflineFixture(t *testing.T) {
 	}
 	work := privateParent(t)
 	prefix := filepath.Join(work, "opt/pi-cli")
-	if err := os.MkdirAll(filepath.Join(prefix, "lib"), 0755); err != nil {
+	if err := os.MkdirAll(prefix, 0755); err != nil {
 		t.Fatal(err)
 	}
 	// These are new fixture files, given the initial installer's safe modes. No
 	// existing installation or dependency fixture is chmodded or overwritten.
-	copyLauncherFixtureTree(t, filepath.Join(os.Getenv("AWF_PI_INSTALLED_FIXTURE_DIR"), "pi-release/node_modules"), filepath.Join(prefix, "lib/node_modules"))
+	// Retain the production npm-ci layout, including both top-level manifests.
+	copyLauncherFixtureTree(t, filepath.Join(os.Getenv("AWF_PI_INSTALLED_FIXTURE_DIR"), "pi-release"), filepath.Join(prefix, "lib"))
 	copyLauncherFixtureTree(t, filepath.Dir(filepath.Dir(node)), filepath.Join(work, "opt/node"))
 	node = filepath.Join(work, "opt/node/bin/node")
 	if err := os.Mkdir(filepath.Join(prefix, "bin"), 0755); err != nil {
@@ -132,7 +134,7 @@ func TestPiLauncherOfficialUpdateOfflineFixture(t *testing.T) {
 	writeLauncherFixture(t, filepath.Join(work, "global.npmrc"), "")
 	guard := filepath.Join(work, "guard.mjs")
 	writeLauncherFixture(t, guard, piOfflineGuard+launcherOfficialUpdateGuard)
-	info, err := os.Stat(prefix)
+	info, err := os.Lstat(prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +155,7 @@ func TestPiLauncherOfficialUpdateOfflineFixture(t *testing.T) {
 	if !strings.Contains(result.Stdout, "Updated pi from 1.0.2 to 1.0.4") || !strings.Contains(result.Stdout, "--ignore-scripts") || !strings.Contains(result.Stdout, "--prefix "+prefix) || strings.Contains(result.Stderr, "awf_network_denied") || !strings.Contains(result.Stderr, `"blockedNetworkCalls":0`) || !strings.Contains(result.Stderr, `"type":"awf_fixture_latest"`) {
 		t.Fatal("official update/guard evidence missing", result.Stdout, result.Stderr)
 	}
-	checkVersion("1.0.4")
-	after, err := os.Stat(prefix)
+	after, err := os.Lstat(prefix)
 	if err != nil || !os.SameFile(info, after) {
 		t.Fatal("sole prefix inode replaced", err)
 	}
@@ -168,37 +169,147 @@ func TestPiLauncherOfficialUpdateOfflineFixture(t *testing.T) {
 	}
 	defer root.Close()
 	inspector := nativeAdapter{root: root, owner: os.Getuid()}
-	var entries int
-	if err := filepath.WalkDir(prefix, func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		entries++
-		if info.Mode()&os.ModeSymlink == 0 {
-			rel, err := filepath.Rel(work, name)
-			if err != nil {
-				return err
-			}
-			if err := inspector.trusted(rel, entry.IsDir()); err != nil {
-				return fmt.Errorf("updated fixture prefix %s mode %04o: %w", rel, info.Mode().Perm(), err)
-			}
-		}
-		return nil
-	}); err != nil {
+	entries, err := inspectUpdatedPiFixturePrefix(inspector)
+	if err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]os.FileMode{pkg: 0644, filepath.Dir(pkg): 0755, launcher: 0755} {
-		info, err := os.Stat(name)
+		info, err := os.Lstat(name)
 		if err != nil || info.Mode().Perm() != want {
 			t.Fatalf("%s: wanted %04o, got %v (%v)", name, want, info, err)
 		}
 	}
+	checkVersion("1.0.4")
 	checkPiOfflineVersion(t, work, node, launcher, "1.0.4")
 	t.Logf("Official Pi 1.0.2 -> 1.0.4, %d prefix entries, parent 0002 preserved; npm offline/ignore-scripts, simulated JS root only", entries)
+}
+
+// Match installed's physical package-file/parent and whole-prefix checks.
+// Fixture ownership uses the real local UID; this does not establish root trust.
+func inspectUpdatedPiFixturePrefix(inspector nativeAdapter) (int, error) {
+	if err := inspector.parents("opt/pi-cli/lib/node_modules/@earendil-works/pi-coding-agent/package.json"); err != nil {
+		return 0, err
+	}
+	if err := inspector.trusted("opt/pi-cli/lib/node_modules/@earendil-works/pi-coding-agent/package.json", false); err != nil {
+		return 0, err
+	}
+	var entries int
+	err := fs.WalkDir(inspector.root.FS(), "opt/pi-cli", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := inspector.root.Lstat(name)
+		if err != nil {
+			return err
+		}
+		entries++
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := inspector.root.Readlink(name)
+			if err != nil || path.IsAbs(target) {
+				return fmt.Errorf("updated fixture prefix %s: Pi prefix has an external link", name)
+			}
+			resolved := path.Clean(path.Join(path.Dir(name), target))
+			if !strings.HasPrefix(resolved, "opt/pi-cli/") {
+				return fmt.Errorf("updated fixture prefix %s: Pi prefix link escapes", name)
+			}
+			return nil
+		}
+		if err := inspector.trusted(name, entry.IsDir()); err != nil {
+			return fmt.Errorf("updated fixture prefix %s mode %04o: %w", name, info.Mode().Perm(), err)
+		}
+		return nil
+	})
+	return entries, err
+}
+
+func TestUpdatedPiFixturePrefixTrust(t *testing.T) {
+	for _, tc := range []struct {
+		name, link, target string
+		packageRootLink    bool
+		packageJSONLink    bool
+		writablePackage    bool
+		wantError          string
+	}{
+		{name: "physical-package"},
+		{name: "relative-internal-bin", link: "bin/pi", target: "../lib/node_modules/@earendil-works/pi-coding-agent/package.json"},
+		{name: "relative-internal-directory", link: "lib/internal", target: "node_modules"},
+		{name: "directory-source-package-root", packageRootLink: true, target: "../../../../../source", wantError: "system path ownership, type or permissions require inspection"},
+		{name: "internal-package-root-link", packageRootLink: true, target: "../../../source", wantError: "system path ownership, type or permissions require inspection"},
+		{name: "internal-package-json-link", packageJSONLink: true, wantError: "system path ownership, type or permissions require inspection"},
+		{name: "escaping-link", link: "bin/pi", target: "../../../source/package.json", wantError: "Pi prefix link escapes"},
+		{name: "absolute-link-inside-prefix", link: "bin/pi", target: "/INSIDE_PREFIX", wantError: "Pi prefix has an external link"},
+		{name: "writable-physical-package", writablePackage: true, wantError: "system path ownership, type or permissions require inspection"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			work := privateParent(t)
+			prefix := filepath.Join(work, "opt/pi-cli")
+			pkg := filepath.Join(prefix, "lib/node_modules/@earendil-works/pi-coding-agent")
+			for _, dir := range []string{pkg, filepath.Join(prefix, "bin")} {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"name":"@earendil-works/pi-coding-agent","version":"1.0.4"}`), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.packageRootLink {
+				destination := filepath.Join(work, "source")
+				if tc.name == "internal-package-root-link" {
+					destination = filepath.Join(prefix, "source")
+				}
+				if err := os.Rename(pkg, destination); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(tc.target, pkg); err != nil {
+					t.Fatal(err)
+				}
+				// The old Stat assertion followed this link and saw a safe directory.
+				followed, err := os.Stat(pkg)
+				if err != nil || !followed.IsDir() || followed.Mode().Perm() != 0755 {
+					t.Fatal("directory-source counterexample invalid", followed, err)
+				}
+				physical, err := os.Lstat(pkg)
+				if err != nil || physical.Mode()&os.ModeSymlink == 0 || physical.Mode().Perm() != 0777 {
+					t.Fatal("expected Linux package-root symlink", physical, err)
+				}
+			}
+			if tc.link != "" {
+				target := tc.target
+				if target == "/INSIDE_PREFIX" {
+					target = filepath.Join(pkg, "package.json")
+				}
+				if err := os.Symlink(target, filepath.Join(prefix, tc.link)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.packageJSONLink {
+				if err := os.Rename(filepath.Join(pkg, "package.json"), filepath.Join(pkg, "package-real.json")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("package-real.json", filepath.Join(pkg, "package.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.writablePackage {
+				if err := os.Chmod(pkg, 0777); err != nil {
+					t.Fatal(err)
+				}
+			}
+			root, err := os.OpenRoot(work)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			entries, err := inspectUpdatedPiFixturePrefix(nativeAdapter{root: root, owner: os.Getuid()})
+			if tc.wantError == "" {
+				if err != nil || entries == 0 {
+					t.Fatal(entries, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("expected %q, got %v", tc.wantError, err)
+			}
+		})
+	}
 }
 
 func copyLauncherFixtureTree(t *testing.T, source, destination string) {

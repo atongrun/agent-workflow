@@ -84,6 +84,9 @@ func (a *nativeAdapter) replacePrepared(ctx context.Context, m Manifest, generat
 		return err
 	}
 	defer dest.Close()
+	if err := isolateProgramStage(dest); err != nil {
+		return err
+	}
 	var links []InstalledFile
 	for _, c := range r.Components {
 		if c.ID == "pi" {

@@ -1,5 +1,11 @@
 # Fresh-install Pi update umask candidate
 
+Status: the later actual Ubuntu run 37431059458 still failed after this change.
+Process umask alone does not prevent writable objects when an inherited default
+ACL grants them. The controlled reproduction and current fresh-install staging
+candidate are recorded in [linux-default-acl-investigation.md](linux-default-acl-investigation.md).
+The historical local evidence below does not establish native acceptance.
+
 This local candidate starts at `510e6b893c6524873297b972edc72e801b870b0d`.
 Its only application change is in the Linux shared Pi launcher: immediately
 before execve, root with first argument exactly `update` sets the current process
