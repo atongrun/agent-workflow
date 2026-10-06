@@ -1,0 +1,165 @@
+name: One Ubuntu VM for RC4 RC5 Pi umask acceptance
+
+on:
+  push:
+    branches: [awf/linux-pi-umask-native-ci-v1]
+
+permissions: {}
+concurrency:
+  group: awf-linux-pi-umask-native-v1
+  cancel-in-progress: false
+
+jobs:
+  native:
+    if: github.repository == 'atongrun/agent-workflow' && github.event_name == 'push' && github.ref == 'refs/heads/awf/linux-pi-umask-native-ci-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      EVIDENCE: /tmp/awf-pi-umask-acceptance
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Record one job deadline with cleanup reserve
+        run: |
+          python3 -c 'import os,time; open(os.environ["GITHUB_ENV"],"a").write("AWF_NATIVE_DEADLINE_EPOCH="+str(int(time.time())+28*60)+"\n")'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 761e78c7ea1664fbc96cabc919868ab243ca7cbd
+          path: packager
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify fixed harness and publication boundaries locally
+        run: |
+          set -eu
+          python3 scripts/test_native_runner_probe.py
+          python3 scripts/test_native_acceptance.py
+          python3 scripts/test_native_ci_parent.py
+          python3 scripts/test_native_startup_diagnostics.py
+          python3 scripts/test_linux_channel_gate.py
+          python3 scripts/test_complete_linux_preview_acceptance.py
+          python3 packager/scripts/test_linux_preview_release.py
+      - name: Install the pinned Go toolchain in job scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain_dir="$RUNNER_TEMP/awf-umask-go"
+          mkdir "$toolchain_dir"
+          curl --fail --location --proto '=https' --tlsv1.2 --output "$toolchain_dir/go.tar.gz" https://go.dev/dl/go1.25.14.linux-amd64.tar.gz
+          test "$(stat -c %s "$toolchain_dir/go.tar.gz")" = 59909419
+          printf '%s  %s\n' a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712 "$toolchain_dir/go.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$toolchain_dir/go.tar.gz" --directory "$toolchain_dir"
+          printf '%s\n' "$toolchain_dir/go/bin" >> "$GITHUB_PATH"
+      - name: Build both new immutable test previews from the frozen packaging checkout
+        run: |
+          set -eu
+          umask 022
+          for version in v1.0.1-rc.4 v1.0.1-rc.5; do
+            python3 packager/scripts/package_linux_preview.py --version "$version" --go "$(command -v go)" --upstream-cache "$RUNNER_TEMP/awf-umask-inputs" --output "$RUNNER_TEMP/awf-umask-assets/$version"
+          done
+          python3 scripts/complete_linux_preview_acceptance.py --verify-assets "$RUNNER_TEMP/awf-umask-assets"
+      - name: Publish only new pending-acceptance prereleases with no latest or channel change
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          for version in v1.0.1-rc.4 v1.0.1-rc.5; do
+            python3 packager/scripts/publish_linux_preview.py --version "$version" --assets "$RUNNER_TEMP/awf-umask-assets/$version"
+          done
+      - name: Public RC4 installation official Pi update and RC5 AWF upgrade
+        id: upgrade
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$EVIDENCE"
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            AWF_NATIVE_DEADLINE_EPOCH="$AWF_NATIVE_DEADLINE_EPOCH" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/upgrade-report.json" --phase upgrade --prepare-ci-parents
+      - name: Always finish upgrade cleanup and restore both recorded parents
+        id: upgrade_cleanup
+        if: always() && steps.upgrade.outcome != 'skipped'
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+              GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+              GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+              /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+              --expected-release 24.04 --report "$EVIDENCE/upgrade-report.json" --phase upgrade --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: upgrade_report
+        if: always() && steps.upgrade.outcome != 'skipped'
+        with:
+          name: linux-upgrade-umask-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}/upgrade-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require upgrade acceptance cleanup and restoration before channel coordination
+        id: upgrade_gate
+        if: steps.upgrade.outcome == 'success' && steps.upgrade_cleanup.outcome == 'success' && steps.upgrade_report.outcome == 'success'
+        run: |
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["acceptancePassed"] is True and r["awfUpdate"]["passed"] is True and r["piUpdate"]["passed"] is True and r["cleanup"]["passed"] is True and r["parentRestoration"]["passed"] is True and r["parentRestoration"]["privateReceiptRemoved"] is True' "$EVIDENCE/upgrade-report.json"
+      - name: Wait only for the separately evidence-gated exact RC5 Linux channel
+        id: channel
+        if: steps.upgrade_gate.outcome == 'success'
+        run: python3 scripts/wait_linux_channel.py
+      - name: Default public bootstrap and bare awf update no-op on the same fresh VM
+        id: default
+        if: steps.channel.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c 'import os,time; assert int(os.environ["AWF_NATIVE_DEADLINE_EPOCH"])-time.time() >= 15*60, "whole-job default and cleanup reserve unavailable"'
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            AWF_NATIVE_DEADLINE_EPOCH="$AWF_NATIVE_DEADLINE_EPOCH" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --phase default --report "$EVIDENCE/default-report.json" --prepare-ci-parents
+      - name: Always finish default cleanup and restore both recorded parents
+        id: default_cleanup
+        if: always() && steps.default.outcome != 'skipped'
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --phase default --report "$EVIDENCE/default-report.json" --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: default_report
+        if: always() && steps.default.outcome != 'skipped'
+        with:
+          name: linux-default-umask-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}/default-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require both real phases and complete restoration
+        id: final_gate
+        if: always()
+        run: |
+          test '${{ steps.upgrade.outcome }}' = success
+          test '${{ steps.upgrade_cleanup.outcome }}' = success
+          test '${{ steps.upgrade_report.outcome }}' = success
+          test '${{ steps.channel.outcome }}' = success
+          test '${{ steps.default.outcome }}' = success
+          test '${{ steps.default_cleanup.outcome }}' = success
+          test '${{ steps.default_report.outcome }}' = success
+          python3 - "$EVIDENCE/upgrade-report.json" "$EVIDENCE/default-report.json" <<'PY'
+          import json,sys
+          for path in sys.argv[1:]:
+              r=json.load(open(path))
+              assert r['acceptancePassed'] and r['cleanup']['passed'] and r['parentRestoration']['passed'] and r['parentRestoration']['privateReceiptRemoved']
+          PY
+      - name: Mark only these two new previews accepted after both real phases
+        if: steps.final_gate.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/complete_linux_preview_acceptance.py --reports "$EVIDENCE"
