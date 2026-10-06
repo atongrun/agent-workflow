@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import package_linux_preview as package
 import publish_linux_preview as publisher
@@ -55,6 +56,20 @@ class FakeGitHub:
             self.release.update(data)
             return self.release
         raise AssertionError((method,path))
+
+
+class PackagingIdentityTests(unittest.TestCase):
+    def test_dirty_or_workflow_checkout_refused_before_ancestry_check(self):
+        for rows in [(b'1'*40,b' M scripts/package.py'),(b'1'*40,b'',b'.github/workflows/unapproved.yml')]:
+            with patch.object(package,'git',side_effect=rows),patch('subprocess.run') as run:
+                with self.assertRaisesRegex(ValueError,'frozen clean'):
+                    publisher.packaging_identity(Path('/fixture'))
+                run.assert_not_called()
+
+    def test_source_ancestry_checked_for_exact_clean_packaging_commit(self):
+        with patch.object(package,'git',side_effect=[b'1'*40,b'',b'']),patch('subprocess.run') as run:
+            self.assertEqual(publisher.packaging_identity(Path('/fixture')),'1'*40)
+            run.assert_called_once_with(['git','merge-base','--is-ancestor',package.SOURCE_COMMIT,'1'*40],cwd=Path('/fixture'),check=True)
 
 
 class ReleaseBoundaryTests(unittest.TestCase):

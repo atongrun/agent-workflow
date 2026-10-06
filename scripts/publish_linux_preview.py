@@ -28,6 +28,16 @@ def ci_identity(environment):
     return sha
 
 
+def packaging_identity(root):
+    import re
+    import subprocess
+    head=package.git(root,'rev-parse','HEAD').decode().strip()
+    if not re.fullmatch('[0-9a-f]{40}',head) or package.git(root,'status','--porcelain') or package.git(root,'ls-tree','-r','--name-only',head,'.github/workflows'):
+        raise ValueError('frozen clean packaging checkout without workflows required')
+    subprocess.run(['git','merge-base','--is-ancestor',SOURCE_COMMIT,head],cwd=root,check=True)
+    return head
+
+
 class GitHub:
     def __init__(self, token):
         if not token:
@@ -88,7 +98,7 @@ def publish(output, api, workflow_commit):
     tag=api.request('GET',base+'git/ref/tags/'+package.VERSION)
     if tag.get('object',{}).get('type')!='commit' or tag['object']['sha']!=SOURCE_COMMIT:
         raise ValueError('new tag source differs; inspect without draft or publication')
-    body='Linux amd64 preview. Native public bootstrap, cross-version AWF update and actual same-prefix Pi update are pending for these candidate bytes. Linux channel promotion requires separate successful Ubuntu 24.04 acceptance.\n\nSource: `'+SOURCE_COMMIT+'`\nPackaging workflow: `'+workflow_commit+'`\n\nUse the release-specific public install-linux.sh with --allow-prerelease. AWF owns machine lifecycle; official Pi owns its sole /opt/pi-cli update. Initial Node/Pi/Magpie inputs remain fixed official downloads. No model calls, production credentials or private kit. Windows RC9 and existing releases remain unchanged. Companion Go notices and SHA256SUMS are supplied.\n'
+    body='Linux amd64 preview. Native public bootstrap, cross-version AWF update and actual same-prefix Pi update are pending for these candidate bytes. Linux channel promotion requires separate successful Ubuntu 24.04 acceptance.\n\nSource: `'+SOURCE_COMMIT+'`\nPackaging source commit: `'+workflow_commit+'`\n\nUse the release-specific public install-linux.sh with --allow-prerelease. AWF owns machine lifecycle; official Pi owns its sole /opt/pi-cli update. Initial Node/Pi/Magpie inputs remain fixed official downloads. No model calls, production credentials or private kit. Windows RC9 and existing releases remain unchanged. Companion Go notices and SHA256SUMS are supplied.\n'
     release=api.request('POST',base+'releases',dict(tag_name=package.VERSION,target_commitish=SOURCE_COMMIT,name='AWF Linux preview '+package.VERSION,body=body,draft=True,prerelease=True,make_latest='false'))
     release_id=release['id']
     if not isinstance(release_id,int) or release_id<=0 or release.get('tag_name')!=package.VERSION or release.get('draft') is not True or release.get('prerelease') is not True:
@@ -129,7 +139,7 @@ def main():
     sha=ci_identity(os.environ)
     # Build/publication use the same frozen packaging checkout; the CI job
     # identity is checked separately so one approved VM can also run acceptance.
-    packaging_commit=package.git(Path(__file__).resolve().parent.parent,'rev-parse','HEAD').decode().strip()
+    packaging_commit=packaging_identity(Path(__file__).resolve().parent.parent)
     result=publish(args.assets,GitHub(os.environ.get('GH_TOKEN')),packaging_commit)
     result['executionWorkflowCommit']=sha
     print(json.dumps(result,indent=2))
