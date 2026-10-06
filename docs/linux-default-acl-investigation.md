@@ -1,4 +1,14 @@
-# Default ACL investigation and local staging candidate
+# Historical default ACL investigation
+
+Status: the subsequent fresh-install staging fix is included in accepted product
+source `77735d2a94d1bda3bcd0e979d71fac643709f2f4`. Actual Ubuntu 24.04 same-prefix
+Pi update and service/extension compatibility passed
+[run 37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615);
+default channel installation and bare AWF updates passed
+[run 37493692484](https://github.com/atongrun/agent-workflow/actions/runs/37493692484).
+See the current [installation and native evidence](linux-host-install.md).
+The local investigation and approval proposal below are historical, with no
+remaining VM gate for this preview.
 
 The actual Ubuntu24 diagnostic run37431059458 reported official Pi update exit0,
 replacement physical package directory0777, package.json0666, and a real root
@@ -8,11 +18,12 @@ observations. The new evidence proves a matching filesystem mechanism locally.
 
 ## Environment and fixed inputs
 
-The recovered executor is Debian13 amd64, kernel UID/GID1000, PID1tail. Existing
-source0deba4bb and the native report/private handoff hashes match. Public remote
-has235refs and22releases. Compared with the saved baseline, the only ref change
-is the previously authorized diagnostic commit1b83173b; every release/asset
-id,size,digest,update time is unchanged. No production host or secret was read.
+The recovered executor was Debian 13 amd64, kernel UID/GID 1000, PID1 tail.
+Existing source 0deba4bb and the native report/private handoff hashes matched.
+At that point the public remote had 235 refs and 22 releases. Compared with that
+saved baseline, the only ref change was the previously authorized diagnostic
+commit 1b83173b; every release/asset id, size, digest and update time was unchanged.
+No production host or secret was read.
 
 `/tmp` is tmpfs and rejects setting a default ACL with ENOTSUP95. `/workspace`
 overlayfs supports them. Every ACL proof is inside a newly created0700
@@ -100,12 +111,13 @@ The existing broad fixture suite deliberately requires its sandboxes beneath
 skip. Using /workspace for the broad suites is an invalid test configuration,
 not a supported override of the fixture guard.
 
-## Native gate requiring new authorization
+## Historical native approval gate (superseded)
 
-No additional VM, branch push, release, channel promotion or system permission
-change is authorized by these local results. The previous one-shot permission
-was consumed. A useful next native iteration must first record bounded numeric
-default/access ACL metadata for /opt and the Pi parent chain, effective npm umask,
+At this investigation stage, no additional VM, branch push, release, channel
+promotion or system permission change was authorized by the local results. The
+previous one-shot permission was consumed. The proposed native iteration had to
+first record bounded numeric default/access ACL metadata for /opt and the Pi
+parent chain, effective npm umask,
 actual creation modes and the objects' lstat identities. It must preserve the
 existing report-before-guard and cleanup checks. The exact action, public branch,
 workflow commit, one-run timeout, path/mode changes and cleanup obligations must

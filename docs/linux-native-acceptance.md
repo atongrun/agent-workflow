@@ -1,10 +1,18 @@
-# Private native acceptance on an existing machine
+# Historical private native acceptance plan
 
-This is a reviewable plan, not authorization or evidence of installation. The
-current executor is Debian 13 without systemd as PID1; all completed machine
-adapter tests here are isolated fixtures. Ubuntu 22.04/24.04 and Debian 12 amd64,
-glibc, systemd/cgroup v2 are source-supported targets with native acceptance
-pending. Windows RC9 assets, tags and dispatch remain unchanged.
+This existing-machine/CloudCone route was cancelled and is retained as historical
+design. It is not a remaining preview requirement or authorization to access a
+machine. The public Ubuntu 24.04 amd64 preview subsequently passed
+[run 37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615)
+and [run 37493692484](https://github.com/atongrun/agent-workflow/actions/runs/37493692484).
+See the current [installation commands and accepted scope](linux-host-install.md).
+Ubuntu 22.04 and low-memory testing are not pending gates for that preview.
+
+The executor, resource figures, candidate identities and proposed commands below
+describe this earlier planning stage. They are not instructions to run another
+VPS test. The executor then was Debian 13 without systemd as PID1, and its machine
+adapter checks were isolated fixtures. Windows RC9 assets, tags and dispatch
+remain unchanged.
 
 ## Exact candidate and private artifact route
 
@@ -43,7 +51,8 @@ those values; fixture receipts never count as native acceptance.
 
 This explicitly private provenance route does not validate a public release/tag,
 download progress or bootstrap E2E. The production bootstrap/Go installer retain
-all public source checks, and the Linux public channel remains unpublished.
+all public source checks. The Linux public channel was unpublished when this
+private route was proposed; it is now published with the accepted preview bytes.
 
 After extraction within that same approved window, the installation invocation
 has this form:
@@ -148,10 +157,11 @@ ownership. Reads of local Host maintenance use the freshly issued local token
 without logging it. No model account is needed for these process checks; if
 upstream startup unexpectedly requires credentials, stop and report the blocker.
 
-Bare `pi update` remains supported on the sole global prefix; its real network
-execution and post-update compatibility are a later explicitly reviewed slice,
-with both services stopped. Public bootstrap, other target OS versions, reboot,
-autostart, interrupted replacement and model-backed E2E remain separate gates.
+This historical first slice excluded real network `pi update` and public
+bootstrap acceptance. Those operations were subsequently verified in the two
+public native runs linked above. Other OS versions and low-memory hosts are
+outside the accepted preview scope; reboot/autostart, interrupted replacement
+and model-backed E2E are not established by its installer/lifecycle evidence.
 
 ## Rollback limited to this attempt's newly owned items
 

@@ -1,12 +1,21 @@
-# Fresh-install Pi update umask candidate
+# Historical Pi update umask candidate
 
-Status: the later actual Ubuntu run 37431059458 still failed after this change.
-Process umask alone does not prevent writable objects when an inherited default
+Status: this investigation and its proposed VM sequence are superseded by the
+accepted fresh-install preview. Product source
+`77735d2a94d1bda3bcd0e979d71fac643709f2f4` passed actual same-prefix Pi update in
+[run 37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615)
+and default channel installation/bare AWF updates in
+[run 37493692484](https://github.com/atongrun/agent-workflow/actions/runs/37493692484).
+See the current [Linux installation contract](linux-host-install.md). No further
+VM or low-memory/Ubuntu 22.04 acceptance is required to close that preview.
+
+During this earlier investigation, Ubuntu run 37431059458 still failed after the
+umask change alone. Process umask alone does not prevent writable objects when an inherited default
 ACL grants them. The controlled reproduction and current fresh-install staging
-candidate are recorded in [linux-default-acl-investigation.md](linux-default-acl-investigation.md).
+fix are recorded in [linux-default-acl-investigation.md](linux-default-acl-investigation.md).
 The historical local evidence below does not establish native acceptance.
 
-This local candidate starts at `510e6b893c6524873297b972edc72e801b870b0d`.
+The local candidate started at `510e6b893c6524873297b972edc72e801b870b0d`.
 Its only application change is in the Linux shared Pi launcher: immediately
 before execve, root with first argument exactly `update` sets the current process
 umask to `0022`. The official Pi CLI, npm arguments and single global prefix are
@@ -71,23 +80,28 @@ is a test fixture, not a replacement updater or a production environment flag.
 
 ## Compatibility boundary
 
-This is a **fresh-install candidate**. RC2/RC3 embed the former launcher (648
-bytes, SHA256 `f6eb186b77cbe07667321ac9d338074b3b7143d14904c62e0ab294a457aff07f`).
+This was a **fresh-install candidate**. Earlier `v1.0.1-rc.2`/`v1.0.1-rc.3`
+embed the former launcher (648 bytes, SHA256
+`f6eb186b77cbe07667321ac9d338074b3b7143d14904c62e0ab294a457aff07f`).
 AWF replacement deliberately preserves the entire Pi prefix and original Pi
 receipt. A newer Host therefore rejects that older launcher at its exact byte
 check. This candidate neither allows legacy launcher bytes nor rewrites an old
-launcher or recursively chmods an existing tree. RC2/RC3-to-this-source upgrade
+launcher or recursively chmods an existing tree. Those earlier previews' upgrade
 is not supported by this candidate and must not be reported as verified.
 
-The next cross-version acceptance must start from a fresh install and use two
-new immutable Linux previews built from the same frozen candidate source, so
-their launcher bytes agree. Supporting earlier failed previews would be a
-separate compatibility decision and is outside this minimal fix.
+Cross-version acceptance subsequently started from fresh `v1.0.2-rc.1` and used
+`v1.0.2-rc.2`, both built from the same frozen product source with identical
+launcher bytes. Supporting the earlier failed previews remains outside this
+fresh-install preview; no migration or repair was introduced.
 
-## Fixed plan for the next single Ubuntu VM
+## Historical single-VM plan (superseded)
 
-No VM or publishing is authorized in this local round. Before starting a new
-VM, obtain approval for the exact candidate commit, two new immutable Linux
+The early proposed sequence below was superseded by two explicitly approved
+single-VM runs, linked above. It is retained as planning history, not a request
+or authorization for another VM.
+
+No VM or publishing was authorized when this local plan was written. It required
+approval before a VM for the exact candidate commit, two new immutable Linux
 preview versions/assets/manifests, one Ubuntu 24.04 amd64 systemd VM, the narrow
 fixed system writes/parent-mode restoration, and the independent Linux channel
 write needed for the default-entry phase. Retain Windows RC9, main/archive/tags,
@@ -126,6 +140,7 @@ acceptance.
    inodes/modes, remove the private receipt, and upload only bounded safe JSON.
    Mark acceptance true only if every required phase and restoration passed.
 
-New VM execution, asset publication and channel writes require the parent's next
-explicit action approval. No production VPS, credentials, new listener/firewall,
-model calls, CloudCone work or new cloud purchases are part of this plan.
+This historical plan granted no VM, asset-publication or channel-write authority.
+The later approved public runs closed the preview's install/update checks.
+No production VPS, credentials, new listener/firewall, model calls, CloudCone
+work or new cloud purchases were part of this plan.

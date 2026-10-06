@@ -2,21 +2,15 @@
 
 The thin bootstrap acquires verified public AWF bytes; Go owns native machine
 and service lifecycle. These are Linux previews, requiring `--allow-prerelease`,
-not a stable release. Product source is
-`77735d2a94d1bda3bcd0e979d71fac643709f2f4`.
-On a disposable Ubuntu24.04 amd64 systemd VM, run
-[37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615)
-passed the release-specific v1.0.2-rc.1 fresh install, init/start/stop,
-official same-prefix Pi 1.0.2 to 1.0.4 update, and explicit AWF
-`update --version v1.0.2-rc.2 --yes`. Three health/production-extension RPC
-rounds and owned cleanup passed, with zero model calls. Both original parent
-modes and complete ACLs were restored. The channel manifest selects the exact
-existing rc.2 assets; default channel fresh install, bare cross-version
-`awf update`, and same-version bare update still require their own native
-acceptance. This document does not claim that acceptance in advance.
+not a stable release. The published Linux channel selects `v1.0.2-rc.2`, with
+product source `77735d2a94d1bda3bcd0e979d71fac643709f2f4`. Public installation,
+bare AWF updates and official same-prefix Pi update passed the two actual native
+runs recorded under [native preview acceptance](#native-preview-acceptance).
 
-The targets are Ubuntu 22.04/24.04 and Debian 12, glibc, systemd with unified
-cgroup v2, amd64. Root may install on an existing machine with fresh AWF paths
+The accepted preview scope is Ubuntu 24.04 amd64, glibc 2.39, systemd 255 and
+unified cgroup v2. Ubuntu 22.04, Debian 12 and low-memory/CloudCone hosts are
+outside that scope and are not pending release gates. Root may install on an
+existing machine with fresh AWF paths
 and accounts. Existing AWF/Pi/Magpie commands, accounts, fixed roots or unit
 overrides require inspection; installation never adopts, repairs
 or migrates them. Windows lifecycle dispatch, release artifacts and channels are
@@ -38,8 +32,7 @@ Unavailable/invalid metadata fails before program replacement. Initial preview
 installation explicitly permits future Linux previews; old receipts without
 that approval default to false. `--yes` alone never grants preview permission.
 
-After publication of `awf/linux-v1` and successful default-entry acceptance,
-the preview commands are:
+The published, natively accepted preview commands are:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh | sudo sh -s -- --allow-prerelease
@@ -76,7 +69,7 @@ sudo awf start
 sudo awf stop
 sudo awf start
 sudo awf update --manifest /path/to/reviewed-next-linux-manifest.json --allow-prerelease
-sudo awf update --version v1.0.1-rc.3 --allow-prerelease
+sudo awf update --version v1.0.2-rc.2 --allow-prerelease
 ```
 
 The release evidence records which exact commands actually ran. Install, init
@@ -190,7 +183,7 @@ explicitly later; startup is not proof that model-backed work is ready.
 
 ## Pi update contract
 
-**Bare `pi update` self-updates the sole Pi installation.** This candidate uses
+**Bare `pi update` self-updates the sole Pi installation.** This preview uses
 Pi's supported global npm prefix detection, not the earlier managed-release
 fixture. In official Pi 1.0.2, `lib/node_modules` identifies the prefix and the
 updater selects `npm --prefix /opt/pi-cli install -g --ignore-scripts
@@ -207,10 +200,14 @@ custom upstream updater or permanent self-update refusal. Use the administrative
 root shell for `pi update`; the service account cannot modify program roots.
 When root's first CLI argument is exactly `update`, the launcher sets its own
 process umask to `0022` before execve. Official Pi and its npm child inherit that
-mask, so newly created shared package files remain readable without group/other
-write access. The parent shell, non-root users and other Pi commands retain their
-umask. Existing file modes are not repaired. This behavior is for fresh installs;
-old preview launchers remain subject to exact byte verification.
+mask. Fresh installation first removes inherited default ACLs only from newly
+created private staging roots, before creating program children; shared-parent
+ACLs are unchanged. Together these prevent npm replacements from inheriting
+writable defaults and keep newly created shared package files readable without
+group/other write access. Umask alone cannot override an inherited default ACL.
+The parent shell, non-root users and other Pi commands retain their umask.
+Existing trees and file modes are not repaired. This behavior is for fresh
+installs; old preview launchers remain subject to exact byte verification.
 For a working Host, first `awf stop`, then `pi update`, then `awf start`, so both
 service process groups have exited before shared Pi packages change. Do not run
 plain npm installs over the prefix while services are active.
@@ -222,7 +219,9 @@ prefix must stay root-owned and read-only to the service, and all links stay in
 the prefix; the initial hashes are provenance, not a lock that disables updates.
 The stable launcher and other fixed programs retain exact verification. Future
 Pi compatibility beyond the observed 1.0.4 version remains version-specific.
-The official native network update to 1.0.4 passed the linked Ubuntu24.04 run.
+The official native network update to 1.0.4, followed by service health and
+production-extension RPC, passed
+[run 37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615).
 `awf update` replaces AWF/Node/Magpie, preserves the current Pi tree and original
 Pi evidence, and never silently restores Pi 1.0.2 over an upstream update.
 
@@ -323,7 +322,7 @@ roll back unknown state, or erase backups. It writes the new receipt, verifies
 startup/build/loopback, releases only the original lease and then removes the
 pending marker. Pi is not copied by this replacement.
 
-## Reproduced local checks and remaining acceptance
+## Reproduced local checks and fixtures
 
 Go 1.25 or later is required for the Linux native adapter's confined `os.Root`
 link APIs. The module requirement is aligned with those APIs; Windows release
@@ -359,7 +358,7 @@ with a fixed latest-version response and only a simulated JavaScript root UID.
 They check inherited `0002` becomes `0022` only for root's `update`, parent mask
 isolation, all updated prefix permissions, and updated Pi's read-only RPC/tool
 registration. They cannot prove actual root or native service acceptance. See
-[candidate evidence and the next single-VM plan](linux-pi-update-umask-candidate.md).
+[launcher fixture evidence and the historical native plan](linux-pi-update-umask-candidate.md).
 Adapter tests substitute account/systemctl/HTTP commands and
 use synthetic program bytes in confined directories; they prove refusal and
 state transitions, not root ownership, OS account creation or native services.
@@ -368,33 +367,51 @@ and rechecks the actual full official program inventory beneath a temporary root
 with synthetic Host bytes and substituted machine commands; it also cannot prove
 native installation or operating-system service ownership.
 
-The next Ubuntu24.04 preview must verify its public bootstrap, cross-version AWF
-update, actual official same-prefix Pi update and read-only production-extension
-RPC compatibility, lifecycle and owned cleanup in the separately approved
-disposable GitHub environment. Ubuntu22.04/Debian12, provider/model-backed work
-and reboot/autostart are not claimed as accepted by that slice. Low-memory and
-CloudCone acceptance are cancelled and are not release gates. Local fixtures
-grant no production machine, credential, firewall or cloud-purchase authority.
+## Native preview acceptance
 
-## Native acceptance routes
+Both immutable previews, `v1.0.2-rc.1` and `v1.0.2-rc.2`, were built from product
+source `77735d2a94d1bda3bcd0e979d71fac643709f2f4`. Their existing assets and tags
+were retained. Each approved run used one disposable Ubuntu 24.04 amd64 VM,
+attempt 1, with glibc 2.39, PID1 systemd 255 and unified cgroup v2:
 
-The first existing-machine slice is defined in [native acceptance plan](linux-native-acceptance.md).
-It uses a precompiled private offline kit, no source build, no credential import,
-no model calls, and serial installation/process checks. It preserves unrelated
-services and the existing system Node. That slice still requires one explicit
-machine/action approval and does not establish public bootstrap acceptance.
+| Actual run | Verified public entry and lifecycle |
+| --- | --- |
+| [37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615) | Release rc.1 bootstrap; init/start/stop; official bare `pi update` from 1.0.2 to 1.0.4 on the same prefix; explicit `awf update --version v1.0.2-rc.2 --yes`; three health/production-extension RPC rounds; owned cleanup and parent restoration. |
+| [37493692484](https://github.com/atongrun/agent-workflow/actions/runs/37493692484) | Release rc.1 bootstrap; literal bare `awf update` selecting channel rc.2, with confirmation through stdin; bare rc.2 no-op; complete cleanup/restoration; then a fresh public channel bootstrap selecting rc.2, init/start/health/production-extension RPC and a second bare no-op, followed by complete cleanup/restoration. |
 
-Public bootstrap acceptance needs separately approved Linux release assets/tag
-matching the candidate and canonical manifest URLs. The default channel is
-unpublished; supplying only a local Host archive cannot bypass Go's public tag
-and remaining asset checks. Private test input is a distinct developer-only
-provenance route, never a released installer flag or a claimed public release.
+The default-entry run used harness
+`c9f273721c0e245eb430542525fdb0dcfb9af392` and channel source
+`d0e1cae121921bc718c93c56941e6ef8ccef658b`. Its 80 CI tests passed and all 20
+native command stages exited zero. The changing bare update retained three
+program backups and preserved the current Pi tree, configuration, local
+credentials, synthetic task and service agent directory. Both no-ops preserved
+program roots, receipt bytes and service PIDs. Cleanup removed 16 owned paths
+from the upgrade phase and 13 from the default fresh phase, preserved preinstalled
+Node/npm/npx, and verified service processes gone. Both phases restored the exact
+original parent inodes, modes and full ACLs, then removed their private receipts.
 
-Complete acceptance on the three target distributions must also cover actual
-account/root isolation, read-only systemd settings mounts and provider writes,
-loopback/socket ownership, both recursive process groups exiting, boot/restart,
-genuine same-prefix `pi update`, AWF update retaining that Pi, notices, extension
-catalog and separately approved model-backed E2E. Failure injection, arbitrary
-cgroup children, reboot and interrupted replacement belong on separately
-approved disposable environments or explicit maintenance windows. They are
-excluded from the first existing-machine slice. No cloud purchase is implied.
+The tests verified non-root service identity, real read-only settings mounts,
+owned loopback listeners and production-extension RPC with the four AWF tools.
+Both runs made zero model calls and performed no provider authentication. The
+default-entry run did not repeat Pi update; its Pi-update evidence is the earlier
+run. Safe JSON evidence is attached to the linked Actions runs; private raw logs,
+credentials and Dashboard source are not publication inputs.
+
+The accepted public channel manifest remains 2,737 bytes, SHA256
+`c83ebabaeca915545e4dea9cd484a1b1fc3514b10c1e3a91c039b0158cfb7eec`.
+Its tested bootstrap remains 11,377 bytes, SHA256
+`0e295c8458a728c26dfd54dad70b2839e0d5e4431d59d3c3f85b1218fdb3f158`.
+Documentation updates do not change those bytes or rebuild release assets.
+
+These results establish this Ubuntu 24.04 preview's installer and lifecycle
+behavior. They do not claim provider/model-backed work, reboot/autostart,
+interrupted-update recovery or production deployment. Ubuntu 22.04, Debian 12
+and low-memory/CloudCone testing are outside the accepted preview requirements;
+no further VM is needed to close this preview.
+
+The [private existing-machine plan](linux-native-acceptance.md),
+[launcher candidate](linux-pi-update-umask-candidate.md) and
+[ACL investigation](linux-default-acl-investigation.md) retain historical design
+and diagnostic context. Those earlier proposed slices are superseded or cancelled
+for this preview. They grant no production-machine, credential, firewall or
+cloud-purchase authority.

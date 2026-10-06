@@ -2,7 +2,7 @@
 
 AWF is a small personal control plane: a Go Host adapts native Pi sessions to a protected web client, and a Go node sends explicitly authorized work to native OpenCode. The web interface lives in its existing application repository; this repository contains no frontend or private handoff material.
 
-This is a new implementation on the current main baseline. Historical `archive/final` and tags are preserved. The retired runtime is not restored.
+The Linux preview code and channel are published on `awf/linux-v1`, based on the Go implementation from `awf/go-v1`. The default `main` branch is retired. Historical `archive/final` and tags are preserved. The retired runtime is not restored.
 
 ## Status
 
@@ -59,14 +59,15 @@ and [the Windows CLI contract](docs/windows-cli.md).
 
 ## Linux Host fresh installation
 
-The Linux bootstrap installs the Go Host, private Node22.19.0/npm, official
-Pi1.0.2, AWF Pi extension and Magpie0.1.855 with observed download/install
+The Linux bootstrap installs the Go Host, private Node.js 22.19.0/npm, official
+Pi 1.0.2, AWF Pi extension and Magpie 0.1.855 with observed download/install
 progress. There is one Pi installation at `/opt/pi-cli`. Ordinary root Pi keeps
 `~/.pi/agent`; the service uses independent `/var/lib/awf/pi-agent`. System
 Node/npm/npx are preserved. Install and init do not activate services.
 
-The independent Linux channel is `awf/linux-v1/distribution/linux-host-v1.json`.
-After its preview is published, install with:
+The published independent Linux channel is
+`awf/linux-v1/distribution/linux-host-v1.json`, selecting `v1.0.2-rc.2`.
+Install the preview with:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh | sudo sh -s -- --allow-prerelease
@@ -82,16 +83,30 @@ sudo awf start
 `awf update` selects and verifies the channel release without a manual manifest;
 `--version TAG` and `--manifest FILE` remain optional administrator controls.
 AWF updates retain the current Pi, configuration, credentials and task state.
-Official `pi update` owns that same Pi prefix; stop AWF before using it.
+Official `pi update` updates that sole `/opt/pi-cli` npm prefix; stop AWF before
+using it. It does not create a second Pi installation or change the service's
+independent agent directory.
 
-Ubuntu24.04 glibc systemd amd64 is the native preview target. The original RC1
-install/lifecycle passed real GitHub Ubuntu24.04 acceptance; this source's new
-default updater and actual Pi upgrade require their separate release evidence.
-Ubuntu22.04 and Debian12 code paths remain unaccepted. Low-memory/CloudCone
-acceptance was cancelled by the user and is not a publication gate. See the
+This preview passed real Ubuntu 24.04 amd64 acceptance with glibc 2.39,
+systemd 255 and unified cgroup v2. Product source is
+`77735d2a94d1bda3bcd0e979d71fac643709f2f4`:
+
+- [Run 37487187615](https://github.com/atongrun/agent-workflow/actions/runs/37487187615)
+  passed release rc.1 installation, init/start/stop, official same-prefix Pi
+  1.0.2 to 1.0.4 update and explicit AWF rc.1 to rc.2 update.
+- [Run 37493692484](https://github.com/atongrun/agent-workflow/actions/runs/37493692484)
+  passed bare `awf update` from rc.1 to channel rc.2, same-version bare no-ops,
+  and a fresh install through the public default channel.
+
+Both runs passed production-extension read-only RPC, native service health,
+owned cleanup and complete parent permission/ACL restoration, with zero model
+calls or provider authentication. They establish installer/lifecycle behavior;
+they do not establish model-backed execution or reboot/autostart. Ubuntu 22.04,
+Debian 12 and low-memory/CloudCone hosts are outside this preview's acceptance
+scope and are not pending release gates. See the
 [Linux installer and update contract](docs/linux-host-install.md).
 Read-only `awf host-install plan|doctor --manifest FILE [--json]` remains available.
 
-A precompiled private offline runner and an existing-machine acceptance scope are
-documented in [native acceptance plan](docs/linux-native-acceptance.md). This plan
-does not authorize a machine connection, installation, activation or publication.
+The earlier [private existing-machine acceptance plan](docs/linux-native-acceptance.md)
+is retained as historical background. Its CloudCone route was cancelled; it is
+not a remaining preview requirement or authorization to access a machine.
