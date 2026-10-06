@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One approved disposable-VM /opt adjustment around the native harness.
+"""Approved disposable-VM /opt and /usr/local/bin preparation and restoration.
 
 No recursive chmod, ownership change, child permission change or installer
 exception exists here. A private write-ahead receipt survives cancellation.
@@ -14,7 +14,7 @@ import sys
 
 import native_acceptance as native
 
-OPT=Path('/opt')
+PARENTS=('/opt','/usr/local/bin')
 STATE=Path('/tmp/awf-native-parent-'+os.environ.get('GITHUB_SHA','invalid'))
 
 
@@ -22,48 +22,57 @@ def inode(info):
     return dict(dev=info.st_dev,ino=info.st_ino,type=stat.S_IFMT(info.st_mode))
 
 
-def open_opt(modes):
-    info=OPT.lstat()
+def open_parent(name,modes):
+    native.require(name in PARENTS,'unapproved parent path')
+    path=Path(name)
+    info=path.lstat()
     native.require(stat.S_ISDIR(info.st_mode) and info.st_uid==0 and info.st_gid==0
                    and stat.S_IMODE(info.st_mode) in modes
-                   and str(OPT.resolve(strict=True))=='/opt',
-                   'approved /opt metadata differs; no permission adjustment')
-    fd=os.open('/opt',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+                   and str(path.resolve(strict=True))==name,
+                   'approved parent metadata differs: '+name)
+    fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
     try:
-        verify_opt(fd,inode(info),stat.S_IMODE(info.st_mode))
+        verify_parent(name,fd,inode(info),stat.S_IMODE(info.st_mode))
         return fd,info
     except Exception:
         os.close(fd)
         raise
 
 
-def verify_opt(fd,saved,mode):
+def verify_parent(name,fd,saved,mode):
     current=os.fstat(fd)
-    native.require(inode(current)==saved and inode(OPT.lstat())==saved
+    native.require(inode(current)==saved and inode(Path(name).lstat())==saved
                    and current.st_uid==0 and current.st_gid==0
                    and stat.S_IMODE(current.st_mode)==mode,
-                   '/opt identity, owner or mode changed')
+                   'parent identity, owner or mode changed: '+name)
 
 
 def prepare(context):
     native.require(not os.path.lexists(STATE),'existing parent-preparation control; no adoption')
-    fd,info=open_opt({0o777})
+    handles={}
     try:
+        # Validate BOTH VM objects before any parent permission changes.
+        for name in PARENTS:
+            handles[name]=open_parent(name,{0o777})
         STATE.mkdir(mode=0o700)
         context['stateCreated']=True
-        record=dict(schema=1,path='/opt',workflowCommit=os.environ['GITHUB_SHA'],
-                    controlIdentity=native.identity(STATE),identity=inode(info),
-                    uid=0,gid=0,originalMode=0o777,testMode=0o755,applied=False)
-        # This atomic private receipt MUST precede the sole permission write.
+        record=dict(schema=2,workflowCommit=os.environ['GITHUB_SHA'],
+                    controlIdentity=native.identity(STATE),parents=[
+                        dict(path=name,identity=inode(handles[name][1]),uid=0,gid=0,
+                             originalMode=0o777,testMode=0o755,applied=False) for name in PARENTS])
+        # Persist BOTH original identities/modes before the first chmod.
         native.private_file(STATE/'parent.json',record)
-        verify_opt(fd,record['identity'],0o777)
-        os.fchmod(fd,0o755)
-        verify_opt(fd,record['identity'],0o755)
-        record['applied']=True
-        native.private_file(STATE/'parent.json',record)
+        for row in record['parents']:
+            name=row['path']; fd=handles[name][0]
+            verify_parent(name,fd,row['identity'],0o777)
+            os.fchmod(fd,0o755)
+            verify_parent(name,fd,row['identity'],0o755)
+            row['applied']=True
+            native.private_file(STATE/'parent.json',record)
         return record
     finally:
-        os.close(fd)
+        for fd,_ in handles.values():
+            os.close(fd)
 
 
 def load_state():
@@ -78,25 +87,28 @@ def load_state():
     with os.fdopen(fd) as stream:
         native.require(inode(os.fstat(stream.fileno()))==inode(before),'parent receipt replaced')
         record=json.load(stream)
-    native.require(record['schema']==1 and record['path']=='/opt'
+    native.require(record['schema']==2
                    and record['workflowCommit']==os.environ['GITHUB_SHA']
                    and record['controlIdentity']==inode(info)
-                   and record['uid']==0 and record['gid']==0
-                   and record['originalMode']==0o777 and record['testMode']==0o755,
+                   and tuple(row['path'] for row in record['parents'])==PARENTS
+                   and all(row['uid']==0 and row['gid']==0 and row['originalMode']==0o777
+                           and row['testMode']==0o755 and isinstance(row['applied'],bool)
+                           for row in record['parents']),
                    'parent receipt differs from this approved run')
     return record
 
 
-def restore(record):
-    fd,info=open_opt({0o755,0o777})
+def restore_parent(row):
+    name=row['path']
+    fd,info=open_parent(name,{0o755,0o777})
     before=stat.S_IMODE(info.st_mode)
     try:
-        native.require(inode(info)==record['identity'],'/opt inode differs; restoration blocked')
-        verify_opt(fd,record['identity'],before)
+        native.require(inode(info)==row['identity'],'parent inode differs; restoration blocked: '+name)
+        verify_parent(name,fd,row['identity'],before)
         if before==0o755:
             os.fchmod(fd,0o777)
-        verify_opt(fd,record['identity'],0o777)
-        return dict(passed=True,path='/opt',restoredMode='0777',identityPreserved=True,
+        verify_parent(name,fd,row['identity'],0o777)
+        return dict(passed=True,path=name,restoredMode='0777',identityPreserved=True,
                     observedBeforeRestoreMode=format(before,'04o'),
                     permissionWritePerformed=before==0o755,
                     uid=0,gid=0,recursive=False,ownershipChanged=False)
@@ -104,21 +116,38 @@ def restore(record):
         os.close(fd)
 
 
+def restore(record):
+    results=[]
+    for row in record['parents']:
+        try:
+            results.append(restore_parent(row))
+        except Exception:
+            # A failure on one parent never suppresses the other's restoration.
+            results.append(dict(path=row['path'],passed=False,reason='parent restoration blocked'))
+    return dict(passed=all(row['passed'] for row in results),parents=results)
+
+
 def protect_retry(record):
-    fd,info=open_opt({0o755,0o777})
+    handles={}
     try:
-        native.require(inode(info)==record['identity'],'/opt identity differs before cleanup')
-        verify_opt(fd,record['identity'],stat.S_IMODE(info.st_mode))
-        # Path-based owned cleanup requires the trusted parent again. A prior
-        # failed/cancelled main attempt may already have restored its 0777 mode.
-        # No native control means there is no native cleanup and no second write.
-        needed=os.path.lexists(native.CONTROL) and stat.S_IMODE(info.st_mode)==0o777
-        if needed:
-            os.fchmod(fd,0o755)
-            verify_opt(fd,record['identity'],0o755)
-        return needed
+        for row in record['parents']:
+            name=row['path']; fd,info=open_parent(name,{0o755,0o777})
+            handles[name]=(fd,info)
+            native.require(inode(info)==row['identity'],'parent identity differs before cleanup: '+name)
+            verify_parent(name,fd,row['identity'],stat.S_IMODE(info.st_mode))
+        changed=[]
+        if os.path.lexists(native.CONTROL):
+            for row in record['parents']:
+                name=row['path']; fd,info=handles[name]
+                if stat.S_IMODE(info.st_mode)==0o777:
+                    os.fchmod(fd,0o755)
+                    changed.append(name)
+                # BOTH parents must be trusted before path-based owned cleanup.
+                verify_parent(name,fd,row['identity'],0o755)
+        return changed
     finally:
-        os.close(fd)
+        for fd,_ in handles.values():
+            os.close(fd)
 
 
 def remove_state(record):
@@ -144,7 +173,7 @@ def main():
     parser.add_argument('--expected-release',required=True,choices=('24.04',))
     parser.add_argument('--report',required=True,type=Path)
     modes=parser.add_mutually_exclusive_group(required=True)
-    modes.add_argument('--prepare-ci-opt',action='store_true')
+    modes.add_argument('--prepare-ci-parents',action='store_true')
     modes.add_argument('--cleanup-only',action='store_true')
     args=parser.parse_args()
     native.probe.ci_guard(os.environ,os.getuid(),os.geteuid())
@@ -163,7 +192,7 @@ def main():
         if args.cleanup_only:
             context['stateCreated']=True
             record=load_state()
-            context['cleanupParentReacquired']=protect_retry(record)
+            context['cleanupParentsReacquired']=protect_retry(record)
         else:
             record=prepare(context)
         code=call_native(args)
@@ -183,13 +212,19 @@ def main():
                 # Native main already attempted scoped cleanup in its finally.
                 # This outer finally also covers preflight, download and signal failures.
                 report['parentRestoration']=restore(record)
-                report['parentRestoration']['cleanupParentReacquired']=context.get('cleanupParentReacquired',False)
-                observed=record['applied'] or report['parentRestoration']['observedBeforeRestoreMode']=='0755' \
-                    or report.get('parentPreparation',{}).get('applied') is True
-                report['parentPreparation']=dict(path='/opt',originalMode='0777',testMode='0755',
-                    applied=True if observed else None,completedReceipt=record['applied'],
-                    uid=0,gid=0,recursive=False,ownershipChanged=False)
-                if args.cleanup_only and code==0:
+                report['parentRestoration']['cleanupParentsReacquired']=context.get('cleanupParentsReacquired',[])
+                previous={row['path']:row for row in report.get('parentPreparation',{}).get('parents',[])}
+                prepared=[]
+                for row,result in zip(record['parents'],report['parentRestoration']['parents']):
+                    observed=row['applied'] or result.get('observedBeforeRestoreMode')=='0755' \
+                        or previous.get(row['path'],{}).get('applied') is True
+                    prepared.append(dict(path=row['path'],originalMode='0777',testMode='0755',
+                        applied=True if observed else None,completedReceipt=row['applied'],
+                        uid=0,gid=0,recursive=False,ownershipChanged=False))
+                report['parentPreparation']=dict(parents=prepared)
+                if not report['parentRestoration']['passed']:
+                    code=1
+                if args.cleanup_only and code==0 and report['parentRestoration']['passed']:
                     remove_state(record)
                     report['parentRestoration']['privateReceiptRemoved']=True
             except Exception:

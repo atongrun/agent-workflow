@@ -13,7 +13,7 @@ jobs:
   native:
     if: github.repository == 'atongrun/agent-workflow' && github.ref == 'refs/heads/awf/linux-native-ci-test-v1' && github.event_name == 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -25,7 +25,7 @@ jobs:
           python3 scripts/test_native_runner_probe.py
           python3 scripts/test_native_acceptance.py
           python3 scripts/test_native_ci_parent.py
-      - name: Complete read-only source-derived prerequisite diagnostics
+      - name: Approved two-parent VM preparation and native lifecycle
         shell: bash
         run: |
           set -euo pipefail
@@ -36,8 +36,19 @@ jobs:
             GITHUB_REPOSITORY=atongrun/agent-workflow \
             GITHUB_REF=refs/heads/awf/linux-native-ci-test-v1 \
             GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
-            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_acceptance.py" \
-            --expected-release 24.04 --report "$evidence_dir/report.json" --diagnostic-only
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$evidence_dir/report.json" --prepare-ci-parents
+      - name: Retry only owned cleanup and independently restore both parents
+        if: always()
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow \
+            GITHUB_REF=refs/heads/awf/linux-native-ci-test-v1 \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$RUNNER_TEMP/awf-native-acceptance/report.json" --cleanup-only
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

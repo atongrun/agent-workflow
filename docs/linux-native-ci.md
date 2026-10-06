@@ -1,10 +1,35 @@
 # Public native Ubuntu test
 
-## Current complete read-only diagnostic
+## Current authorized two-parent native run
+
+On 2026-10-06 02:22 UTC the user approved the complete diagnostic's two known
+permission changes for the next disposable GitHub Ubuntu VM: physical
+root:root `/opt` and `/usr/local/bin`, each `0777` to `0755`, nonrecursive, then
+independent restoration to the original modes after owned cleanup.
+
+The current 30-minute job calls `native_ci_parent.py --prepare-ci-parents`.
+Both new VM objects must match the approved metadata. A schema-2 private receipt
+captures both original identities/modes before the first permission write. No
+old VM inode is reused. Every permission write uses a verified directory
+descriptor, changes no owner or child, and leaves the installer trust rules
+unchanged. Partial apply, failure and cancellation attempt restoration of each
+recorded parent independently. An `always()` cleanup retry revalidates both
+parents and, only while native control remains, reacquires trusted `0755` for
+both before path-based cleanup, then independently restores both. Unknown
+objects block changes; restoration/cleanup failures retain private evidence and
+fail the job. Successful cleanup removes the private parent receipt. The public
+report records each preparation/restoration result without logs or tokens.
+
+The approved native sequence is immutable RC1 install and version checks,
+local-only init, two start/health/stop rounds and owned cleanup. Model/provider
+authentication, Pi network update, production/CloudCone access, release/Windows
+changes and further permission targets are outside this run.
+
+## Completed complete read-only diagnostic
 
 Run 37341262966 verified the approved `/opt` adjustment and restoration but
-then stopped at `/usr/local/bin`, before installation. The current five-minute
-workflow runs `native_acceptance.py --diagnostic-only` with no parent-preparation
+then stopped at `/usr/local/bin`, before installation. The completed five-minute
+workflow ran `native_acceptance.py --diagnostic-only` with no parent-preparation
 or cleanup invocation. It collects every fixed installation parent and all its
 components, plus the fixed native-command parents, before freshness can fail:
 `/opt`, `/etc`, `/var/lib`, `/var/cache`, `/usr/local/bin`,
@@ -16,7 +41,7 @@ labelled test-isolation check; no home, authentication or environment scan occur
 The diagnostic performs no chmod/chown/install/cleanup, and can never claim
 native acceptance. Read-only errors are reported without hiding later entries.
 
-## Approved disposable-VM parent preparation
+## Previous approved single-parent preparation
 
 The diagnostic run [37338037770](https://github.com/atongrun/agent-workflow/actions/runs/37338037770)
 proved `/opt` was a physical root:root directory with mode `0777`. Only the group
@@ -24,7 +49,7 @@ and other write conditions failed. On 2026-10-05 16:14 UTC the user explicitly
 approved temporarily changing only this disposable VM's `/opt` to `0755`,
 running the native acceptance and scoped cleanup, then restoring `0777`.
 
-`native_ci_parent.py --prepare-ci-opt` requires that exact initial metadata;
+The then-used `native_ci_parent.py --prepare-ci-opt` required that exact initial metadata;
 different metadata stops the run. A root-private write-ahead receipt records
 the original device/inode/type and mode before an `fchmod` on a verified
 directory descriptor. There is no recursive chmod, chown, child permission
