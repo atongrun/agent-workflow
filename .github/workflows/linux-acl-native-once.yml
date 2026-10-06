@@ -1,0 +1,136 @@
+name: One Ubuntu VM for fixed Linux ACL candidate acceptance
+
+on:
+  push:
+    branches: [awf/linux-acl-native-once-20261006]
+
+permissions: {}
+concurrency:
+  group: awf-linux-acl-native-once-20261006
+  cancel-in-progress: false
+
+jobs:
+  native:
+    if: github.repository == 'atongrun/agent-workflow' && github.event_name == 'push' && github.ref == 'refs/heads/awf/linux-acl-native-once-20261006' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      EVIDENCE: /tmp/awf-linux-acl-native-evidence
+      PYTHONDONTWRITEBYTECODE: '1'
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 512MiB
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Record one whole-job deadline with cleanup reserve
+        run: |
+          python3 -c 'import os,time; open(os.environ["GITHUB_ENV"],"a").write("AWF_NATIVE_DEADLINE_EPOCH="+str(int(time.time())+28*60)+"\n")'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 8f7f06defad8b61c7ac215d2319d6b1aadfe230e
+          path: packager
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify local harness and fixed publication boundaries
+        run: |
+          set -eu
+          python3 scripts/test_native_runner_probe.py
+          python3 scripts/test_native_acceptance.py
+          python3 scripts/test_native_ci_parent.py
+          python3 scripts/test_native_startup_diagnostics.py
+          python3 scripts/test_native_pi_update_observation.py
+          python3 scripts/test_native_acl_observation.py
+          python3 packager/scripts/test_linux_preview_release.py
+      - name: Install pinned Go toolchain in job scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain_dir="$RUNNER_TEMP/awf-acl-go"
+          mkdir "$toolchain_dir"
+          curl --fail --location --proto '=https' --tlsv1.2 --output "$toolchain_dir/go.tar.gz" https://go.dev/dl/go1.25.14.linux-amd64.tar.gz
+          test "$(stat -c %s "$toolchain_dir/go.tar.gz")" = 59909419
+          printf '%s  %s\n' a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712 "$toolchain_dir/go.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$toolchain_dir/go.tar.gz" --directory "$toolchain_dir"
+          printf '%s\n' "$toolchain_dir/go/bin" >> "$GITHUB_PATH"
+      - name: Rebuild both previews and require all eighteen frozen asset pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 022
+          for version in v1.0.2-rc.1 v1.0.2-rc.2; do
+            python3 packager/scripts/package_linux_preview.py --version "$version" --go "$(command -v go)" --upstream-cache "$RUNNER_TEMP/awf-acl-inputs" --output "$RUNNER_TEMP/awf-acl-assets/$version"
+          done
+          python3 scripts/test_native_entry_offline.py --assets-root "$RUNNER_TEMP/awf-acl-assets"
+          python3 - "$RUNNER_TEMP/awf-acl-assets" <<'PY'
+          import pathlib,sys
+          sys.path.insert(0,'scripts')
+          import native_acceptance as n
+          base=pathlib.Path(sys.argv[1])
+          for version,pins in n.PINS_BY_VERSION.items():
+              out=base/version
+              assert set(p.name for p in out.iterdir())==set(pins)
+              n.package.configure(version)
+              n.package.verify(out,n.PACKAGING_COMMIT)
+              for name,(size,sha) in pins.items():
+                  assert (out/name).stat().st_size==size and n.package.digest_file(out/name)==sha
+          PY
+      - name: Publish only two new pending TEST ONLY previews
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c 'import os,time; assert int(os.environ["AWF_NATIVE_DEADLINE_EPOCH"])-time.time() >= 14*60, "publication and native cleanup window unavailable"'
+          for version in v1.0.2-rc.1 v1.0.2-rc.2; do
+            python3 packager/scripts/publish_linux_preview.py --version "$version" --assets "$RUNNER_TEMP/awf-acl-assets/$version"
+          done
+      - name: Public fresh install official Pi update and explicit AWF upgrade
+        id: acceptance
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$EVIDENCE"
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            AWF_NATIVE_DEADLINE_EPOCH="$AWF_NATIVE_DEADLINE_EPOCH" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/native-report.json" --prepare-ci-parents --acl-full-acceptance
+      - name: Always finish owned cleanup and restore both original parents and ACLs
+        id: cleanup
+        if: always() && steps.acceptance.outcome != 'skipped'
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/native-report.json" --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: report
+        if: always() && steps.acceptance.outcome != 'skipped'
+        with:
+          name: linux-acl-native-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}/native-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require actual acceptance complete cleanup and restored parent ACLs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ steps.acceptance.outcome }}' = success
+          test '${{ steps.cleanup.outcome }}' = success
+          test '${{ steps.report.outcome }}' = success
+          python3 - "$EVIDENCE/native-report.json" <<'PY'
+          import json,sys
+          r=json.load(open(sys.argv[1]))
+          assert r['acceptancePassed'] and r['piUpdate']['passed'] and r['awfUpdate']['passed']
+          assert r['cleanup']['passed'] and r['parentRestoration']['passed'] and r['parentRestoration']['privateReceiptRemoved']
+          assert r['modelCalls']==0 and r['providerAuthenticationPerformed'] is False
+          assert all(p['aclRestored'] for p in r['parentRestoration']['parents'])
+          PY
