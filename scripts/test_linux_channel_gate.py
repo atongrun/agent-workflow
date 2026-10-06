@@ -59,6 +59,17 @@ class ChannelGateTests(unittest.TestCase):
                 channel.main()
         ready.assert_not_called()
 
+    def test_diagnostic_workflow_env_exists_before_runner_context_and_artifact_names_are_safe(self):
+        workflow=Path(__file__).parent.parent.joinpath('.github/workflows/linux-post-pi-diagnostic.yml').read_text()
+        # Job env cannot use the runner context; reject before allocating a VM.
+        environment=workflow.split('    env:\n',1)[1].split('    steps:',1)[0]
+        self.assertNotIn('${{ runner.',environment)
+        self.assertIn('EVIDENCE: /tmp/awf-post-pi-diagnostic',environment)
+        names=re.findall(r'^\s+name: (linux-post-pi-[^\n]+)$',workflow,re.MULTILINE)
+        self.assertEqual(len(names),2)
+        for name in names:
+            self.assertFalse(re.search(r'["<>:|*?\r\n\\/]',name.replace('${{ github.sha }}','c'*40)))
+
 
 if __name__=='__main__':
     unittest.main()

@@ -17,7 +17,7 @@ jobs:
     permissions:
       contents: read
     env:
-      EVIDENCE: ${{ runner.temp }}/awf-post-pi-diagnostic
+      EVIDENCE: /tmp/awf-post-pi-diagnostic
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
