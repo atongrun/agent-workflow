@@ -1,5 +1,10 @@
 # Private native acceptance on an existing machine
 
+Historical plan: the user cancelled CloudCone and low-memory acceptance. Do not
+execute or schedule this plan. Public Ubuntu24.04 preview results are recorded
+separately in [Linux preview acceptance](linux-preview-acceptance.md); its latest
+post-Pi AWF start failed, and the Linux default channel remains unpublished.
+
 This is a reviewable plan, not authorization or evidence of installation. The
 current executor is Debian 13 without systemd as PID1; all completed machine
 adapter tests here are isolated fixtures. Ubuntu 22.04/24.04 and Debian 12 amd64,

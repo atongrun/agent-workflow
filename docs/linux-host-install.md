@@ -5,9 +5,11 @@ and service lifecycle. The immutable Linux TEST ONLY RC1 was published and
 installed on a real disposable GitHub Ubuntu24.04 amd64 systemd VM in run
 [37404774253](https://github.com/atongrun/agent-workflow/actions/runs/37404774253).
 Its install, version, init, two start/health/stop rounds and owned cleanup passed.
-This source adds the independent Linux update channel; its new release and
-actual upgrade results must be recorded separately and cannot inherit a pass
-merely from source fixtures. No production deployment is implied.
+RC2/RC3 are published previews. The subsequent Ubuntu24.04 run installed RC2 and
+actually updated sole-prefix Pi 1.0.2 to 1.0.4, but the following AWF start failed.
+The first error is unknown; AWF cross-version/default acceptance remains blocked
+and the independent Linux channel is unpublished. See [actual evidence and
+promotion gates](linux-preview-acceptance.md). No production deployment is implied.
 
 The targets are Ubuntu 22.04/24.04 and Debian 12, glibc, systemd with unified
 cgroup v2, amd64. Root may install on an existing machine with fresh AWF paths
@@ -32,7 +34,7 @@ Unavailable/invalid metadata fails before program replacement. Initial preview
 installation explicitly permits future Linux previews; old receipts without
 that approval default to false. `--yes` alone never grants preview permission.
 
-After publication, the ordinary commands are:
+After independent Linux channel publication, the ordinary commands are:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh | sudo sh -s -- --allow-prerelease
@@ -140,8 +142,9 @@ settings file, makes state ancestors read-only, and permits writes only inside
 the mounted Magpie app directory and service cache. Provider/auth files remain
 writable; the process cannot replace the settings bind or rename its ancestors.
 The guard checks the bound inode and the kernel read-only mount record. These
-unit directives and guards are covered locally; real mounts and account isolation
-still need native acceptance.
+unit directives and guards are covered locally; the latest Ubuntu24.04 initial
+health checked the real read-only mount and non-root identity. Post-Pi restart,
+other platforms and broader isolation cases remain unaccepted.
 
 The snapshot fixes `lan: false`, `noAutoUpdate: true`, `noStats: true` and uses
 independent HOME/XDG roots plus `MAGPIE_ADDR=127.0.0.1:3425`. Upstream LAN overrides
@@ -192,8 +195,10 @@ integrity evidence. A later **upstream npm update does not preserve those initia
 transitive dependency pins**. Its current package and executable must agree, the
 prefix must stay root-owned and read-only to the service, and all links stay in
 the prefix; the initial hashes are provenance, not a lock that disables updates.
-The stable launcher and other fixed programs retain exact verification. Future
-Pi compatibility and actual native network updates remain acceptance gates.
+The stable launcher and other fixed programs retain exact verification. The
+actual Ubuntu24.04 network update to 1.0.4 succeeded, while the following AWF
+start failed before post-update health/RPC. Post-update compatibility remains a
+gate; the failure cause is unknown.
 `awf update` replaces AWF/Node/Magpie, preserves the current Pi tree and original
 Pi evidence, and never silently restores Pi 1.0.2 over an upstream update.
 
@@ -319,11 +324,13 @@ directories; default tests skip them explicitly:
 AWF_PUBLIC_AUDIT_FIXTURE_DIR=/tmp/approved-audit AWF_PI_INSTALLED_FIXTURE_DIR=/tmp/approved-pi go test ./internal/hostinstall -run 'TestOfficialPreparationEvidence|TestRuntimeOfficialOfflineFixture|TestPiInstalledOfflineFixture|TestNativeOfficialInventoryFixture' -v
 ```
 
-This cloud task reproduced actual Node22/npm10/Pi1.0.2 offline version/import
+The local fixture reproduced actual Node22/npm10/Pi1.0.2 offline version/import
 checks, AWF extension tool registration, launcher PID/stdio, read-only `get_state`
 and same-prefix upstream update selection. A cooperative JavaScript network guard
 observed zero network attempts; it is not kernel isolation. No model call or
-actual updater ran. Adapter tests substitute account/systemctl/HTTP commands and
+actual updater ran in that offline fixture. Actual native update evidence is
+recorded separately in [Linux preview acceptance](linux-preview-acceptance.md).
+Adapter tests substitute account/systemctl/HTTP commands and
 use synthetic program bytes in confined directories; they prove refusal and
 state transitions, not root ownership, OS account creation or native services.
 They run as a non-root fixture user. The optional native inventory fixture copies

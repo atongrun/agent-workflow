@@ -4,7 +4,53 @@ Reviewed application source: `510e6b893c6524873297b972edc72e801b870b0d`.
 Packaging source: `e520c8c6f09719ee11551124e3443869d21a7c61`.
 Both new versions remain prereleases. Publication does not promote a channel.
 
-The first standard GitHub ephemeral Ubuntu24.04 VM downloads all nine RC2 public
+## Actual Ubuntu24.04 results
+
+The current approval's two disposable VMs have both been consumed. Run
+[37409328088](https://github.com/atongrun/agent-workflow/actions/runs/37409328088)
+installed RC2 and passed initial lifecycle/RPC, then failed before executing Pi
+or AWF update. Its report upload failed because the artifact name contained a
+branch-name slash. Cleanup/restoration were reported in the job log, but no
+complete structured report survived.
+
+Run [37410289437](https://github.com/atongrun/agent-workflow/actions/runs/37410289437),
+harness `a7e47399f500df3b4e5030121f9f763eeb1702a9`, actually passed public RC2
+installation, init, initial native health/read-only RPC, stop and bare official
+`pi update` from **1.0.2 to 1.0.4** in the sole `/opt/pi-cli` prefix. Postinstall
+scripts remained disabled and ordinary root Pi retained its default HOME path.
+The next `awf start` exited 1. Its first error was not retained in the report;
+the cause remains unknown. AWF RC2-to-RC3 update never ran. Channel waiting,
+default installation and bare default update were skipped. The Linux channel
+remains unpublished.
+
+The retained phase1 artifact is ID `11389370237`, 3272 ZIP bytes, SHA256
+`59f3e18af5f0e53db2761c79e36ce6d09fb40ac11331c4525170507d12c18c9c`.
+Its sole `upgrade-report.json` has SHA256
+`f49f64b676116293e60ee0955f5ce826abb8a52428d31aa7a4060e87fd6c1a7b`.
+The report, job step outcomes and log were independently checked. All 13 owned
+paths were cleaned, service processes exited and existing Node/npm/npx were
+preserved. Both approved parents retained their original inode/root:root/0777,
+and the private preparation receipt was removed.
+
+An isolated local official npm 1.0.4 install with scripts disabled passed CLI
+version and prefix trust checks. The actual package tree also passed the native
+adapter's inventory and start/stop/start checks beneath temporary paths with
+substituted machine commands. Draft/sealed Host restart tests passed locally.
+These results do not establish native post-update startup or identify its error.
+No published application source, tag or asset was changed in response to the
+unknown failure.
+
+The diagnostic harness now exports only exact static error codes/progress and
+bounded enum/PID status from the two ledger-owned units after a failed AWF
+restart/update. Raw command logs, arbitrary error text and credentials remain
+private. Cleanup preserves the bounded diagnostic. This change has local tests;
+it has not run on another native VM. A further native attempt requires a new
+explicit machine/action approval. No approval remains from the maximum-two-VM
+request, and no third VM was started.
+
+## Planned acceptance and promotion gates
+
+An explicitly approved standard GitHub ephemeral Ubuntu24.04 VM downloads all nine RC2 public
 assets, verifies their actual published pins, and executes the release-bound
 public bootstrap with only `--allow-prerelease`. The bootstrap itself fetches its
 immutable release manifest and Host archive; no local manifest/archive override
@@ -38,10 +84,16 @@ config and generated-credential bytes, persisted synthetic task, service agent
 root, external Node/npm/npx and real native lifecycle. Three exact owned backups
 are included in cleanup; no glob removal occurs. Unknown residue is reported.
 
-Only after this VM succeeds may the independent `awf/linux-v1` channel select
-the immutable RC3 manifest. After the first VM failed before Pi update, the remaining approved VM runs both phases serially: upgrade, complete owned cleanup and parent restoration, verified external channel promotion, then the
-public channel bootstrap and genuine bare `awf update`. Same-version success
-must preserve program/receipt inodes and bytes and service PIDs. The default phase reuses the same second VM after complete owned AWF cleanup; it is not a third machine or a new image. Both phases independently record and restore only the same approved two parent directories. A bounded read-only wait precedes the default phase; no channel is promoted by the native job.
+Only after actual post-Pi startup and AWF cross-version upgrade succeed, with
+independently verified complete cleanup/restoration, may the independent
+`awf/linux-v1` channel select the immutable RC3 manifest. The planned two-phase
+workflow can then reuse that same approved VM after complete owned AWF cleanup
+for the public channel bootstrap and genuine bare `awf update`. This is a
+current-version verification, not another cross-version upgrade or a new image.
+It must preserve program/receipt inodes and bytes and service PIDs. Each phase
+independently records and restores only the same two approved parent directories.
+A bounded read-only wait precedes the default phase; the native job never
+promotes a channel. This plan itself authorizes no new VM.
 
 Each new VM requires an explicit bounded approval for the two physical,
 root-owned, root-group-owned `/opt` and `/usr/local/bin` directories whose exact

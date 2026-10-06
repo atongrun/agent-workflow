@@ -66,7 +66,7 @@ progress. There is one Pi installation at `/opt/pi-cli`. Ordinary root Pi keeps
 Node/npm/npx are preserved. Install and init do not activate services.
 
 The independent Linux channel is `awf/linux-v1/distribution/linux-host-v1.json`.
-After its preview is published, install with:
+After the independent Linux channel is published, install with:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/atongrun/agent-workflow/awf/linux-v1/scripts/install-linux.sh | sudo sh -s -- --allow-prerelease
@@ -84,9 +84,11 @@ sudo awf start
 AWF updates retain the current Pi, configuration, credentials and task state.
 Official `pi update` owns that same Pi prefix; stop AWF before using it.
 
-Ubuntu24.04 glibc systemd amd64 is the native preview target. The original RC1
-install/lifecycle passed real GitHub Ubuntu24.04 acceptance; this source's new
-default updater and actual Pi upgrade require their separate release evidence.
+Ubuntu24.04 glibc systemd amd64 is the native preview target. RC2 and RC3 are
+published previews; the Linux default channel is still unpublished. The latest
+actual test installed RC2 and updated the sole Pi from 1.0.2 to 1.0.4, then failed
+on the next AWF start. AWF cross-version and default updater acceptance remain
+blocked. See [the actual results and promotion gates](docs/linux-preview-acceptance.md).
 Ubuntu22.04 and Debian12 code paths remain unaccepted. Low-memory/CloudCone
 acceptance was cancelled by the user and is not a publication gate. See the
 [Linux installer and update contract](docs/linux-host-install.md).

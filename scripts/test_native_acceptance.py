@@ -273,6 +273,71 @@ class NativeHarnessTests(unittest.TestCase):
                 runner.cleanup()
         self.assertEqual(runner.ledger['paths'],{})
 
+    def test_awf_failure_diagnostic_exports_only_exact_static_lines(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log=Path(temp)/'failure.log'
+            secret='synthetic-private-token'
+            log.write_text('x'*70000+'\n'+secret+'\ncurrent Pi package and executable version disagree\n'+
+                           'current Pi package and executable version disagree '+secret+'\n'+
+                           'AWF bundle service-start: started\nAWF awf-host health: failed\n'+
+                           'AWF bundle service-start: failed '+secret+'\n')
+            result=native.awf_failure_diagnostic(log)
+        self.assertEqual(result['errorCodes'],['pi_executable_identity_disagrees'])
+        self.assertEqual(result['progress'],[dict(component='bundle',stage='service-start',state='started'),dict(component='awf-host',stage='health',state='failed')])
+        self.assertNotIn(secret,json.dumps(result))
+        self.assertNotIn('current Pi',json.dumps(result))
+
+    def test_awf_failure_diagnostic_does_not_export_unknown_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log=Path(temp)/'failure.log'
+            log.write_text('secret=/private/credential\nHTTP upstream response private-body\n')
+            self.assertEqual(native.awf_failure_diagnostic(log),dict(errorCodes=['unclassified'],progress=[]))
+
+    def test_failure_unit_status_never_queries_an_unrecorded_or_changed_unit(self):
+        runner=self.runner(dict(paths={native.UNIT_FILES[0]:{'ino':1}}))
+        with patch.object(native,'same',return_value=False),patch.object(native.probe,'run') as run:
+            result=runner.failure_unit_status()
+        run.assert_not_called()
+        self.assertEqual(result,[dict(unit=u,observed=False) for u in native.probe.UNITS])
+
+    def test_failed_restart_records_diagnostic_without_replacing_the_original_failure(self):
+        runner=self.runner(dict(paths={}))
+        runner.report={'stages':[]}
+        runner.deadline=float('inf')
+        process=SimpleNamespace(returncode=1,poll=lambda:1)
+        def launch(*args,**kwargs):
+            kwargs['stdout'].write(b'native command systemctl failed\nprivate-body-token\n')
+            kwargs['stdout'].flush()
+            return process
+        with tempfile.TemporaryDirectory() as temp,patch.object(native,'CONTROL',Path(temp)),patch.object(native.subprocess,'Popen',side_effect=launch),patch.object(native.probe,'run') as command,contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(native.TestFailure,'stage failed: start-after-pi'):
+                runner.command('start-after-pi',['/usr/local/bin/awf','start'],30)
+        command.assert_not_called()
+        self.assertEqual(runner.report['stages'][0]['exitCode'],1)
+        self.assertEqual(runner.report['awfFailureDiagnostic']['errorCodes'],['systemctl_failed'])
+        self.assertNotIn('private-body-token',json.dumps(runner.report))
+
+    def test_cleanup_report_preserves_bounded_failure_diagnostic(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'report.json'
+            payload=dict(sourceCommit=native.probe.SOURCE,workflowCommit='c'*40,
+                         awfFailureDiagnostic=dict(errorCodes=['systemctl_failed'],progress=[]))
+            path.write_text(json.dumps(payload))
+            with patch.dict(native.os.environ,{'GITHUB_SHA':'c'*40}),patch.object(native.Path,'lstat',return_value=SimpleNamespace(st_mode=stat.S_IFREG|0o644,st_uid=0)):
+                result=native.previous_report(path,{})
+        self.assertEqual(result['awfFailureDiagnostic'],payload['awfFailureDiagnostic'])
+
+    def test_failure_unit_status_rejects_unknown_values_and_only_reads_fixed_units(self):
+        runner=self.runner(dict(paths={p:{'ino':1} for p in native.UNIT_FILES}))
+        valid='LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nMainPID=0\n'
+        with patch.object(native,'same',return_value=True),patch.object(native.probe,'run',side_effect=[valid,valid.replace('exit-code','synthetic-private-token')]) as run:
+            result=runner.failure_unit_status()
+        self.assertTrue(result[0]['observed'])
+        self.assertEqual(result[0]['status']['Result'],'exit-code')
+        self.assertFalse(result[1]['observed'])
+        self.assertNotIn('synthetic-private-token',json.dumps(result))
+        self.assertEqual([c.args for c in run.call_args_list],[('/usr/bin/systemctl','show',u,'--property=LoadState,ActiveState,SubState,Result,MainPID','--no-pager') for u in native.probe.UNITS])
+
     def test_truncated_public_report_cannot_block_private_ledger_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'report.json'

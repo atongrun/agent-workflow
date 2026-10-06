@@ -165,6 +165,48 @@ def same(path, saved):
     return identity(path)==saved
 
 
+AWF_FAILURE_CODES = {
+    'native receipt invalid':'receipt_invalid',
+    'installed command link changed':'command_link_changed',
+    'program command link changed':'program_link_changed',
+    'system path ownership, type or permissions require inspection':'system_path_untrusted',
+    'fixed program mode differs from install provenance':'fixed_program_mode_changed',
+    'fixed program differs from install provenance':'fixed_program_bytes_changed',
+    'current official Pi package identity invalid':'pi_package_identity_invalid',
+    'stable Pi launcher changed; upstream npm owns only its package tree':'pi_launcher_changed',
+    'stable Pi launcher must be executable':'pi_launcher_mode_changed',
+    'Pi prefix has an external link':'pi_external_link',
+    'Pi prefix link escapes':'pi_link_escape',
+    'current Pi package and executable version disagree':'pi_executable_identity_disagrees',
+    'Magpie private state ownership/type changed':'magpie_state_untrusted',
+    'Magpie LAN must be false or omitted':'magpie_lan_invalid',
+    'invalid Magpie settings':'magpie_settings_invalid',
+    'stopped maintenance target differs from installed receipt':'maintenance_target_changed',
+    'stopped maintenance owner/seal changed':'maintenance_owner_changed',
+    'systemd shutdown is not established':'shutdown_unverified',
+    'partially running service pair requires awf stop before start':'partial_service_pair',
+    'systemd unit ownership, overrides or control-group contract changed':'unit_contract_changed',
+    'loopback Host maintenance unavailable':'host_maintenance_unavailable',
+    'native command systemctl failed':'systemctl_failed',
+    'native command awf-launcher.mjs failed':'pi_version_command_failed',
+}
+
+
+def awf_failure_diagnostic(log):
+    # Never export raw command output, paths, tokens, HTTP bodies or npm logs.
+    with log.open('rb') as stream:
+        stream.seek(0,os.SEEK_END)
+        stream.seek(max(0,stream.tell()-65536))
+        lines=stream.read(65536).decode('utf-8',errors='replace').splitlines()
+    codes=sorted({AWF_FAILURE_CODES[line] for line in lines if line in AWF_FAILURE_CODES})
+    progress=[]
+    for line in lines:
+        match=re.fullmatch(r'AWF (bundle|awf-host|magpie) (service-start|health|service-stop|service-stop-retry): (started|completed|failed)',line)
+        if match:
+            progress.append(dict(component=match[1],stage=match[2],state=match[3]))
+    return dict(errorCodes=codes or ['unclassified'],progress=progress[-32:])
+
+
 def private_file(path, data):
     # Ledger/control files are created or replaced only inside a held, trusted
     # root-private directory. No remote text or token becomes a filename.
@@ -338,8 +380,35 @@ class Acceptance:
                 self.observe()
         self.report['stages'].append(dict(name=name,exitCode=process.returncode,elapsedSeconds=round(time.monotonic()-start,2)))
         print('AWF native test: '+name+' exit '+str(process.returncode),flush=True)
+        if process.returncode and name in ('start-after-pi','awf-update') and args[0]=='/usr/local/bin/awf':
+            try:
+                diagnostic=awf_failure_diagnostic(log)
+                diagnostic['units']=self.failure_unit_status()
+                self.report['awfFailureDiagnostic']=diagnostic
+            except Exception:
+                self.report['awfFailureDiagnostic']=dict(errorCodes=['diagnostic_unavailable'],progress=[])
         require(process.returncode==0,'stage failed: '+name)
         return log.read_bytes() if capture else None
+
+    def failure_unit_status(self):
+        results=[]
+        choices={'LoadState':{'loaded','not-found','error','masked','bad-setting'},
+                 'ActiveState':{'active','inactive','failed','activating','deactivating','reloading','maintenance','refreshing'},
+                 'SubState':{'running','dead','failed','start-pre','start','start-post','stop','stop-sigterm','stop-sigkill','stop-post','auto-restart','exited'},
+                 'Result':{'success','exit-code','signal','core-dump','timeout','resources','start-limit-hit','watchdog','protocol','oom-kill'}}
+        for unit,path in zip(probe.UNITS,UNIT_FILES):
+            row=dict(unit=unit,observed=False)
+            try:
+                require(path in self.ledger['paths'] and same(path,self.ledger['paths'][path]),'unit identity unverified')
+                values=probe.properties(probe.run('/usr/bin/systemctl','show',unit,'--property=LoadState,ActiveState,SubState,Result,MainPID','--no-pager'))
+                require(set(values)==set(choices)|{'MainPID'} and
+                        all(values[k] in allowed for k,allowed in choices.items()) and
+                        re.fullmatch('[0-9]{1,10}',values['MainPID']),'unit diagnostic outside bounded enums')
+                row.update(observed=True,status=values)
+            except Exception:
+                pass
+            results.append(row)
+        return results
 
     def download(self):
         downloads=CONTROL/'assets'
@@ -777,7 +846,7 @@ def previous_report(path, default):
         allowed={'schema','sourceCommit','version','workflowCommit','stages','healthRounds','acceptancePassed','cleanup',
                  'modelCalls','providerAuthenticationPerformed','piUpdateExecuted','CloudConeAcceptance',
                  'preflight','failure','publicAssetsVerified','preinstalledRuntimePreserved','resources',
-                 'parentPreparation','parentRestoration','piUpdate','awfUpdate','businessStatePreserved','rpcCompatibility','publicBootstrap','noOp','mode'}
+                 'parentPreparation','parentRestoration','piUpdate','awfUpdate','businessStatePreserved','rpcCompatibility','publicBootstrap','noOp','mode','awfFailureDiagnostic'}
         default.update({key:value for key,value in payload.items() if key in allowed})
     except Exception:
         default['failure']='previous public report unavailable; cleanup uses private ledger only'
