@@ -338,6 +338,33 @@ class NativeHarnessTests(unittest.TestCase):
         self.assertNotIn('synthetic-private-token',json.dumps(result))
         self.assertEqual([c.args for c in run.call_args_list],[('/usr/bin/systemctl','show',u,'--property=LoadState,ActiveState,SubState,Result,MainPID','--no-pager') for u in native.probe.UNITS])
 
+    def test_retention_requires_both_owned_units_quiescent(self):
+        runner=self.runner(dict(controlIdentity={}))
+        runner.report=dict(failure='stage failed: start-after-pi',piUpdate={'passed':True})
+        for fail in (False,True):
+            with self.subTest(fail=fail),patch.object(native,'same',return_value=True), \
+                 patch.object(runner,'trusted_unit') as trusted, \
+                 patch.object(native,'stopped',side_effect=native.TestFailure('occupied') if fail else None):
+                runner.report.pop('retainedForDiagnosis',None)
+                if fail:
+                    with self.assertRaises(native.TestFailure):
+                        runner.retain_failed_start()
+                    self.assertNotIn('retainedForDiagnosis',runner.report)
+                else:
+                    runner.retain_failed_start()
+                    self.assertTrue(runner.report['retainedForDiagnosis'])
+                    self.assertEqual(trusted.call_count,2)
+
+    def test_other_failure_or_failed_pi_update_cannot_retain_installation(self):
+        runner=self.runner(dict(controlIdentity={}))
+        for failure,pi_passed in [('stage failed: install',True),('stage failed: start-after-pi',False)]:
+            runner.report=dict(failure=failure,piUpdate={'passed':pi_passed})
+            with self.subTest(failure=failure),patch.object(native,'stopped') as stopped:
+                with self.assertRaises(native.TestFailure):
+                    runner.retain_failed_start()
+                stopped.assert_not_called()
+                self.assertNotIn('retainedForDiagnosis',runner.report)
+
     def test_truncated_public_report_cannot_block_private_ledger_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'report.json'

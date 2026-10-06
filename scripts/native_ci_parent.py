@@ -162,6 +162,8 @@ def call_native(args):
     sys.argv=['native_acceptance','--expected-release',args.expected_release,'--report',str(args.report)]
     if getattr(args,'phase',None):
         sys.argv.extend(['--phase',args.phase])
+    if getattr(args,'retain_post_pi_failure',False):
+        sys.argv.append('--retain-post-pi-failure')
     if args.cleanup_only:
         sys.argv.append('--cleanup-only')
     try:
@@ -175,11 +177,15 @@ def main():
     parser.add_argument('--expected-release',required=True,choices=('24.04',))
     parser.add_argument('--report',required=True,type=Path)
     parser.add_argument('--phase',choices=('upgrade','default'))
+    parser.add_argument('--retain-post-pi-failure',action='store_true')
     modes=parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare-ci-parents',action='store_true')
     modes.add_argument('--cleanup-only',action='store_true')
     args=parser.parse_args()
     native.probe.ci_guard(os.environ,os.getuid(),os.geteuid())
+    if args.retain_post_pi_failure:
+        native.require(not args.cleanup_only and args.phase!='default' and os.environ.get('GITHUB_REF')=='refs/heads/'+native.probe.POST_PI_BRANCH,
+                       'retention requires the separately approved post-Pi diagnostic VM')
     if args.cleanup_only and not os.path.lexists(STATE):
         native.require(not os.path.lexists(native.CONTROL),'native control without parent receipt; cleanup blocked')
         return 0
@@ -214,18 +220,34 @@ def main():
                 record=load_state()
                 # Native main already attempted scoped cleanup in its finally.
                 # This outer finally also covers preflight, download and signal failures.
-                report['parentRestoration']=restore(record)
+                retained=args.retain_post_pi_failure and not args.cleanup_only and report.get('retainedForDiagnosis') is True
+                if retained:
+                    try:
+                        for row in record['parents']:
+                            fd,info=open_parent(row['path'],{0o755})
+                            try:
+                                verify_parent(row['path'],fd,row['identity'],0o755)
+                            finally:
+                                os.close(fd)
+                        report['parentRestoration']=dict(passed=False,pending=True,parents=[])
+                    except Exception:
+                        retained=False
+                        report['retainedForDiagnosis']=False
+                        report['failure']='retained parent verification failed; cleanup required'
+                        code=1
+                if not retained:
+                    report['parentRestoration']=restore(record)
                 report['parentRestoration']['cleanupParentsReacquired']=context.get('cleanupParentsReacquired',[])
                 previous={row['path']:row for row in report.get('parentPreparation',{}).get('parents',[])}
                 prepared=[]
-                for row,result in zip(record['parents'],report['parentRestoration']['parents']):
+                for row,result in zip(record['parents'],report['parentRestoration']['parents'] if not retained else [{}]*2):
                     observed=row['applied'] or result.get('observedBeforeRestoreMode')=='0755' \
                         or previous.get(row['path'],{}).get('applied') is True
                     prepared.append(dict(path=row['path'],originalMode='0777',testMode='0755',
                         applied=True if observed else None,completedReceipt=row['applied'],
                         uid=0,gid=0,recursive=False,ownershipChanged=False))
                 report['parentPreparation']=dict(parents=prepared)
-                if not report['parentRestoration']['passed']:
+                if not retained and not report['parentRestoration']['passed']:
                     code=1
                 if args.cleanup_only and code==0 and report['parentRestoration']['passed']:
                     remove_state(record)

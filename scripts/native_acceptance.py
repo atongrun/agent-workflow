@@ -382,8 +382,10 @@ class Acceptance:
         print('AWF native test: '+name+' exit '+str(process.returncode),flush=True)
         if process.returncode and name in ('start-after-pi','awf-update') and args[0]=='/usr/local/bin/awf':
             try:
-                diagnostic=awf_failure_diagnostic(log)
+                import native_startup_diagnostics as startup
+                diagnostic=startup.classify(log)
                 diagnostic['units']=self.failure_unit_status()
+                diagnostic['startupChecks']=startup.collect(self)
                 self.report['awfFailureDiagnostic']=diagnostic
             except Exception:
                 self.report['awfFailureDiagnostic']=dict(errorCodes=['diagnostic_unavailable'],progress=[])
@@ -672,6 +674,19 @@ class Acceptance:
         self.health(2)
         self.report['noOp']=dict(passed=True,command='awf update',version=TARGET_VERSION,programRootsPreserved=True,receiptPreserved=True,servicePIDsPreserved=True)
 
+    def retain_failed_start(self):
+        # Preserve only this already diagnosed stopped installation until the
+        # immediately following safe report upload. No remote continuation.
+        require(self.report.get('failure')=='stage failed: start-after-pi'
+                and self.report.get('piUpdate',{}).get('passed') is True,
+                'only actual post-Pi startup failure may be retained')
+        require(same(CONTROL,self.ledger['controlIdentity']),'native control inode changed')
+        for unit in probe.UNITS:
+            self.trusted_unit(unit)
+            stopped(unit)
+        self.report['retainedForDiagnosis']=True
+        self.report['firstAttemptFailure']=self.report['failure']
+
     def health(self, round_number):
         tokens=probe.properties(Path('/etc/awf/host.env').read_text())
         require(set(tokens)=={'AWF_HOST_TOKEN','AWF_EXTENSION_TOKEN'} and len(set(tokens.values()))==2 and
@@ -846,7 +861,8 @@ def previous_report(path, default):
         allowed={'schema','sourceCommit','version','workflowCommit','stages','healthRounds','acceptancePassed','cleanup',
                  'modelCalls','providerAuthenticationPerformed','piUpdateExecuted','CloudConeAcceptance',
                  'preflight','failure','publicAssetsVerified','preinstalledRuntimePreserved','resources',
-                 'parentPreparation','parentRestoration','piUpdate','awfUpdate','businessStatePreserved','rpcCompatibility','publicBootstrap','noOp','mode','awfFailureDiagnostic'}
+                 'parentPreparation','parentRestoration','piUpdate','awfUpdate','businessStatePreserved','rpcCompatibility','publicBootstrap','noOp','mode','awfFailureDiagnostic',
+                 'retainedForDiagnosis','firstAttemptFailure'}
         default.update({key:value for key,value in payload.items() if key in allowed})
     except Exception:
         default['failure']='previous public report unavailable; cleanup uses private ledger only'
@@ -868,8 +884,12 @@ def main():
     parser.add_argument('--phase',choices=('upgrade','default'))
     parser.add_argument('--cleanup-only',action='store_true')
     parser.add_argument('--diagnostic-only',action='store_true')
+    parser.add_argument('--retain-post-pi-failure',action='store_true')
     args=parser.parse_args()
     probe.ci_guard(os.environ,os.getuid(),os.geteuid())
+    if args.retain_post_pi_failure:
+        require(os.environ.get('GITHUB_REF')=='refs/heads/'+probe.POST_PI_BRANCH and args.phase!='default' and not args.cleanup_only and not args.diagnostic_only,
+                'retention requires the separately approved post-Pi diagnostic VM')
     if args.phase:
         # Separate fresh processes in one approved VM may run the two phases.
         # The real GitHub branch/commit guard stays unchanged.
@@ -892,6 +912,7 @@ def main():
         previous_report(args.report,report)
         try:
             runner.cleanup()
+            report['retainedForDiagnosis']=False
             report_write(args.report,report)
             shutil.rmtree(CONTROL)
             print('AWF native test: owned cleanup completed',flush=True)
@@ -961,11 +982,17 @@ def main():
         # Only our controlled TestFailure strings are public. Upstream exception
         # details, output and HTTP bodies remain private, including credentials.
         report['failure']=str(error) if isinstance(error,TestFailure) else 'native verification exception: '+type(error).__name__
+        if args.retain_post_pi_failure and report['failure']=='stage failed: start-after-pi' and report.get('piUpdate',{}).get('passed') is True:
+            try:
+                runner.retain_failed_start()
+            except Exception:
+                report['retainedForDiagnosis']=False
     finally:
-        try:
-            runner.cleanup()
-        except Exception:
-            report['cleanup']=dict(passed=False,reason='owned cleanup blocked; private ledger retained')
+        if not report.get('retainedForDiagnosis'):
+            try:
+                runner.cleanup()
+            except Exception:
+                report['cleanup']=dict(passed=False,reason='owned cleanup blocked; private ledger retained')
         report_write(args.report,report)
         if report['cleanup']['passed']:
             shutil.rmtree(CONTROL)

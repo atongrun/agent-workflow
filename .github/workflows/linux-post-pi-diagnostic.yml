@@ -1,0 +1,92 @@
+name: One approved Ubuntu post-Pi diagnosis
+
+on:
+  push:
+    branches: [awf/linux-post-pi-diagnostic-ci-v1]
+
+permissions: {}
+concurrency:
+  group: awf-linux-post-pi-diagnostic-v1
+  cancel-in-progress: false
+
+jobs:
+  native:
+    if: github.repository == 'atongrun/agent-workflow' && github.event_name == 'push' && github.ref == 'refs/heads/awf/linux-post-pi-diagnostic-ci-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      EVIDENCE: ${{ runner.temp }}/awf-post-pi-diagnostic
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify bounded harness without machine mutation
+        run: |
+          set -eu
+          python3 scripts/test_native_runner_probe.py
+          python3 scripts/test_native_acceptance.py
+          python3 scripts/test_native_ci_parent.py
+          python3 scripts/test_native_startup_diagnostics.py
+          python3 scripts/test_linux_channel_gate.py
+      - name: Reproduce official Pi update and retain first startup failure
+        id: first
+        continue-on-error: true
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$EVIDENCE"
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" \
+            GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/upgrade-report.json" --phase upgrade --prepare-ci-parents --retain-post-pi-failure
+      - name: Complete first-phase cleanup unless validated diagnosis is retained
+        id: first_cleanup
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("retainedForDiagnosis") is True else 1)' "$EVIDENCE/upgrade-report.json"; then
+            echo 'Bounded diagnosis pending; both original VM parent receipts retained.'
+          else
+            sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+              GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+              GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+              /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+              --expected-release 24.04 --report "$EVIDENCE/upgrade-report.json" --phase upgrade --cleanup-only
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: first_report
+        if: always()
+        with:
+          name: linux-post-pi-first-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}/upgrade-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Always clean owned paths and independently restore both parent directories
+        id: upgrade_cleanup
+        if: always()
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT='${{ runner.environment }}' RUNNER_OS='${{ runner.os }}' \
+            GITHUB_REPOSITORY=atongrun/agent-workflow GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME=push GITHUB_SHA="$GITHUB_SHA" \
+            /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/native_ci_parent.py" \
+            --expected-release 24.04 --report "$EVIDENCE/upgrade-report.json" --phase upgrade --cleanup-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: upgrade_report
+        if: always()
+        with:
+          name: linux-post-pi-final-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}/upgrade-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Report diagnosis without disguising failed public acceptance
+        if: always()
+        run: |
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["acceptancePassed"] is True and r["cleanup"]["passed"] is True and r["parentRestoration"]["passed"] is True and r["parentRestoration"]["privateReceiptRemoved"] is True' "$EVIDENCE/upgrade-report.json"

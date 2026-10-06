@@ -20,6 +20,7 @@ import time
 REPOSITORY = 'atongrun/agent-workflow'
 BRANCH = 'awf/linux-upgrade-ci-v1'
 DEFAULT_BRANCH = 'awf/linux-default-ci-v1'
+POST_PI_BRANCH = 'awf/linux-post-pi-diagnostic-ci-v1'
 SOURCE = '510e6b893c6524873297b972edc72e801b870b0d'
 RELEASE = 'v1.0.1-rc.3' if os.environ.get('GITHUB_REF') == 'refs/heads/'+DEFAULT_BRANCH else 'v1.0.1-rc.2'
 MIN_AVAILABLE_BYTES = 512 << 20
@@ -47,7 +48,8 @@ UNIT_PATHS = (
 
 
 def ci_guard(env, uid, euid):
-    branch = DEFAULT_BRANCH if env.get('GITHUB_REF') == 'refs/heads/'+DEFAULT_BRANCH else BRANCH
+    branches=(BRANCH,DEFAULT_BRANCH,POST_PI_BRANCH)
+    branch = next((b for b in branches if env.get('GITHUB_REF')=='refs/heads/'+b),BRANCH)
     expected = dict(GITHUB_ACTIONS='true', RUNNER_ENVIRONMENT='github-hosted',
                     RUNNER_OS='Linux', GITHUB_REPOSITORY=REPOSITORY,
                     GITHUB_REF='refs/heads/'+branch, GITHUB_EVENT_NAME='push')

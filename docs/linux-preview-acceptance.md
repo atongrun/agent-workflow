@@ -44,9 +44,36 @@ The diagnostic harness now exports only exact static error codes/progress and
 bounded enum/PID status from the two ledger-owned units after a failed AWF
 restart/update. Raw command logs, arbitrary error text and credentials remain
 private. Cleanup preserves the bounded diagnostic. This change has local tests;
-it has not run on another native VM. A further native attempt requires a new
-explicit machine/action approval. No approval remains from the maximum-two-VM
-request, and no third VM was started.
+it has not run on another native VM. No approval remains from the original
+maximum-two-VM request.
+
+## Separately approved post-Pi diagnosis
+
+On 2026-10-06 04:04:41 UTC the user approved exactly one additional GitHub-hosted
+ephemeral Ubuntu24.04 VM to identify this failure and, where feasible, verify
+an already authorized reviewed fix on that same VM. The only temporary parent
+permission changes remain the same physical root:root `/opt` and
+`/usr/local/bin`, exact `0777` to `0755`, then independent restoration. This
+does not authorize an automatic further machine or workflow rerun.
+
+The new exact trigger is `awf/linux-post-pi-diagnostic-ci-v1`, using a 30-minute
+job and the original 22-minute command deadline. Only a reproduced first
+`start-after-pi` failure after a successful official update may retain the
+ledger-owned installation, and only after both literal units have stopped with
+empty cgroups. The first safe report is uploaded immediately. Static source
+error codes, metadata, dependencies, unit state, and the exact native-environment
+Pi version probe identify which startup guard failed. The official version
+probe may create a temporary settings lock; it invokes no model or provider.
+Private logs, settings bodies, task state and credentials are not uploaded.
+
+On the parent's 2026-10-06 follow-up, this attempt is restricted to reproduction,
+the concrete startup error and the minimum fix assessment. There is no remote
+continuation, candidate loader or interactive repair framework. The fixed
+workflow uploads the safe first report, then immediately performs owned cleanup,
+independent restoration of both original parent objects and a final report.
+It does not wait for channel publication or run a second default installation.
+The Linux channel remains unpublished pending actual public-product gates.
+This harness description is preparation, not evidence that the VM has run.
 
 ## Planned acceptance and promotion gates
 
