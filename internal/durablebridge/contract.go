@@ -15,6 +15,8 @@ const (
 	MaxResultBytes        = 256 * 1024
 	MaxCursorBytes        = 512
 	MaxNativeID           = uint64(1<<53 - 1)
+	DefaultPageLimit      = 20
+	MaxPageLimit          = 50
 )
 
 type SubmitInput struct {
@@ -58,10 +60,10 @@ type Receipt struct {
 }
 
 type Page struct {
-	Version    int       `json:"version"`
-	Owner      string    `json:"owner"`
-	Items      []Summary `json:"items"`
-	NextCursor string    `json:"nextCursor,omitempty"`
+	Version int       `json:"version"`
+	Items   []Summary `json:"items"`
+	// RawMessage distinguishes the required explicit null from a missing field.
+	NextCursor json.RawMessage `json:"nextCursor"`
 }
 
 type Health struct {

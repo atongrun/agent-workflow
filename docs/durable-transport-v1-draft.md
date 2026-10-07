@@ -8,6 +8,12 @@ cross-implementation freeze. Wire types/constants are isolated in
 `7c10bd4337495ee613f2224843ecdf349b80d1df`. This replaces the unlaunched
 execution/attempt protocol; no compatibility adapter is required.
 
+The parent supplied PRIVATE constraints on 2026-10-07: owner grammar, lowercase
+UUIDv4, list owner query/default 20/max 50/nullable cursor/empty continuation,
+opaque delivered result and inherited FD3 lifecycle. These are aligned locally.
+Complete receipt/error/list-item examples and GET/cancel owner carrier details
+remain requested; do not claim every field is interoperable until reconciled.
+
 ## Boundary
 
 GoHost provides one existing HTTP listener, owner-scoped authentication, bounded
@@ -41,8 +47,10 @@ worker shutdown; it does not call `LOCK_UN` on the shared open-file description.
 The descriptor is a process ownership lease, with no application state inside.
 Startup refuses an already owned directory. The native installation must ensure
 only one canonical storage pathname and systemd control-group cleanup before a
-replacement worker opens storage. This startup proposal still requires the
-parent/PRIVATE freeze.
+replacement worker opens storage. PRIVATE consumes the inherited open-file
+description directly and does not acquire a second lock. Unknown cleanup must
+retain the descriptor until Go terminates and joins the worker; a replacement
+cannot open storage while ownership/cleanup remains uncertain.
 
 PRIVATE must verify the descriptor's type, owner, permissions and inode against
 the configured lock path before opening native storage. Tools and auxiliary
@@ -65,7 +73,8 @@ Implemented default worker routes (public paths add `/content` after `/v1`):
 * `GET /v1/requests/{requestId}`: read-only owner-scoped request lookup after lost
   acknowledgement; never creates a conversation, resolves a model or submits.
 * `GET /v1/submissions`: bounded owner-scoped native-reference list for product
-  history. Query `limit` defaults to 20 and is 1–100; optional `cursor` is opaque,
+  history. Go injects query `owner` from authentication. Public query cannot set
+  owner. `limit` defaults to 20 and is 1–50; optional `cursor` is opaque,
   nonempty, at most 512 UTF-8 bytes with no control characters. Go normalizes and
   forwards these fields only. Unknown/duplicate query fields are rejected.
 
@@ -75,8 +84,9 @@ Abort sends `{version:1,owner}` and accepts no public body. PRIVATE must verify
 owner against its saved mapping on every operation, including request lookup and
 list. Startup health is the sole ownerless readiness probe on the private socket.
 Health is `{version:1,durableVersion:"1.0.4",ready:true}` after native storage and
-recovery initialization. Success receipt/page echoes the checked owner, which
-Go verifies before forwarding it.
+recovery initialization. The current success receipt echoes owner, which Go
+checks; its final complete field shape/carrier is pending the requested PRIVATE
+examples. The confirmed list envelope has no top-level owner echo.
 
 Default receipt:
 
@@ -91,20 +101,27 @@ Go passes released safe codes `aborted`, `model_error`, `no_model`, `reset`,
 `stale`, `faulted`, `missing_task`, `task_too_old`, `migration_failed`; every other
 valid native reason becomes fixed public `unanswered`. Private detail and
 arbitrary error text are never public. Optional non-null `result` is opaque JSON
-only on `done`, bounded to 256 KiB. Its semantic/schema/reference ownership
+only on uncancelled `done`, bounded to 256 KiB. Abort responses cannot deliver a
+result. Its semantic/schema/reference ownership
 validation remains PRIVATE's responsibility. No executionId/ownerEpoch/nativeSessionRef
 is fabricated.
 
-List response is `{version:1,owner,items:[summary...],nextCursor?}`. Each summary
+List response is `{version:1,items:[receipt-without-result...],nextCursor:string|null}`.
+The current Go item summary
 contains only requestId/conversationId/submissionId/status/abortRequested/reason.
 No input, result, model configuration, prompt or transcript is permitted. Go
 rejects unknown fields, duplicate native references or more items than requested.
-PRIVATE owns cursor/index order and scope; Go stores no product history ledger.
+PRIVATE owns cursor/index order, owner binding and first-page upper bound. Its
+scan stops after at most 128 steps and excludes editor children. Empty items with
+a non-null continuation are valid; Go forwards them without continuing the scan.
+The nullable cursor field is required and preserved. Go stores no history or
+root/child execution ledger. The full PRIVATE item metadata remains to reconcile.
 
 Public submit takes exactly
 `{version:1,requestId,capability,payloadSchema,opaquePayload}`. Owner and fingerprint
-are generated in Go. RequestId is a lowercase canonical UUID; owner and labels
-are bounded ASCII identifiers. Public JSON is limited to 256 KiB; the final
+are generated in Go. RequestId is a lowercase UUIDv4 with RFC variant. Owner
+matches `[A-Za-z0-9_-]{1,80}`; capability/schema are bounded ASCII labels. Public
+JSON is limited to 256 KiB; the final
 worker request frame including trusted fields is limited to 256 KiB + 1 KiB.
 Worker response bodies read by Go are limited to 512 KiB; public result JSON is
 independently limited to 256 KiB before re-encoding. Exact JSON tag spellings are required. Duplicate

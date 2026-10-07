@@ -93,6 +93,13 @@ Go 1.25.14, local Linux subprocess fixtures, no real model calls:
   native ID/receipt/result bounds, safe public reason, summary-only pagination,
   lost ACK lookup without mutation retry, readiness/exit/startup cleanup,
   inherited lease lifetime and explicit forced-stop error.
+* The 2026-10-07 PRIVATE wire constraints are applied: owner is 1–80 ASCII
+  letters/digits/underscore/hyphen; request ID is lowercase UUIDv4; list defaults
+  to 20 and allows at most 50, injects the trusted owner query, requires an
+  explicit nullable cursor, and forwards an empty continuation page once.
+  Cancelled or abort responses cannot deliver an opaque result. The unknown-join
+  fixture verifies real flock retention after a synthetic join observation;
+  it starts no process and does not establish native quiescence.
 * Composition uses the actual existing Host handler and a live Unix worker
   fixture. It does not run the actual PRIVATE SDK or full installed command.
 * `go test -race -count=1 ./...` passed with fixture umask 022 (Host 69.443s,
@@ -109,15 +116,37 @@ Go 1.25.14, local Linux subprocess fixtures, no real model calls:
 * Independent read-only review closed configuration ancestry/canonical paths,
   literal JSON tags, final frame bounds, public reason and cleanup error issues.
   It did not validate PRIVATE/native storage, systemd or transport agreement.
+* After the wire changes, `go test -race ./internal/durablebridge ./cmd/awf`
+  passed (7.751s/1.023s). Targeted vet and Linux/Windows amd64 compilation also
+  passed after these changes. Independent review ran the five new targeted race
+  fixtures (3.037s) and found no new source blocker. Full-suite results above
+  belong to the preceding complete candidate; these new fixtures do not prove
+  PRIVATE interoperability.
 
 ## Remaining gates
 
-Reconcile PRIVATE's owner/result/cursor/lease schema with explicit defaults.
+The full success/error/admission-pending envelope, list-item JSON, GET owner
+carrier and cancel body/return shape still require PRIVATE's exact examples.
+In particular, current `Page.Items []Summary` omits receipt-level version/owner;
+strict decoding would reject a PRIVATE item containing them. Current GET owner
+uses `X-AWF-Owner`, while submit/cancel also use the body. Do not represent this
+known-constraint alignment as a complete cross-implementation wire freeze.
 Real pinned native Harness/SQLite tests with faux models must cover reopen/crash,
 dedup/model freeze, cancellation/replay ordering, result-reference authorization,
 Unix socket and Linux flock inheritance. Full cmd lifecycle, fixed permissions,
 systemd control-group cleanup and Ubuntu service activation remain native
 acceptance gates requiring a separately authorized suitable environment.
 
-No push, new CI, release, production access, system mutation or user data
-deletion occurred in this local Host implementation.
+The parent approved a reviewed public feature-branch push on 2026-10-07 for
+PRIVATE's read-only fetch. No new CI workflow, release, production access,
+system mutation or user data deletion is part of this implementation.
+
+## Public feature branch and CI boundary
+
+This candidate has no tracked `.github/workflows` files and adds no CI workflow.
+The unrelated branch's existing test workflow must not be merged into it.
+A future push still requires parent authorization: repository-level GitHub Apps,
+webhooks or external runners may react to branch creation even when this tree
+contains no Actions workflow. Their settings are not established by this local
+source review. PRIVATE source, SDK, credentials and Library input are absent
+from the patch; its worker executable remains an operator-supplied reference.

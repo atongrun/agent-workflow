@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-const fixtureRequest = "11111111-2222-3333-4444-555555555555"
-const fixtureRequest2 = "11111111-2222-3333-4444-555555555556"
+const fixtureRequest = "11111111-2222-4333-8444-555555555555"
+const fixtureRequest2 = "11111111-2222-4333-8444-555555555556"
 const fixtureToken = "fixture-owner-a-token-1234567890"
 const fixtureTokenB = "fixture-owner-b-token-1234567890"
 
@@ -177,7 +177,7 @@ func TestArbitraryNativeReasonIsNotPublicUnixFixture(t *testing.T) {
 		receipt.Status = "unanswered"
 		receipt.Reason = "private-secret-model-detail"
 		if r.URL.Path == "/v1/submissions" {
-			writeJSON(w, 200, Page{Version: 1, Owner: "owner-a", Items: []Summary{receipt.Summary}})
+			writeJSON(w, 200, Page{Version: 1, Items: []Summary{receipt.Summary}, NextCursor: json.RawMessage("null")})
 		} else {
 			writeJSON(w, 200, receipt)
 		}
@@ -283,14 +283,13 @@ func TestBoundedSummaryPaginationAndOwnerIsolationUnixFixture(t *testing.T) {
 	var calls atomic.Int32
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		owner := r.Header.Get(OwnerHeader)
-		if r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("cursor") != "opaque+/=" {
+		if r.URL.Query().Get("owner") != r.Header.Get(OwnerHeader) || r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("cursor") != "opaque+/=" {
 			t.Error("pagination was not normalized")
 		}
 		first := fixtureSummary(fixtureRequest, "queued")
 		second := fixtureSummary(fixtureRequest2, "done")
 		second.SubmissionID = 3
-		writeJSON(w, 200, Page{Version: 1, Owner: owner, Items: []Summary{first, second}, NextCursor: "next.cursor"})
+		writeJSON(w, 200, Page{Version: 1, Items: []Summary{first, second}, NextCursor: json.RawMessage(`"next.cursor"`)})
 	}))
 	for _, token := range []string{fixtureToken, fixtureTokenB} {
 		w := publicCall(handler, "GET", "/submissions?limit=2&cursor=opaque%2B%2F%3D", "", token)
@@ -319,7 +318,7 @@ func TestBoundedSummaryPaginationAndOwnerIsolationUnixFixture(t *testing.T) {
 
 func TestListCannotExposeResultUnixFixture(t *testing.T) {
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"version":1,"owner":"owner-a","items":[{"requestId":"` + fixtureRequest + `","conversationId":1,"submissionId":2,"status":"done","abortRequested":false,"result":{"private":"do-not-expose"}}]}`))
+		w.Write([]byte(`{"version":1,"items":[{"requestId":"` + fixtureRequest + `","conversationId":1,"submissionId":2,"status":"done","abortRequested":false,"result":{"private":"do-not-expose"}}],"nextCursor":null}`))
 	}))
 	w := publicCall(handler, "GET", "/submissions", "", fixtureToken)
 	if w.Code != 503 || strings.Contains(w.Body.String(), "do-not-expose") {

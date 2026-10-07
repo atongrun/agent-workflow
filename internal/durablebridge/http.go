@@ -17,8 +17,8 @@ import (
 	"unicode/utf8"
 )
 
-var ownerPattern = regexp.MustCompile(`^[A-Za-z0-9._:@-]{1,128}$`)
-var requestPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var ownerPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+var requestPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 var labelPattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,128}$`)
 
 func (c *Client) Handler(credentials []Credential, protectedTokens ...string) (http.Handler, error) {
@@ -122,10 +122,10 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 					return
 				}
 			}
-			limit = 20
+			limit = DefaultPageLimit
 			if q.Has("limit") {
 				n, err := strconv.Atoi(q.Get("limit"))
-				if err != nil || n < 1 || n > 100 {
+				if err != nil || n < 1 || n > MaxPageLimit {
 					writeCode(w, 400, "invalid_input")
 					return
 				}
@@ -136,6 +136,7 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 				return
 			}
 			q.Set("limit", strconv.Itoa(limit))
+			q.Set("owner", owner)
 			path += "?" + q.Encode()
 		default:
 			writeCode(w, 405, "method_not_allowed")
@@ -215,7 +216,7 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 	}
 	if limit > 0 {
 		var page Page
-		if strictJSON(b, &page) != nil || page.Version != ProtocolVersion || page.Owner != owner || page.Items == nil || len(page.Items) > limit || !validText(page.NextCursor, MaxCursorBytes, true) {
+		if strictJSON(b, &page) != nil || page.Version != ProtocolVersion || page.Items == nil || len(page.Items) > limit || !validCursor(page.NextCursor) {
 			writeCode(w, 503, "unavailable")
 			return
 		}
@@ -239,13 +240,21 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 	}
 	if len(receipt.Result) > 0 {
 		var result any
-		if receipt.Status != "done" || strictJSON(receipt.Result, &result) != nil || result == nil {
+		if receipt.Status != "done" || *receipt.AbortRequested || (r.Method == http.MethodPost && strings.HasSuffix(path, "/abort")) || strictJSON(receipt.Result, &result) != nil || result == nil {
 			writeCode(w, 503, "unavailable")
 			return
 		}
 	}
 	receipt.Reason = publicReason(receipt.Reason)
 	writeJSON(w, status, receipt)
+}
+
+func validCursor(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var cursor *string
+	return strictJSON(raw, &cursor) == nil && (cursor == nil || validText(*cursor, MaxCursorBytes, false))
 }
 
 func publicReason(reason string) string {
