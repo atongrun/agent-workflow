@@ -106,7 +106,8 @@ Public submit takes exactly
 are generated in Go. RequestId is a lowercase canonical UUID; owner and labels
 are bounded ASCII identifiers. Public JSON is limited to 256 KiB; the final
 worker request frame including trusted fields is limited to 256 KiB + 1 KiB.
-Responses are at most 512 KiB. Exact JSON tag spellings are required. Duplicate
+Worker response bodies read by Go are limited to 512 KiB; public result JSON is
+independently limited to 256 KiB before re-encoding. Exact JSON tag spellings are required. Duplicate
 keys, invalid UTF-8, depth over 32 and trailing JSON are rejected. Opaque JSON is
 normalized using Go encoding/json with sorted map keys, preserved numeric
 lexemes and HTML escaping disabled. The SHA256 lowercase hexadecimal fingerprint
