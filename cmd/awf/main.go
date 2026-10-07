@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/atongrun/agent-workflow/internal/durablebridge"
 	"github.com/atongrun/agent-workflow/internal/host"
 	"github.com/atongrun/agent-workflow/internal/lifecycle"
 )
@@ -32,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run(args []string) error {
+func run(args []string) (runErr error) {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: awf host --config host.json | awf request METHOD /v1/path [JSON] | awf doctor [--json] | awf install | awf init | awf pair [--status | --retry] | awf start | awf stop | awf update [--version vX.Y.Z] | awf version")
 	}
@@ -55,11 +57,43 @@ func run(args []string) error {
 			return err
 		}
 		defer app.Close()
-		server := &http.Server{Addr: cfg.Listen, Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		var worker *durablebridge.Worker
+		var workerDone <-chan struct{}
+		var content http.Handler
+		if cfg.DurableConfig != "" {
+			durableConfig, err := durablebridge.LoadConfig(cfg.DurableConfig)
+			if err != nil {
+				return err
+			}
+			protected := []string{os.Getenv(cfg.TokenEnv), os.Getenv(cfg.ExtensionTokenEnv)}
+			for _, node := range cfg.Nodes {
+				protected = append(protected, os.Getenv(node.TokenEnv))
+			}
+			worker, err = durablebridge.Start(ctx, durableConfig, protected...)
+			if err != nil {
+				return err
+			}
+			workerDone, content = worker.Done(), worker.Handler()
+			defer func() {
+				shutdown, cancel := context.WithTimeout(context.Background(), time.Duration(durableConfig.ShutdownSeconds)*time.Second)
+				defer cancel()
+				if err := worker.Close(shutdown); err != nil {
+					runErr = errors.Join(runErr, err)
+				}
+			}()
+		}
+		server := &http.Server{Addr: cfg.Listen, Handler: composeHostHandler(app.Handler(), content), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+		workerFailure := make(chan error, 1)
 		go func() {
-			<-ctx.Done()
+			select {
+			case <-ctx.Done():
+			case <-workerDone:
+				if ctx.Err() == nil {
+					workerFailure <- durablebridge.ErrWorkerExited
+				}
+			}
 			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			_ = server.Shutdown(shutdown)
@@ -67,6 +101,11 @@ func run(args []string) error {
 		fmt.Fprintf(os.Stderr, "AWF Host listening on %s\n", cfg.Listen)
 		err = server.ListenAndServe()
 		if err == http.ErrServerClosed {
+			select {
+			case err := <-workerFailure:
+				return err
+			default:
+			}
 			return nil
 		}
 		return err
@@ -114,4 +153,16 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+// Native content and the existing Host share one listener while retaining
+// separate credentials and route ownership. No second TCP server is opened.
+func composeHostHandler(host, content http.Handler) http.Handler {
+	if content == nil {
+		return host
+	}
+	mux := http.NewServeMux()
+	mux.Handle(durablebridge.PublicPrefix+"/", content)
+	mux.Handle("/", host)
+	return mux
 }

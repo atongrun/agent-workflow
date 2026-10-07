@@ -1,14 +1,18 @@
 # Native Durable transport v1 draft
 
-Draft for the parent and PRIVATE consumer to freeze before transport
-implementation. Published Pi Durable baseline is 1.0.4, source
+Explicit contract defaults for the locally implemented Go Host adapter. The
+parent authorized independent implementation on 2026-10-07 while PRIVATE's final
+owner/result/pagination/lease schema is pending; this is not a claim of a
+cross-implementation freeze. Wire types/constants are isolated in
+`internal/durablebridge/contract.go`. Published Pi Durable baseline is 1.0.4, source
 `7c10bd4337495ee613f2224843ecdf349b80d1df`. This replaces the unlaunched
 execution/attempt protocol; no compatibility adapter is required.
 
 ## Boundary
 
 GoHost provides one existing HTTP listener, owner-scoped authentication, bounded
-envelopes and typed business-result validation. It manages one long-lived
+envelopes and bounded opaque JSON results. PRIVATE validates business results,
+including catalog/CAS and ownership of result references. Go manages one long-lived
 PRIVATE worker and an OS storage-owner lease. It does not persist an execution
 ledger, scheduler, checkpoint, attempt/session identity or prompt retry.
 
@@ -48,7 +52,7 @@ NodeExecutionEnv already supplies only stdin/stdout/stderr to its tool spawns;
 verify the actual PRIVATE worker's custom spawn paths as well. No native addon
 or private Node binding is required merely to set a descriptor flag.
 
-Suggested worker routes:
+Implemented default worker routes (public paths add `/content` after `/v1`):
 
 * `GET /v1/health`: protocol version 1, Durable package 1.0.4, ready only after
   native storage open and recovery initialization.
@@ -61,25 +65,68 @@ Suggested worker routes:
 * `GET /v1/requests/{requestId}`: read-only owner-scoped request lookup after lost
   acknowledgement; never creates a conversation, resolves a model or submits.
 * `GET /v1/submissions`: bounded owner-scoped native-reference list for product
-  history. Final pagination details are pending freeze.
+  history. Query `limit` defaults to 20 and is 1–100; optional `cursor` is opaque,
+  nonempty, at most 512 UTF-8 bytes with no control characters. Go normalizes and
+  forwards these fields only. Unknown/duplicate query fields are rejected.
 
-Suggested receipt:
+Every authenticated call sets `X-AWF-Owner` from the trusted Go token mapping;
+no browser header is forwarded. Submit also includes that owner in its envelope.
+Abort sends `{version:1,owner}` and accepts no public body. PRIVATE must verify
+owner against its saved mapping on every operation, including request lookup and
+list. Startup health is the sole ownerless readiness probe on the private socket.
+Health is `{version:1,durableVersion:"1.0.4",ready:true}` after native storage and
+recovery initialization. Success receipt/page echoes the checked owner, which
+Go verifies before forwarding it.
+
+Default receipt:
 
 ```json
-{"version":1,"requestId":"<application request UUID>","conversationId":1,"submissionId":2,"status":"placed","abortRequested":false}
+{"version":1,"owner":"<authenticated owner>","requestId":"<application request UUID>","conversationId":1,"submissionId":2,"status":"placed","abortRequested":false}
 ```
 
 IDs are positive native JavaScript safe integers, not Go UUIDs. Native input
-status is exactly `queued`, `placed`, `done` or `unanswered`. Optional `reason`
-comes from an unanswered native receipt; arbitrary private error detail is not
-exposed. Optional `result` is the agreed typed business artifact, not a textual
-claim of completion. No executionId/ownerEpoch/nativeSessionRef is fabricated.
+status is exactly `queued`, `placed`, `done` or `unanswered`. `abortRequested` is
+required. Reason is required only for `unanswered`, bounded to 256 UTF-8 bytes.
+Go passes released safe codes `aborted`, `model_error`, `no_model`, `reset`,
+`stale`, `faulted`, `missing_task`, `task_too_old`, `migration_failed`; every other
+valid native reason becomes fixed public `unanswered`. Private detail and
+arbitrary error text are never public. Optional non-null `result` is opaque JSON
+only on `done`, bounded to 256 KiB. Its semantic/schema/reference ownership
+validation remains PRIVATE's responsibility. No executionId/ownerEpoch/nativeSessionRef
+is fabricated.
 
-Errors are bounded versioned code envelopes for `request_conflict`, `not_found`,
+List response is `{version:1,owner,items:[summary...],nextCursor?}`. Each summary
+contains only requestId/conversationId/submissionId/status/abortRequested/reason.
+No input, result, model configuration, prompt or transcript is permitted. Go
+rejects unknown fields, duplicate native references or more items than requested.
+PRIVATE owns cursor/index order and scope; Go stores no product history ledger.
+
+Public submit takes exactly
+`{version:1,requestId,capability,payloadSchema,opaquePayload}`. Owner and fingerprint
+are generated in Go. RequestId is a lowercase canonical UUID; owner and labels
+are bounded ASCII identifiers. Public JSON is limited to 256 KiB; the final
+worker request frame including trusted fields is limited to 256 KiB + 1 KiB.
+Responses are at most 512 KiB. Exact JSON tag spellings are required. Duplicate
+keys, invalid UTF-8, depth over 32 and trailing JSON are rejected. Opaque JSON is
+normalized using Go encoding/json with sorted map keys, preserved numeric
+lexemes and HTML escaping disabled. The SHA256 lowercase hexadecimal fingerprint
+is over `{version,capability,payloadSchema,opaquePayload}` in that field order,
+using this same compact encoder. Different numeric spellings may conflict;
+requestId and owner do not enter the digest because they are the admission key.
+
+Errors are `{version:1,error:{code}}` envelopes for `request_conflict`, `not_found`,
 `invalid_input`, `unavailable` and `admission_pending`; no prompts, credentials or
 stderr. Incomplete application admission has no invented submission ID. Go does
 not retry mutations after timeout/disconnect; the original request/native IDs
 are the recovery keys.
+HTTP codes are 400 invalid_input, 404 not_found, 409 request_conflict/admission_pending,
+503 unavailable. Successful submit is 200 or 202; other success responses are 200.
+Go also uses 401 unauthorized, 405 method_not_allowed and 413 invalid_input for
+its own boundary. Wrong version, IDs, owner, status, shape, bounds or redirects
+become generic unavailable. There are no forwarded error messages or stderr.
+All responses are JSON with `Cache-Control: no-store`. Transport uses a fresh
+connection per request, no idempotency-key header, no redirect and no mutation
+retry. GET lookup cannot finish an interrupted admission.
 
 ## Application admission
 

@@ -19,6 +19,7 @@ type NodeConfig struct {
 	TokenEnv string `json:"tokenEnv"`
 }
 type Config struct {
+	DurableConfig     string                `json:"durableConfig,omitempty"`
 	PiAgentDir        string                `json:"piAgentDir,omitempty"`
 	PiProvider        string                `json:"piProvider,omitempty"`
 	EnableReviewer    bool                  `json:"enableReviewer,omitempty"`

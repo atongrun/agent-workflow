@@ -24,6 +24,10 @@ func AcquireStorageLease(dir string) (*StorageLease, error) {
 }
 
 func validateDirectory(dir string) error {
+	return validateDirectoryAncestry(dir, true)
+}
+
+func validateDirectoryAncestry(dir string, privateLeaf bool) error {
 	path := "/"
 	parts := strings.Split(strings.TrimPrefix(dir, "/"), "/")
 	for i := 0; i <= len(parts); i++ {
@@ -44,7 +48,7 @@ func validateDirectory(dir string) error {
 		if info.Mode().Perm()&0022 != 0 && !(stat.Uid == 0 && info.Mode()&os.ModeSticky != 0) {
 			return fmt.Errorf("Durable directory ancestry is writable by another principal")
 		}
-		if i == len(parts) && (stat.Uid != uint32(os.Geteuid()) || info.Mode().Perm() != 0700) {
+		if privateLeaf && i == len(parts) && (stat.Uid != uint32(os.Geteuid()) || info.Mode().Perm() != 0700) {
 			return fmt.Errorf("Durable directory must be service-owned with mode 0700")
 		}
 	}
