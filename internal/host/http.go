@@ -63,6 +63,9 @@ func auth(token string, h http.Handler) http.Handler {
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.cfg.ContentHandler != nil {
+		mux.Handle("/v1/content/", s.cfg.ContentHandler)
+	}
 	public := http.NewServeMux()
 	public.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok", "version": "v1"})

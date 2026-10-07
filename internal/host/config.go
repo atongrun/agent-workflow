@@ -19,6 +19,9 @@ type NodeConfig struct {
 	TokenEnv string `json:"tokenEnv"`
 }
 type Config struct {
+	// ContentHandler is composed by the awf entry point, on this same listener.
+	// It has its own owner-scoped credentials and independent job ledger.
+	ContentHandler    http.Handler          `json:"-"`
 	PiAgentDir        string                `json:"piAgentDir,omitempty"`
 	PiProvider        string                `json:"piProvider,omitempty"`
 	EnableReviewer    bool                  `json:"enableReviewer,omitempty"`
