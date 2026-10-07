@@ -1,0 +1,135 @@
+name: Content jobs one Ubuntu verification
+
+on:
+  push:
+    branches: [awf/content-jobs-ci-6d5ec5b]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GOPROXY: https://proxy.golang.org
+      GOSUMDB: sum.golang.org
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.25.14'
+          cache: false
+      - name: Record exact source and trusted Ubuntu workspace
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(git rev-parse HEAD^)" = 6d5ec5b16766e39b6c7796066d6674b1ab43018a
+          git diff --name-only HEAD^ HEAD | python3 -c 'import sys; paths=sys.stdin.read().splitlines(); assert paths and all(p.startswith(".github/") for p in paths), paths'
+          mkdir -p evidence "$RUNNER_TEMP/awf-content-private" "$RUNNER_TEMP/awf-content-bin"
+          chmod 700 "$RUNNER_TEMP/awf-content-private" "$RUNNER_TEMP/awf-content-bin"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP/awf-content-private" >> "$GITHUB_ENV"
+          {
+            git log -2 --format='%H %T %s'
+            cat /etc/os-release
+            uname -a
+            id
+            go version
+            stat -c '%U %u %a %n' / /home /home/runner "$RUNNER_TEMP" "$RUNNER_TEMP/awf-content-private"
+          } | tee evidence/source.txt
+          cp .github/fixtures/content_crash_test.go.txt internal/content/zz_ci_crash_test.go
+      - name: Resolve official SQLite dependencies and verify module bytes
+        id: dependencies
+        run: |
+          set -euo pipefail
+          go mod tidy 2>&1 | tee evidence/dependency-resolution.log
+          test "$(go list -m modernc.org/sqlite)" = 'modernc.org/sqlite v1.59.0'
+          go mod download -json > evidence/module-downloads.json
+          go mod verify 2>&1 | tee evidence/module-verify.log
+          go list -m -json all > evidence/modules.json
+          cp go.mod go.sum evidence/
+          git diff -- go.mod go.sum > evidence/dependency.patch
+          printf 'GOFLAGS=-mod=readonly\n' >> "$GITHUB_ENV"
+      - name: Real SQLite WAL transactions SIGKILL locks and directory tests
+        id: sqlite
+        if: always() && steps.dependencies.outcome == 'success'
+        run: |
+          set -euo pipefail
+          go test -tags sqliteintegration -race -count=1 -timeout=6m -json ./internal/content | tee evidence/sqlite-tests.jsonl
+          python3 - <<'PY'
+          import json
+          events = [json.loads(line) for line in open("evidence/sqlite-tests.jsonl")]
+          required = {"TestCIDirectoryTrustRequired", "TestCISQLiteSIGKILLWALAndRecovery", "TestSQLiteReceiptOwnershipCapacityAndLock", "TestSQLiteExactArtifactAtomicFailureAndFence", "TestSQLiteCancelCompletionRace", "TestSQLiteRestartUnknownAndExplicitRecovery", "TestPrivateLedgerOwnershipAndPaths/directory-trust"}
+          passed = {e.get("Test") for e in events if e["Action"] == "pass"}
+          skipped = {e.get("Test") for e in events if e["Action"] == "skip"}
+          assert required <= passed, sorted(required - passed)
+          assert not skipped, sorted(skipped)
+          PY
+      - name: All Go package and synthetic protocol tests with race detector
+        id: suite
+        if: always() && steps.dependencies.outcome == 'success'
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -timeout=8m -json ./... | tee evidence/all-tests.jsonl
+      - name: Vet all packages including SQLite tests
+        id: vet
+        if: always() && steps.dependencies.outcome == 'success'
+        run: |
+          set -euo pipefail
+          go vet -tags sqliteintegration ./... 2>&1 | tee evidence/vet.log
+      - name: Build all Linux amd64 packages and three command binaries without CGO
+        id: linux
+        if: always() && steps.dependencies.outcome == 'success'
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          go build -trimpath ./... 2>&1 | tee evidence/linux-build.log
+          for name in awf awf-node awf-content; do
+            go build -trimpath -o "$RUNNER_TEMP/awf-content-bin/$name-linux" "./cmd/$name" 2>&1 | tee -a evidence/linux-build.log
+            sha256sum "$RUNNER_TEMP/awf-content-bin/$name-linux" | tee -a evidence/linux-build.log
+            go version -m "$RUNNER_TEMP/awf-content-bin/$name-linux" | tee -a evidence/linux-build.log
+          done
+      - name: Cross-build all Windows amd64 packages and three commands without CGO
+        id: windows
+        if: always() && steps.dependencies.outcome == 'success'
+        env:
+          CGO_ENABLED: '0'
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          go build -trimpath ./... 2>&1 | tee evidence/windows-build.log
+          for name in awf awf-node awf-content; do
+            go build -trimpath -o "$RUNNER_TEMP/awf-content-bin/$name-windows.exe" "./cmd/$name" 2>&1 | tee -a evidence/windows-build.log
+            sha256sum "$RUNNER_TEMP/awf-content-bin/$name-windows.exe" | tee -a evidence/windows-build.log
+            go version -m "$RUNNER_TEMP/awf-content-bin/$name-windows.exe" | tee -a evidence/windows-build.log
+          done
+      - name: Record stage outcomes
+        if: always()
+        env:
+          STAGE_OUTCOMES: ${{ toJSON(steps) }}
+        run: |
+          mkdir -p evidence
+          printf '%s\n' "$STAGE_OUTCOMES" > evidence/stage-outcomes.json
+          printf 'Public Go and synthetic fixtures only. No private bridge, model calls, installation, service activation, release or deployment.\n' | tee evidence/scope.txt
+      - name: Preserve public test and dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: content-jobs-ubuntu-evidence
+          path: evidence/
+          retention-days: 1
+          if-no-files-found: error

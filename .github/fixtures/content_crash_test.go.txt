@@ -1,0 +1,210 @@
+//go:build sqliteintegration && linux
+
+// Copied into internal/content by the one-run CI workflow. Synthetic data only.
+package content
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"testing"
+	"time"
+)
+
+type ciCrashReceipt struct {
+	Completed string `json:"completed"`
+	Unknown   string `json:"unknown"`
+	Queued    string `json:"queued"`
+}
+
+var ciExactArtifact = []byte("{\n  \"example\": \"synthetic fixture\", \"unicode\": \"🙂\"\n}\n")
+
+func TestCIDirectoryTrustRequired(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ledger")
+	if err := validateDataDirectory(dir, true); err != nil {
+		t.Fatalf("CI must exercise trusted directory validation without skipping: %v", err)
+	}
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := validateDataDirectory(dir, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCISQLiteCrashHelper(t *testing.T) {
+	dir := os.Getenv("AWF_CI_CRASH_DIR")
+	if dir == "" {
+		return
+	}
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	completed := submitSQLite(t, s, "fixture-owner", 4)
+	ex, err := s.Claim(ctx, newID())
+	if err != nil || ex == nil {
+		t.Fatalf("claim completed fixture: %v", err)
+	}
+	outcome := fixtureSuccess()
+	artifact := artifactFor(ciExactArtifact)
+	outcome.Artifact, outcome.RawArtifact = &artifact, ciExactArtifact
+	if err := s.Finish(ctx, *ex, outcome); err != nil {
+		t.Fatal(err)
+	}
+	unknown := submitSQLite(t, s, "fixture-owner", 4)
+	queued := submitSQLite(t, s, "fixture-owner", 4)
+	ex, err = s.Claim(ctx, newID())
+	if err != nil || ex == nil || ex.JobID != unknown.JobID {
+		t.Fatalf("claim unknown fixture: %v", err)
+	}
+	startToken, err := processStartToken(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordBinding(ctx, *ex, ProcessBinding{PID: os.Getpid(), StartToken: startToken, SessionRef: "synthetic-session"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Cancel(ctx, "fixture-owner", unknown.JobID); err != nil {
+		t.Fatal(err)
+	}
+	// Leave a real write transaction open at SIGKILL. Small cache encourages
+	// page spill; committed WAL data must survive and these writes must not.
+	if _, err := s.db.Exec(`PRAGMA cache_size=1; PRAGMA cache_spill=ON`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO artifacts(job_id,schema,media_type,bytes,sha256,raw) VALUES (?,?,?,?,?,?)`, unknown.JobID, artifact.Schema, artifact.MediaType, artifact.Bytes, artifact.SHA256, bytes.Repeat([]byte("x"), 65536)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE jobs SET status='succeeded',cancel_requested=0 WHERE job_id=?`, unknown.JobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(ciCrashReceipt{completed.JobID, unknown.JobID, queued.JobID}); err != nil {
+		t.Fatal(err)
+	}
+	// The parent kills this process; no deferred SQL close or transaction commit.
+	time.Sleep(time.Minute)
+	t.Fatal("parent did not SIGKILL crash helper")
+}
+
+func TestCISQLiteSIGKILLWALAndRecovery(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ledger")
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, bin, "-test.run=^TestCISQLiteCrashHelper$")
+	child.Env = []string{"PATH=/usr/bin:/bin", "TMPDIR=" + os.TempDir(), "AWF_CI_CRASH_DIR=" + dir}
+	var stderr bytes.Buffer
+	child.Stderr = &stderr
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	var receipt ciCrashReceipt
+	if err := json.NewDecoder(stdout).Decode(&receipt); err != nil {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+		t.Fatalf("crash helper handshake: %v %s", err, stderr.String())
+	}
+	if receipt.Completed == "" || receipt.Unknown == "" || receipt.Queued == "" {
+		t.Fatal("incomplete crash handshake")
+	}
+	if info, err := os.Stat(filepath.Join(dir, "content.db-wal")); err != nil || info.Size() == 0 {
+		t.Fatalf("no live WAL before crash: %v", err)
+	}
+	startToken, err := processStartToken(child.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	err = child.Wait()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("expected SIGKILL exit: %v", err)
+	}
+	status, ok := exit.Sys().(syscall.WaitStatus)
+	if !ok || status.Signal() != syscall.SIGKILL {
+		t.Fatalf("unexpected crash status: %v", exit)
+	}
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if s != nil {
+			_ = s.Close()
+		}
+	}()
+	checkCtx := context.Background()
+	var integrity string
+	if err := s.db.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("post-crash integrity: %q %v", integrity, err)
+	}
+	done, err := s.Get(checkCtx, "fixture-owner", receipt.Completed)
+	if err != nil || done.Status != Succeeded || done.Result == nil || done.Result.SHA256 != artifactFor(ciExactArtifact).SHA256 {
+		t.Fatalf("committed success lost after SIGKILL: %+v %v", done, err)
+	}
+	raw, err := VerifyArtifact(*done.Result)
+	if err != nil || !bytes.Equal(raw, ciExactArtifact) {
+		t.Fatal("committed exact artifact changed after SIGKILL")
+	}
+	unknown, err := s.Get(checkCtx, "fixture-owner", receipt.Unknown)
+	if err != nil || unknown.Status != NeedsVerification || unknown.ErrorCode != "restart_unknown" || !unknown.CancelRequested || unknown.Result != nil {
+		t.Fatalf("unknown execution or durable cancel changed: %+v %v", unknown, err)
+	}
+	var uncommitted int
+	if err := s.db.QueryRow(`SELECT count(*) FROM artifacts WHERE job_id=?`, receipt.Unknown).Scan(&uncommitted); err != nil || uncommitted != 0 {
+		t.Fatal("uncommitted artifact survived SIGKILL")
+	}
+	if _, err := s.Claim(checkCtx, newID()); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("crash silently resumed execution")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = nil
+	s, err = OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := s.InspectRecovery(checkCtx)
+	if err != nil || !report.Halted || len(report.UnknownAttempts) != 1 || report.QueuedCount != 1 {
+		t.Fatalf("recovery evidence lost on second reopen: %+v %v", report, err)
+	}
+	binding := report.UnknownAttempts[0]
+	if binding.BridgePID != child.Process.Pid || binding.BridgeStartToken != startToken || binding.NativeSessionRef != "synthetic-session" {
+		t.Fatalf("persisted process/session binding changed after SIGKILL: %+v", binding)
+	}
+	if err := s.RecoverExecution(checkCtx, report.RecoveryToken, true); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.Claim(checkCtx, newID())
+	if err != nil || next == nil || next.JobID != receipt.Queued {
+		t.Fatal("explicit recovery replayed an unknown execution")
+	}
+	unknown, err = s.Get(checkCtx, "fixture-owner", receipt.Unknown)
+	if err != nil || unknown.Status != NeedsVerification {
+		t.Fatal("explicit recovery changed unknown outcome")
+	}
+}
