@@ -36,7 +36,7 @@ func TestPrivateOwnerAndRequestGrammar(t *testing.T) {
 	var calls atomic.Int32
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		writeJSON(w, 202, fixtureReceipt("owner-a"))
+		writeJSON(w, 202, fixtureReceipt())
 	}))
 	for _, request := range []string{"AAAAAAAA-2222-4333-8444-555555555555", "11111111-2222-3333-8444-555555555555", "11111111-2222-5333-8444-555555555555", "11111111-2222-4333-7444-555555555555"} {
 		body := `{"version":1,"requestId":"` + request + `","capability":"shortpost","payloadSchema":"content.v1","opaquePayload":{}}`
@@ -53,7 +53,7 @@ func TestPrivateListNullAndEmptyContinuation(t *testing.T) {
 	var calls atomic.Int32
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.URL.Query().Get("owner") != "owner-a" || r.Header.Get(OwnerHeader) != "owner-a" {
+		if r.URL.Query().Get("owner") != "owner-a" || r.Header.Get(OwnerHeader) != "" {
 			t.Error("owner was not injected from Go auth")
 		}
 		if r.URL.Query().Has("cursor") {
@@ -91,7 +91,7 @@ func TestPrivateListNullAndEmptyContinuation(t *testing.T) {
 }
 
 func TestPrivateListRequiresNullableCursorField(t *testing.T) {
-	for _, suffix := range []string{"", `,"nextCursor":{}`, `,"nextCursor":[]`, `,"nextCursor":12`, `,"nextCursor":""`} {
+	for _, suffix := range []string{"", `,"nextCursor":{}`, `,"nextCursor":[]`, `,"nextCursor":12`} {
 		t.Run(suffix, func(t *testing.T) {
 			handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"version":1,"items":[]` + suffix + `}`))
@@ -107,7 +107,7 @@ func TestCancelledReceiptDoesNotDeliverOpaqueResult(t *testing.T) {
 	for _, path := range []string{"/conversations/1/submissions/2", "/conversations/1/submissions/2/abort"} {
 		t.Run(path, func(t *testing.T) {
 			handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				receipt := fixtureReceipt("owner-a")
+				receipt := fixtureReceipt()
 				receipt.Status = "done"
 				aborted := true
 				receipt.AbortRequested = &aborted

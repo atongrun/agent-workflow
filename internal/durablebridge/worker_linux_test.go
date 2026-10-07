@@ -274,7 +274,7 @@ func TestWorkerChildFixture(t *testing.T) {
 		if mode == "exit-on-request" {
 			os.Exit(23)
 		}
-		writeJSON(w, 200, fixtureReceipt(r.Header.Get(OwnerHeader)))
+		writeJSON(w, 200, fixtureReceipt())
 	})}
 	if mode == "ignore-term" {
 		signal.Ignore(syscall.SIGTERM)

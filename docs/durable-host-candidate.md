@@ -8,9 +8,9 @@ Existing unrelated Host/Dash behavior is unchanged.
 
 Go now implements the OS storage lease, long-lived worker lifecycle, Unix HTTP,
 bounded request/receipt/list validation, trusted owner authentication and
-composition on the existing Host listener. The [explicit wire defaults](durable-transport-v1-draft.md)
-are isolated in `internal/durablebridge/contract.go`. The parent authorized
-independent implementation while PRIVATE finalizes its adapter; actual
+composition on the existing Host listener. The [generic PRIVATE wire](durable-transport-v1-draft.md)
+is isolated in `internal/durablebridge/contract.go`. The parent supplied full
+receipt/error/route/owner/bounds fixtures after the first feature handoff; actual
 interoperability remains an acceptance gate. This is not an installed service or
 native acceptance result.
 
@@ -31,7 +31,7 @@ Durable config example (operator-provisioned paths; not run here):
   "piAgentDir":"/var/lib/awf/pi-agent",
   "worker":{
     "executable":"/opt/awf/runtime/node/bin/node",
-    "args":["/opt/awf/private/durable-worker.mjs"],
+    "args":["/opt/awf/private/durable-worker.mjs","--bootstrap=/opt/awf/private/bootstrap.mjs"],
     "env":{}
   },
   "credentials":[{"owner":"operator-user","tokenEnv":"AWF_CONTENT_TOKEN"}],
@@ -97,12 +97,19 @@ Go 1.25.14, local Linux subprocess fixtures, no real model calls:
   letters/digits/underscore/hyphen; request ID is lowercase UUIDv4; list defaults
   to 20 and allows at most 50, injects the trusted owner query, requires an
   explicit nullable cursor, and forwards an empty continuation page once.
-  Cancelled or abort responses cannot deliver an opaque result. The unknown-join
+  Worker GET/cancel routes translate to `/v1/submissions/by-request/{id}` and
+  `/v1/submissions/{cid}/{sid}`, with owner only in trusted query/body. Every
+  receipt/list item has version; no owner echo. Pending has cid and omits sid.
+  Worker string errors and submit-only 202 are separate from public error
+  objects. Public abort drops a validated completed late-cancel result.
+  Complete request frames are 128 KiB, opaque input/result 64 KiB and cursor
+  2048 bytes. The unknown-join
   fixture verifies real flock retention after a synthetic join observation;
   it starts no process and does not establish native quiescence.
 * Composition uses the actual existing Host handler and a live Unix worker
   fixture. It does not run the actual PRIVATE SDK or full installed command.
-* `go test -race -count=1 ./...` passed with fixture umask 022 (Host 69.443s,
+* The preceding implementation (`72e7225`) passed full
+  `go test -race -count=1 ./...` with fixture umask 022 (Host 69.443s,
   durablebridge 5.803s, command composition 1.022s), as did `go vet ./...` and
   Linux/Windows amd64 CGO-free `go build -buildvcs=false ./...`. This worktree
   environment could not provide automatic VCS stamp; source commit/tree are
@@ -116,21 +123,22 @@ Go 1.25.14, local Linux subprocess fixtures, no real model calls:
 * Independent read-only review closed configuration ancestry/canonical paths,
   literal JSON tags, final frame bounds, public reason and cleanup error issues.
   It did not validate PRIVATE/native storage, systemd or transport agreement.
-* After the wire changes, `go test -race ./internal/durablebridge ./cmd/awf`
-  passed (7.751s/1.023s). Targeted vet and Linux/Windows amd64 compilation also
-  passed after these changes. Independent review ran the five new targeted race
-  fixtures (3.037s) and found no new source blocker. Full-suite results above
-  belong to the preceding complete candidate; these new fixtures do not prove
-  PRIVATE interoperability.
+* Full wire fixtures cover the actual TS generate/rewrite canonical byte/SHA
+  references, root-zero depth (31/32 accept, 33 reject), lexical numeric object
+  keys, safe number/Unicode/surrogate behavior, final input/frame/result bounds,
+  exact worker paths/owner carriers, pending omitted sid, item version/detail,
+  string error projection, late cancel and cursor continuation. Node scalar
+  comparison is local Node 24.19.0, not a pinned SDK/Harness run. Final scoped
+  race passed (durablebridge 8.165s / command 1.026s); full `go vet ./...` and
+  Linux/Windows amd64 CGO-free build passed. Independent changed-package race
+  passed (7.766s / 1.021s). Exact results are retained with the final handoff;
+  earlier full-suite evidence above does not stand for a new full-suite run.
 
 ## Remaining gates
 
-The full success/error/admission-pending envelope, list-item JSON, GET owner
-carrier and cancel body/return shape still require PRIVATE's exact examples.
-In particular, current `Page.Items []Summary` omits receipt-level version/owner;
-strict decoding would reject a PRIVATE item containing them. Current GET owner
-uses `X-AWF-Owner`, while submit/cancel also use the body. Do not represent this
-known-constraint alignment as a complete cross-implementation wire freeze.
+The generic wire and exact TS byte probes are reconciled in local source and
+synthetic fixtures. Actual Go/PRIVATE/native interoperability remains to run on
+PRIVATE's prepared Linux CI; this public worker does not consume that CI grant.
 Real pinned native Harness/SQLite tests with faux models must cover reopen/crash,
 dedup/model freeze, cancellation/replay ordering, result-reference authorization,
 Unix socket and Linux flock inheritance. Full cmd lifecycle, fixed permissions,
@@ -145,8 +153,9 @@ system mutation or user data deletion is part of this implementation.
 
 This candidate has no tracked `.github/workflows` files and adds no CI workflow.
 The unrelated branch's existing test workflow must not be merged into it.
-A future push still requires parent authorization: repository-level GitHub Apps,
-webhooks or external runners may react to branch creation even when this tree
-contains no Actions workflow. Their settings are not established by this local
+The parent authorized necessary reviewed compatibility fixes as ordinary
+fast-forward pushes to the same feature branch. Repository-level GitHub Apps,
+webhooks or external runners may react even when this tree contains no Actions
+workflow. Their settings are not established by this local
 source review. PRIVATE source, SDK, credentials and Library input are absent
 from the patch; its worker executable remains an operator-supplied reference.

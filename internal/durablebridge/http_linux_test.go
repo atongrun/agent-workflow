@@ -24,11 +24,12 @@ const fixtureTokenB = "fixture-owner-b-token-1234567890"
 
 func fixtureSummary(request string, status string) Summary {
 	abort := false
-	return Summary{RequestID: request, ConversationID: 1, SubmissionID: 2, Status: status, AbortRequested: &abort}
+	sid := uint64(2)
+	return Summary{Version: 1, RequestID: request, ConversationID: 1, SubmissionID: &sid, Status: status, AbortRequested: &abort}
 }
 
-func fixtureReceipt(owner string) Receipt {
-	return Receipt{Version: 1, Owner: owner, Summary: fixtureSummary(fixtureRequest, "placed")}
+func fixtureReceipt() Receipt {
+	return Receipt{Summary: fixtureSummary(fixtureRequest, "placed")}
 }
 
 // This is a real Unix HTTP server with synthetic responses, not a Pi Harness.
@@ -80,7 +81,7 @@ func TestOwnerFingerprintAndCanonicalInputUnixFixture(t *testing.T) {
 	var mu sync.Mutex
 	var submissions []Submit
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/submissions" || r.Method != "POST" || r.Header.Get(OwnerHeader) != "owner-a" || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Idempotency-Key") != "" {
+		if r.URL.Path != "/v1/submissions" || r.Method != "POST" || r.Header.Get(OwnerHeader) != "" || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Idempotency-Key") != "" {
 			t.Error("untrusted route/header reached worker")
 		}
 		b, _ := io.ReadAll(r.Body)
@@ -91,9 +92,9 @@ func TestOwnerFingerprintAndCanonicalInputUnixFixture(t *testing.T) {
 		mu.Lock()
 		submissions = append(submissions, input)
 		mu.Unlock()
-		writeJSON(w, 202, fixtureReceipt("owner-a"))
+		writeJSON(w, 202, fixtureReceipt())
 	}))
-	for _, payload := range []string{`{"b":2,"a":1.0}`, `{ "a":1.0, "b":2 }`} {
+	for _, payload := range []string{`{"b":2,"a":1.0}`, `{ "a":1, "b":2 }`} {
 		body := `{"version":1,"requestId":"` + fixtureRequest + `","capability":"shortpost","payloadSchema":"content.v1","opaquePayload":` + payload + `}`
 		if w := publicCall(handler, "POST", "/submissions", body, fixtureToken); w.Code != 202 {
 			t.Fatalf("submit failed: %d %s", w.Code, w.Body.String())
@@ -101,8 +102,8 @@ func TestOwnerFingerprintAndCanonicalInputUnixFixture(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(submissions) != 2 || submissions[0].Fingerprint != submissions[1].Fingerprint || string(submissions[0].OpaquePayload) != `{"a":1.0,"b":2}` {
-		t.Fatal("canonical retry changed fingerprint or numeric lexeme")
+	if len(submissions) != 2 || submissions[0].Fingerprint != submissions[1].Fingerprint || string(submissions[0].OpaquePayload) != `{"a":1,"b":2}` {
+		t.Fatal("canonical retry changed fingerprint or number normalization")
 	}
 }
 
@@ -110,7 +111,7 @@ func TestUntrustedInputDoesNotReachWorkerUnixFixture(t *testing.T) {
 	var calls atomic.Int32
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		writeJSON(w, 200, fixtureReceipt("owner-a"))
+		writeJSON(w, 200, fixtureReceipt())
 	}))
 	valid := `{"version":1,"requestId":"` + fixtureRequest + `","capability":"shortpost","payloadSchema":"content.v1","opaquePayload":{}}`
 	for _, body := range []string{
@@ -147,33 +148,36 @@ func TestFinalWorkerEnvelopeBudgetUnixFixture(t *testing.T) {
 		if len(b) > MaxWorkerRequestBytes || strings.Contains(string(b), `\u003c`) {
 			t.Error("final frame expanded past its budget or HTML escaped")
 		}
-		writeJSON(w, 202, fixtureReceipt("owner-a"))
+		writeJSON(w, 202, fixtureReceipt())
 	}))
 	wrap := func(payload string) string {
 		return `{"version":1,"requestId":"` + fixtureRequest + `","capability":"shortpost","payloadSchema":"content.v1","opaquePayload":"` + payload + `"}`
 	}
-	body := wrap(strings.Repeat("<&>", (MaxRequestBytes-300)/3))
+	body := wrap(strings.Repeat("<&>", (MaxInputBytes-3)/3))
 	if len(body) > MaxRequestBytes {
 		t.Fatal("invalid fixture")
 	}
 	if w := publicCall(handler, "POST", "/submissions", body, fixtureToken); w.Code != 202 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	body = wrap(strings.Repeat("\u2028", (MaxRequestBytes-300)/3))
+	body = wrap(strings.Repeat("\u2028", (MaxInputBytes-3)/3))
 	if len(body) > MaxRequestBytes {
 		t.Fatal("invalid fixture")
 	}
-	if w := publicCall(handler, "POST", "/submissions", body, fixtureToken); w.Code != 413 {
-		t.Fatal("expanded final frame was sent", w.Code)
+	if w := publicCall(handler, "POST", "/submissions", body, fixtureToken); w.Code != 202 {
+		t.Fatal("literal Unicode was unnecessarily expanded", w.Code)
 	}
-	if calls.Load() != 1 {
+	if w := publicCall(handler, "POST", "/submissions", wrap(strings.Repeat("x", MaxInputBytes)), fixtureToken); w.Code != 413 {
+		t.Fatal("oversized opaque input was sent", w.Code)
+	}
+	if calls.Load() != 2 {
 		t.Fatal("oversized final frame reached worker")
 	}
 }
 
 func TestArbitraryNativeReasonIsNotPublicUnixFixture(t *testing.T) {
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receipt := fixtureReceipt("owner-a")
+		receipt := fixtureReceipt()
 		receipt.Status = "unanswered"
 		receipt.Reason = "private-secret-model-detail"
 		if r.URL.Path == "/v1/submissions" {
@@ -203,7 +207,7 @@ func TestLostMutationAckIsNotRetriedAndLookupIsReadOnlyUnixFixture(t *testing.T)
 			return
 		}
 		reads.Add(1)
-		writeJSON(w, 200, fixtureReceipt(r.Header.Get(OwnerHeader)))
+		writeJSON(w, 200, fixtureReceipt())
 	}))
 	body := `{"version":1,"requestId":"` + fixtureRequest + `","capability":"shortpost","payloadSchema":"content.v1","opaquePayload":{}}`
 	if w := publicCall(handler, "POST", "/submissions", body, fixtureToken); w.Code != 503 {
@@ -230,12 +234,13 @@ func TestNativeReceiptScopeAndBoundsUnixFixture(t *testing.T) {
 	for _, name := range []string{"wrong-owner", "wrong-id", "unsafe-integer", "invented-status", "missing-abort", "done-reason", "unanswered-without-reason", "huge-result", "huge-response", "private-detail", "redirect", "valid-result"} {
 		t.Run(name, func(t *testing.T) {
 			handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				receipt := fixtureReceipt("owner-a")
+				receipt := fixtureReceipt()
 				switch name {
 				case "wrong-owner":
-					receipt.Owner = "owner-b"
+					w.Write([]byte(`{"version":1,"owner":"owner-b","requestId":"` + fixtureRequest + `","conversationId":1,"submissionId":2,"status":"placed","abortRequested":false}`))
+					return
 				case "wrong-id":
-					receipt.SubmissionID = 3
+					*receipt.SubmissionID = 3
 				case "unsafe-integer":
 					receipt.ConversationID = MaxNativeID + 1
 				case "invented-status":
@@ -269,7 +274,7 @@ func TestNativeReceiptScopeAndBoundsUnixFixture(t *testing.T) {
 			}))
 			w := publicCall(handler, "GET", "/conversations/1/submissions/2", "", fixtureToken)
 			want := 503
-			if name == "valid-result" {
+			if name == "valid-result" || name == "done-reason" || name == "unanswered-without-reason" {
 				want = 200
 			}
 			if w.Code != want || strings.Contains(w.Body.String(), "private-secret") {
@@ -283,12 +288,12 @@ func TestBoundedSummaryPaginationAndOwnerIsolationUnixFixture(t *testing.T) {
 	var calls atomic.Int32
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.URL.Query().Get("owner") != r.Header.Get(OwnerHeader) || r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("cursor") != "opaque+/=" {
+		if (r.URL.Query().Get("owner") != "owner-a" && r.URL.Query().Get("owner") != "owner-b") || r.Header.Get(OwnerHeader) != "" || r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("cursor") != "opaque+/=" {
 			t.Error("pagination was not normalized")
 		}
 		first := fixtureSummary(fixtureRequest, "queued")
 		second := fixtureSummary(fixtureRequest2, "done")
-		second.SubmissionID = 3
+		*second.SubmissionID = 3
 		writeJSON(w, 200, Page{Version: 1, Items: []Summary{first, second}, NextCursor: json.RawMessage(`"next.cursor"`)})
 	}))
 	for _, token := range []string{fixtureToken, fixtureTokenB} {
@@ -297,7 +302,7 @@ func TestBoundedSummaryPaginationAndOwnerIsolationUnixFixture(t *testing.T) {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
-	for _, path := range []string{"/submissions?limit=101", "/submissions?limit=2&limit=3", "/submissions?owner=owner-b", "/submissions?cursor=", "/submissions?cursor=a&cursor=b", "/submissions?offset=0", "/conversations/01/submissions/2", "/conversations/9007199254740992/submissions/2"} {
+	for _, path := range []string{"/submissions?limit=101", "/submissions?limit=2&limit=3", "/submissions?owner=owner-b", "/submissions?cursor=a&cursor=b", "/submissions?offset=0", "/conversations/01/submissions/2", "/conversations/9007199254740992/submissions/2"} {
 		if w := publicCall(handler, "GET", path, "", fixtureToken); w.Code != 400 {
 			t.Fatal(path, w.Code)
 		}
@@ -318,7 +323,7 @@ func TestBoundedSummaryPaginationAndOwnerIsolationUnixFixture(t *testing.T) {
 
 func TestListCannotExposeResultUnixFixture(t *testing.T) {
 	handler := fixtureUnixHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"version":1,"items":[{"requestId":"` + fixtureRequest + `","conversationId":1,"submissionId":2,"status":"done","abortRequested":false,"result":{"private":"do-not-expose"}}],"nextCursor":null}`))
+		w.Write([]byte(`{"version":1,"items":[{"version":1,"requestId":"` + fixtureRequest + `","conversationId":1,"submissionId":2,"status":"done","abortRequested":false,"result":{"private":"do-not-expose"}}],"nextCursor":null}`))
 	}))
 	w := publicCall(handler, "GET", "/submissions", "", fixtureToken)
 	if w.Code != 503 || strings.Contains(w.Body.String(), "do-not-expose") {

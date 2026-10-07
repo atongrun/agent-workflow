@@ -42,14 +42,14 @@ func NewUnixClient(socket string, timeout time.Duration) (*Client, error) {
 
 func (c *Client) Close() { c.transport.CloseIdleConnections() }
 
-func (c *Client) call(ctx context.Context, method, path, owner string, body any) ([]byte, int, error) {
+func (c *Client) call(ctx context.Context, method, path string, body any) ([]byte, int, error) {
 	if c.available != nil && !c.available() {
 		return nil, 0, ErrUnavailable
 	}
-	return c.exchange(ctx, method, path, owner, body)
+	return c.exchange(ctx, method, path, body)
 }
 
-func (c *Client) exchange(ctx context.Context, method, path, owner string, body any) ([]byte, int, error) {
+func (c *Client) exchange(ctx context.Context, method, path string, body any) ([]byte, int, error) {
 	var input []byte
 	var err error
 	if body != nil {
@@ -66,9 +66,6 @@ func (c *Client) exchange(ctx context.Context, method, path, owner string, body 
 		return nil, 0, ErrInvalid
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if owner != "" {
-		req.Header.Set(OwnerHeader, owner)
-	}
 	res, err := c.http.Do(req)
 	if err != nil {
 		return nil, 0, ErrUnavailable

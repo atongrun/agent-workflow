@@ -1,6 +1,7 @@
 package durablebridge
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -76,6 +77,7 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, PublicPrefix)
+	workerPath := "/v1" + path
 	var body any
 	var in SubmitInput
 	var requestID string
@@ -102,11 +104,18 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 				writeCode(w, 400, "invalid_input")
 				return
 			}
-			// Send the canonical JSON that was hashed, preserving numeric lexemes.
-			// Map keys are sorted by encoding/json; whitespace/key order cannot
-			// turn an otherwise identical retry into a new fingerprint.
-			in.OpaquePayload, _ = marshalFrame(payload)
-			canonical, _ := marshalFrame(fingerprintInput{in.Version, in.Capability, in.PayloadSchema, in.OpaquePayload})
+			// Hash business input before PRIVATE fills defaults. Scalars use
+			// JSON.stringify rules; version, owner and requestId are excluded.
+			in.OpaquePayload, err = canonicalJSON(payload)
+			if err != nil || len(in.OpaquePayload) > MaxInputBytes {
+				writeCode(w, 413, "invalid_input")
+				return
+			}
+			canonical, err := canonicalJSON(map[string]any{"capability": in.Capability, "payloadSchema": in.PayloadSchema, "opaquePayload": payload})
+			if err != nil {
+				writeCode(w, 400, "invalid_input")
+				return
+			}
 			hash := sha256.Sum256(canonical)
 			body = Submit{SubmitInput: in, Owner: owner, Fingerprint: hex.EncodeToString(hash[:])}
 			requestID = in.RequestID
@@ -131,13 +140,13 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 				}
 				limit = n
 			}
-			if q.Has("cursor") && !validText(q.Get("cursor"), MaxCursorBytes, false) {
+			if q.Has("cursor") && !validText(q.Get("cursor"), MaxCursorBytes, true) {
 				writeCode(w, 400, "invalid_input")
 				return
 			}
 			q.Set("limit", strconv.Itoa(limit))
 			q.Set("owner", owner)
-			path += "?" + q.Encode()
+			workerPath += "?" + q.Encode()
 		default:
 			writeCode(w, 405, "method_not_allowed")
 			return
@@ -150,8 +159,19 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 		switch {
 		case path == "/health" && r.Method == http.MethodGet:
-		case len(parts) == 2 && parts[0] == "requests" && requestPattern.MatchString(parts[1]) && r.Method == http.MethodGet:
+		case (len(parts) == 2 || (len(parts) == 3 && parts[2] == "abort")) && parts[0] == "requests" && requestPattern.MatchString(parts[1]):
 			requestID = parts[1]
+			workerPath = "/v1/submissions/by-request/" + requestID
+			if len(parts) == 2 && r.Method == http.MethodGet {
+				break
+			}
+			if len(parts) == 3 && r.Method == http.MethodPost {
+				workerPath += "/cancel"
+				body = cancelInput{ProtocolVersion, owner}
+				break
+			}
+			writeCode(w, 405, "method_not_allowed")
+			return
 		case (len(parts) == 4 || (len(parts) == 5 && parts[4] == "abort")) && parts[0] == "conversations" && parts[2] == "submissions":
 			conversationID = parseNativeID(parts[1])
 			submissionID = parseNativeID(parts[3])
@@ -159,14 +179,13 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 				writeCode(w, 400, "invalid_input")
 				return
 			}
+			workerPath = "/v1/submissions/" + parts[1] + "/" + parts[3]
 			if len(parts) == 4 && r.Method == http.MethodGet {
 				break
 			}
 			if len(parts) == 5 && r.Method == http.MethodPost {
-				body = struct {
-					Version int    `json:"version"`
-					Owner   string `json:"owner"`
-				}{ProtocolVersion, owner}
+				workerPath += "/cancel"
+				body = cancelInput{ProtocolVersion, owner}
 				break
 			}
 			writeCode(w, 405, "method_not_allowed")
@@ -176,6 +195,9 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 			return
 		}
 	}
+	if r.Method == http.MethodGet && limit == 0 && path != "/health" {
+		workerPath += "?" + url.Values{"owner": {owner}}.Encode()
+	}
 	if !(r.Method == http.MethodPost && path == "/submissions") {
 		b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1))
 		if err != nil || len(b) != 0 {
@@ -183,7 +205,7 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 			return
 		}
 	}
-	b, status, err := c.call(r.Context(), r.Method, "/v1"+path, owner, body)
+	b, status, err := c.call(r.Context(), r.Method, workerPath, body)
 	if err != nil {
 		if errors.Is(err, ErrFrameTooLarge) {
 			writeCode(w, 413, "invalid_input")
@@ -193,15 +215,19 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 		return
 	}
 	if status >= 300 {
-		var e ErrorEnvelope
-		if strictJSON(b, &e) != nil || e.Version != ProtocolVersion || errorStatus(e.Error.Code) != status {
+		var e WorkerError
+		if strictJSON(b, &e) != nil || e.Version != ProtocolVersion || errorStatus(e.Error) != status {
 			writeCode(w, 503, "unavailable")
 			return
 		}
-		writeCode(w, status, e.Error.Code)
+		writeCode(w, status, e.Error)
 		return
 	}
-	if status != 200 && !(r.Method == http.MethodPost && path == "/submissions" && status == 202) {
+	expectedStatus := 200
+	if r.Method == http.MethodPost && path == "/submissions" {
+		expectedStatus = 202
+	}
+	if status != expectedStatus {
 		writeCode(w, 503, "unavailable")
 		return
 	}
@@ -220,32 +246,36 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 			writeCode(w, 503, "unavailable")
 			return
 		}
-		seen := map[[2]uint64]bool{}
 		for i, item := range page.Items {
-			key := [2]uint64{item.ConversationID, item.SubmissionID}
-			if !validSummary(item) || seen[key] {
+			if !validSummary(item) {
 				writeCode(w, 503, "unavailable")
 				return
 			}
-			seen[key] = true
 			page.Items[i].Reason = publicReason(item.Reason)
+			page.Items[i].Detail = nil
 		}
 		writeJSON(w, 200, page)
 		return
 	}
 	var receipt Receipt
-	if strictJSON(b, &receipt) != nil || receipt.Version != ProtocolVersion || receipt.Owner != owner || !validSummary(receipt.Summary) || (requestID != "" && receipt.RequestID != requestID) || (conversationID != 0 && (receipt.ConversationID != conversationID || receipt.SubmissionID != submissionID)) || len(receipt.Result) > MaxResultBytes {
+	if strictJSON(b, &receipt) != nil || !validSummary(receipt.Summary) || (requestID != "" && receipt.RequestID != requestID) || (conversationID != 0 && (receipt.ConversationID != conversationID || nativeSID(receipt.Summary) != submissionID)) || len(receipt.Result) > MaxResultBytes {
 		writeCode(w, 503, "unavailable")
 		return
 	}
 	if len(receipt.Result) > 0 {
 		var result any
-		if receipt.Status != "done" || *receipt.AbortRequested || (r.Method == http.MethodPost && strings.HasSuffix(path, "/abort")) || strictJSON(receipt.Result, &result) != nil || result == nil {
+		if receipt.Status != "done" || *receipt.AbortRequested || strictJSON(receipt.Result, &result) != nil {
 			writeCode(w, 503, "unavailable")
 			return
 		}
 	}
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/abort") {
+		// Completion wins over a late cancel. Validate cached delivery above,
+		// then omit it from the public abort projection without inventing work.
+		receipt.Result = nil
+	}
 	receipt.Reason = publicReason(receipt.Reason)
+	receipt.Detail = nil
 	writeJSON(w, status, receipt)
 }
 
@@ -253,8 +283,11 @@ func validCursor(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
 	}
-	var cursor *string
-	return strictJSON(raw, &cursor) == nil && (cursor == nil || validText(*cursor, MaxCursorBytes, false))
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return true
+	}
+	var cursor string
+	return strictJSON(raw, &cursor) == nil && validText(cursor, MaxCursorBytes, true)
 }
 
 func publicReason(reason string) string {
@@ -275,17 +308,36 @@ func parseNativeID(text string) uint64 {
 }
 
 func validSummary(s Summary) bool {
-	if !requestPattern.MatchString(s.RequestID) || s.ConversationID == 0 || s.ConversationID > MaxNativeID || s.SubmissionID == 0 || s.SubmissionID > MaxNativeID || s.AbortRequested == nil {
+	if s.Version != ProtocolVersion || !requestPattern.MatchString(s.RequestID) || s.ConversationID == 0 || s.ConversationID > MaxNativeID || s.AbortRequested == nil {
+		return false
+	}
+	if s.Detail != nil {
+		switch *s.Detail {
+		case "dispatch_requires_verification", "request_budget_exhausted", "stage_failed":
+		default:
+			return false
+		}
+	}
+	if s.Status == "admission_pending" {
+		return s.SubmissionID == nil
+	}
+	if nativeSID(s) == 0 || nativeSID(s) > MaxNativeID {
 		return false
 	}
 	switch s.Status {
-	case "queued", "placed", "done":
-		return s.Reason == ""
-	case "unanswered":
-		return validText(s.Reason, 256, false)
+	case "queued", "placed", "done", "unanswered":
+		// reason is an optional native string, projected to safe public codes.
+		return true
 	default:
 		return false
 	}
+}
+
+func nativeSID(s Summary) uint64 {
+	if s.SubmissionID == nil {
+		return 0
+	}
+	return *s.SubmissionID
 }
 
 func validText(s string, max int, empty bool) bool {
@@ -296,7 +348,7 @@ func errorStatus(code string) int {
 	switch code {
 	case "invalid_input":
 		return 400
-	case "request_conflict", "admission_pending":
+	case "request_conflict":
 		return 409
 	case "not_found":
 		return 404

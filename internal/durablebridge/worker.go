@@ -130,7 +130,7 @@ func startOwned(ctx context.Context, cfg Config, lease *StorageLease, runtimeDir
 	startup, cancel := context.WithTimeout(ctx, time.Duration(cfg.StartupSeconds)*time.Second)
 	defer cancel()
 	for {
-		b, status, err := client.exchange(startup, http.MethodGet, "/v1/health", "", nil)
+		b, status, err := client.exchange(startup, http.MethodGet, "/v1/health", nil)
 		var health Health
 		if err == nil && status == 200 && strictJSON(b, &health) == nil && health.Version == ProtocolVersion && health.DurableVersion == DurableVersion && health.Ready {
 			select {

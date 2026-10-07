@@ -42,7 +42,7 @@ func TestOneHostListenerKeepsNativeContentCredentialScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(durablebridge.OwnerHeader) != "fixture-owner" || r.Header.Get("Authorization") != "" {
+		if r.Header.Get(durablebridge.OwnerHeader) != "" || r.Header.Get("Authorization") != "" || r.URL.RawQuery != "" {
 			t.Error("authentication was not kept at Host boundary")
 		}
 		w.Header().Set("Content-Type", "application/json")
