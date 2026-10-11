@@ -20,6 +20,12 @@ const (
 	MaxPageLimit          = 50
 )
 
+// Exact PRIVATE SDK pins; wire-v1 schema validation remains independent.
+// Keep the previous release available for an atomic runtime rollback.
+func supportedDurableVersion(version string) bool {
+	return version == DurableVersion || version == "1.1.0"
+}
+
 type SubmitInput struct {
 	Version       int             `json:"version"`
 	RequestID     string          `json:"requestId"`

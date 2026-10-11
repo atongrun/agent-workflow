@@ -233,7 +233,7 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request, owner string) {
 	}
 	if path == "/health" {
 		var h Health
-		if strictJSON(b, &h) != nil || h.Version != ProtocolVersion || h.DurableVersion != DurableVersion || !h.Ready {
+		if strictJSON(b, &h) != nil || h.Version != ProtocolVersion || !supportedDurableVersion(h.DurableVersion) || !h.Ready {
 			writeCode(w, 503, "unavailable")
 			return
 		}

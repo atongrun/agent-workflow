@@ -265,6 +265,9 @@ func TestWorkerChildFixture(t *testing.T) {
 	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/health" {
 			version := DurableVersion
+			if mode == "pi-1.1.0" {
+				version = "1.1.0"
+			}
 			if mode == "wrong-version" {
 				version = "not-pinned"
 			}
@@ -293,4 +296,17 @@ func TestWorkerChildFixture(t *testing.T) {
 	listener.Close()
 	lease.Close()
 	os.Exit(0)
+}
+
+func TestManagedWorkerPi110HealthKeepsActualSDKVersion(t *testing.T) {
+	cfg, storage, runtime := workerFixtureConfig(t, "pi-1.1.0")
+	w, err := startWorkerFixture(t, cfg, storage, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(context.Background())
+	response := publicCall(w.Handler(), "GET", "/health", "", fixtureToken)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"durableVersion":"1.1.0"`) {
+		t.Fatal("actual SDK health version lost", response.Code, response.Body.String())
+	}
 }

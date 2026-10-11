@@ -132,7 +132,7 @@ func startOwned(ctx context.Context, cfg Config, lease *StorageLease, runtimeDir
 	for {
 		b, status, err := client.exchange(startup, http.MethodGet, "/v1/health", nil)
 		var health Health
-		if err == nil && status == 200 && strictJSON(b, &health) == nil && health.Version == ProtocolVersion && health.DurableVersion == DurableVersion && health.Ready {
+		if err == nil && status == 200 && strictJSON(b, &health) == nil && health.Version == ProtocolVersion && supportedDurableVersion(health.DurableVersion) && health.Ready {
 			select {
 			case <-w.done:
 				goto failed
