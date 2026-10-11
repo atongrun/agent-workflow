@@ -1,0 +1,56 @@
+name: Go Host release checks
+# Opt-in native Windows checks on the exact selected branch/tag commit.
+# Does not publish assets, install the product, update a channel or deploy.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: go-host-release-check-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows:
+    name: Native Windows release fixtures
+    runs-on: windows-2022
+    timeout-minutes: 15
+    env:
+      GOENV: 'off'
+      GOTOOLCHAIN: local
+      GOPROXY: 'off'
+      GOSUMDB: 'off'
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+          cache: false
+      - name: Native Go lifecycle and Windows binaries
+        shell: pwsh
+        run: |
+          if ((go env GOVERSION) -ne 'go1.27.1') { throw 'unexpected Go toolchain' }
+          go vet -mod=readonly ./...
+          if ($LASTEXITCODE -ne 0) { throw 'vet failed' }
+          go test -mod=readonly -count=1 -timeout=5m ./...
+          if ($LASTEXITCODE -ne 0) { throw 'native Go tests failed' }
+          go build -mod=readonly -trimpath -o "$env:RUNNER_TEMP/awf.exe" ./cmd/awf
+          if ($LASTEXITCODE -ne 0) { throw 'Host build failed' }
+          go build -mod=readonly -trimpath -o "$env:RUNNER_TEMP/awf-node.exe" ./cmd/awf-node
+          if ($LASTEXITCODE -ne 0) { throw 'node build failed' }
+      - name: Fresh process, consent and install guards (PowerShell 7)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('install', 'channel', 'entry', 'install_context', 'install_path', 'fresh_install', 'install_progress')) {
+            & "./scripts/test_$name.ps1"
+          }
+      - name: Fresh process, consent and install guards (PowerShell 5.1)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('install', 'channel', 'entry', 'install_context', 'install_path', 'fresh_install', 'install_progress')) {
+            & "./scripts/test_$name.ps1"
+          }

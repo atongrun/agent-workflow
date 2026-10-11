@@ -1,0 +1,49 @@
+name: Go Host CI
+on:
+  pull_request:
+    branches: [main, awf/go-v1, awf/linux-v1]
+  push:
+    branches: [main, awf/go-v1, awf/linux-v1]
+permissions:
+  contents: read
+concurrency:
+  group: go-host-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    name: Go Host checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOENV: 'off'
+      GOTOOLCHAIN: local
+      GOPROXY: 'off'
+      GOSUMDB: 'off'
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Isolated build paths
+        run: printf 'GOCACHE=%s\nGOMODCACHE=%s\n' "$RUNNER_TEMP/go-host-build" "$RUNNER_TEMP/go-host-modules" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+          cache: false
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ${{ env.GOCACHE }}
+          key: go-host-${{ runner.os }}-${{ runner.arch }}-1.27.1-${{ hashFiles('go.mod', 'go.sum') }}
+      - name: Vet and all package tests once
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.1"
+          go vet -mod=readonly ./...
+          go test -mod=readonly -race -count=1 -timeout=5m ./...
+      - name: Current Linux command binaries
+        run: |
+          mkdir -p "$RUNNER_TEMP/go-host-bin"
+          go build -mod=readonly -trimpath -o "$RUNNER_TEMP/go-host-bin/awf" ./cmd/awf
+          go build -mod=readonly -trimpath -o "$RUNNER_TEMP/go-host-bin/awf-node" ./cmd/awf-node
+      - name: Portable package and bootstrap contracts
+        run: python3 scripts/test_package_windows.py
