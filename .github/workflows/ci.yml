@@ -1,9 +1,9 @@
 name: Go Host CI
 on:
   pull_request:
-    branches: [main, awf/go-v1, awf/linux-v1]
+    branches: [main, awf/go-v1, awf/linux-v1, codex/pi-110-health]
   push:
-    branches: [main, awf/go-v1, awf/linux-v1]
+    branches: [main, awf/go-v1, awf/linux-v1, codex/pi-110-health]
 permissions:
   contents: read
 concurrency:

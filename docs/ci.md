@@ -1,7 +1,9 @@
 # Go Host checks
 
 One daily Ubuntu workflow runs on pull requests and pushes to the current main
-or supported Go/Linux development channels. It runs all package race tests and
+or supported Go/Linux development channels and the approved
+`codex/pi-110-health` compatibility branch. The retired default branch is not
+changed by publishing this branch. It runs all package race tests and
 vet once, builds the two existing Linux command binaries, and checks the
 portable package/bootstrap contracts. Source dependencies remain offline and
 read-only. The Go compilation cache is keyed by platform, Go version and module
