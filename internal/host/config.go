@@ -1,6 +1,7 @@
 package host
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,25 +20,34 @@ type NodeConfig struct {
 	TokenEnv string `json:"tokenEnv"`
 }
 type Config struct {
-	DurableConfig     string                `json:"durableConfig,omitempty"`
-	PiAgentDir        string                `json:"piAgentDir,omitempty"`
-	PiProvider        string                `json:"piProvider,omitempty"`
-	EnableReviewer    bool                  `json:"enableReviewer,omitempty"`
-	MaxPiProcesses    int                   `json:"maxPiProcesses,omitempty"`
-	Listen            string                `json:"listen"`
-	DataDir           string                `json:"dataDir"`
-	TokenEnv          string                `json:"tokenEnv"`
-	ExtensionTokenEnv string                `json:"extensionTokenEnv"`
-	PiBinary          string                `json:"piBinary"`
-	PiExtension       string                `json:"piExtension"`
-	InternalURL       string                `json:"internalUrl"`
-	Projects          map[string]string     `json:"projects"`
-	Nodes             map[string]NodeConfig `json:"nodes"`
+	ContentServiceTokenFile  string                `json:"contentServiceTokenFile,omitempty"`
+	MagpieWebKeyFile         string                `json:"magpieWebKeyFile,omitempty"`
+	MagpieConfigDir          string                `json:"magpieConfigDir,omitempty"`
+	ContentPiAgentDir        string                `json:"contentPiAgentDir,omitempty"`
+	ContentDurablePiAgentDir string                `json:"contentDurablePiAgentDir,omitempty"`
+	DurableConfig            string                `json:"durableConfig,omitempty"`
+	PiAgentDir               string                `json:"piAgentDir,omitempty"`
+	PiProvider               string                `json:"piProvider,omitempty"`
+	EnableReviewer           bool                  `json:"enableReviewer,omitempty"`
+	MaxPiProcesses           int                   `json:"maxPiProcesses,omitempty"`
+	Listen                   string                `json:"listen"`
+	DataDir                  string                `json:"dataDir"`
+	TokenEnv                 string                `json:"tokenEnv"`
+	ExtensionTokenEnv        string                `json:"extensionTokenEnv"`
+	PiBinary                 string                `json:"piBinary"`
+	PiExtension              string                `json:"piExtension"`
+	InternalURL              string                `json:"internalUrl"`
+	Projects                 map[string]string     `json:"projects"`
+	Nodes                    map[string]NodeConfig `json:"nodes"`
 }
 type Server struct {
-	cfg                   Config
-	store                 *core.Store
-	token, extensionToken string
+	providerMu        sync.Mutex
+	providerAdmission sync.RWMutex
+	// Testable private transport boundary; production always uses trusted local endpoints.
+	providerMaintenanceCall func(context.Context, string, bool) error
+	cfg                     Config
+	store                   *core.Store
+	token, extensionToken   string
 	// Serializes Pi startup, eviction, and task deletion without holding the store lock during process I/O.
 	piLifecycle sync.Mutex
 	mu          sync.Mutex
@@ -61,6 +71,13 @@ func LoadConfig(path string) (Config, error) {
 	return c, err
 }
 func New(c Config) (*Server, error) {
+	if c.MagpieWebKeyFile != "" {
+		for _, p := range []string{c.MagpieWebKeyFile, c.MagpieConfigDir, c.ContentPiAgentDir, c.ContentDurablePiAgentDir, c.ContentServiceTokenFile, c.DurableConfig} {
+			if !filepath.IsAbs(p) {
+				return nil, errors.New("provider adapter paths must be explicit absolute paths")
+			}
+		}
+	}
 	if c.MaxPiProcesses == 0 {
 		c.MaxPiProcesses = 1
 	}

@@ -79,6 +79,11 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("POST /v1/tasks/{id}/restore", s.taskLifecycle)
 	public.HandleFunc("GET /v1/settings", s.settings)
 	public.HandleFunc("PATCH /v1/settings", s.settings)
+	public.HandleFunc("GET /v1/provider-settings", s.providerSettings)
+	public.HandleFunc("POST /v1/provider-settings", s.providerSettings)
+	public.HandleFunc("POST /v1/provider-settings/models", s.providerSettings)
+	public.HandleFunc("GET /v1/provider-settings/requests/{requestId}", s.providerRequest)
+	public.HandleFunc("POST /v1/provider-settings/requests/{requestId}/sync", s.providerRequest)
 	public.HandleFunc("GET /v1/model-settings", s.modelSettings)
 	public.HandleFunc("PATCH /v1/model-settings", s.modelSettings)
 	public.HandleFunc("GET /v1/agents", s.agents)
@@ -97,7 +102,7 @@ func (s *Server) Handler() http.Handler {
 	for _, action := range []string{"messages", "pi/ui-response", "plan/confirm", "start", "execution/cancel", "review", "rework"} {
 		public.HandleFunc("POST /v1/tasks/{id}/"+action, s.action)
 	}
-	mux.Handle("/v1/", auth(s.token, public))
+	mux.Handle("/v1/", auth(s.token, s.providerAdmissionGuard(public)))
 	internal := http.NewServeMux()
 	internal.HandleFunc("POST /internal/tasks/{id}/{action}", s.internalAction)
 	mux.Handle("/internal/", s.internalAuth(internal))

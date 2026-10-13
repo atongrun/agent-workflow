@@ -3,6 +3,7 @@ package durablebridge
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -76,4 +77,19 @@ func (c *Client) exchange(ctx context.Context, method, path string, body any) ([
 		return nil, 0, ErrUnavailable
 	}
 	return b, res.StatusCode, nil
+}
+
+// CatalogMaintenance is private socket-only; the public bridge has no route to it.
+func (c *Client) CatalogMaintenance(ctx context.Context, requestID string, release bool) error {
+	b, status, err := c.call(ctx, "POST", "/v1/catalog-maintenance", map[string]any{"requestId": requestID, "release": release})
+	if err != nil {
+		return ErrUnavailable
+	}
+	var value struct {
+		Held bool `json:"held"`
+	}
+	if status != 200 || json.Unmarshal(b, &value) != nil || value.Held == release {
+		return ErrUnavailable
+	}
+	return nil
 }
