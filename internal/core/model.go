@@ -46,11 +46,35 @@ type Session struct {
 	PendingUI       []json.RawMessage    `json:"pendingUi"`
 	Persisted       bool                 `json:"persisted"`
 }
+
+// RepositorySource is a bounded immutable source bundle from the authenticated dashboard.
+// Missing files are unknown; this grants neither filesystem access nor execution authority.
+type RepositorySource struct {
+	BaseRef   string            `json:"baseRef"`
+	BaseSHA   string            `json:"baseSha"`
+	Files     map[string]string `json:"files"`
+	Truncated bool              `json:"truncated,omitempty"`
+}
+type ApprovedInput struct {
+	RepositoryReadVerified bool   `json:"repositoryReadVerified,omitempty"`
+	PlanRevision           int    `json:"planRevision"`
+	PlanContent            string `json:"planContent"`
+	PlanHash               string `json:"planHash"`
+	TargetRevision         int    `json:"targetRevision"`
+	RepositoryID           string `json:"repositoryId"`
+	Repository             string `json:"repository"`
+	NodeID                 string `json:"nodeId"`
+	ProjectID              string `json:"projectId"`
+	Branch                 string `json:"branch"`
+	BaseRef                string `json:"baseRef"`
+	BaseSHA                string `json:"baseSha"`
+}
 type Plan struct {
-	Revision    int        `json:"revision"`
-	Content     string     `json:"content"`
-	ConfirmedAt *time.Time `json:"confirmedAt,omitempty"`
-	Source      string     `json:"source"`
+	Approved    *ApprovedInput `json:"approved,omitempty"`
+	Revision    int            `json:"revision"`
+	Content     string         `json:"content"`
+	ConfirmedAt *time.Time     `json:"confirmedAt,omitempty"`
+	Source      string         `json:"source"`
 }
 type Budget struct {
 	TaskSeconds int64      `json:"taskSeconds"`
@@ -102,6 +126,7 @@ type ResultReview struct {
 	Error                 string          `json:"error,omitempty"`
 }
 type Execution struct {
+	Approved           *ApprovedInput    `json:"approved,omitempty"`
 	ResultReview       *ResultReview     `json:"resultReview,omitempty"`
 	Target             *ExecutionTarget  `json:"target,omitempty"`
 	PendingPermissions []json.RawMessage `json:"pendingPermissions,omitempty"`
@@ -144,6 +169,7 @@ type Completion struct {
 const RestrictedPlanning = "restricted"
 
 type Task struct {
+	RepositorySource   *RepositorySource   `json:"repositorySource,omitempty"`
 	BudgetRevision     int                 `json:"budgetRevision"`
 	LifecycleRevision  int                 `json:"lifecycleRevision"`
 	DeletedAt          *time.Time          `json:"deletedAt,omitempty"`

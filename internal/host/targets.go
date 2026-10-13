@@ -19,6 +19,7 @@ type targetView struct {
 	ProjectLabel string `json:"projectLabel"`
 	NodeLabel    string `json:"nodeLabel"`
 	Ready        bool   `json:"ready"`
+	Managed      bool   `json:"managed,omitempty"`
 }
 type targetNodeView struct {
 	NodeID string `json:"nodeId"`
@@ -32,6 +33,7 @@ type nodeProjects struct {
 		ProjectID string `json:"projectId"`
 		Label     string `json:"label"`
 		Ready     bool   `json:"ready"`
+		Managed   bool   `json:"managed,omitempty"`
 	} `json:"projects"`
 }
 
@@ -59,15 +61,15 @@ func (s *Server) targetCatalog(ctx context.Context, nodeID string) ([]targetView
 	seen := map[string]bool{}
 	for _, p := range catalog.Projects {
 		dir, ok := s.cfg.Projects[p.ProjectID]
-		if !ok || seen[p.ProjectID] {
+		if (!ok && !(p.Managed && p.ProjectID == "managed")) || seen[p.ProjectID] {
 			continue
 		}
 		seen[p.ProjectID] = true
 		info, err := os.Stat(dir)
-		ready := status == "online" && p.Ready && err == nil && info.IsDir()
+		ready := status == "online" && p.Ready && (p.Managed || err == nil && info.IsDir())
 		// Configuration keys are stable presentation labels until operators provide
 		// dedicated labels. Do not expose host or node filesystem locations.
-		targets = append(targets, targetView{p.ProjectID, nodeID, p.ProjectID, nodeID, ready})
+		targets = append(targets, targetView{p.ProjectID, nodeID, p.ProjectID, nodeID, ready, p.Managed})
 	}
 	return targets, status
 }
@@ -121,7 +123,7 @@ func (s *Server) validateTarget(t *core.Task) error {
 	if !validRepository(t.Repository, t.RepositoryID) || t.ProjectID == "" || t.NodeID == "" {
 		return fail("target_required", "select an explicit repository and configured execution target", 409)
 	}
-	if _, ok := s.cfg.Projects[t.ProjectID]; !ok {
+	if _, ok := s.cfg.Projects[t.ProjectID]; !ok && t.ProjectID != "managed" {
 		return fail("target_unavailable", "selected project is no longer configured", 409)
 	}
 	if _, ok := s.cfg.Nodes[t.NodeID]; !ok {
@@ -148,12 +150,13 @@ func taskPiIdle(t *core.Task) bool {
 }
 
 type targetInput struct {
-	RequestID              string `json:"requestId"`
-	ExpectedTargetRevision *int   `json:"expectedTargetRevision"`
-	Repository             string `json:"repository"`
-	RepositoryID           string `json:"repositoryId,omitempty"`
-	ProjectID              string `json:"projectId"`
-	NodeID                 string `json:"nodeId"`
+	RepositorySource       *core.RepositorySource `json:"repositorySource,omitempty"`
+	RequestID              string                 `json:"requestId"`
+	ExpectedTargetRevision *int                   `json:"expectedTargetRevision"`
+	Repository             string                 `json:"repository"`
+	RepositoryID           string                 `json:"repositoryId,omitempty"`
+	ProjectID              string                 `json:"projectId"`
+	NodeID                 string                 `json:"nodeId"`
 }
 
 func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +187,14 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if in.RepositorySource != nil {
+			if err := validateRepositorySource(in.RepositorySource); err != nil {
+				return err
+			}
+		}
+		if in.ProjectID == "managed" && in.RepositorySource == nil {
+			return fail("source_required", "load a fixed repository baseline before binding a managed target", 409)
+		}
 		candidate := *t
 		candidate.ProjectID, candidate.NodeID = in.ProjectID, in.NodeID
 		candidate.Repository, candidate.RepositoryID = in.Repository, in.RepositoryID
@@ -192,9 +203,14 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 		}
 		t.ProjectID, t.NodeID = in.ProjectID, in.NodeID
 		t.Repository, t.RepositoryID = in.Repository, in.RepositoryID
+		t.RepositorySource = in.RepositorySource
+		if in.ProjectID == "managed" {
+			t.Branch = "awf/" + t.ID
+		}
 		t.TargetRevision++
 		if t.Plan != nil {
 			t.Plan.ConfirmedAt = nil
+			t.Plan.Approved = nil
 			t.Status = "awaiting_confirmation"
 		}
 		core.Changed(st, t)

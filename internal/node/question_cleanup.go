@@ -70,11 +70,11 @@ func questionToolPart(q opencode.Question, messages []opencode.Message, r *recor
 // Native ownership is rechecked before each rejection; project locking alone
 // cannot fence someone using a separate native interface.
 func (s *Server) cleanupTurn(ctx context.Context, p *project, r *record) ([]opencode.Message, error) {
-	session, err := s.native.Session(ctx, p.workspace, r.Job.SessionID)
-	if err != nil || session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, p.workspace) {
+	session, err := s.native.Session(ctx, r.Job.Workspace, r.Job.SessionID)
+	if err != nil || session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, r.Job.Workspace) {
 		return nil, errQuestionCleanup
 	}
-	statuses, err := s.native.Statuses(ctx, p.workspace)
+	statuses, err := s.native.Statuses(ctx, r.Job.Workspace)
 	if err != nil || statuses == nil {
 		return nil, errQuestionCleanup
 	}
@@ -83,7 +83,7 @@ func (s *Server) cleanupTurn(ctx context.Context, p *project, r *record) ([]open
 	if status, ok := statuses[r.Job.SessionID]; ok && status.Type != "idle" {
 		return nil, errQuestionCleanup
 	}
-	messages, err := s.native.Messages(ctx, p.workspace, r.Job.SessionID)
+	messages, err := s.native.Messages(ctx, r.Job.Workspace, r.Job.SessionID)
 	if err != nil {
 		return nil, errQuestionCleanup
 	}
@@ -140,7 +140,7 @@ func (s *Server) cleanupCancelledQuestions(ctx context.Context, p *project, r *r
 	if err != nil {
 		return err
 	}
-	raw, err := s.native.PendingQuestions(ctx, p.workspace)
+	raw, err := s.native.PendingQuestions(ctx, r.Job.Workspace)
 	if err != nil || raw == nil {
 		return errQuestionCleanup
 	}
@@ -192,7 +192,7 @@ func (s *Server) cleanupCancelledQuestions(ctx context.Context, p *project, r *r
 		}
 		// Question IDs are native immutable identities. Recheck the actual
 		// request binding immediately before creating its dispatch fence.
-		current, err := s.native.PendingQuestions(ctx, p.workspace)
+		current, err := s.native.PendingQuestions(ctx, r.Job.Workspace)
 		if err != nil || current == nil {
 			return errQuestionCleanup
 		}
@@ -219,7 +219,7 @@ func (s *Server) cleanupCancelledQuestions(ctx context.Context, p *project, r *r
 			receipt.Status = "needs_verification"
 			return errQuestionCleanup
 		}
-		err = s.native.RejectQuestion(ctx, p.workspace, id)
+		err = s.native.RejectQuestion(ctx, r.Job.Workspace, id)
 		receipt.Status = "needs_verification"
 		receipt.Acknowledged = err == nil
 		if err != nil {
@@ -233,7 +233,7 @@ func (s *Server) cleanupCancelledQuestions(ctx context.Context, p *project, r *r
 	}
 	// A fresh authoritative list resolves the wait, never invents an ACK or resets
 	// execution/cancellation state. Unrelated native sessions are not mutated.
-	current, err := s.native.PendingQuestions(ctx, p.workspace)
+	current, err := s.native.PendingQuestions(ctx, r.Job.Workspace)
 	if err != nil || current == nil {
 		return errQuestionCleanup
 	}

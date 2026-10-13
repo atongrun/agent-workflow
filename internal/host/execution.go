@@ -71,13 +71,25 @@ func (s *Server) jobRequest(t *core.Task) node.JobRequest {
 		copy.Repository = t.Execution.Target.Repository
 		t = &copy
 	}
+	if a := t.Execution.Approved; a != nil {
+		copy := *t
+		copy.Repository, copy.ProjectID, copy.NodeID, copy.Branch = a.Repository, a.ProjectID, a.NodeID, a.Branch
+		copy.Plan = &core.Plan{Revision: a.PlanRevision, Content: a.PlanContent}
+		copy.Settings.DefaultBranch = a.BaseRef
+		t = &copy
+	}
 	reviewContext := ""
 	if t.Settings.Reviewer != "pi" && t.Completion != nil {
 		reviewContext = "\n\nPrior Pi execution findings for this explicitly authorized rework:\n" + string(mustJSON(t.Completion))
 	} else if len(t.ReviewHistory) > 0 {
 		reviewContext = "\n\nPrior review findings for this explicitly authorized rework:\n" + string(mustJSON(t.ReviewHistory[len(t.ReviewHistory)-1]))
 	}
-	return node.JobRequest{RequestID: t.Execution.RequestID, TaskID: t.ID, ProjectID: t.ProjectID, Repository: t.Repository, Branch: t.Branch, Plan: t.Plan.Content, Prompt: fmt.Sprintf("Implement only this explicitly confirmed task.\nTitle: %s\nGoal: %s\nAcceptance criteria: %s\nRepository: %s\nBase branch: %s\nWork branch: %s\n\nConfirmed plan:\n%s\n\nYou own all Git operations via your native tools. Preserve existing work. Run relevant checks and report actual artifacts, commit references, command output and failures. Capture the actual code diff with git diff or git show, test command output/exit status, and remote branch SHA with git ls-remote, using separate native tool calls with unmasked exit codes. Missing evidence must be reported as unknown. Do not claim tests, pushes or commits that did not happen.", t.Title, t.Goal, t.AcceptanceCriteria, t.Repository, t.Settings.DefaultBranch, t.Branch, t.Plan.Content) + reviewContext, TimeoutSeconds: t.Execution.TimeoutSeconds, SessionID: t.Execution.OriginalSessionID}
+	req := node.JobRequest{RequestID: t.Execution.RequestID, TaskID: t.ID, ProjectID: t.ProjectID, Repository: t.Repository, Branch: t.Branch, Plan: t.Plan.Content, Prompt: fmt.Sprintf("Implement only this explicitly confirmed task.\nTitle: %s\nGoal: %s\nAcceptance criteria: %s\nRepository: %s\nBase branch: %s\nWork branch: %s\n\nConfirmed plan:\n%s\n\nYou own all Git operations via your native tools. Preserve existing work. Run relevant checks and report actual artifacts, commit references, command output and failures. Capture the actual code diff with git diff or git show, test command output/exit status, and remote branch SHA with git ls-remote, using separate native tool calls with unmasked exit codes. Missing evidence must be reported as unknown. Do not claim tests, pushes or commits that did not happen.", t.Title, t.Goal, t.AcceptanceCriteria, t.Repository, t.Settings.DefaultBranch, t.Branch, t.Plan.Content) + reviewContext, TimeoutSeconds: t.Execution.TimeoutSeconds, SessionID: t.Execution.OriginalSessionID}
+	if a := t.Execution.Approved; a != nil && t.ProjectID == "managed" {
+		req.WorkspaceInput = &node.WorkspaceInput{RepositoryID: a.RepositoryID, BaseSHA: a.BaseSHA, PlanHash: a.PlanHash}
+		req.Prompt += "\nManaged workspace authorization covers local implementation and validation only. Do not create remote repositories, add credentials, push, merge or deploy. Report local changes and any missing remote-delivery evidence honestly."
+	}
+	return req
 }
 func (s *Server) recoverExecutions() {
 	for _, t := range s.store.Snapshot().Tasks {

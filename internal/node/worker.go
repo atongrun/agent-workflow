@@ -48,6 +48,17 @@ func (s *Server) advance(ctx context.Context, p *project, r *record) {
 		return
 	}
 	if r.Job.SubmissionState == "queued" {
+		if r.Request.WorkspaceInput != nil {
+			if err := s.prepareWorkspace(ctx, r); err != nil {
+				s.finish(r, "failed")
+				r.Job.Error = err.Error()
+				_ = s.persist(r)
+				return
+			}
+			if s.persist(r) != nil {
+				return
+			}
+		}
 		r.Job.Status = "running"
 		r.Job.Error = ""
 		if r.Job.SessionID == "" {
@@ -55,14 +66,14 @@ func (s *Server) advance(ctx context.Context, p *project, r *record) {
 			if s.persist(r) != nil {
 				return
 			}
-			session, err := s.native.CreateSession(ctx, p.workspace, r.SessionTitle)
+			session, err := s.native.CreateSession(ctx, r.Job.Workspace, r.SessionTitle)
 			if err != nil {
 				s.uncertain(r, fmt.Errorf("native session creation outcome is unknown; no automatic retry: %w", err))
 				return
 			}
 			// Keep the native ID even if its returned scope is invalid, for diagnosis.
 			r.Job.SessionID = session.ID
-			if !sameWorkspace(session.Directory, p.workspace) {
+			if !sameWorkspace(session.Directory, r.Job.Workspace) {
 				s.uncertain(r, fmt.Errorf("native session returned a different workspace"))
 				return
 			}
@@ -79,16 +90,16 @@ func (s *Server) advance(ctx context.Context, p *project, r *record) {
 		}
 	}
 	if r.Job.SubmissionState == "ready" {
-		session, err := s.native.Session(ctx, p.workspace, r.Job.SessionID)
+		session, err := s.native.Session(ctx, r.Job.Workspace, r.Job.SessionID)
 		if err != nil {
 			s.uncertain(r, err)
 			return
 		}
-		if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, p.workspace) {
+		if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, r.Job.Workspace) {
 			s.uncertain(r, fmt.Errorf("native session scope does not match recorded workspace"))
 			return
 		}
-		statuses, err := s.native.Statuses(ctx, p.workspace)
+		statuses, err := s.native.Statuses(ctx, r.Job.Workspace)
 		if err != nil {
 			s.uncertain(r, err)
 			return
@@ -97,7 +108,7 @@ func (s *Server) advance(ctx context.Context, p *project, r *record) {
 			s.uncertain(r, fmt.Errorf("native session is already %s; refusing overlapping prompt", state.Type))
 			return
 		}
-		if err = s.ensureEvents(p); err != nil {
+		if err = s.ensureEvents(p, r.Job.Workspace); err != nil {
 			s.uncertain(r, fmt.Errorf("native event connection unavailable before dispatch: %w", err))
 			return
 		}
@@ -110,7 +121,7 @@ func (s *Server) advance(ctx context.Context, p *project, r *record) {
 			return
 		}
 		// NEVER repeat this POST, including after EOF, timeout, an HTTP error or crash.
-		err = s.native.PromptAsync(ctx, p.workspace, r.Job.SessionID, r.Job.MessageID, executionPrompt(r.Request), r.Job.Model)
+		err = s.native.PromptAsync(ctx, r.Job.Workspace, r.Job.SessionID, r.Job.MessageID, executionPrompt(r.Request), r.Job.Model)
 		if err != nil {
 			s.uncertain(r, fmt.Errorf("native prompt outcome is unknown; reconcile original session, do not resubmit: %w", err))
 			return
@@ -123,7 +134,7 @@ func (s *Server) advance(ctx context.Context, p *project, r *record) {
 	// Event recovery is best-effort for an already-submitted prompt. Polling the
 	// original session remains authoritative and never causes a re-prompt.
 	if r.Job.SubmissionState == "dispatching" || r.Job.SubmissionState == "submitted" {
-		_ = s.ensureEvents(p)
+		_ = s.ensureEvents(p, r.Job.Workspace)
 	}
 	s.reconcile(ctx, p, r)
 }
@@ -139,12 +150,12 @@ func executionPrompt(req JobRequest) string {
 }
 func (s *Server) recoverSession(ctx context.Context, p *project, r *record) {
 	if r.Job.SessionID != "" {
-		session, err := s.native.Session(ctx, p.workspace, r.Job.SessionID)
+		session, err := s.native.Session(ctx, r.Job.Workspace, r.Job.SessionID)
 		if err != nil {
 			s.uncertain(r, err)
 			return
 		}
-		if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, p.workspace) {
+		if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, r.Job.Workspace) {
 			s.uncertain(r, fmt.Errorf("native session scope does not match recorded workspace"))
 			return
 		}
@@ -153,14 +164,14 @@ func (s *Server) recoverSession(ctx context.Context, p *project, r *record) {
 		_ = s.persist(r)
 		return
 	}
-	sessions, err := s.native.Sessions(ctx, p.workspace)
+	sessions, err := s.native.Sessions(ctx, r.Job.Workspace)
 	if err != nil {
 		s.uncertain(r, err)
 		return
 	}
 	var matches []opencode.Session
 	for _, session := range sessions {
-		if session.Title == r.SessionTitle && sameWorkspace(session.Directory, p.workspace) {
+		if session.Title == r.SessionTitle && sameWorkspace(session.Directory, r.Job.Workspace) {
 			matches = append(matches, session)
 		}
 	}
@@ -188,26 +199,26 @@ func (s *Server) reconcile(ctx context.Context, p *project, r *record) {
 		s.uncertain(r, fmt.Errorf("native session identity is unknown"))
 		return
 	}
-	session, err := s.native.Session(ctx, p.workspace, r.Job.SessionID)
+	session, err := s.native.Session(ctx, r.Job.Workspace, r.Job.SessionID)
 	if err != nil {
 		s.uncertain(r, err)
 		return
 	}
-	if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, p.workspace) {
+	if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, r.Job.Workspace) {
 		s.uncertain(r, fmt.Errorf("native session scope does not match recorded workspace"))
 		return
 	}
-	messages, err := s.native.Messages(ctx, p.workspace, r.Job.SessionID)
+	messages, err := s.native.Messages(ctx, r.Job.Workspace, r.Job.SessionID)
 	if err != nil {
 		s.uncertain(r, err)
 		return
 	}
-	permissions, err := s.native.PendingPermissions(ctx, p.workspace)
+	permissions, err := s.native.PendingPermissions(ctx, r.Job.Workspace)
 	if err != nil {
 		s.uncertain(r, fmt.Errorf("native permission recovery: %w", err))
 		return
 	}
-	questions, err := s.native.PendingQuestions(ctx, p.workspace)
+	questions, err := s.native.PendingQuestions(ctx, r.Job.Workspace)
 	if err != nil {
 		s.uncertain(r, fmt.Errorf("native question recovery: %w", err))
 		return
@@ -217,7 +228,7 @@ func (s *Server) reconcile(ctx context.Context, p *project, r *record) {
 	if len(r.Job.PendingPermissions)+len(r.Job.PendingQuestions) > 0 {
 		r.HadWait = true
 	}
-	statuses, err := s.native.Statuses(ctx, p.workspace)
+	statuses, err := s.native.Statuses(ctx, r.Job.Workspace)
 	if err != nil {
 		s.uncertain(r, err)
 		return
@@ -369,12 +380,12 @@ func (s *Server) abort(ctx context.Context, p *project, r *record) {
 	if r.Job.AbortConfirmed {
 		return
 	}
-	session, err := s.native.Session(ctx, p.workspace, r.Job.SessionID)
+	session, err := s.native.Session(ctx, r.Job.Workspace, r.Job.SessionID)
 	if err != nil {
 		s.uncertain(r, err)
 		return
 	}
-	if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, p.workspace) {
+	if session.ID != r.Job.SessionID || !sameWorkspace(session.Directory, r.Job.Workspace) {
 		s.uncertain(r, fmt.Errorf("refusing abort: native workspace mismatch"))
 		return
 	}
@@ -383,7 +394,7 @@ func (s *Server) abort(ctx context.Context, p *project, r *record) {
 	if s.persist(r) != nil {
 		return
 	}
-	ok, err := s.native.Abort(ctx, p.workspace, r.Job.SessionID)
+	ok, err := s.native.Abort(ctx, r.Job.Workspace, r.Job.SessionID)
 	if err != nil {
 		s.uncertain(r, fmt.Errorf("native abort outcome unknown: %w", err))
 		return

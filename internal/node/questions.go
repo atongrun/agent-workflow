@@ -72,18 +72,18 @@ func questionReadScope(w http.ResponseWriter, r *http.Request, rec *record) bool
 // Caller holds project mutex. Native question tool/message must belong to the
 // recorded user turn, not merely a reused native session or another job.
 func (s *Server) boundQuestions(r *http.Request, p *project, rec *record) ([]opencode.Question, error) {
-	session, err := s.native.Session(r.Context(), p.workspace, rec.Job.SessionID)
+	session, err := s.native.Session(r.Context(), rec.Job.Workspace, rec.Job.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	if session.ID != rec.Job.SessionID || !sameWorkspace(session.Directory, p.workspace) {
+	if session.ID != rec.Job.SessionID || !sameWorkspace(session.Directory, rec.Job.Workspace) {
 		return nil, errQuestionBinding
 	}
-	messages, err := s.native.Messages(r.Context(), p.workspace, rec.Job.SessionID)
+	messages, err := s.native.Messages(r.Context(), rec.Job.Workspace, rec.Job.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := s.native.PendingQuestions(r.Context(), p.workspace)
+	raw, err := s.native.PendingQuestions(r.Context(), rec.Job.Workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func (s *Server) replyQuestion(w http.ResponseWriter, r *http.Request, id, qid s
 		return
 	}
 	// Never retry this native mutation after a timeout, crash, or lost ACK.
-	err = s.native.ReplyQuestion(r.Context(), p.workspace, qid, in.Answers)
+	err = s.native.ReplyQuestion(r.Context(), rec.Job.Workspace, qid, in.Answers)
 	receipt.Reply.Status = "completed"
 	if err != nil {
 		receipt.Reply.Status = "needs_verification"

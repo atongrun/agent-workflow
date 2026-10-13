@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	ManagedRoot      string                   `json:"managedRoot,omitempty"`
 	OpenCodeModel    *opencode.ModelSelection `json:"openCodeModel,omitempty"`
 	ListenAddress    string                   `json:"listenAddress"`
 	AllowedSourceIPs []string                 `json:"allowedSourceIPs,omitempty"` // Empty permits loopback only; a list replaces that default.
@@ -23,16 +24,22 @@ type Config struct {
 	PollInterval     time.Duration            `json:"-"`
 }
 
+type WorkspaceInput struct {
+	RepositoryID string `json:"repositoryId"`
+	BaseSHA      string `json:"baseSha"`
+	PlanHash     string `json:"planHash"`
+}
 type JobRequest struct {
-	RequestID      string `json:"requestId"`
-	TaskID         string `json:"taskId"`
-	ProjectID      string `json:"projectId"`
-	Repository     string `json:"repository"`
-	Branch         string `json:"branch"`
-	Plan           string `json:"plan"`
-	Prompt         string `json:"prompt"`
-	TimeoutSeconds int    `json:"timeoutSeconds"`
-	SessionID      string `json:"sessionId,omitempty"`
+	WorkspaceInput *WorkspaceInput `json:"workspaceInput,omitempty"`
+	RequestID      string          `json:"requestId"`
+	TaskID         string          `json:"taskId"`
+	ProjectID      string          `json:"projectId"`
+	Repository     string          `json:"repository"`
+	Branch         string          `json:"branch"`
+	Plan           string          `json:"plan"`
+	Prompt         string          `json:"prompt"`
+	TimeoutSeconds int             `json:"timeoutSeconds"`
+	SessionID      string          `json:"sessionId,omitempty"`
 }
 
 type Evidence struct {

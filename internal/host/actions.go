@@ -39,6 +39,25 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail("invalid_role", "role must be architect or reviewer", 400))
 		return
 	}
+	// Probe outside Store.Update: the Worker verifies this task via Host GET.
+	// Holding the store lock during the callback would deadlock that verification.
+	var checkedSourceSHA string
+	var checkedTargetRevision int
+	var checkedLifecycleRevision int
+	if op == "plan/confirm" {
+		snapshot := s.store.Snapshot()
+		if snapshot.Requests[in.RequestID] == nil {
+			if t := snapshot.Tasks[id]; t != nil && t.RepositorySource != nil && t.RepositorySource.Truncated {
+				if result, e := s.repositoryBridgeRead(r.Context(), t, "list", "", 0); e != nil || result["truncated"] == true {
+					writeError(w, fail("repository_source_incomplete", "truncated source cannot be confirmed until the authorized on-demand reader is working; do not infer omitted files", 409))
+					return
+				}
+				checkedSourceSHA = t.RepositorySource.BaseSHA
+				checkedTargetRevision = t.TargetRevision
+				checkedLifecycleRevision = t.LifecycleRevision
+			}
+		}
+	}
 	duplicate, err := s.reserveRequest(in.RequestID, id, op, in, func(st *core.State, req *core.Request) error {
 		t := st.Tasks[id]
 		if t == nil {
@@ -120,6 +139,17 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				return fail("execution_active", "cannot confirm a new plan during execution", 409)
 			}
 			now := time.Now().UTC()
+			if t.RepositorySource != nil && t.RepositorySource.Truncated && !sourcePreflightMatches(t, checkedSourceSHA, checkedTargetRevision, checkedLifecycleRevision) {
+				return fail("repository_source_incomplete", "source verification is missing or stale; reconfirm the current target", 409)
+			}
+			approved, err := approveInput(t)
+			if err != nil {
+				return err
+			}
+			if approved != nil && t.RepositorySource.Truncated {
+				approved.RepositoryReadVerified = true
+			}
+			t.Plan.Approved = approved
 			t.Plan.ConfirmedAt = &now
 			t.Status = "ready"
 			if t.Execution != nil && needsRework(t) {
@@ -222,6 +252,11 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 	if executionActive(t) {
 		return fail("execution_active", "execution already active", 409)
 	}
+	if t.RepositorySource != nil {
+		if err := verifyApproval(t); err != nil {
+			return err
+		}
+	}
 	if (t.PlanningProfile == core.RestrictedPlanning && t.TargetRevision == 0) || ((t.PlanningProfile == core.RestrictedPlanning || t.TargetRevision > 0) && expectedTargetRevision == nil) {
 		return fail("target_required", "bind an execution target and explicitly start its current revision", 409)
 	}
@@ -261,7 +296,7 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 		t.ExecutionHistory = append(t.ExecutionHistory, *t.Execution)
 		t.Budget.Reworks++
 	}
-	t.Execution = &core.Execution{Target: &core.ExecutionTarget{Revision: t.TargetRevision, ProjectID: t.ProjectID, NodeID: t.NodeID, Repository: t.Repository, RepositoryID: t.RepositoryID}, RequestID: requestID, JobID: node.JobID(requestID), SessionID: previousSession, OriginalSessionID: previousSession, TimeoutSeconds: remainingSeconds(t), Status: "queued", Evidence: []core.Evidence{}}
+	t.Execution = &core.Execution{Approved: t.Plan.Approved, Target: &core.ExecutionTarget{Revision: t.TargetRevision, ProjectID: t.ProjectID, NodeID: t.NodeID, Repository: t.Repository, RepositoryID: t.RepositoryID}, RequestID: requestID, JobID: node.JobID(requestID), SessionID: previousSession, OriginalSessionID: previousSession, TimeoutSeconds: remainingSeconds(t), Status: "queued", Evidence: []core.Evidence{}}
 	t.Status = "queued"
 	t.Phase = "execution"
 	return nil

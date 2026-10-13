@@ -66,7 +66,11 @@ func (s *Server) load() error {
 			return fmt.Errorf("durable job %s has invalid identity", filepath.Base(path))
 		}
 		p, ok := s.projects[r.Job.ProjectID]
-		if !ok || p.workspace != r.Job.Workspace {
+		validWorkspace := ok && p.workspace == r.Job.Workspace
+		if ok && p.managed {
+			validWorkspace = validateWorkspaceInput(r.Request) == nil && sameWorkspace(r.Job.Workspace, managedTaskPath(s.cfg.ManagedRoot, r.Job.TaskID))
+		}
+		if !validWorkspace {
 			return fmt.Errorf("durable job %s requires its original configured workspace", r.Job.ID)
 		}
 		switch r.Job.Status {

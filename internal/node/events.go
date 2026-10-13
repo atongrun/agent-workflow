@@ -6,11 +6,16 @@ import (
 	"time"
 )
 
-func (s *Server) ensureEvents(p *project) error {
+func (s *Server) ensureEvents(p *project, workspace string) error {
 	if p.events != nil {
-		return nil
+		if p.eventWorkspace == workspace {
+			return nil
+		}
+		p.events.Close()
+		p.events = nil
 	}
-	stream, err := s.native.OpenEvents(s.ctx, p.workspace)
+	p.eventWorkspace = workspace
+	stream, err := s.native.OpenEvents(s.ctx, workspace)
 	if err != nil {
 		return err
 	}
@@ -47,7 +52,7 @@ func (s *Server) ensureEvents(p *project) error {
 			s.mu.Lock()
 			var rec *record
 			for _, r := range s.jobs {
-				if r.Job.ProjectID == p.id && r.Job.SessionID == info.SessionID && !terminal(r.Job.Status) && (r.Job.SubmissionState == "dispatching" || r.Job.SubmissionState == "submitted") {
+				if r.Job.ProjectID == p.id && r.Job.Workspace == workspace && r.Job.SessionID == info.SessionID && !terminal(r.Job.Status) && (r.Job.SubmissionState == "dispatching" || r.Job.SubmissionState == "submitted") {
 					rec = r
 					break
 				}

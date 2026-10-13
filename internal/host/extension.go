@@ -36,20 +36,27 @@ func (s *Server) internalAuth(h http.Handler) http.Handler {
 }
 
 type extensionInput struct {
-	EvidenceChecks     []core.EvidenceCheck `json:"evidenceChecks,omitempty"`
-	LifecycleRevision  int                  `json:"lifecycleRevision,omitempty"`
-	RequestID          string               `json:"requestId"`
-	Content            string               `json:"content,omitempty"`
-	Verdict            string               `json:"verdict,omitempty"`
-	Summary            string               `json:"summary,omitempty"`
-	Findings           []string             `json:"findings,omitempty"`
-	ExecutionRequestID string               `json:"executionRequestId,omitempty"`
+	EvidenceChecks      []core.EvidenceCheck `json:"evidenceChecks,omitempty"`
+	LifecycleRevision   int                  `json:"lifecycleRevision,omitempty"`
+	RequestID           string               `json:"requestId"`
+	RepositoryOperation string               `json:"repositoryOperation,omitempty"`
+	Cursor              int                  `json:"cursor,omitempty"`
+	Path                string               `json:"path,omitempty"`
+	Content             string               `json:"content,omitempty"`
+	Verdict             string               `json:"verdict,omitempty"`
+	Summary             string               `json:"summary,omitempty"`
+	Findings            []string             `json:"findings,omitempty"`
+	ExecutionRequestID  string               `json:"executionRequestId,omitempty"`
 }
 
 func (s *Server) internalAction(w http.ResponseWriter, r *http.Request) {
 	var in extensionInput
 	if err := decode(w, r, &in); err != nil {
 		writeError(w, err)
+		return
+	}
+	if r.PathValue("action") == "repository" {
+		s.readRepositorySource(w, r, in)
 		return
 	}
 	id, op, role := r.PathValue("id"), r.PathValue("action"), r.Header.Get("X-AWF-Role")

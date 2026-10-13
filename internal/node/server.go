@@ -23,10 +23,12 @@ import (
 )
 
 type project struct {
-	id, workspace string
-	mu            sync.Mutex
-	wake          chan struct{}
-	events        *opencode.Events
+	id, workspace  string
+	eventWorkspace string
+	managed        bool
+	mu             sync.Mutex
+	wake           chan struct{}
+	events         *opencode.Events
 }
 type Server struct {
 	cfg          Config
@@ -87,7 +89,7 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.StateDir == "" {
 		return nil, errors.New("node stateDir is required")
 	}
-	if len(cfg.Projects) == 0 {
+	if len(cfg.Projects) == 0 && cfg.ManagedRoot == "" {
 		return nil, errors.New("at least one explicit project workspace is required")
 	}
 	if cfg.PollInterval <= 0 {
@@ -119,6 +121,29 @@ func New(cfg Config) (http.Handler, error) {
 			}
 		}
 		s.projects[id] = &project{id: id, workspace: clean, wake: make(chan struct{}, 1)}
+	}
+	if cfg.ManagedRoot != "" {
+		if !filepath.IsAbs(cfg.ManagedRoot) {
+			return nil, errors.New("managedRoot must be absolute")
+		}
+		root, err := filepath.EvalSymlinks(cfg.ManagedRoot)
+		if err != nil {
+			return nil, errors.New("managedRoot must be an existing directory")
+		}
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			return nil, errors.New("managedRoot must be a directory")
+		}
+		for _, p := range s.projects {
+			if overlaps(root, p.workspace) {
+				return nil, errors.New("managedRoot must not overlap configured workspaces")
+			}
+		}
+		if s.projects["managed"] != nil {
+			return nil, errors.New("managed is a reserved project ID")
+		}
+		s.cfg.ManagedRoot = root
+		s.projects["managed"] = &project{id: "managed", workspace: root, managed: true, wake: make(chan struct{}, 1)}
 	}
 	state, err := filepath.Abs(cfg.StateDir)
 	if err != nil {
@@ -320,6 +345,15 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "workspace_denied", "project has no configured workspace")
 		return
 	}
+	if p.managed {
+		if err := validateWorkspaceInput(req); err != nil {
+			writeError(w, 400, "invalid_workspace", err.Error())
+			return
+		}
+	} else if req.WorkspaceInput != nil {
+		writeError(w, 400, "invalid_workspace", "managed input requires managed project")
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	id := JobID(req.RequestID)
@@ -380,7 +414,11 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		model = &copy
 	}
 	now := time.Now().UTC()
-	rec := &record{Version: 1, Request: req, Fingerprint: fingerprint(req), SessionTitle: "AWF " + id, Job: Job{Model: model, ID: id, RequestID: req.RequestID, TaskID: req.TaskID, ProjectID: req.ProjectID, Repository: req.Repository, Branch: req.Branch, Workspace: p.workspace, SessionID: req.SessionID, MessageID: mid, Status: "queued", SubmissionState: "queued", CreatedAt: now, UpdatedAt: now, TimeoutSeconds: req.TimeoutSeconds, Evidence: []Evidence{}}}
+	workspace := p.workspace
+	if p.managed {
+		workspace = managedTaskPath(s.cfg.ManagedRoot, req.TaskID)
+	}
+	rec := &record{Version: 1, Request: req, Fingerprint: fingerprint(req), SessionTitle: "AWF " + id, Job: Job{Model: model, ID: id, RequestID: req.RequestID, TaskID: req.TaskID, ProjectID: req.ProjectID, Repository: req.Repository, Branch: req.Branch, Workspace: workspace, SessionID: req.SessionID, MessageID: mid, Status: "queued", SubmissionState: "queued", CreatedAt: now, UpdatedAt: now, TimeoutSeconds: req.TimeoutSeconds, Evidence: []Evidence{}}}
 	s.mu.Lock()
 	if old := s.jobs[id]; old != nil {
 		s.mu.Unlock()
@@ -488,11 +526,12 @@ func (s *Server) projectCatalog(w http.ResponseWriter, r *http.Request) {
 		ProjectID string `json:"projectId"`
 		Label     string `json:"label"`
 		Ready     bool   `json:"ready"`
+		Managed   bool   `json:"managed,omitempty"`
 	}
 	projects := []projectView{}
 	for id, p := range s.projects {
 		info, err := os.Stat(p.workspace)
-		projects = append(projects, projectView{id, id, available && reachable && err == nil && info.IsDir()})
+		projects = append(projects, projectView{id, id, available && reachable && err == nil && info.IsDir(), p.managed})
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].ProjectID < projects[j].ProjectID })
 	writeJSON(w, 200, map[string]any{"available": available, "reachable": reachable, "projects": projects})
