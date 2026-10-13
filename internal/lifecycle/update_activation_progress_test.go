@@ -88,7 +88,7 @@ func main() {
 		oldPath := filepath.Join(oldDirectory, "awf.exe")
 		mustWriteFixture(t, oldPath, []byte("unchanged prior fixture executable"))
 		requests := 0
-		client := freshFixtureClient(t, "v1.2.3", false, &requests)
+		client := freshFixtureClientForArch(t, "v1.2.3", runtime.GOARCH, false, &requests)
 		original := client.Transport
 		client.Transport = fixtureTransport(func(req *http.Request) (*http.Response, error) {
 			var body []byte

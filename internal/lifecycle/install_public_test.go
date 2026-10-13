@@ -28,10 +28,14 @@ func freshFixtureOps(local string) freshInstallOps {
 }
 func freshFixtureClient(t *testing.T, v string, corrupt bool, requests *int) *http.Client {
 	t.Helper()
-	payload := archiveFixture(t, releaseEntries(v, "amd64"))
+	return freshFixtureClientForArch(t, v, "amd64", corrupt, requests)
+}
+func freshFixtureClientForArch(t *testing.T, v, arch string, corrupt bool, requests *int) *http.Client {
+	t.Helper()
+	payload := archiveFixture(t, releaseEntries(v, arch))
 	sum := sha256.Sum256(payload)
 	digest := hex.EncodeToString(sum[:])
-	name := assetName(v, "amd64")
+	name := assetName(v, arch)
 	meta, _ := json.Marshal(releaseInfo{Tag: v, TargetCommitish: fixtureSourceCommit, Prerelease: prereleaseVersion(v), Assets: []releaseAsset{{name, officialAsset(v, name)}, {"SHA256SUMS", officialAsset(v, "SHA256SUMS")}}})
 	return &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
 		*requests++

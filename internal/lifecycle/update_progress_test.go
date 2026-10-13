@@ -35,11 +35,11 @@ func TestUpdateProgressWiringAndStdout(t *testing.T) {
 					t.Fatal(err)
 				}
 				requests := 0
-				client := freshFixtureClient(t, "v1.2.3", tc.corrupt, &requests)
+				client := freshFixtureClientForArch(t, "v1.2.3", runtime.GOARCH, tc.corrupt, &requests)
 				transport := client.Transport
 				client.Transport = fixtureTransport(func(req *http.Request) (*http.Response, error) {
 					res, err := transport.RoundTrip(req)
-					if err == nil && req.URL.String() == officialAsset("v1.2.3", assetName("v1.2.3", "amd64")) {
+					if err == nil && req.URL.String() == officialAsset("v1.2.3", assetName("v1.2.3", runtime.GOARCH)) {
 						data, readErr := io.ReadAll(res.Body)
 						res.Body.Close()
 						if readErr != nil {
