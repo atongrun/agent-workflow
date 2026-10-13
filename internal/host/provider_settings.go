@@ -586,11 +586,9 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 					input = append(input, "image")
 				}
 			}
-			modelName := m.Name
-			if modelName == "" {
-				modelName = m.ID
-			}
-			models = append(models, map[string]any{"id": m.ID, "name": modelName, "reasoning": m.Reasoning, "input": input, "contextWindow": m.Context, "maxTokens": m.Output})
+			// Catalog titles are vendor-controlled free text. Persist only the
+			// selected model identity, never an echoed credential in a title.
+			models = append(models, map[string]any{"id": m.ID, "name": m.ID, "reasoning": m.Reasoning, "input": input, "contextWindow": m.Context, "maxTokens": m.Output})
 		}
 		if !valid {
 			continue
