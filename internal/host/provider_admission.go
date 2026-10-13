@@ -83,6 +83,18 @@ func (s *Server) maintenanceEndpoints(ctx context.Context, id string, release bo
 			return providerBusy()
 		}
 	}
+	if s.cfg.ContentAdminSocket != "" {
+		var result struct {
+			Held bool `json:"held"`
+		}
+		if s.contentAdmin(ctx, "POST", "/maintenance", map[string]any{"requestId": id, "release": release}, &result) != nil || result.Held == release {
+			return providerBusy()
+		}
+		if release && client.CatalogMaintenance(ctx, id, true) != nil {
+			return providerBusy()
+		}
+		return nil
+	}
 	key, err := privateRegular(s.cfg.ContentServiceTokenFile, 4096)
 	if err != nil {
 		return providerBusy()

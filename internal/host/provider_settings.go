@@ -93,6 +93,17 @@ func privateRegular(path string, limit int64) ([]byte, error) {
 // Paths and cookie are server configuration only. Only these two management
 // actions and a projected provider list can be reached, always on loopback.
 func (s *Server) magpieManagement(ctx context.Context, action string, input any, output any) error {
+	if s.cfg.ContentAdminSocket != "" {
+		path, method := "/providers", "GET"
+		if action != "" {
+			if action != "list" && action != "save" {
+				return providerFailure()
+			}
+			path = "/" + action
+			method = "POST"
+		}
+		return s.contentAdmin(ctx, method, path, input, output)
+	}
 	if s.cfg.MagpieWebKeyFile == "" {
 		return providerFailure()
 	}
@@ -142,7 +153,8 @@ func (s *Server) magpieManagement(ctx context.Context, action string, input any,
 }
 func (s *Server) providerSnapshot(ctx context.Context) (providerSnapshot, []nativeProvider, error) {
 	var raw struct {
-		Providers []nativeProvider `json:"providers"`
+		Providers      []nativeProvider `json:"providers"`
+		SourceRevision string           `json:"sourceRevision"`
 	}
 	if e := s.magpieManagement(ctx, "", nil, &raw); e != nil {
 		return providerSnapshot{}, nil, e
@@ -158,12 +170,18 @@ func (s *Server) providerSnapshot(ctx context.Context) (providerSnapshot, []nati
 	}
 	sort.Slice(out.Providers, func(i, j int) bool { return out.Providers[i].ID < out.Providers[j].ID })
 	// File identity detects key-only saves without reading any existing key.
-	info, e := os.Stat(filepath.Join(s.cfg.MagpieConfigDir, "providers.json"))
-	if e != nil {
+	identity := raw.SourceRevision
+	if s.cfg.ContentAdminSocket == "" {
+		info, e := os.Stat(filepath.Join(s.cfg.MagpieConfigDir, "providers.json"))
+		if e != nil {
+			return out, nil, providerFailure()
+		}
+		identity = fmt.Sprintf("/%d/%d", info.ModTime().UnixNano(), info.Size())
+	} else if identity == "" || len(identity) > 128 {
 		return out, nil, providerFailure()
 	}
 	b, _ := json.Marshal(out)
-	sum := sha256.Sum256(append(b, []byte(fmt.Sprintf("/%d/%d", info.ModTime().UnixNano(), info.Size()))...))
+	sum := sha256.Sum256(append(b, []byte(identity)...))
 	out.Revision = hex.EncodeToString(sum[:])
 	return out, raw.Providers, nil
 }
@@ -384,7 +402,11 @@ func (s *Server) providerSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, providerFailure())
 		return
 	}
-	if s.magpieManagement(ctx, "save", map[string]any{"id": "dash-" + in.Preset, "preset": in.Preset, "key": in.Key, "models": in.Models, "noModels": false}, nil) != nil {
+	saveInput := map[string]any{"id": "dash-" + in.Preset, "preset": in.Preset, "key": in.Key, "models": in.Models, "noModels": false}
+	if s.cfg.ContentAdminSocket != "" {
+		saveInput["requestId"] = in.RequestID
+	}
+	if s.magpieManagement(ctx, "save", saveInput, nil) != nil {
 		writeJSON(w, 202, receipt)
 		return
 	}
@@ -511,6 +533,15 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 	}
 	for name, dir := range dirs {
 		status[name] = "failed"
+		if name == "x-studio" && s.cfg.ContentAdminSocket != "" {
+			var result struct {
+				Synced bool `json:"synced"`
+			}
+			if s.contentAdmin(ctx, "POST", "/sync", map[string]any{"requestId": receipt.RequestID, "preset": receipt.Preset, "models": receipt.Models}, &result) == nil && result.Synced {
+				status[name] = "synced"
+			}
+			continue
+		}
 		if dir == "" {
 			continue
 		}

@@ -20,6 +20,7 @@ type NodeConfig struct {
 	TokenEnv string `json:"tokenEnv"`
 }
 type Config struct {
+	ContentAdminSocket       string                `json:"contentAdminSocket,omitempty"`
 	ContentServiceTokenFile  string                `json:"contentServiceTokenFile,omitempty"`
 	MagpieWebKeyFile         string                `json:"magpieWebKeyFile,omitempty"`
 	MagpieConfigDir          string                `json:"magpieConfigDir,omitempty"`
@@ -45,6 +46,7 @@ type Server struct {
 	providerAdmission sync.RWMutex
 	// Testable private transport boundary; production always uses trusted local endpoints.
 	providerMaintenanceCall func(context.Context, string, bool) error
+	providerAdminCall       func(context.Context, string, string, any, any) error
 	cfg                     Config
 	store                   *core.Store
 	token, extensionToken   string
@@ -71,6 +73,9 @@ func LoadConfig(path string) (Config, error) {
 	return c, err
 }
 func New(c Config) (*Server, error) {
+	if c.ContentAdminSocket != "" && (!filepath.IsAbs(c.ContentAdminSocket) || filepath.Clean(c.ContentAdminSocket) != c.ContentAdminSocket) {
+		return nil, errors.New("provider broker path must be explicit absolute path")
+	}
 	if c.MagpieWebKeyFile != "" {
 		for _, p := range []string{c.MagpieWebKeyFile, c.MagpieConfigDir, c.ContentPiAgentDir, c.ContentDurablePiAgentDir, c.ContentServiceTokenFile, c.DurableConfig} {
 			if !filepath.IsAbs(p) {
