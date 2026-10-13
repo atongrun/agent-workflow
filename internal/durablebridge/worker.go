@@ -158,6 +158,12 @@ failed:
 	return nil, ErrUnavailable
 }
 
+// CatalogMaintenance uses this owner's exact private client, including its
+// random lifetime runtime directory and availability fence. No public route.
+func (w *Worker) CatalogMaintenance(ctx context.Context, requestID string, release bool) error {
+	return w.client.CatalogMaintenance(ctx, requestID, release)
+}
+
 func (w *Worker) Handler() http.Handler { return w.handler }
 func (w *Worker) Done() <-chan struct{} { return w.done }
 

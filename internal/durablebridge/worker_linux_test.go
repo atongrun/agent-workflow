@@ -4,6 +4,7 @@ package durablebridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -274,6 +275,18 @@ func TestWorkerChildFixture(t *testing.T) {
 			writeJSON(w, 200, Health{Version: 1, DurableVersion: version, Ready: true})
 			return
 		}
+		if r.URL.Path == "/v1/catalog-maintenance" {
+			var body struct {
+				RequestID string `json:"requestId"`
+				Release   bool   `json:"release"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil || body.RequestID != "owned_fixture" {
+				writeJSON(w, 400, map[string]string{"error": "invalid_input"})
+				return
+			}
+			writeJSON(w, 200, map[string]bool{"held": !body.Release})
+			return
+		}
 		if mode == "exit-on-request" {
 			os.Exit(23)
 		}
@@ -308,5 +321,28 @@ func TestManagedWorkerPi110HealthKeepsActualSDKVersion(t *testing.T) {
 	response := publicCall(w.Handler(), "GET", "/health", "", fixtureToken)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"durableVersion":"1.1.0"`) {
 		t.Fatal("actual SDK health version lost", response.Code, response.Body.String())
+	}
+}
+
+func TestOwnedWorkerCatalogMaintenanceUsesRandomLifetimeSocket(t *testing.T) {
+	cfg, storage, runtime := workerFixtureConfig(t, "ready")
+	w, err := startWorkerFixture(t, cfg, storage, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(context.Background())
+	if _, err := os.Stat(filepath.Join(runtime, "worker.sock")); !os.IsNotExist(err) {
+		t.Fatal("fixture did not exercise random directory")
+	}
+	for _, release := range []bool{false, true} {
+		if err := w.CatalogMaintenance(context.Background(), "owned_fixture", release); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.CatalogMaintenance(context.Background(), "owned_fixture", false); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("closed owner accepted maintenance", err)
 	}
 }

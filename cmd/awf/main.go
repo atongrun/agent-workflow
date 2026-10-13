@@ -75,6 +75,7 @@ func run(args []string) (runErr error) {
 			if err != nil {
 				return err
 			}
+			app.BindDurableCatalogMaintenance(worker.CatalogMaintenance)
 			workerDone, content = worker.Done(), worker.Handler()
 			defer func() {
 				shutdown, cancel := context.WithTimeout(context.Background(), time.Duration(durableConfig.ShutdownSeconds)*time.Second)

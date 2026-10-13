@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/atongrun/agent-workflow/internal/core"
-	"github.com/atongrun/agent-workflow/internal/durablebridge"
 	"github.com/atongrun/agent-workflow/internal/pi"
 )
 
@@ -63,23 +62,24 @@ func (s *Server) providerIdle() error {
 	}
 	return nil
 }
+
+// Bind the already owned native worker before HTTP serving. Never discover a
+// worker socket or create another client/owner from the shared runtime root.
+func (s *Server) BindDurableCatalogMaintenance(call func(context.Context, string, bool) error) {
+	s.durableCatalogMaintenance = call
+}
+
 func (s *Server) maintenanceEndpoints(ctx context.Context, id string, release bool) error {
 	if s.providerMaintenanceCall != nil {
 		return s.providerMaintenanceCall(ctx, id, release)
 	}
-	cfg, err := durablebridge.LoadConfig(s.cfg.DurableConfig)
-	if err != nil {
+	if s.durableCatalogMaintenance == nil {
 		return providerBusy()
 	}
-	client, err := durablebridge.NewUnixClient(filepath.Join(cfg.RuntimeDir, "worker.sock"), 10*time.Second)
-	if err != nil {
-		return providerBusy()
-	}
-	defer client.Close()
 	// Release the legacy gate first. If either release is unconfirmed, the Host
 	// fence remains and all new admissions stay closed until a confirmed retry.
 	if !release {
-		if client.CatalogMaintenance(ctx, id, false) != nil {
+		if s.durableCatalogMaintenance(ctx, id, false) != nil {
 			return providerBusy()
 		}
 	}
@@ -90,7 +90,7 @@ func (s *Server) maintenanceEndpoints(ctx context.Context, id string, release bo
 		if s.contentAdmin(ctx, "POST", "/maintenance", map[string]any{"requestId": id, "release": release}, &result) != nil || result.Held == release {
 			return providerBusy()
 		}
-		if release && client.CatalogMaintenance(ctx, id, true) != nil {
+		if release && s.durableCatalogMaintenance(ctx, id, true) != nil {
 			return providerBusy()
 		}
 		return nil
@@ -114,7 +114,7 @@ func (s *Server) maintenanceEndpoints(ctx context.Context, id string, release bo
 	if res.StatusCode != 200 || json.NewDecoder(http.MaxBytesReader(nil, res.Body, 256)).Decode(&value) != nil || value.Held == release {
 		return providerBusy()
 	}
-	if release && client.CatalogMaintenance(ctx, id, true) != nil {
+	if release && s.durableCatalogMaintenance(ctx, id, true) != nil {
 		return providerBusy()
 	}
 	return nil

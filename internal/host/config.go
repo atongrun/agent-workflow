@@ -45,11 +45,12 @@ type Server struct {
 	providerMu        sync.Mutex
 	providerAdmission sync.RWMutex
 	// Testable private transport boundary; production always uses trusted local endpoints.
-	providerMaintenanceCall func(context.Context, string, bool) error
-	providerAdminCall       func(context.Context, string, string, any, any) error
-	cfg                     Config
-	store                   *core.Store
-	token, extensionToken   string
+	providerMaintenanceCall   func(context.Context, string, bool) error
+	durableCatalogMaintenance func(context.Context, string, bool) error
+	providerAdminCall         func(context.Context, string, string, any, any) error
+	cfg                       Config
+	store                     *core.Store
+	token, extensionToken     string
 	// Serializes Pi startup, eviction, and task deletion without holding the store lock during process I/O.
 	piLifecycle sync.Mutex
 	mu          sync.Mutex
