@@ -38,7 +38,7 @@ func TestGeneralProviderOfficialPresetsUseNativeNewWithoutEndpoints(t *testing.T
 			}
 			var snapshot providerSnapshot
 			json.Unmarshal(call(t, s, "GET", "/v1/provider-settings", nil).Body.Bytes(), &snapshot)
-			if len(snapshot.Presets) != 12 {
+			if len(snapshot.Presets) != 14 {
 				t.Fatal("two-preset limit retained")
 			}
 		})

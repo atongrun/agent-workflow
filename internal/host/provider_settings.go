@@ -25,7 +25,7 @@ type providerPreset struct {
 	Name string `json:"name"`
 }
 
-var providerPresets = []providerPreset{{"zhipu", "智谱 · 按量 API"}, {"zai", "Z.ai · 按量 API"}, {"openai", "OpenAI"}, {"anthropic", "Anthropic"}, {"google", "Google Gemini"}, {"deepseek", "DeepSeek"}, {"xai", "xAI"}, {"moonshot", "Kimi · Global"}, {"moonshot-cn", "Kimi · China"}, {"minimax", "MiniMax · Global"}, {"minimax-cn", "MiniMax · China"}, {"openrouter", "OpenRouter"}}
+var providerPresets = []providerPreset{{"zhipu", "智谱 · 按量 API"}, {"zai", "Z.ai · 按量 API"}, {"openai", "OpenAI"}, {"anthropic", "Anthropic"}, {"google", "Google Gemini"}, {"deepseek", "DeepSeek"}, {"xai", "xAI"}, {"moonshot", "Kimi · Global"}, {"moonshot-cn", "Kimi · China"}, {"minimax", "MiniMax · Global"}, {"minimax-cn", "MiniMax · China"}, {"openrouter", "OpenRouter"}, {"qwen", "Qwen · Global"}, {"qwen-cn", "Qwen · China"}}
 var providerModelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 var providerRequestID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
