@@ -53,7 +53,7 @@ func existingProviderFixture(t *testing.T) (*Server, *int) {
 		case "/api/providers":
 			raw = `{"providers":[{"id":"custom-native","preset":"custom","chosen":["vendor/model"],"key":{"set":true,"value":"DO-NOT-LEAK"},"chat":"https://existing.example/v1","headers":{"Authorization":"DO-NOT-LEAK"},"proxy":"https://existing-proxy.example"}]}`
 		case "/v1/models":
-			raw = `{"data":[{"id":"custom-native/vendor/model","context_window":1000,"max_output_tokens":500}]}`
+			raw = `{"data":[{"id":"custom-native/vendor/model","context_window":1000,"max_output_tokens":500,"modalities":{"input":["text","image"],"output":["text"]}},{"id":"unrelated/no-metadata"}]}`
 		default:
 			return original.RoundTrip(r)
 		}
@@ -83,6 +83,32 @@ func TestExistingProviderSyncPreservesNativeConfigAndOpaqueModels(t *testing.T) 
 	for _, status := range receipt.Sync {
 		if status != "synced" {
 			t.Fatal(receipt)
+		}
+	}
+	for _, dir := range []string{s.cfg.PiAgentDir, s.cfg.ContentPiAgentDir, s.cfg.ContentDurablePiAgentDir} {
+		data, err := os.ReadFile(filepath.Join(dir, "models.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var root struct {
+			Providers map[string]struct {
+				Models []struct {
+					ID    string   `json:"id"`
+					Input []string `json:"input"`
+				} `json:"models"`
+			} `json:"providers"`
+		}
+		if json.Unmarshal(data, &root) != nil {
+			t.Fatal("invalid catalog")
+		}
+		found := false
+		for _, m := range root.Providers["magpie"].Models {
+			if m.ID == "custom-native/vendor/model" {
+				found = len(m.Input) == 2 && m.Input[1] == "image"
+			}
+		}
+		if !found {
+			t.Fatal("native image input not preserved")
 		}
 	}
 	providerAfter, _ := os.ReadFile(filepath.Join(s.cfg.MagpieConfigDir, "providers.json"))
@@ -116,6 +142,35 @@ func TestExistingProviderCannotSyncUnchosenModelsOrArbitraryID(t *testing.T) {
 			w := call(t, s, "POST", "/v1/provider-settings", in)
 			if w.Code < 400 || *writes != 0 {
 				t.Fatal("unapproved existing selection accepted")
+			}
+		})
+	}
+}
+
+func TestNativeModalitiesMalformedFailsWithoutCatalogWrites(t *testing.T) {
+	for _, shape := range []string{`["text"]`, `{"input":"image"}`, `{"input":[1]}`} {
+		t.Run(shape, func(t *testing.T) {
+			s, _, _ := providerFixture(t)
+			originals := map[string]string{}
+			for _, dir := range []string{s.cfg.PiAgentDir, s.cfg.ContentPiAgentDir, s.cfg.ContentDurablePiAgentDir} {
+				p := filepath.Join(dir, "models.json")
+				b, _ := os.ReadFile(p)
+				originals[p] = string(b)
+			}
+			s.http.Transport = providerTransport(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"qwen-cn/qwen-max","context_window":1000,"max_output_tokens":500,"modalities":` + shape + `}]}`))}, nil
+			})
+			result := s.syncProviderModels(t.Context(), providerReceipt{RequestID: "shape", Preset: "existing", ProviderID: "qwen-cn", Models: []string{"qwen-max"}})
+			for _, v := range result {
+				if v != "failed" {
+					t.Fatal(result)
+				}
+			}
+			for p, b := range originals {
+				after, _ := os.ReadFile(p)
+				if string(after) != b {
+					t.Fatal("invalid native field wrote catalog")
+				}
 			}
 		})
 	}

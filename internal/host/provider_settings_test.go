@@ -49,7 +49,7 @@ func providerFixture(t *testing.T) (*Server, *int, *bool) {
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(b)), Header: http.Header{"Content-Type": []string{"application/json"}}}
 		}
 		if r.URL.Path == "/v1/models" {
-			return response(map[string]any{"data": []any{map[string]any{"id": "dash-zhipu/glm-5", "context_window": 128000, "max_output_tokens": 8192, "reasoning": true, "modalities": []string{"text"}}}}), nil
+			return response(map[string]any{"data": []any{map[string]any{"id": "dash-zhipu/glm-5", "context_window": 128000, "max_output_tokens": 8192, "reasoning": true, "modalities": map[string]any{"input": []string{"text"}, "output": []string{"text"}}}}}), nil
 		}
 		c, e := r.Cookie("magpie_web_3430")
 		if e != nil || c.Value != "private-cookie" {

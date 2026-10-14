@@ -530,12 +530,15 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 	defer res.Body.Close()
 	var catalog struct {
 		Data []struct {
-			ID        string   `json:"id"`
-			Name      string   `json:"display_name"`
-			Context   int      `json:"context_window"`
-			Output    int      `json:"max_output_tokens"`
-			Reasoning bool     `json:"reasoning"`
-			Input     []string `json:"modalities"`
+			ID         string `json:"id"`
+			Name       string `json:"display_name"`
+			Context    int    `json:"context_window"`
+			Output     int    `json:"max_output_tokens"`
+			Reasoning  bool   `json:"reasoning"`
+			Modalities struct {
+				Input  []string `json:"input"`
+				Output []string `json:"output"`
+			} `json:"modalities"`
 		} `json:"data"`
 	}
 	b, e := io.ReadAll(io.LimitReader(res.Body, 2*1024*1024+1))
@@ -609,7 +612,7 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 				break
 			}
 			input := []string{"text"}
-			for _, i := range m.Input {
+			for _, i := range m.Modalities.Input {
 				if i == "image" {
 					input = append(input, "image")
 				}
