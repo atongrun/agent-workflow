@@ -41,6 +41,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	}
 	// Probe outside Store.Update: the Worker verifies this task via Host GET.
 	// Holding the store lock during the callback would deadlock that verification.
+	var checkedPreparation *failedPreparationProof
 	var checkedSourceSHA string
 	var checkedTargetRevision int
 	var checkedLifecycleRevision int
@@ -55,6 +56,20 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				checkedSourceSHA = t.RepositorySource.BaseSHA
 				checkedTargetRevision = t.TargetRevision
 				checkedLifecycleRevision = t.LifecycleRevision
+			}
+		}
+	}
+	if op == "rework" {
+		snapshot := s.store.Snapshot()
+		if snapshot.Requests[in.RequestID] == nil {
+			if task := snapshot.Tasks[id]; task != nil && task.Execution != nil && task.Execution.Status == "failed" && task.Execution.RequestID == in.ExecutionRequestID {
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				var job node.Job
+				status, err := s.nodeCall(ctx, executionNodeID(task), "GET", "/v1/jobs/"+task.Execution.JobID, nil, &job)
+				cancel()
+				if err == nil && status == http.StatusOK {
+					checkedPreparation = verifyFailedPreparation(task, &job)
+				}
 			}
 		}
 	}
@@ -156,7 +171,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				t.Status = "needs_changes"
 			}
 		case "start", "rework":
-			if err := s.prepareExecution(st, t, in.RequestID, in.Revision, op == "rework", in.ExpectedTargetRevision); err != nil {
+			if err := s.prepareExecution(st, t, in.RequestID, in.Revision, op == "rework", in.ExpectedTargetRevision, checkedPreparation); err != nil {
 				return err
 			}
 		case "execution/cancel":
@@ -239,7 +254,7 @@ func executionActive(t *core.Task) bool {
 	}
 	return true
 }
-func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string, revision int, rework bool, expectedTargetRevision *int) error {
+func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string, revision int, rework bool, expectedTargetRevision *int, preparation ...*failedPreparationProof) error {
 	if t.DeletedAt != nil {
 		return fail("task_deleted", "restore this task before execution", 409)
 	}
@@ -271,7 +286,7 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 	}
 
 	if rework {
-		if !needsRework(t) {
+		if !needsRework(t) && !failedPreparationMatches(t, preparation) {
 			return fail("rework_unavailable", "Pi must report changes needed before rework", 409)
 		}
 		if t.Budget.Reworks >= t.Settings.MaxReworks {
