@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type providerPreset struct {
@@ -24,10 +25,12 @@ type providerPreset struct {
 	Name string `json:"name"`
 }
 
-var providerPresets = []providerPreset{{"zhipu", "智谱 · 按量 API"}, {"zai", "Z.ai · 按量 API"}}
+var providerPresets = []providerPreset{{"zhipu", "智谱 · 按量 API"}, {"zai", "Z.ai · 按量 API"}, {"openai", "OpenAI"}, {"anthropic", "Anthropic"}, {"google", "Google Gemini"}, {"deepseek", "DeepSeek"}, {"xai", "xAI"}, {"moonshot", "Kimi · Global"}, {"moonshot-cn", "Kimi · China"}, {"minimax", "MiniMax · Global"}, {"minimax-cn", "MiniMax · China"}, {"openrouter", "OpenRouter"}}
+var providerModelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 var providerRequestID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
 type providerInput struct {
+	ProviderID       string   `json:"providerId,omitempty"`
 	RequestID        string   `json:"requestId"`
 	Preset           string   `json:"preset"`
 	Key              string   `json:"key"`
@@ -46,12 +49,13 @@ type providerSnapshot struct {
 	Providers []providerPublic `json:"providers"`
 }
 type providerReceipt struct {
-	Admission string            `json:"admission,omitempty"`
-	RequestID string            `json:"requestId"`
-	Preset    string            `json:"preset"`
-	Models    []string          `json:"models"`
-	Status    string            `json:"status"`
-	Sync      map[string]string `json:"sync"`
+	ProviderID string            `json:"providerId,omitempty"`
+	Admission  string            `json:"admission,omitempty"`
+	RequestID  string            `json:"requestId"`
+	Preset     string            `json:"preset"`
+	Models     []string          `json:"models"`
+	Status     string            `json:"status"`
+	Sync       map[string]string `json:"sync"`
 }
 type nativeProvider struct {
 	ID     string   `json:"id"`
@@ -69,7 +73,20 @@ type nativeProvider struct {
 	} `json:"models"`
 }
 
-func supportedPreset(id string) bool { return id == "zhipu" || id == "zai" }
+func supportedPreset(id string) bool {
+	for _, p := range providerPresets {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+func receiptProviderID(r providerReceipt) string {
+	if r.ProviderID != "" {
+		return r.ProviderID
+	}
+	return "dash-" + r.Preset
+}
 func providerFailure() error {
 	return fail("provider_unavailable", "Provider configuration could not be confirmed. Refresh the existing request; do not replay it.", 503)
 }
@@ -161,10 +178,15 @@ func (s *Server) providerSnapshot(ctx context.Context) (providerSnapshot, []nati
 	}
 	out := providerSnapshot{Presets: providerPresets, Providers: []providerPublic{}}
 	for _, p := range raw.Providers {
-		if p.ID != "dash-"+p.Preset || !supportedPreset(p.Preset) {
+		if !providerRequestID.MatchString(p.ID) {
 			continue
 		}
-		m := append([]string{}, p.Chosen...)
+		m := []string{}
+		for _, id := range p.Chosen {
+			if safeProviderModel(id) {
+				m = append(m, id)
+			}
+		}
 		sort.Strings(m)
 		out.Providers = append(out.Providers, providerPublic{p.ID, p.Preset, p.Key.Set, m})
 	}
@@ -250,7 +272,9 @@ func (s *Server) providerSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	var in providerInput
 	// Do not return JSON decoder diagnostics, which may echo an input key.
-	if decode(w, r, &in) != nil || !supportedPreset(in.Preset) || len(in.Key) > 4096 || strings.ContainsAny(in.Key, "\r\n\x00") || len(in.Models) > 100 {
+	if decode(w, r, &in) != nil || !(supportedPreset(in.Preset) || in.Preset == "existing" && providerRequestID.MatchString(in.ProviderID) && in.Key == "") || len(in.Key) > 4096 || strings.IndexFunc(in.Key, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune(",;，；", r)
+	}) >= 0 || len(in.Models) > 100 {
 		writeError(w, fail("invalid_provider", "Invalid provider input", 400))
 		return
 	}
@@ -303,7 +327,7 @@ func (s *Server) providerSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, providerFailure())
 			return
 		}
-		if receipt.Preset != in.Preset || strings.Join(receipt.Models, "\x00") != strings.Join(in.Models, "\x00") {
+		if receipt.Preset != in.Preset || receipt.ProviderID != in.ProviderID || strings.Join(receipt.Models, "\x00") != strings.Join(in.Models, "\x00") {
 			writeError(w, fail("request_conflict", "Use the original request identity and selection", 409))
 			return
 		}
@@ -323,19 +347,23 @@ func (s *Server) providerSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail("provider_conflict", "Provider configuration changed. Refresh before saving", 409))
 		return
 	}
+	if in.ProviderID != "" && in.Preset != "existing" {
+		writeError(w, fail("invalid_provider", "Existing provider selection cannot change keys or configuration", 400))
+		return
+	}
 	exists := false
 	for _, p := range providers {
-		if p.ID == "dash-"+in.Preset {
+		if in.Preset == "existing" && p.ID == in.ProviderID {
 			exists = true
-			expected := "https://open.bigmodel.cn/api/paas/v4"
-			if in.Preset == "zai" {
-				expected = "https://api.z.ai/api/paas/v4"
-			}
-			if p.Preset != in.Preset || p.Chat != expected || p.Proxy != "" || len(p.Headers) != 0 {
-				writeError(w, fail("provider_conflict", "This provider needs native Magpie review", 409))
-				return
-			}
 		}
+		if in.Preset != "existing" && p.ID == "dash-"+in.Preset {
+			writeError(w, fail("provider_conflict", "Select this existing provider to sync its enabled models; edit its configuration in native Magpie", 409))
+			return
+		}
+	}
+	if in.Preset == "existing" && !exists {
+		writeError(w, fail("provider_conflict", "Existing provider is unavailable", 409))
+		return
 	}
 	if !exists && strings.TrimSpace(in.Key) == "" {
 		writeError(w, fail("key_required", "A new provider requires an API key", 400))
@@ -366,9 +394,9 @@ func (s *Server) providerSettings(w http.ResponseWriter, r *http.Request) {
 		for _, m := range in.Models {
 			found := false
 			for _, p := range providers {
-				if p.ID == "dash-"+in.Preset {
-					for _, x := range p.Models {
-						if x.ID == m {
+				if p.ID == in.ProviderID {
+					for _, x := range p.Chosen {
+						if x == m {
 							found = true
 						}
 					}
@@ -397,16 +425,16 @@ func (s *Server) providerSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
-	receipt := providerReceipt{Admission: "held", RequestID: in.RequestID, Preset: in.Preset, Models: in.Models, Status: "unknown", Sync: map[string]string{}}
+	receipt := providerReceipt{ProviderID: in.ProviderID, Admission: "held", RequestID: in.RequestID, Preset: in.Preset, Models: in.Models, Status: "unknown", Sync: map[string]string{}}
 	if atomicPrivateJSON(path, receipt) != nil {
 		writeError(w, providerFailure())
 		return
 	}
-	saveInput := map[string]any{"id": "dash-" + in.Preset, "preset": in.Preset, "key": in.Key, "models": in.Models, "noModels": false}
+	saveInput := map[string]any{"id": "dash-" + in.Preset, "preset": in.Preset, "key": in.Key, "models": in.Models, "noModels": false, "new": true}
 	if s.cfg.ContentAdminSocket != "" {
 		saveInput["requestId"] = in.RequestID
 	}
-	if s.magpieManagement(ctx, "save", saveInput, nil) != nil {
+	if in.Preset != "existing" && s.magpieManagement(ctx, "save", saveInput, nil) != nil {
 		writeJSON(w, 202, receipt)
 		return
 	}
@@ -432,7 +460,7 @@ func (s *Server) providerSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, receipt)
 }
 func safeProviderModel(id string) bool {
-	return id != "" && len(id) <= 160 && !strings.ContainsAny(id, " \t\r\n\x00/")
+	return id != "" && len(id) <= 160 && providerModelID.MatchString(id)
 }
 func (s *Server) providerRequest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("requestId")
@@ -520,7 +548,7 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 	for _, id := range receipt.Models {
 		found := false
 		for _, m := range catalog.Data {
-			if m.ID == "dash-"+receipt.Preset+"/"+id {
+			if m.ID == receiptProviderID(receipt)+"/"+id {
 				found = true
 			}
 		}
@@ -537,7 +565,7 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 			var result struct {
 				Synced bool `json:"synced"`
 			}
-			if s.contentAdmin(ctx, "POST", "/sync", map[string]any{"requestId": receipt.RequestID, "preset": receipt.Preset, "models": receipt.Models}, &result) == nil && result.Synced {
+			if s.contentAdmin(ctx, "POST", "/sync", map[string]any{"requestId": receipt.RequestID, "preset": receipt.Preset, "models": receipt.Models, "providerId": receipt.ProviderID}, &result) == nil && result.Synced {
 				status[name] = "synced"
 			}
 			continue
@@ -567,13 +595,13 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 		models := []map[string]any{}
 		for _, m := range existing {
 			id, _ := m["id"].(string)
-			if !strings.HasPrefix(id, "dash-"+receipt.Preset+"/") {
+			if !strings.HasPrefix(id, receiptProviderID(receipt)+"/") {
 				models = append(models, m)
 			}
 		}
 		valid := true
 		for _, m := range catalog.Data {
-			if !strings.HasPrefix(m.ID, "dash-"+receipt.Preset+"/") {
+			if !strings.HasPrefix(m.ID, receiptProviderID(receipt)+"/") {
 				continue
 			}
 			if m.Context <= 0 || m.Output <= 0 || m.Output > m.Context {
