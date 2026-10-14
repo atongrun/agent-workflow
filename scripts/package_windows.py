@@ -93,6 +93,7 @@ def build_assets(version: str, output: Path, go: str, *, allow_prerelease: bool 
         raise ValueError("output contains release assets already; use a fresh output directory")
     env = os.environ.copy()
     # The caller chooses the installed Go toolchain. Never auto-download one.
+    # Keep the source revision/dirty state in Go build info for release auditing.
     env.update(GOOS="windows", CGO_ENABLED="0", GOTOOLCHAIN="local", GOFLAGS="",
                GOAMD64="v1", GOARM64="v8.0", GOEXPERIMENT="")
     with tempfile.TemporaryDirectory(prefix="awf-release-", dir=output) as temporary:
@@ -102,7 +103,7 @@ def build_assets(version: str, output: Path, go: str, *, allow_prerelease: bool 
             binaries = {}
             for executable, command in (("awf.exe", "awf"), ("awf-node.exe", "awf-node")):
                 path = staging / executable
-                subprocess.run([go, "build", "-trimpath", "-buildvcs=false",
+                subprocess.run([go, "build", "-trimpath", "-buildvcs=true",
                                 "-ldflags", "-s -w -buildid= -X github.com/atongrun/agent-workflow/internal/lifecycle.Version=" + version,
                                 "-o", str(path), "./cmd/" + command],
                                cwd=REPOSITORY, env=env, check=True)

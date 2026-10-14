@@ -74,7 +74,7 @@ func TestUnobservedChildBlocksStopUpdateAndDuplicateStart(t *testing.T) {
 	t.Fatal("observed exact child exit did not clear its startup intent")
 }
 func TestOldChildCannotClearNewerStartupIntent(t *testing.T) {
-	root := t.TempDir()
+	root := fixtureProgramRoot(t)
 	if e := privateRoot(root); e != nil {
 		t.Fatal(e)
 	}

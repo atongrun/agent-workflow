@@ -13,6 +13,8 @@ import (
 func checkInstallerContext() error          { return nil }
 func checkInstallerPath(string, bool) error { return nil }
 
+func createAtomicTemp(dir string) (*os.File, error) { return os.CreateTemp(dir, ".awf-*") }
+
 func replaceFile(a, b string) error         { return os.Rename(a, b) }
 func createPrivateDirectory(p string) error { return os.Mkdir(p, 0700) }
 func lockFile(p string) (*os.File, error) {

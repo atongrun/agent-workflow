@@ -139,7 +139,7 @@ func writeJSON(path string, v any) error {
 	return atomicWrite(path, append(b, '\n'))
 }
 func atomicWrite(path string, b []byte) error {
-	f, e := os.CreateTemp(filepath.Dir(path), ".awf-*")
+	f, e := createAtomicTemp(filepath.Dir(path))
 	if e != nil {
 		return e
 	}

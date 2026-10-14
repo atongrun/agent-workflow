@@ -12,7 +12,7 @@ import (
 
 func lifecycleConfigFixture(t *testing.T) (string, Config, []string) {
 	t.Helper()
-	base := t.TempDir()
+	base := fixtureProgramRoot(t)
 	root, workspace, binary := filepath.Join(base, "AWF"), filepath.Join(base, "workspace"), filepath.Join(base, "OpenCode.exe")
 	if err := os.MkdirAll(workspace, 0700); err != nil {
 		t.Fatal(err)

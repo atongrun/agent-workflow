@@ -20,7 +20,7 @@ import (
 
 func privateReleaseRoot(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := fixtureProgramRoot(t)
 	if err := privateRoot(root); err != nil {
 		t.Fatalf("protect release fixture root: %v", err)
 	}

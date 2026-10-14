@@ -237,3 +237,68 @@ func inspectPathPermissions(p string, role permissionRole) error {
 	}
 	return nil
 }
+
+// The owner of a new file must be TokenUser, not the elevated token's default
+// owner. Supply OWNER only at CREATE_NEW; keep the same parent-inherited DACL.
+// Existing files and directories are never opened for security writes.
+func createAtomicTemp(dir string) (*os.File, error) {
+	if e := rejectReparsePath(dir); e != nil {
+		return nil, e
+	}
+	role := programPermissionRole
+	if checkPrivatePath(dir) == nil {
+		role = privatePermissionRole
+	} else if e := checkProgramPath(dir); e != nil {
+		return nil, e
+	}
+	token, e := syscall.OpenCurrentProcessToken()
+	if e != nil {
+		return nil, e
+	}
+	defer token.Close()
+	user, e := token.GetTokenUser()
+	if e != nil {
+		return nil, e
+	}
+	sid, e := user.User.Sid.String()
+	if e != nil {
+		return nil, e
+	}
+	descriptor, e := syscall.UTF16PtrFromString("O:" + sid)
+	if e != nil {
+		return nil, e
+	}
+	var sd uintptr
+	r, _, callErr := syscall.NewLazyDLL("advapi32.dll").NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW").Call(uintptr(unsafe.Pointer(descriptor)), 1, uintptr(unsafe.Pointer(&sd)), 0)
+	if r == 0 {
+		return nil, fmt.Errorf("cannot specify atomic file owner: %w", callErr)
+	}
+	defer syscall.LocalFree(syscall.Handle(sd))
+	sa := syscall.SecurityAttributes{Length: uint32(unsafe.Sizeof(syscall.SecurityAttributes{})), SecurityDescriptor: sd}
+	for i := 0; i < 10; i++ {
+		suffix, e := randomToken()
+		if e != nil {
+			return nil, e
+		}
+		name := filepath.Join(dir, ".awf-"+suffix)
+		ptr, e := syscall.UTF16PtrFromString(name)
+		if e != nil {
+			return nil, e
+		}
+		h, e := syscall.CreateFile(ptr, syscall.GENERIC_READ|syscall.GENERIC_WRITE, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE, &sa, syscall.CREATE_NEW, syscall.FILE_ATTRIBUTE_NORMAL|syscall.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		if e == syscall.ERROR_FILE_EXISTS || e == syscall.ERROR_ALREADY_EXISTS {
+			continue
+		}
+		if e != nil {
+			return nil, e
+		}
+		f := os.NewFile(uintptr(h), name)
+		if e = checkPathPermissions(name, role); e != nil {
+			f.Close()
+			os.Remove(name)
+			return nil, e
+		}
+		return f, nil
+	}
+	return nil, errors.New("cannot reserve new atomic file")
+}

@@ -81,7 +81,7 @@ func TestPermissionWindowsProgramRootDACLNeverChanges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(path, "fixture.txt"), []byte("synthetic"), 0600); err != nil {
+		if err := atomicWrite(filepath.Join(path, "fixture.txt"), []byte("synthetic")); err != nil {
 			t.Fatal(err)
 		}
 		for _, p := range []string{filepath.Dir(path), path, filepath.Join(path, "fixture.txt")} {

@@ -22,7 +22,7 @@ func mustWriteFixture(t *testing.T, path string, b []byte) {
 func TestSwitchVersionCommitRollbackAndPreservation(t *testing.T) {
 	for _, outcome := range []string{"success", "activation failure", "rollback activation failure", "activation unknown"} {
 		t.Run(outcome, func(t *testing.T) {
-			root := t.TempDir()
+			root := fixtureProgramRoot(t)
 			old := Pointer{Version: "v1.2.3"}
 			if err := writeJSON(filepath.Join(root, "current.json"), old); err != nil {
 				t.Fatal(err)
@@ -91,7 +91,7 @@ func TestSwitchVersionRefusesBeforeActivation(t *testing.T) {
 		{"invalid tag", "../escape", false}, {"unwritable pointer", "v1.2.4", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := fixtureProgramRoot(t)
 			if tc.blocked {
 				mustWriteFixture(t, filepath.Join(root, "current.json", "keep"), []byte("sentinel"))
 			}
@@ -117,7 +117,7 @@ func TestSwitchVersionRefusesBeforeActivation(t *testing.T) {
 }
 
 func TestSwitchVersionReportsPointerRollbackFailure(t *testing.T) {
-	root := t.TempDir()
+	root := fixtureProgramRoot(t)
 	p := filepath.Join(root, "current.json")
 	if err := writeJSON(p, Pointer{Version: "v1.2.3"}); err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestSwitchVersionReportsPointerRollbackFailure(t *testing.T) {
 }
 
 func TestAtomicWritePreservesDestinationOnFailure(t *testing.T) {
-	root := t.TempDir()
+	root := fixtureProgramRoot(t)
 	path := filepath.Join(root, "pointer")
 	mustWriteFixture(t, filepath.Join(path, "sentinel"), []byte("preserve"))
 	if err := atomicWrite(path, []byte("replacement")); err == nil {
@@ -158,7 +158,7 @@ func TestAtomicWritePreservesDestinationOnFailure(t *testing.T) {
 }
 
 func TestReadBoundedAndStrictPointerJSON(t *testing.T) {
-	root := t.TempDir()
+	root := fixtureProgramRoot(t)
 	p := filepath.Join(root, "input")
 	mustWriteFixture(t, p, []byte("123456789"))
 	if _, err := readBounded(p, 8); err == nil {

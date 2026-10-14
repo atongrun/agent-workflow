@@ -60,10 +60,17 @@ func main() {
 		t.Fatal(err)
 	}
 	executable := filepath.Join(build, "fixture.exe")
-	command := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-trimpath", "-buildvcs=false", "-o", executable, source)
-	command.Env = append(os.Environ(), "GOTOOLCHAIN=local", "CGO_ENABLED=0", "GOFLAGS=")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("compile native self-check fixture: %v\n%s", err, output)
+	if supplied := os.Getenv("AWF_TEST_SELFCHECK_EXE"); supplied != "" {
+		if !filepath.IsAbs(supplied) || filepath.Base(supplied) != "awf-selfcheck-fixture.exe" {
+			t.Fatal("invalid supplied synthetic executable")
+		}
+		executable = supplied
+	} else {
+		command := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-trimpath", "-buildvcs=false", "-o", executable, source)
+		command.Env = append(os.Environ(), "GOTOOLCHAIN=local", "CGO_ENABLED=0", "GOFLAGS=")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("compile native self-check fixture: %v\n%s", err, output)
+		}
 	}
 	native, err := os.ReadFile(executable)
 	if err != nil {

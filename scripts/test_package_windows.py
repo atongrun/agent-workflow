@@ -150,7 +150,7 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(len(paths), 4)
             for command, env in calls:
                 self.assertIn("-trimpath", command)
-                self.assertIn("-buildvcs=false", command)
+                self.assertIn("-buildvcs=true", command)
                 self.assertIn("-X github.com/atongrun/agent-workflow/internal/lifecycle.Version=v1.2.3", command[command.index("-ldflags") + 1])
                 self.assertEqual(env["GOTOOLCHAIN"], "local")
                 self.assertEqual(env["CGO_ENABLED"], "0")
