@@ -82,7 +82,7 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 		}
 	}
 	if runtime.GOOS != "windows" {
-		return errors.New("managed init/pair/start/stop/update require native Windows; host and request remain available here")
+		return errors.New("managed init/pair/workspace/start/stop/update require native Windows; host and request remain available here")
 	}
 	root, e := DefaultRoot()
 	if e != nil {
@@ -115,6 +115,11 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 	}
 	defer lock.Close()
 	switch args[0] {
+	case "workspace":
+		if len(args) != 2 || args[1] != "enable" {
+			return errors.New("usage: awf workspace enable (fixed private default only)")
+		}
+		return enableWorkspace(root, out)
 	case "init":
 		if _, e = current(root); e != nil {
 			return errors.New("install AWF for this user before running init")

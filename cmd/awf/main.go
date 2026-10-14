@@ -36,7 +36,7 @@ func main() {
 }
 func run(args []string) (runErr error) {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: awf host --config host.json | awf request METHOD /v1/path [JSON] | awf doctor [--json] | awf install | awf init | awf pair [--status | --retry] | awf start | awf stop | awf update [--version vX.Y.Z] | awf version")
+		return fmt.Errorf("usage: awf host --config host.json | awf request METHOD /v1/path [JSON] | awf doctor [--json] | awf install | awf init | awf pair [--status | --retry] | awf workspace enable | awf start | awf stop | awf update [--version vX.Y.Z] | awf version")
 	}
 	switch args[0] {
 	case "host":
@@ -149,7 +149,7 @@ func run(args []string) (runErr error) {
 			return fmt.Errorf("Host returned HTTP %d", res.StatusCode)
 		}
 		return nil
-	case "doctor", "install", "init", "pair", "start", "stop", "update", "version", "install-protocol", "_serve", "_install":
+	case "doctor", "workspace", "install", "init", "pair", "start", "stop", "update", "version", "install-protocol", "_serve", "_install":
 		return lifecycle.Run(args, os.Stdin, os.Stdout)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])

@@ -58,11 +58,43 @@ func OfflineIdle(cfg Config) (*os.File, error) {
 	s := &Server{cfg: cfg, jobsDir: filepath.Join(cfg.StateDir, "jobs"), jobs: map[string]*record{}, projects: map[string]*project{}}
 	fail := func(e error) (*os.File, error) { lock.Close(); return nil, e }
 	for id, p := range cfg.Projects {
+		if id == "" || !filepath.IsAbs(p) {
+			return fail(errors.New("invalid configured project"))
+		}
 		clean, e := filepath.EvalSymlinks(filepath.Clean(p))
 		if e != nil {
 			return fail(e)
 		}
+		info, err := os.Stat(clean)
+		if err != nil || !info.IsDir() {
+			return fail(errors.New("configured project is not a directory"))
+		}
+		for _, existing := range s.projects {
+			if overlaps(clean, existing.workspace) {
+				return fail(errors.New("configured projects overlap"))
+			}
+		}
 		s.projects[id] = &project{id: id, workspace: clean}
+	}
+	if cfg.ManagedRoot != "" {
+		if !filepath.IsAbs(cfg.ManagedRoot) || s.projects["managed"] != nil {
+			return fail(errors.New("invalid managed root or reserved project ID"))
+		}
+		root, err := filepath.EvalSymlinks(cfg.ManagedRoot)
+		if err != nil {
+			return fail(errors.New("managed root is unavailable"))
+		}
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			return fail(errors.New("managed root is not a directory"))
+		}
+		for _, p := range s.projects {
+			if overlaps(root, p.workspace) {
+				return fail(errors.New("managed root overlaps a configured workspace"))
+			}
+		}
+		s.cfg.ManagedRoot = root
+		s.projects["managed"] = &project{id: "managed", workspace: root, managed: true}
 	}
 	entries, e := os.ReadDir(s.jobsDir)
 	if e != nil {

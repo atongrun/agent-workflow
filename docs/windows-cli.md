@@ -659,3 +659,23 @@ inventory, mode, mtime and content comparisons with no tolerance. Regression cas
 must still detect same-size content edits, file/directory mtime changes, creation
 and deletion. Native ACL/control before/after equality is a separate additional
 assertion. This extension requires its own native Windows fixture acceptance.
+
+## Enable the default managed workspace
+
+After AWF is initialized, stop it safely while all jobs are idle, then run:
+
+```powershell
+awf workspace enable
+awf start
+```
+
+`workspace enable` adds only `%LOCALAPPDATA%\Programs\AWF\private\managed-workspaces`
+to the existing configuration. It preserves fixed projects, paired identity,
+provider credentials, job history, autostart and network settings. It acquires
+lifecycle, startup, runtime and native writer ownership before saving atomically.
+An active runtime, unresolved job, existing unconfigured directory, reserved
+`managed` project ID or overlapping workspace blocks the command. Repeating the
+command validates the original root and succeeds without moving existing tasks.
+It accepts no custom path and does not prepare repositories or start services.
+A save or verification failure restores the original configuration; if rollback
+cannot be confirmed, the command reports that AWF must not be started.

@@ -253,3 +253,56 @@ func TestOfflineIdleRejectsOversizedRecordWithoutReadingIt(t *testing.T) {
 	}
 	assertOfflineBlocked(t, cfg)
 }
+
+func TestOfflineIdleManagedHistoryAndBoundaries(t *testing.T) {
+	for _, kind := range []string{"terminal", "running", "foreign-workspace", "reserved-id", "overlap", "missing-root"} {
+		t.Run(kind, func(t *testing.T) {
+			cfg, r, path := offlineFixture(t)
+			root := filepath.Join(filepath.Dir(cfg.StateDir), "managed")
+			if e := os.Mkdir(root, 0700); e != nil {
+				t.Fatal(e)
+			}
+			root, _ = filepath.EvalSymlinks(root)
+			cfg.ManagedRoot = root
+			r.Request = managedRequest(strings.Repeat("a", 40))
+			r.Request.Repository = "owner/repo"
+			r.Fingerprint = fingerprint(r.Request)
+			r.Job.ID = JobID(r.Request.RequestID)
+			r.Job.RequestID = r.Request.RequestID
+			r.Job.TaskID = r.Request.TaskID
+			r.Job.ProjectID = "managed"
+			r.Job.Workspace = managedTaskPath(root, r.Request.TaskID)
+			path = filepath.Join(filepath.Dir(path), r.Job.ID+".json")
+			switch kind {
+			case "running":
+				r.Job.Status = "running"
+			case "foreign-workspace":
+				r.Job.Workspace = root
+			case "reserved-id":
+				cfg.Projects["managed"] = cfg.Projects["project"]
+			case "overlap":
+				cfg.ManagedRoot = cfg.Projects["project"]
+			case "missing-root":
+				cfg.ManagedRoot = filepath.Join(root, "absent")
+			}
+			original := writeOfflineFixture(t, path, r)
+			if kind == "terminal" {
+				lock, e := OfflineIdle(cfg)
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer lock.Close()
+				if other, e := lockState(filepath.Join(cfg.StateDir, "node.lock")); e == nil {
+					other.Close()
+					t.Fatal("writer lease missing")
+				}
+			} else {
+				assertOfflineBlocked(t, cfg)
+			}
+			after, e := os.ReadFile(path)
+			if e != nil || !bytes.Equal(original, after) {
+				t.Fatal("history changed")
+			}
+		})
+	}
+}
