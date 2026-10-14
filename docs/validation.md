@@ -36,3 +36,7 @@ A separate model-backed acceptance run on 2026-10-02 exercised the Go node from 
 This establishes native Windows Go-node execution and same-job idempotency for this acceptance task. The seven-test result is separate from the earlier direct native OpenCode nine-test run and from the Go tests above. It does not establish model-backed Pi operation, Host deployment, browser/mobile UI, Access/tunnel configuration or a complete web end-to-end workflow; those acceptance gates remain open.
 
 That Windows evidence update was documentation-only. Subsequent source-IP guard changes have passed Linux tests and live CLI/HTTP smoke checks plus Windows amd64/arm64 cross-builds; actual Windows/Tailscale source-policy validation remains a deployment gate.
+
+## 2026-10-14 bounded orchestration closeout
+
+See [read-only orchestration acceptance](readonly-orchestration-acceptance.md) for deployed Host/Windows versions and the actual four-command, 23-assertion same-task native result. Historical Windows compiler/build evidence above belongs to its original validation environment; it does not establish compiler availability in the later OpenCode environment. The packaged CLI needs no Go installation. The later task did not run Go tests/vet/build and retained `needs_changes` despite the scoped orchestration PASS.
