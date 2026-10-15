@@ -22,7 +22,7 @@ func TestInstallProgressPreservesStdoutAndNoPath(t *testing.T) {
 			name = "no path"
 		}
 		t.Run(name, func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			args := []string{"--yes", "--allow-prerelease"}
 			if noPath {
 				args = append(args, "--no-path")
@@ -117,7 +117,7 @@ func TestInstallProgressCancellationDoesNotComplete(t *testing.T) {
 }
 
 func TestInstallProgressDirectoryFailureStage(t *testing.T) {
-	local := t.TempDir()
+	local := freshFixtureTempDir(t)
 	ops := freshFixtureOps(local)
 	var stdout, stderr bytes.Buffer
 	ops.progress = &installProgress{out: &stderr}

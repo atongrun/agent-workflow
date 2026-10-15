@@ -45,6 +45,13 @@ type fakeNative struct {
 }
 
 func newNative(t *testing.T, workspace string) *fakeNative {
+	t.Helper()
+	// Windows temporary paths can contain 8.3 aliases; the native scope is the
+	// actual workspace identity, not the spelling returned by TempDir.
+	workspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
 	f := &fakeNative{t: t, workspace: workspace, sessions: map[string]opencode.Session{}, messages: map[string][]opencode.Message{}, statuses: map[string]opencode.Status{}, events: map[chan string]bool{}}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)

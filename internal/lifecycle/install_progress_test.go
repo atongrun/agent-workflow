@@ -97,7 +97,7 @@ func TestInstallProgressNetworkFailureDoesNotComplete(t *testing.T) {
 func TestInstallProgressStageOrderingAndFailure(t *testing.T) {
 	for _, failure := range []string{"", "verify", "install", "path"} {
 		t.Run(failure, func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			ops := freshFixtureOps(local)
 			var progress, stdout bytes.Buffer
 			ops.progress = &installProgress{out: &progress}
@@ -185,7 +185,7 @@ func TestInstallProgressFetchFailureAndQuiet(t *testing.T) {
 func TestInstallProgressOutputFailureNeverInterruptsInstall(t *testing.T) {
 	for _, stage := range []string{"before", "after root", "after PATH"} {
 		t.Run(stage, func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			ops := freshFixtureOps(local)
 			var display bytes.Buffer
 			ops.progress = &installProgress{out: &display}

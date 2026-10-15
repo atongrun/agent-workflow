@@ -14,6 +14,36 @@ import (
 
 // These tests use temporary synthetic credentials only. They never open the
 // configured pairing credential or register startup. Run on real Windows.
+func logWindowsPermissionMetadata(t *testing.T, path string) {
+	t.Helper()
+	// Failure-only diagnostics: never log paths, account names, or file contents.
+	m := inspectDoctorACL(path)
+	tokenOwner := "unavailable"
+	if token, err := syscall.OpenCurrentProcessToken(); err == nil {
+		defer token.Close()
+		proc := syscall.NewLazyDLL("advapi32.dll").NewProc("GetTokenInformation")
+		const tokenOwnerInformation = 4
+		var size uint32
+		proc.Call(uintptr(token), tokenOwnerInformation, 0, 0, uintptr(unsafe.Pointer(&size)))
+		if size >= uint32(unsafe.Sizeof(uintptr(0))) && size <= 4096 {
+			data := make([]byte, size)
+			ok, _, _ := proc.Call(uintptr(token), tokenOwnerInformation, uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), uintptr(unsafe.Pointer(&size)))
+			if ok != 0 {
+				owner := *(**syscall.SID)(unsafe.Pointer(&data[0]))
+				if owner != nil {
+					if sid, err := owner.String(); err == nil {
+						tokenOwner = sid
+					}
+				}
+			}
+		}
+	}
+	t.Logf("OwnerSID=%s CurrentUserSID=%s TokenOwner=%s", m.OwnerSID, m.CurrentUserSID, tokenOwner)
+	for _, ace := range m.Entries {
+		t.Logf("ACE type=%d SID=%s rights=%s", ace.Type, ace.SID, ace.Mask)
+	}
+}
+
 func protectFixture(t *testing.T, plain, entropy string) []byte {
 	t.Helper()
 	in := bytesBlob([]byte(plain))
@@ -49,6 +79,7 @@ func TestWindowsPairingDPAPIContract(t *testing.T) {
 			got, e := readNodeToken(path)
 			if tc.ok {
 				if e != nil || got != tc.plain {
+					logWindowsPermissionMetadata(t, path)
 					t.Fatalf("compatible fixture did not decrypt correctly")
 				}
 			} else if e == nil {
@@ -59,44 +90,27 @@ func TestWindowsPairingDPAPIContract(t *testing.T) {
 }
 func TestWindowsPrivateACLAndAtomicPointer(t *testing.T) {
 	root := privatePermissionFixtureRoot(t)
-	p, e := syscall.UTF16PtrFromString(root)
-	if e != nil {
-		t.Fatal(e)
+	// SDDL may abbreviate the current account as LA. Compare actual SID/ACE
+	// metadata, retaining the exact current-user/SYSTEM-only boundary.
+	m := inspectDoctorACL(root)
+	if !m.Complete || m.DACLState != "present" || m.Protected == nil || !*m.Protected || m.CurrentUserSID == "" || m.OwnerSID != m.CurrentUserSID || len(m.Entries) != 2 {
+		logWindowsPermissionMetadata(t, root)
+		t.Fatal("private fixture must have a protected DACL owned by the current user with exactly two ACEs")
 	}
-	var sd uintptr
-	advapi := syscall.NewLazyDLL("advapi32.dll")
-	result, _, _ := advapi.NewProc("GetNamedSecurityInfoW").Call(uintptr(unsafe.Pointer(p)), 1, 4, 0, 0, 0, 0, uintptr(unsafe.Pointer(&sd)))
-	if result != 0 {
-		t.Fatalf("read ACL error %d", result)
-	}
-	defer syscall.LocalFree(syscall.Handle(sd))
-	var text *uint16
-	result, _, e = advapi.NewProc("ConvertSecurityDescriptorToStringSecurityDescriptorW").Call(sd, 1, 4, uintptr(unsafe.Pointer(&text)), 0)
-	if result == 0 {
-		t.Fatal(e)
-	}
-	defer syscall.LocalFree(syscall.Handle(uintptr(unsafe.Pointer(text))))
-	var chars []uint16
-	for i := uintptr(0); ; i++ {
-		c := *(*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(text)) + i*2))
-		if c == 0 {
-			break
+	want := map[string]bool{m.CurrentUserSID: false, "S-1-5-18": false}
+	for _, ace := range m.Entries {
+		seen, allowed := want[ace.SID]
+		if !allowed || seen || ace.Type != 0 || ace.Flags != 3 || ace.Mask != "0x001f01ff" || len(ace.Issues) != 0 {
+			logWindowsPermissionMetadata(t, root)
+			t.Fatal("private fixture must contain one inheritable full-control ALLOW ACE each for the current user and SYSTEM")
 		}
-		chars = append(chars, c)
-	}
-	sddl := syscall.UTF16ToString(chars)
-	u, e := user.Current()
-	if e != nil {
-		t.Fatal(e)
-	}
-	if !strings.HasPrefix(sddl, "D:P") || strings.Count(sddl, "(") != 2 || !strings.Contains(sddl, ";;;SY)") || !strings.Contains(sddl, ";;;"+u.Uid+")") {
-		t.Fatalf("unexpected private fixture ACL: %s", sddl)
+		want[ace.SID] = true
 	}
 	pointer := filepath.Join(root, "current.json")
-	if e = writeJSON(pointer, Pointer{Version: "v1.0.0"}); e != nil {
+	if e := writeJSON(pointer, Pointer{Version: "v1.0.0"}); e != nil {
 		t.Fatal(e)
 	}
-	if e = writeJSON(pointer, Pointer{Version: "v1.0.1"}); e != nil {
+	if e := writeJSON(pointer, Pointer{Version: "v1.0.1"}); e != nil {
 		t.Fatal(e)
 	}
 	got, e := current(root)
@@ -229,12 +243,14 @@ func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
 	defer store.Close()
 	statePath := filepath.Join(hostDir, "state.json")
 	if e = checkPrivatePath(statePath); e != nil {
+		logWindowsPermissionMetadata(t, statePath)
 		t.Fatalf("initial Host state DACL: %v", e)
 	}
 	if e = store.Update(func(st *core.State) error { st.Settings.DefaultBranch = "fixture"; return nil }); e != nil {
 		t.Fatal(e)
 	}
 	if e = checkPrivatePath(statePath); e != nil {
+		logWindowsPermissionMetadata(t, statePath)
 		t.Fatalf("replacement Host state DACL: %v", e)
 	}
 	planning := filepath.Join(hostDir, "planning", "task-fixture")
@@ -255,6 +271,7 @@ func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
 	}
 	for _, path := range []string{hostDir, filepath.Dir(planning), planning, filepath.Dir(jobs), jobs, record, pointer} {
 		if e = checkPrivatePath(path); e != nil {
+			logWindowsPermissionMetadata(t, path)
 			t.Fatalf("inherited fixture DACL for %s: %v", filepath.Base(path), e)
 		}
 	}
@@ -278,10 +295,12 @@ func TestWindowsNativePairWriterRoundTripAndNoOverwrite(t *testing.T) {
 	path := filepath.Join(root, "credentials", "windows-node", "node-token.dpapi")
 	token := strings.Repeat("AB0123CD", 8)
 	if e := writeNodeToken(root, path, token); e != nil {
+		logWindowsPermissionMetadata(t, path)
 		t.Fatal(e)
 	}
 	for _, p := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path), path} {
 		if e := checkPrivatePath(p); e != nil {
+			logWindowsPermissionMetadata(t, p)
 			t.Fatalf("native pairing path is not private: %v", e)
 		}
 	}

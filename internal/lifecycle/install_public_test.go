@@ -16,6 +16,17 @@ import (
 	"testing"
 )
 
+func freshFixtureTempDir(t *testing.T) string {
+	t.Helper()
+	// The real final-launcher check compares canonical paths. Resolve only the
+	// disposable fixture parent, before deriving any intentionally missing paths.
+	path, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func freshFixtureOps(local string) freshInstallOps {
 	return freshInstallOps{
 		context: func() error { return nil }, knownFolder: func() (string, error) { return local, nil }, architecture: func() (string, error) { return "amd64", nil },
@@ -63,7 +74,7 @@ func freshFixtureClientForArch(t *testing.T, v, arch string, corrupt bool, reque
 func TestFreshInstallRefusesEveryExistingRootBeforeNetworkAndACL(t *testing.T) {
 	for _, kind := range []string{"empty", "credentials", "current.json", "config.json", "runtime.json", "state", "file-root"} {
 		t.Run(kind, func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			root := filepath.Join(local, "AWF")
 			if kind == "file-root" {
 				if err := os.WriteFile(root, []byte("keep"), 0600); err != nil {
@@ -105,7 +116,7 @@ func TestFreshInstallConsentAndHashRefusalHaveNoWrites(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			before := doctorSnapshot(t, local)
 			ops := freshFixtureOps(local)
 			ops.checkRoot = func(string) error { t.Fatal("refusal reached ACL mutation"); return nil }
@@ -124,7 +135,7 @@ func TestFreshInstallConsentAndHashRefusalHaveNoWrites(t *testing.T) {
 func TestFreshInstallContextProfileAndPathRefusal(t *testing.T) {
 	for _, kind := range []string{"packaged", "unknown context", "profile mismatch", "unknown architecture", "redirected parent", "reparse parent"} {
 		t.Run(kind, func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			ops := freshFixtureOps(local)
 			switch kind {
 			case "packaged", "unknown context":
@@ -150,7 +161,7 @@ func TestFreshInstallContextProfileAndPathRefusal(t *testing.T) {
 func TestFreshInstallSuccessAndPathOrdering(t *testing.T) {
 	for _, noPath := range []bool{false, true} {
 		t.Run(fmt.Sprint(noPath), func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			root := filepath.Join(local, "AWF")
 			ops := freshFixtureOps(local)
 			registered := 0
@@ -195,7 +206,7 @@ func TestFreshInstallSuccessAndPathOrdering(t *testing.T) {
 	}
 }
 func TestFreshInstallChangedRootDuringDownloadIsPreserved(t *testing.T) {
-	local := t.TempDir()
+	local := freshFixtureTempDir(t)
 	root := filepath.Join(local, "AWF")
 	ops := freshFixtureOps(local)
 	calls := 0
@@ -225,7 +236,7 @@ func TestFreshInstallChangedRootDuringDownloadIsPreserved(t *testing.T) {
 	}
 }
 func TestFreshInstallLatePathFailureDoesNotRegister(t *testing.T) {
-	local := t.TempDir()
+	local := freshFixtureTempDir(t)
 	root := filepath.Join(local, "AWF")
 	ops := freshFixtureOps(local)
 	ops.path = func(p string, _ bool) error {
@@ -243,7 +254,7 @@ func TestFreshInstallLatePathFailureDoesNotRegister(t *testing.T) {
 }
 
 func TestFreshInstallPathPreviewFailureHasNoSideEffects(t *testing.T) {
-	local := t.TempDir()
+	local := freshFixtureTempDir(t)
 	before := doctorSnapshot(t, local)
 	ops := freshFixtureOps(local)
 	ops.previewPath = func(string) (bool, error) { return false, errors.New("unsafe PATH value") }
@@ -260,7 +271,7 @@ func TestFreshInstallDirectCommandQuoting(t *testing.T) {
 	if got := installInitCommand(windows); got != want {
 		t.Fatalf("got %q", got)
 	}
-	local := filepath.Join(t.TempDir(), "O'Brien with space")
+	local := filepath.Join(freshFixtureTempDir(t), "O'Brien with space")
 	if err := os.Mkdir(local, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +293,7 @@ func TestFreshLocalArchiveNeedsExactHashBeforeRoot(t *testing.T) {
 		{"--yes", "--version", "v1.0.0", "--archive", "missing.zip"},
 		{"--yes", "--version", "v1.0.0", "--archive", "missing.zip", "--sha256", strings.Repeat("0", 64)},
 	} {
-		local := t.TempDir()
+		local := freshFixtureTempDir(t)
 		ops := freshFixtureOps(local)
 		client := &http.Client{Transport: fixtureTransport(func(*http.Request) (*http.Response, error) {
 			t.Fatal("local archive accessed network")
@@ -297,7 +308,7 @@ func TestFreshLocalArchiveNeedsExactHashBeforeRoot(t *testing.T) {
 	}
 }
 func TestFreshInstallRefusesPublishedLegacyChannel(t *testing.T) {
-	local := t.TempDir()
+	local := freshFixtureTempDir(t)
 	ops := freshFixtureOps(local)
 	client := &http.Client{Transport: fixtureTransport(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != channelManifestURL {
@@ -337,7 +348,7 @@ func TestFreshLayoutMarkerRefusesHistoryWithoutWrites(t *testing.T) {
 func TestFreshProgramsParentCreationAndOldRootIsolation(t *testing.T) {
 	for _, accept := range []bool{false, true} {
 		t.Run(fmt.Sprint(accept), func(t *testing.T) {
-			local := t.TempDir()
+			local := freshFixtureTempDir(t)
 			old := filepath.Join(local, "AWF")
 			if err := os.Mkdir(old, 0700); err != nil {
 				t.Fatal(err)
@@ -384,7 +395,7 @@ func TestFreshProgramsParentCreationAndOldRootIsolation(t *testing.T) {
 }
 
 func TestFreshProgramsParentPermissionsFailWithoutRepair(t *testing.T) {
-	programs := filepath.Join(t.TempDir(), "Programs")
+	programs := filepath.Join(freshFixtureTempDir(t), "Programs")
 	ops := freshFixtureOps(programs)
 	ops.checkParent = func(string) error { return errors.New("untrusted write access") }
 	requests := 0
