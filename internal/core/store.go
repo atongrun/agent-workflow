@@ -155,6 +155,25 @@ func (s *Store) PendingExecutionResultIDs() []string {
 	return ids
 }
 
+type PiActivity struct {
+	SessionID, ProcessID string
+	LifecycleRevision    int
+	Active               bool
+}
+
+// PiActivity copies only a process binding and activity flags. An idle process
+// budget watcher must not clone native history, evidence, or the whole state.
+func (s *Store) PiActivity(taskID, role string) (PiActivity, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task := s.state.Tasks[taskID]
+	if task == nil || task.DeletedAt != nil || task.Sessions[role] == nil {
+		return PiActivity{}, false
+	}
+	ref := task.Sessions[role]
+	return PiActivity{SessionID: ref.ID, ProcessID: ref.ProcessID, LifecycleRevision: task.LifecycleRevision, Active: ref.Busy || ref.Pending}, true
+}
+
 func (s *Store) Snapshot() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()

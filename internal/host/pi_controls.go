@@ -481,7 +481,6 @@ func (s *Server) runPiControl(taskID, op string, in piControlInput) {
 	timeout := 30 * time.Second
 	if op == "pi/compact" {
 		timeout = 5 * time.Minute
-		s.launch(func() { s.watchPiBudget(taskID, in.Role, client) })
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

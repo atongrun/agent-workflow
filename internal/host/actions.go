@@ -514,14 +514,32 @@ func (s *Server) stopForBudget(id string) {
 		}
 	}
 	if executionActive(t) {
-		_ = s.store.Update(func(st *core.State) error {
-			st.Tasks[id].Execution.CancelRequested = true
-			st.Tasks[id].LastError = "Combined execution budget exhausted"
+		s.cancelExecutionForBudget(id, t.Execution.RequestID, t.LifecycleRevision, nil)
+	}
+}
+
+// Preserve the observed execution identity across a slow Pi stop. A stale
+// process watcher must neither mark nor cancel a replacement execution.
+func (s *Server) cancelExecutionForBudget(id, executionRequestID string, lifecycleRevision int, binding *piBinding) {
+	if executionRequestID == "" {
+		return
+	}
+	marked := false
+	err := s.store.Update(func(st *core.State) error {
+		t := st.Tasks[id]
+		if t == nil || t.DeletedAt != nil || t.LifecycleRevision != lifecycleRevision || !executionActive(t) || t.Execution.RequestID != executionRequestID {
 			return nil
-		})
-		s.launch(func() {
-			s.cancelExecution("budget-"+t.Execution.RequestID, id, t.Execution.RequestID, t.LifecycleRevision)
-		})
+		}
+		if binding != nil && !bindingMatches(t.Sessions[binding.Role], *binding) {
+			return nil
+		}
+		t.Execution.CancelRequested = true
+		t.LastError = "Combined execution budget exhausted"
+		marked = true
+		return nil
+	})
+	if err == nil && marked {
+		s.launch(func() { s.cancelExecution("budget-"+executionRequestID, id, executionRequestID, lifecycleRevision) })
 	}
 }
 
