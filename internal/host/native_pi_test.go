@@ -145,7 +145,7 @@ func TestNativePiHostIntegration(t *testing.T) {
 			}
 			nativePiDecode(t, data, &diagnostic)
 			sort.Strings(diagnostic.ActiveTools)
-			want := []string{"awf_execution", "awf_finish", "awf_plan", "awf_task"}
+			want := []string{"awf_execution", "awf_finish", "awf_plan", "awf_repository", "awf_task"}
 			if !reflect.DeepEqual(diagnostic.ActiveTools, want) {
 				t.Fatalf("restricted native active tools: got %v want %v", diagnostic.ActiveTools, want)
 			}

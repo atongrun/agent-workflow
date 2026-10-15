@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/atongrun/agent-workflow/internal/privatefile"
 )
 
 type Store struct {
@@ -72,7 +74,7 @@ func (s *Store) persist() error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".state-*")
+	f, err := privatefile.CreateTemp(filepath.Dir(s.path), ".state-")
 	if err != nil {
 		return err
 	}
@@ -137,6 +139,43 @@ func (s *Store) Update(fn func(*State) error) error {
 	}
 	return nil
 }
+// PendingExecutionResultIDs reads only routing fields under the lock. Idle
+// delivery checks must not clone every task's native history and evidence.
+func (s *Store) PendingExecutionResultIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := []string{}
+	for id, task := range s.state.Tasks {
+		if task.DeletedAt != nil || (task.Status != "reporting" && task.Status != "review") || task.Execution == nil {
+			continue
+		}
+		switch task.Execution.Status {
+		case "completed", "failed", "cancelled":
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+type PiActivity struct {
+	SessionID, ProcessID string
+	LifecycleRevision    int
+	Active               bool
+}
+
+// PiActivity copies only a process binding and activity flags. An idle process
+// budget watcher must not clone native history, evidence, or the whole state.
+func (s *Store) PiActivity(taskID, role string) (PiActivity, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task := s.state.Tasks[taskID]
+	if task == nil || task.DeletedAt != nil || task.Sessions[role] == nil {
+		return PiActivity{}, false
+	}
+	ref := task.Sessions[role]
+	return PiActivity{SessionID: ref.ID, ProcessID: ref.ProcessID, LifecycleRevision: task.LifecycleRevision, Active: ref.Busy || ref.Pending}, true
+}
+
 func (s *Store) Snapshot() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()

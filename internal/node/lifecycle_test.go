@@ -105,6 +105,35 @@ func TestOfflineIdleAcceptsTerminalJobsAndHoldsOwnership(t *testing.T) {
 	}
 }
 
+func TestOfflineIdleAcceptsManagedTerminalJobsWithoutRewritingThem(t *testing.T) {
+	for _, status := range []string{"completed", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			cfg, r, path := offlineFixture(t)
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.ManagedRoot = root
+			r.Request = managedRequest(strings.Repeat("a", 40))
+			r.Fingerprint = fingerprint(r.Request)
+			r.Job = Job{ID: JobID(r.Request.RequestID), RequestID: r.Request.RequestID, TaskID: r.Request.TaskID, ProjectID: "managed", Workspace: managedTaskPath(root, r.Request.TaskID), MessageID: "msg_fixture", Status: status, SubmissionState: "submitted"}
+			path = filepath.Join(cfg.StateDir, "jobs", r.Job.ID+".json")
+			before := writeOfflineFixture(t, path, r)
+			lock, err := OfflineIdle(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lock.Close()
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("offline inspection rewrote managed job: %v", err)
+			}
+			cfg.ManagedRoot = t.TempDir()
+			assertOfflineBlocked(t, cfg)
+		})
+	}
+}
+
 func TestOfflineIdleRejectsInvalidDurableIdentity(t *testing.T) {
 	cases := []struct {
 		name   string

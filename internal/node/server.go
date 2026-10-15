@@ -100,50 +100,8 @@ func New(cfg Config) (http.Handler, error) {
 		return nil, err
 	}
 	s := &Server{cfg: cfg, native: native, projects: map[string]*project{}, jobs: map[string]*record{}, allowedSources: allowedSources}
-	for id, path := range cfg.Projects {
-		if strings.TrimSpace(id) == "" || !filepath.IsAbs(path) {
-			return nil, errors.New("project IDs must be nonempty and workspaces must be absolute existing directories")
-		}
-		clean, err := filepath.EvalSymlinks(filepath.Clean(path))
-		if err != nil {
-			return nil, fmt.Errorf("workspace %s: %w", id, err)
-		}
-		st, err := os.Stat(clean)
-		if err != nil {
-			return nil, err
-		}
-		if !st.IsDir() {
-			return nil, fmt.Errorf("workspace %s is not a directory", id)
-		}
-		for _, p := range s.projects {
-			if overlaps(clean, p.workspace) {
-				return nil, fmt.Errorf("projects %s and %s have overlapping workspaces", id, p.id)
-			}
-		}
-		s.projects[id] = &project{id: id, workspace: clean, wake: make(chan struct{}, 1)}
-	}
-	if cfg.ManagedRoot != "" {
-		if !filepath.IsAbs(cfg.ManagedRoot) {
-			return nil, errors.New("managedRoot must be absolute")
-		}
-		root, err := filepath.EvalSymlinks(cfg.ManagedRoot)
-		if err != nil {
-			return nil, errors.New("managedRoot must be an existing directory")
-		}
-		info, err := os.Stat(root)
-		if err != nil || !info.IsDir() {
-			return nil, errors.New("managedRoot must be a directory")
-		}
-		for _, p := range s.projects {
-			if overlaps(root, p.workspace) {
-				return nil, errors.New("managedRoot must not overlap configured workspaces")
-			}
-		}
-		if s.projects["managed"] != nil {
-			return nil, errors.New("managed is a reserved project ID")
-		}
-		s.cfg.ManagedRoot = root
-		s.projects["managed"] = &project{id: "managed", workspace: root, managed: true, wake: make(chan struct{}, 1)}
+	if err := s.configureProjects(); err != nil {
+		return nil, err
 	}
 	state, err := filepath.Abs(cfg.StateDir)
 	if err != nil {

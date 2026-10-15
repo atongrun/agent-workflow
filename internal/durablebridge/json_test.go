@@ -88,13 +88,22 @@ func TestJSONStringifyNumbersAgainstNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Allow Windows CI cold starts while keeping the reference subprocess bounded.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, node, "-e", `let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>process.stdout.write(JSON.stringify(JSON.parse(input))));`)
 	command.Stdin = strings.NewReader(string(raw))
+	started := time.Now()
 	expected, err := command.Output()
 	if err != nil {
-		t.Fatal(err)
+		var stderr []byte
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr = exitErr.Stderr
+			if len(stderr) > 2<<10 {
+				stderr = stderr[:2<<10]
+			}
+		}
+		t.Fatalf("Node scalar reference failed: node=%q elapsed=%s context=%v error=%v stderr(first 2 KiB)=%q", node, time.Since(started), ctx.Err(), err, stderr)
 	}
 	if string(actual) != string(expected) {
 		t.Fatal("Go numeric encoding differs from Node JSON.stringify")

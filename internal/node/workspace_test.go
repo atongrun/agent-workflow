@@ -118,7 +118,10 @@ func TestManagedRootRejectsSymlinkAndForeignWorktree(t *testing.T) {
 }
 func TestManagedNativeCwdReceiptReplayCancelAndRestart(t *testing.T) {
 	repo, sha := gitFixture(t)
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := managedRequest(sha)
 	cwd := managedTaskPath(root, r.TaskID)
 	if err := prepareGitWorkspace(context.Background(), root, r, repo, cwd); err != nil {

@@ -138,7 +138,7 @@ func TestInitOptionalPairingDefaultsOffAndPreservesExisting(t *testing.T) {
 		t.Fatal(e)
 	}
 	original := []byte("opaque synthetic existing credential; init must not read or replace")
-	mustWriteFixture(t, c.CredentialFile, original)
+	mustWritePrivateFixture(t, c.CredentialFile, original)
 	var out bytes.Buffer
 	if e := initialize(root, args, strings.NewReader("n\ny\ny\n"), &out); e != nil {
 		t.Fatal(e)

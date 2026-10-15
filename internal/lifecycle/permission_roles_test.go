@@ -58,6 +58,7 @@ func TestPermissionRolePolicy(t *testing.T) {
 		{"private administrators", privatePermissionRole, func(m *doctorACLMetadata) {
 			m.Entries = append(m.Entries, doctorACE{SID: "S-1-5-32-544", Mask: "0x001f01ff", Flags: 0x13})
 		}, false},
+		{"private administrators owner", privatePermissionRole, func(m *doctorACLMetadata) { m.OwnerSID = "S-1-5-32-544" }, false},
 		{"private inherited read", privatePermissionRole, func(m *doctorACLMetadata) {
 			m.Entries = append(m.Entries, doctorACE{SID: "S-1-5-32-545", Mask: "0x001200a9", Flags: 0x13})
 		}, false},
@@ -198,7 +199,7 @@ func TestPermissionRuntimeIdentitiesUsePrivateStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := Runtime{LaunchID: intent.LaunchID, URL: "http://127.0.0.1:1234", Token: strings.Repeat("b", 64), Version: intent.Version}
-	if err := writeJSON(runtimePath(root), r); err != nil {
+	if err := writePrivateJSON(runtimePath(root), r); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{filepath.Join(root, "private"), startupPath(root), runtimePath(root)} {

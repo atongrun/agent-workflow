@@ -59,7 +59,7 @@ func TestStartReportsChildFailureWithoutLeakingStderr(t *testing.T) {
 				t.Fatal(err)
 			}
 			const credential = "inert credential fixture, never decrypted"
-			mustWriteFixture(t, c.CredentialFile, []byte(credential))
+			mustWritePrivateFixture(t, c.CredentialFile, []byte(credential))
 			t.Setenv("LIFECYCLE_FAILURE_FIXTURE", tc.message)
 			err := startWith(root, io.Discard, func(string) *exec.Cmd {
 				return exec.Command(os.Args[0], "-test.run=^TestStartupFailureFixture$")

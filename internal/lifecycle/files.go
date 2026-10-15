@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/atongrun/agent-workflow/internal/privatefile"
 )
 
 const Repository = "atongrun/agent-workflow"
@@ -143,9 +145,34 @@ func atomicWrite(path string, b []byte) error {
 	if e != nil {
 		return e
 	}
+	return finishAtomicWrite(path, b, f)
+}
+
+// writePrivateJSON is only for private runtime identities, never program files.
+// An unsafe existing object is refused, not replaced as a permissions repair.
+func writePrivateJSON(path string, v any) error {
+	if e := checkPrivatePath(filepath.Dir(path)); e != nil {
+		return e
+	}
+	if e := checkPrivatePath(path); e != nil && !os.IsNotExist(e) {
+		return e
+	}
+	b, e := json.MarshalIndent(v, "", "  ")
+	if e != nil {
+		return e
+	}
+	f, e := privatefile.CreateTemp(filepath.Dir(path), ".awf-")
+	if e != nil {
+		return e
+	}
+	return finishAtomicWrite(path, append(b, '\n'), f)
+}
+
+func finishAtomicWrite(path string, b []byte, f *os.File) error {
 	name := f.Name()
 	defer os.Remove(name)
-	if e = f.Chmod(0600); e == nil {
+	e := f.Chmod(0600)
+	if e == nil {
 		_, e = f.Write(b)
 	}
 	if e == nil {

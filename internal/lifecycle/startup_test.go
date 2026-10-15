@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -14,9 +15,11 @@ func TestStartupDelayFixture(t *testing.T) {
 	if os.Getenv("LIFECYCLE_DELAY_FIXTURE") != "1" {
 		return
 	}
-	// This synthetic owned child does nothing and exits normally. In particular,
-	// it is delayed before opening any runtime lock or creating runtime identity.
-	time.Sleep(700 * time.Millisecond)
+	// The parent releases this synthetic child by closing its stdin only after
+	// checking the pending-state guards. It never opens a runtime lock or identity.
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatal(err)
+	}
 }
 func TestUnobservedChildBlocksStopUpdateAndDuplicateStart(t *testing.T) {
 	root, c, args := lifecycleConfigFixture(t)
@@ -29,9 +32,21 @@ func TestUnobservedChildBlocksStopUpdateAndDuplicateStart(t *testing.T) {
 	if _, e := managedDirectory(root, "credentials", "windows-node"); e != nil {
 		t.Fatal(e)
 	}
-	mustWriteFixture(t, c.CredentialFile, []byte("inert credential fixture, never decrypted"))
+	mustWritePrivateFixture(t, c.CredentialFile, []byte("inert credential fixture, never decrypted"))
 	t.Setenv("LIFECYCLE_DELAY_FIXTURE", "1")
-	e := startWith(root, io.Discard, func(string) *exec.Cmd { return exec.Command(os.Args[0], "-test.run=^TestStartupDelayFixture$") }, 10*time.Millisecond)
+	input, release, e := os.Pipe()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer input.Close()
+	defer release.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	e = startWith(root, io.Discard, func(string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStartupDelayFixture$")
+		cmd.Stdin = input
+		return cmd
+	}, 10*time.Millisecond)
 	if e == nil || !strings.Contains(e.Error(), "unknown") {
 		t.Fatalf("stalled start = %v", e)
 	}
@@ -64,14 +79,18 @@ func TestUnobservedChildBlocksStopUpdateAndDuplicateStart(t *testing.T) {
 	}
 	// This test process remains alive to observe the exact child's normal exit.
 	// In a CLI process that exits earlier, the retained intent remains fail-closed.
+	if e = release.Close(); e != nil {
+		t.Fatal(e)
+	}
 	until := time.Now().Add(5 * time.Second)
+	var pendingErr error
 	for time.Now().Before(until) {
-		if noPendingStartup(root) == nil {
+		if pendingErr = noPendingStartup(root); pendingErr == nil {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("observed exact child exit did not clear its startup intent")
+	t.Fatalf("released synthetic child did not clear its startup intent: %v", pendingErr)
 }
 func TestOldChildCannotClearNewerStartupIntent(t *testing.T) {
 	root := t.TempDir()

@@ -51,10 +51,23 @@ func TestPiControlHelper(t *testing.T) {
 		}
 	}
 	compacting := false
+	streaming := false
 	var compactID string
 	output := func(value any) { b, _ := json.Marshal(value); fmt.Println(string(b)) }
 	response := func(id, typ string, data any) {
 		output(map[string]any{"id": id, "type": "response", "command": typ, "success": true, "data": data})
+	}
+	finishAbort := func(id string) {
+		if compacting {
+			compacting = false
+			output(map[string]any{"type": "compaction_end", "reason": "manual", "aborted": true})
+			output(map[string]any{"id": compactID, "type": "response", "success": false, "error": "Compaction cancelled"})
+		}
+		if streaming {
+			streaming = false
+			output(map[string]any{"type": "agent_settled"})
+		}
+		response(id, "abort", nil)
 	}
 	logPath := os.Getenv("PI_CONTROL_TEST_LOG")
 	release := os.Getenv("PI_CONTROL_TEST_RELEASE")
@@ -88,7 +101,7 @@ func TestPiControlHelper(t *testing.T) {
 					time.Sleep(5 * time.Millisecond)
 				}
 			}
-			response(id, typ, map[string]any{"sessionId": sessionID, "sessionFile": "/private/native.jsonl", "model": map[string]any{"provider": model.Provider, "id": model.ID, "name": model.Name, "headers": map[string]string{"Authorization": "hidden-model-secret"}, "baseUrl": "https://private.invalid"}, "isStreaming": false, "isCompacting": compacting, "pendingMessageCount": 0})
+			response(id, typ, map[string]any{"sessionId": sessionID, "sessionFile": "/private/native.jsonl", "model": map[string]any{"provider": model.Provider, "id": model.ID, "name": model.Name, "headers": map[string]string{"Authorization": "hidden-model-secret"}, "baseUrl": "https://private.invalid"}, "isStreaming": streaming, "isCompacting": compacting, "pendingMessageCount": 0})
 		case "get_commands":
 			if mode == "no_commands" {
 				response(id, typ, map[string]any{"commands": []any{}})
@@ -140,14 +153,33 @@ func TestPiControlHelper(t *testing.T) {
 		case "clear_queue":
 			response(id, typ, map[string]any{"steering": []string{}, "followUp": []string{"native queued text"}})
 		case "abort":
-			if compacting {
-				compacting = false
-				output(map[string]any{"type": "compaction_end", "reason": "manual", "aborted": true})
-				output(map[string]any{"id": compactID, "type": "response", "success": false, "error": "Compaction cancelled"})
+			if mode == "budget_hold_abort" || mode == "budget_streaming_hold_abort" {
+				// Leave the input reader free so a duplicate watcher is observable
+				// even while the first stop is waiting for its native receipt.
+				go func(id string) {
+					for {
+						if _, err := os.Stat(release); err == nil {
+							break
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					finishAbort(id)
+				}(id)
+			} else {
+				finishAbort(id)
 			}
-			response(id, typ, nil)
 		case "prompt":
-			response(id, typ, map[string]string{"disposition": "handled"})
+			if mode == "budget_no_prompt_ack" || mode == "budget_streaming_hold_abort" {
+				streaming = true
+				output(map[string]any{"type": "agent_start"})
+				if mode != "budget_no_prompt_ack" {
+					response(id, typ, map[string]string{"disposition": "started"})
+				}
+			} else {
+				response(id, typ, map[string]string{"disposition": "handled"})
+			}
 		case "get_messages":
 			response(id, typ, map[string]any{"messages": []any{}})
 		case "get_entries":

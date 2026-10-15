@@ -481,7 +481,6 @@ func (s *Server) runPiControl(taskID, op string, in piControlInput) {
 	timeout := 30 * time.Second
 	if op == "pi/compact" {
 		timeout = 5 * time.Minute
-		s.launch(func() { s.watchPiBudget(taskID, in.Role, client) })
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -619,6 +618,20 @@ func (s *Server) piRequest(w http.ResponseWriter, r *http.Request) {
 	if req == nil || req.TaskID != r.PathValue("id") {
 		writeError(w, fail("not_found", "request receipt not found for this task", 404))
 		return
+	}
+	diagnostic, err := s.reconcileQuestionReceipt(r.Context(), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if questionReceiptPending(req) {
+		st = s.store.Snapshot()
+		req = st.Requests[r.PathValue("requestId")]
+		if diagnostic != "" && questionReceiptPending(req) {
+			copy := *req
+			copy.Error = diagnostic
+			req = &copy
+		}
 	}
 	writeJSON(w, 200, map[string]any{"request": req, "task": st.Tasks[req.TaskID]})
 }

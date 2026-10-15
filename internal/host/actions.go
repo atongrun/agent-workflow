@@ -42,6 +42,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	// Probe outside Store.Update: the Worker verifies this task via Host GET.
 	// Holding the store lock during the callback would deadlock that verification.
 	var checkedPreparation *failedPreparationProof
+	var checkedTarget *targetPreflight
 	var checkedSourceSHA string
 	var checkedTargetRevision int
 	var checkedLifecycleRevision int
@@ -70,6 +71,14 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				if err == nil && status == http.StatusOK {
 					checkedPreparation = verifyFailedPreparation(task, &job)
 				}
+			}
+		}
+	}
+	if op == "start" || op == "rework" {
+		snapshot := s.store.Snapshot()
+		if snapshot.Requests[in.RequestID] == nil {
+			if task := snapshot.Tasks[id]; task != nil {
+				checkedTarget = s.preflightTarget(r.Context(), task, task)
 			}
 		}
 	}
@@ -174,6 +183,9 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			if err := s.prepareExecution(st, t, in.RequestID, in.Revision, op == "rework", in.ExpectedTargetRevision, checkedPreparation); err != nil {
 				return err
 			}
+			if err := checkedTarget.validate(t, t); err != nil {
+				return err
+			}
 		case "execution/cancel":
 			if t.Execution == nil || !executionActive(t) {
 				return fail("no_execution", "no active execution to cancel", 409)
@@ -254,6 +266,9 @@ func executionActive(t *core.Task) bool {
 	}
 	return true
 }
+
+// State-only preparation: the public action validates its outside-lock node
+// preflight in the same reservation, and monitor rechecks before first dispatch.
 func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string, revision int, rework bool, expectedTargetRevision *int, preparation ...*failedPreparationProof) error {
 	if t.DeletedAt != nil {
 		return fail("task_deleted", "restore this task before execution", 409)
@@ -281,7 +296,7 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 	if !taskPiIdle(t) {
 		return fail("role_busy", "wait for Pi and its pending dialogs to settle before starting execution", 409)
 	}
-	if err := s.validateTarget(t); err != nil {
+	if err := s.validateTargetConfig(t); err != nil {
 		return err
 	}
 
@@ -499,14 +514,32 @@ func (s *Server) stopForBudget(id string) {
 		}
 	}
 	if executionActive(t) {
-		_ = s.store.Update(func(st *core.State) error {
-			st.Tasks[id].Execution.CancelRequested = true
-			st.Tasks[id].LastError = "Combined execution budget exhausted"
+		s.cancelExecutionForBudget(id, t.Execution.RequestID, t.LifecycleRevision, nil)
+	}
+}
+
+// Preserve the observed execution identity across a slow Pi stop. A stale
+// process watcher must neither mark nor cancel a replacement execution.
+func (s *Server) cancelExecutionForBudget(id, executionRequestID string, lifecycleRevision int, binding *piBinding) {
+	if executionRequestID == "" {
+		return
+	}
+	marked := false
+	err := s.store.Update(func(st *core.State) error {
+		t := st.Tasks[id]
+		if t == nil || t.DeletedAt != nil || t.LifecycleRevision != lifecycleRevision || !executionActive(t) || t.Execution.RequestID != executionRequestID {
 			return nil
-		})
-		s.launch(func() {
-			s.cancelExecution("budget-"+t.Execution.RequestID, id, t.Execution.RequestID, t.LifecycleRevision)
-		})
+		}
+		if binding != nil && !bindingMatches(t.Sessions[binding.Role], *binding) {
+			return nil
+		}
+		t.Execution.CancelRequested = true
+		t.LastError = "Combined execution budget exhausted"
+		marked = true
+		return nil
+	})
+	if err == nil && marked {
+		s.launch(func() { s.cancelExecution("budget-"+executionRequestID, id, executionRequestID, lifecycleRevision) })
 	}
 }
 

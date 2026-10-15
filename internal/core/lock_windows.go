@@ -5,10 +5,12 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/atongrun/agent-workflow/internal/privatefile"
 )
 
 func lockState(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	f, err := privatefile.OpenLock(path)
 	if err != nil {
 		return nil, err
 	}

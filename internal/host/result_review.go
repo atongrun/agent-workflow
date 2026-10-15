@@ -30,10 +30,8 @@ func (s *Server) watchExecutionResults() {
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		for id, t := range s.store.Snapshot().Tasks {
-			if t.DeletedAt == nil && resultTerminal(t) && (t.Status == "reporting" || t.Status == "review") {
-				s.beginExecutionSummary(id)
-			}
+		for _, id := range s.store.PendingExecutionResultIDs() {
+			s.beginExecutionSummary(id)
 		}
 		select {
 		case <-s.stop:

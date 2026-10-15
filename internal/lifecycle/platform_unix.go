@@ -26,6 +26,8 @@ func lockFile(p string) (*os.File, error) {
 	}
 	return f, nil
 }
+func isTransientStartupCleanupError(error) bool { return false }
+
 func detach(c *exec.Cmd) { c.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
 func readNodeToken(string) (string, error) {
 	return "", errors.New("CurrentUser DPAPI node credentials require native Windows")

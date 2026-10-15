@@ -145,6 +145,13 @@ func (c *Client) read(out io.Reader) {
 		}
 	}
 	err := scanner.Err()
+	if err != nil {
+		// A broken JSONL reader cannot receive any more native acknowledgements.
+		// End this transport process before Wait; otherwise a live child could
+		// leave Alive and every pending request stuck behind an unread stdout.
+		_ = c.stdin.Close()
+		_ = c.cmd.Process.Kill()
+	}
 	waitErr := c.cmd.Wait()
 	if err == nil {
 		err = waitErr

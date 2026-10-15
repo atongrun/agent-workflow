@@ -119,7 +119,10 @@ func validRepository(repository, repositoryID string) bool {
 	}
 	return true
 }
-func (s *Server) validateTarget(t *core.Task) error {
+
+// Configuration checks are safe inside Store.Update. Node I/O belongs only in
+// preflightTarget, before acquiring the store lock.
+func (s *Server) validateTargetConfig(t *core.Task) error {
 	if !validRepository(t.Repository, t.RepositoryID) || t.ProjectID == "" || t.NodeID == "" {
 		return fail("target_required", "select an explicit repository and configured execution target", 409)
 	}
@@ -129,16 +132,52 @@ func (s *Server) validateTarget(t *core.Task) error {
 	if _, ok := s.cfg.Nodes[t.NodeID]; !ok {
 		return fail("target_unavailable", "selected node is no longer configured", 409)
 	}
-	targets, status := s.targetCatalog(context.Background(), t.NodeID)
+	return nil
+}
+
+type targetIdentity struct {
+	TaskID, ProjectID, NodeID, Repository, RepositoryID string
+	TargetRevision, LifecycleRevision                 int
+}
+
+func targetIdentityOf(t *core.Task) targetIdentity {
+	return targetIdentity{t.ID, t.ProjectID, t.NodeID, t.Repository, t.RepositoryID, t.TargetRevision, t.LifecycleRevision}
+}
+
+// A preflight is an ephemeral read, not new execution authority. Keep both the
+// original task and selected target so a concurrent target/lifecycle change
+// cannot make a successful check apply to a different reservation.
+type targetPreflight struct {
+	original, selected targetIdentity
+	err                error
+}
+
+func (s *Server) preflightTarget(ctx context.Context, original, selected *core.Task) *targetPreflight {
+	checked := &targetPreflight{original: targetIdentityOf(original), selected: targetIdentityOf(selected)}
+	if checked.err = s.validateTargetConfig(selected); checked.err != nil {
+		return checked
+	}
+	targets, status := s.targetCatalog(ctx, selected.NodeID)
 	if status != "online" {
-		return fail("target_unavailable", "selected node's execution catalog is unavailable; verify its connection and version", 409)
+		checked.err = fail("target_unavailable", "selected node's execution catalog is unavailable; verify its connection and version", 409)
+		return checked
 	}
 	for _, target := range targets {
-		if target.ProjectID == t.ProjectID && target.Ready {
-			return nil
+		if target.ProjectID == selected.ProjectID && target.Ready {
+			return checked
 		}
 	}
-	return fail("target_unavailable", "selected node does not have a ready configured workspace for this project", 409)
+	checked.err = fail("target_unavailable", "selected node does not have a ready configured workspace for this project", 409)
+	return checked
+}
+
+// Validate only after reserve has handled exact retries. Even a failed probe
+// must not replace an existing request's durable receipt with a network error.
+func (checked *targetPreflight) validate(original, selected *core.Task) error {
+	if checked == nil || original.DeletedAt != nil || checked.original != targetIdentityOf(original) || checked.selected != targetIdentityOf(selected) {
+		return fail("target_changed", "task or execution target changed during node verification; reload before retrying", 409)
+	}
+	return checked.err
 }
 func taskPiIdle(t *core.Task) bool {
 	for _, ref := range t.Sessions {
@@ -166,6 +205,16 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	var checkedTarget *targetPreflight
+	snapshot := s.store.Snapshot()
+	if snapshot.Requests[in.RequestID] == nil {
+		if t := snapshot.Tasks[id]; t != nil {
+			candidate := *t
+			candidate.ProjectID, candidate.NodeID = in.ProjectID, in.NodeID
+			candidate.Repository, candidate.RepositoryID = in.Repository, in.RepositoryID
+			checkedTarget = s.preflightTarget(r.Context(), t, &candidate)
+		}
+	}
 	_, err := s.reserve(in.RequestID, id, "target", in, func(st *core.State) error {
 		t := st.Tasks[id]
 		if t == nil {
@@ -198,7 +247,7 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 		candidate := *t
 		candidate.ProjectID, candidate.NodeID = in.ProjectID, in.NodeID
 		candidate.Repository, candidate.RepositoryID = in.Repository, in.RepositoryID
-		if err := s.validateTarget(&candidate); err != nil {
+		if err := checkedTarget.validate(t, &candidate); err != nil {
 			return err
 		}
 		t.ProjectID, t.NodeID = in.ProjectID, in.NodeID

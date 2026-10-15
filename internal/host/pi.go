@@ -272,6 +272,11 @@ func (s *Server) clientWithStartFence(taskID, role string, beforeStart func(stri
 	}
 	s.clients[key] = c
 	s.mu.Unlock()
+	// The process owns one budget watcher, including before its first prompt ACK.
+	// Reusing this client for another prompt or compact never adds a watcher.
+	binding := piBinding{role, native.SessionID, processID}
+	lifecycleRevision := t.LifecycleRevision
+	s.launch(func() { s.watchPiBudget(taskID, binding, lifecycleRevision, c) })
 	return c, nil
 }
 func (s *Server) piEvent(taskID, role, processID string, raw json.RawMessage) {
@@ -548,10 +553,31 @@ func (s *Server) prompt(requestID, taskID, role, text string) {
 		core.Changed(st, t)
 		return nil
 	})
-
-	s.launch(func() { s.watchPiBudget(taskID, role, c) })
 }
-func (s *Server) watchPiBudget(taskID, role string, c *pi.Client) {
+func piBudgetBindingMatches(t *core.Task, binding piBinding, lifecycleRevision int) bool {
+	return t != nil && t.DeletedAt == nil && t.LifecycleRevision == lifecycleRevision && bindingMatches(t.Sessions[binding.Role], binding)
+}
+
+func piBudgetGenerating(st *core.State, t *core.Task, role string) bool {
+	ref := t.Sessions[role]
+	if ref.Busy || ref.NativeQueued > 0 || ref.AwaitingStart {
+		return true
+	}
+	// Model selection, resume and abort also use PendingCommands, but remain
+	// available after exhaustion. Only generation/compact queues consume budget.
+	for _, id := range ref.PendingCommands {
+		req := st.Requests[id]
+		if req == nil || req.TaskID != t.ID || req.Role != "" && req.Role != role || req.SessionID != "" && req.SessionID != ref.ID || req.ProcessID != "" && req.ProcessID != ref.ProcessID || !requestPending(req) {
+			continue
+		}
+		if nativePromptOperation(req.Operation) || req.Operation == "pi/compact" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) watchPiBudget(taskID string, binding piBinding, lifecycleRevision int, c *pi.Client) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -560,16 +586,21 @@ func (s *Server) watchPiBudget(taskID, role string, c *pi.Client) {
 			return
 		case <-ticker.C:
 		}
-		t, err := s.task(taskID)
-		if err != nil || t.DeletedAt != nil || !c.Alive() {
+		activity, ok := s.store.PiActivity(taskID, binding.Role)
+		if !ok || activity.LifecycleRevision != lifecycleRevision || activity.SessionID != binding.SessionID || activity.ProcessID != binding.ProcessID || !c.Alive() {
 			return
 		}
-		ref := t.Sessions[role]
-		if ref == nil || (!ref.Busy && !ref.Pending) {
-			return
+		if !activity.Active {
+			continue
 		}
 		_ = s.store.Update(func(st *core.State) error {
 			t := st.Tasks[taskID]
+			if !piBudgetBindingMatches(t, binding, lifecycleRevision) {
+				return nil
+			}
+			if !piBudgetGenerating(st, t, binding.Role) {
+				return nil
+			}
 			if t.Budget.ActiveSince != nil {
 				elapsed := int64(time.Since(*t.Budget.ActiveSince).Seconds())
 				if elapsed > 0 {
@@ -581,18 +612,26 @@ func (s *Server) watchPiBudget(taskID, role string, c *pi.Client) {
 			}
 			return nil
 		})
-		t, _ = s.task(taskID)
-		seconds := t.Budget.TaskSeconds
-		if t.Budget.ActiveSince != nil {
-			seconds += int64(time.Since(*t.Budget.ActiveSince).Seconds())
+		st := s.store.Snapshot()
+		t := st.Tasks[taskID]
+		if !piBudgetBindingMatches(t, binding, lifecycleRevision) {
+			return
 		}
-		if seconds >= int64(t.Settings.TaskMinutes*60) || t.Budget.PlanSeconds >= int64(t.Settings.PlanMinutes*60) {
+		if piBudgetGenerating(&st, t, binding.Role) && remainingSeconds(t) <= 0 {
+			executionRequestID := ""
+			if executionActive(t) {
+				executionRequestID = t.Execution.RequestID
+			}
+			// c is this exact process, never a lookup of a replacement client.
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			err = c.Stop(ctx)
+			err := c.Stop(ctx)
 			cancel()
-			s.stopForBudget(taskID)
+			s.cancelExecutionForBudget(taskID, executionRequestID, lifecycleRevision, &binding)
 			_ = s.store.Update(func(st *core.State) error {
 				t := st.Tasks[taskID]
+				if !piBudgetBindingMatches(t, binding, lifecycleRevision) {
+					return nil
+				}
 				s.chargePi(t)
 				t.Status = "blocked"
 				t.LastError = "Execution budget exhausted"
