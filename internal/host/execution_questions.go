@@ -1,10 +1,14 @@
 package host
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/atongrun/agent-workflow/internal/core"
 	"github.com/atongrun/agent-workflow/internal/node"
@@ -24,6 +28,111 @@ type executionQuestionsView struct {
 	ExecutionRequestID string              `json:"executionRequestId"`
 	SessionID          string              `json:"sessionId"`
 	Questions          []opencode.Question `json:"questions"`
+}
+
+const questionReplyOperation = "execution/question-reply/"
+
+// An unresolved receipt retains only its original transport binding and payload
+// digest. Answers remain in the native conversation, never in a Host retry queue.
+type questionReceiptBinding struct {
+	Kind               string `json:"kind"`
+	NodeID             string `json:"nodeId"`
+	NodeBinding        string `json:"nodeBinding"`
+	QuestionID         string `json:"questionId"`
+	ExecutionRequestID string `json:"executionRequestId"`
+	JobID              string `json:"jobId"`
+	SessionID          string `json:"sessionId"`
+	PayloadHash        string `json:"payloadHash"`
+}
+
+// Pin the configured destination without exposing its URL or any credentials in
+// the public request receipt. Credential rotation at the same destination is OK.
+func (s *Server) questionNodeBinding(id string) string {
+	cfg, ok := s.cfg.Nodes[id]
+	if !ok {
+		return ""
+	}
+	b := mustJSON(struct{ ID, URL, TokenEnv string }{id, strings.TrimRight(cfg.URL, "/"), cfg.TokenEnv})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+func questionReceiptPending(req *core.Request) bool {
+	return req != nil && (req.Status == "accepted" || req.Status == "needs_verification") && strings.HasPrefix(req.Operation, questionReplyOperation)
+}
+
+func (s *Server) questionReceiptBound(t *core.Task, req *core.Request, binding questionReceiptBinding) bool {
+	hash, err := hex.DecodeString(binding.PayloadHash)
+	if t == nil || t.ID != req.TaskID || binding.Kind != "execution_question_receipt_v1" || binding.NodeID == "" || binding.NodeBinding == "" ||
+		binding.NodeBinding != s.questionNodeBinding(binding.NodeID) || !opencode.ValidQuestionID(binding.QuestionID) ||
+		req.Operation != questionReplyOperation+binding.QuestionID || err != nil || len(hash) != sha256.Size {
+		return false
+	}
+	e := questionExecution(t, binding.ExecutionRequestID, binding.JobID, binding.SessionID)
+	if e == nil {
+		return false
+	}
+	bound := *t
+	bound.Execution = e
+	return executionNodeID(&bound) == binding.NodeID
+}
+
+// Receipt GET may settle an already-dispatched answer using the original Node
+// receipt only. Missing/unknown/mismatched results never authorize an answer POST.
+func (s *Server) reconcileQuestionReceipt(ctx context.Context, req *core.Request) (string, error) {
+	if !questionReceiptPending(req) {
+		return "", nil
+	}
+	var binding questionReceiptBinding
+	if json.Unmarshal(req.Result, &binding) != nil || binding.Kind != "execution_question_receipt_v1" {
+		return "original answer receipt has no saved recovery binding; verify it with the original payload; no answer was resent", nil
+	}
+	if !req.Dispatched {
+		return "", nil
+	}
+	if !s.questionReceiptBound(s.store.Snapshot().Tasks[req.TaskID], req, binding) {
+		return "original answer execution or node destination binding cannot be verified; no answer was resent", nil
+	}
+	var result struct {
+		Reply node.QuestionReply `json:"reply"`
+	}
+	e := &core.Execution{RequestID: binding.ExecutionRequestID, JobID: binding.JobID, SessionID: binding.SessionID}
+	_, err := s.nodeCall(ctx, binding.NodeID, "GET", "/v1/jobs/"+url.PathEscape(binding.JobID)+"/question-replies/"+url.PathEscape(req.ID)+"?"+questionNodeQuery(req.TaskID, e), nil, &result)
+	if err != nil {
+		return "original node answer receipt is unavailable; keep the original request identity; no answer was resent", nil
+	}
+	reply := result.Reply
+	if reply.RequestID != req.ID || reply.TaskID != req.TaskID || reply.QuestionID != binding.QuestionID || reply.JobID != binding.JobID ||
+		reply.ExecutionRequestID != binding.ExecutionRequestID || reply.SessionID != binding.SessionID || reply.PayloadHash != binding.PayloadHash {
+		return "original node answer receipt does not match its saved binding; no answer was resent", nil
+	}
+	var failure *questionFailure
+	if reply.Status == "failed" && (reply.HTTPStatus == 400 || reply.HTTPStatus == 409) {
+		failure = &questionFailure{Code: reply.ErrorCode, Message: reply.Error, HTTPStatus: reply.HTTPStatus}
+	} else if reply.Status != "completed" {
+		return "original node answer receipt is not terminal; no answer was resent", nil
+	}
+	err = s.store.Update(func(st *core.State) error {
+		current := st.Requests[req.ID]
+		if !questionReceiptPending(current) || !current.Dispatched || current.TaskID != req.TaskID || current.Operation != req.Operation || current.Hash != req.Hash {
+			return nil
+		}
+		var latest questionReceiptBinding
+		if json.Unmarshal(current.Result, &latest) != nil || latest != binding || !s.questionReceiptBound(st.Tasks[req.TaskID], current, latest) {
+			return nil
+		}
+		current.Status = "completed"
+		current.Result = mustJSON(reply)
+		current.Error = ""
+		if failure != nil {
+			current.Status = "failed"
+			current.Result = mustJSON(failure)
+			current.Error = failure.Message
+		}
+		core.Emit(st, req.TaskID, "execution.question-reply", map[string]any{"requestId": req.ID, "status": current.Status})
+		return nil
+	})
+	return "", err
 }
 
 func questionExecution(t *core.Task, execution, job, session string) *core.Execution {
@@ -96,7 +205,8 @@ func (s *Server) executionQuestionReply(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := r.PathValue("id")
-	op := "execution/question-reply/" + qid
+	op := questionReplyOperation + qid
+	nodeInput := node.QuestionReplyInput{RequestID: in.RequestID, TaskID: id, ExecutionRequestID: in.ExecutionRequestID, SessionID: in.SessionID, Answers: in.Answers}
 	duplicate, err := s.reserveRequest(in.RequestID, id, op, in, func(st *core.State, req *core.Request) error {
 		t := st.Tasks[id]
 		if t == nil {
@@ -109,6 +219,12 @@ func (s *Server) executionQuestionReply(w http.ResponseWriter, r *http.Request) 
 		if len(in.Answers) == 0 {
 			return fail("invalid_answers", "answers are required", 400)
 		}
+		nodeID := executionNodeID(t)
+		binding := s.questionNodeBinding(nodeID)
+		if binding == "" {
+			return fail("node_unavailable", "execution node is not configured", 409)
+		}
+		req.Result = mustJSON(questionReceiptBinding{Kind: "execution_question_receipt_v1", NodeID: nodeID, NodeBinding: binding, QuestionID: qid, ExecutionRequestID: in.ExecutionRequestID, JobID: in.JobID, SessionID: in.SessionID, PayloadHash: node.QuestionReplyHash(qid, nodeInput)})
 		return nil
 	})
 	if err != nil {
@@ -136,7 +252,6 @@ func (s *Server) executionQuestionReply(w http.ResponseWriter, r *http.Request) 
 	}
 	bound := *t
 	bound.Execution = e
-	nodeInput := node.QuestionReplyInput{RequestID: in.RequestID, TaskID: id, ExecutionRequestID: in.ExecutionRequestID, SessionID: in.SessionID, Answers: in.Answers}
 	var result struct {
 		Reply node.QuestionReply `json:"reply"`
 	}

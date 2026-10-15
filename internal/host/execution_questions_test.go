@@ -23,6 +23,9 @@ type questionProxyFixture struct {
 	reject        int
 	receiptStatus string
 	receipt       *node.QuestionReply
+	receiptGets   int
+	malformedGET  bool
+	beforeReceipt func()
 }
 
 func hostQuestionFixture(t *testing.T) (*Server, *core.Task, executionQuestionInput, *questionProxyFixture) {
@@ -48,6 +51,20 @@ func hostQuestionFixture(t *testing.T) (*Server, *core.Task, executionQuestionIn
 			}
 			if strings.HasSuffix(r.URL.Path, "/questions") {
 				writeJSON(w, 200, executionQuestionsView{TaskID: task.ID, JobID: in.JobID, ExecutionRequestID: in.ExecutionRequestID, SessionID: in.SessionID, Questions: []opencode.Question{{ID: "que_question", SessionID: in.SessionID, Tool: &opencode.QuestionTool{MessageID: "msg_question", CallID: "call_question"}, Questions: []opencode.QuestionInfo{{Question: "Continue?"}}}}})
+				return
+			}
+			f.receiptGets++
+			if r.URL.Path != "/v1/jobs/"+in.JobID+"/question-replies/"+in.RequestID {
+				t.Error("wrong receipt path")
+				w.WriteHeader(404)
+				return
+			}
+			if f.beforeReceipt != nil {
+				f.beforeReceipt()
+			}
+			if f.malformedGET {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"reply":`))
 				return
 			}
 			if f.receipt == nil {
@@ -220,5 +237,266 @@ func TestExecutionQuestionHistoricalReceiptOnly(t *testing.T) {
 	fresh.RequestID = "fresh"
 	if w := call(t, s, "POST", hostQuestionPath(task), fresh); w.Code != 409 {
 		t.Fatal("deleted historical reply accepted", w.Code)
+	}
+}
+
+func lostQuestionReceipt(t *testing.T) (*Server, *core.Task, executionQuestionInput, *questionProxyFixture, string) {
+	t.Helper()
+	s, task, in, f := hostQuestionFixture(t)
+	f.lostACK = true
+	if w := call(t, s, "POST", hostQuestionPath(task), in); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if got := s.store.Snapshot().Requests[in.RequestID]; got.Status != "needs_verification" {
+		t.Fatal("lost acknowledgement did not retain uncertainty", got.Status)
+	}
+	return s, task, in, f, "/v1/tasks/" + task.ID + "/requests/" + in.RequestID
+}
+
+func TestExecutionQuestionReceiptGETRecoversLostACKWithoutAnswersOrReplay(t *testing.T) {
+	s, task, in, f, path := lostQuestionReceipt(t)
+	before := s.store.Snapshot()
+	var binding questionReceiptBinding
+	if err := json.Unmarshal(before.Requests[in.RequestID].Result, &binding); err != nil || binding.PayloadHash == "" || binding.NodeBinding == "" {
+		t.Fatal("original binding was not saved", err)
+	}
+	if strings.Contains(string(before.Requests[in.RequestID].Result), `"answers"`) || strings.Contains(string(before.Requests[in.RequestID].Result), `"Yes"`) || strings.Contains(string(before.Requests[in.RequestID].Result), s.cfg.Nodes["n"].URL) {
+		t.Fatal("recovery binding exposed answer text or private node address")
+	}
+	var wg sync.WaitGroup
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := call(t, s, "GET", path, nil)
+			if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"completed"`) {
+				t.Error(w.Code, w.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+	after := s.store.Snapshot()
+	if after.Requests[in.RequestID].Status != "completed" || after.Requests[in.RequestID].Hash != before.Requests[in.RequestID].Hash || string(mustJSON(after.Tasks[task.ID])) != string(mustJSON(before.Tasks[task.ID])) {
+		t.Fatal("receipt reconciliation changed request identity or task execution")
+	}
+	settlements := 0
+	for _, event := range after.Events[len(before.Events):] {
+		if event.Type == "execution.question-reply" && strings.Contains(string(event.Data), `"status":"completed"`) {
+			settlements++
+		}
+	}
+	f.mu.Lock()
+	posts, gets := f.posts, f.receiptGets
+	f.mu.Unlock()
+	if posts != 1 || gets == 0 || settlements != 1 {
+		t.Fatal("receipt GET replayed an answer or duplicated settlement", posts, gets, settlements)
+	}
+	call(t, s, "GET", path, nil)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.receiptGets != gets {
+		t.Fatal("terminal receipt performed another node read")
+	}
+}
+
+func TestExecutionQuestionReceiptGETPreservesUnknownOrMismatchedReceipts(t *testing.T) {
+	for _, mode := range []string{"missing", "malformed", "unknown", "failed_bad_status", "request", "task", "question", "execution", "job", "session", "hash"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, in, f, path := lostQuestionReceipt(t)
+			f.mu.Lock()
+			switch mode {
+			case "missing":
+				f.receipt = nil
+			case "malformed":
+				f.malformedGET = true
+			case "unknown":
+				f.receipt.Status = "needs_verification"
+			case "failed_bad_status":
+				f.receipt.Status = "failed"
+				f.receipt.HTTPStatus = 500
+			case "request":
+				f.receipt.RequestID = "foreign"
+			case "task":
+				f.receipt.TaskID = "foreign"
+			case "question":
+				f.receipt.QuestionID = "que_foreign"
+			case "execution":
+				f.receipt.ExecutionRequestID = "foreign"
+			case "job":
+				f.receipt.JobID = "foreign"
+			case "session":
+				f.receipt.SessionID = "ses_foreign"
+			case "hash":
+				f.receipt.PayloadHash = strings.Repeat("0", 64)
+			}
+			f.mu.Unlock()
+			before := string(mustJSON(s.store.Snapshot().Requests[in.RequestID]))
+			for range 2 {
+				if w := call(t, s, "GET", path, nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"needs_verification"`) {
+					t.Fatal(w.Code, w.Body.String())
+				}
+			}
+			if got := string(mustJSON(s.store.Snapshot().Requests[in.RequestID])); got != before {
+				t.Fatal("unknown or mismatched node receipt changed durable request")
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.posts != 1 || f.receiptGets != 2 {
+				t.Fatal("receipt checks must only read the node", f.posts, f.receiptGets)
+			}
+		})
+	}
+}
+
+func TestExecutionQuestionReceiptGETRefusesMissingOrChangedRecoveryBinding(t *testing.T) {
+	for _, mode := range []string{"legacy", "not_dispatched", "node_id", "node_address", "token_binding", "execution"} {
+		t.Run(mode, func(t *testing.T) {
+			s, task, in, f, path := lostQuestionReceipt(t)
+			if err := s.store.Update(func(st *core.State) error {
+				switch mode {
+				case "legacy":
+					st.Requests[in.RequestID].Result = nil
+				case "not_dispatched":
+					st.Requests[in.RequestID].Dispatched = false
+				case "node_id":
+					st.Tasks[task.ID].NodeID = "different-node"
+				case "execution":
+					st.Tasks[task.ID].Execution.SessionID = "ses_replaced"
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "node_address" || mode == "token_binding" {
+				cfg := s.cfg.Nodes["n"]
+				if mode == "node_address" {
+					cfg.URL += "/different-node"
+				} else {
+					cfg.TokenEnv = "DIFFERENT_NODE_TOKEN"
+				}
+				s.cfg.Nodes["n"] = cfg
+			}
+			w := call(t, s, "GET", path, nil)
+			if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"needs_verification"`) {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			if mode == "legacy" && !strings.Contains(w.Body.String(), "no saved recovery binding") {
+				t.Fatal("legacy recovery limitation was not explained")
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.posts != 1 || f.receiptGets != 0 {
+				t.Fatal("unverified binding contacted a node", f.posts, f.receiptGets)
+			}
+		})
+	}
+}
+
+func TestExecutionQuestionReceiptGETRecoversHistoricalBindingAfterRestart(t *testing.T) {
+	s, task, in, f, path := lostQuestionReceipt(t)
+	if err := s.store.Update(func(st *core.State) error {
+		x := st.Tasks[task.ID]
+		x.ExecutionHistory = append(x.ExecutionHistory, *x.Execution)
+		x.Execution = &core.Execution{RequestID: "new", JobID: "new", SessionID: "ses_new", Status: "completed"}
+		x.Status = "done"
+		now := time.Now()
+		x.DeletedAt = &now
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	reopened, err := New(s.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	before := string(mustJSON(reopened.store.Snapshot().Tasks[task.ID]))
+	if w := call(t, reopened, "GET", path, nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"completed"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if reopened.store.Snapshot().Requests[in.RequestID].Status != "completed" || string(mustJSON(reopened.store.Snapshot().Tasks[task.ID])) != before {
+		t.Fatal("historical receipt failed to settle or changed the current task")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.posts != 1 || f.receiptGets != 1 {
+		t.Fatal("historical receipt did not use only its original node GET", f.posts, f.receiptGets)
+	}
+}
+
+func TestExecutionQuestionReceiptGETAcceptsOnlyBoundTerminalFailure(t *testing.T) {
+	s, _, in, f, path := lostQuestionReceipt(t)
+	f.mu.Lock()
+	f.receipt.Status = "failed"
+	f.receipt.HTTPStatus = 409
+	f.receipt.ErrorCode = "question_expired"
+	f.receipt.Error = "native question expired before reply"
+	f.mu.Unlock()
+	if w := call(t, s, "GET", path, nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"failed"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if got := s.store.Snapshot().Requests[in.RequestID]; got.Status != "failed" || got.Error != "native question expired before reply" {
+		t.Fatal("bound failure was not preserved", got)
+	}
+}
+
+func TestExecutionQuestionReceiptGETRechecksBindingAfterNodeIO(t *testing.T) {
+	s, task, in, f, path := lostQuestionReceipt(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	f.mu.Lock()
+	f.beforeReceipt = func() { close(entered); <-release }
+	f.mu.Unlock()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- call(t, s, "GET", path, nil) }()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("node receipt read did not start")
+	}
+	if err := s.store.Update(func(st *core.State) error {
+		st.Tasks[task.ID].Execution.SessionID = "ses_replaced"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	select {
+	case w := <-done:
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"needs_verification"`) {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("node receipt read did not finish")
+	}
+	if s.store.Snapshot().Requests[in.RequestID].Status != "needs_verification" {
+		t.Fatal("late node receipt crossed a changed execution binding")
+	}
+}
+
+func TestExecutionQuestionReceiptGETRetainsAuthorizationAndTaskScope(t *testing.T) {
+	s, task, _, f, path := lostQuestionReceipt(t)
+	r := httptest.NewRequest("GET", path, nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 401 {
+		t.Fatal("unauthenticated receipt read accepted", w.Code)
+	}
+	if w := call(t, s, "GET", strings.Replace(path, task.ID, "different-task", 1), nil); w.Code != 404 {
+		t.Fatal("foreign-task receipt read accepted", w.Code)
+	}
+	if w := call(t, s, "GET", path+"?extra=1", nil); w.Code != 400 {
+		t.Fatal("receipt query override accepted", w.Code)
+	}
+	if w := call(t, s, "GET", "/v1/tasks/"+task.ID+"/requests/question-task", nil); w.Code != 200 {
+		t.Fatal("unrelated task receipt unavailable", w.Code)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.posts != 1 || f.receiptGets != 0 {
+		t.Fatal("unauthorized or unrelated receipt contacted node", f.posts, f.receiptGets)
 	}
 }
