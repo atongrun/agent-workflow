@@ -76,6 +76,26 @@ negative broad-DACL fixture. POSIX mode assertions remain active on Unix; their
 Windows replacement is this native ACL coverage, not a claim that `0600` secures
 Windows files.
 
+The separate Magpie provider-management API (`/v1/provider-settings` and its
+subroutes) is currently supported on the Linux control Host. Its automated
+integration fixtures use synthetic provider transports. The direct
+credential-file adapter relies on POSIX private-file and
+directory checks; these checks are not a Windows DACL implementation. The private
+content broker additionally requires Linux Unix-socket peer credentials and
+root-owned `/run` ancestry, and explicitly refuses non-Linux platforms. Do not
+enable this management integration on a standalone Windows Host or bypass its
+permission checks to make it work. This boundary does not restrict the Windows
+execution node's native OpenCode provider authentication or the separate model
+selection API.
+
+Provider persistence, sync, replay and recovery integration fixtures are
+restricted to Linux. Windows tests assert refusal by the real private-file and
+non-Linux broker guards, zero direct-management or fallback HTTP calls through
+the Host client, no new receipt or admission fence, and unchanged native model
+configuration. The platform-independent bound-worker and maintenance-order tests
+remain enabled on both platforms. These tests cover rejection behavior; they do
+not establish Windows provider-management support or live Magpie acceptance.
+
 ## Native Windows execution node
 
 Install the supported native Windows OpenCode release and authenticate its provider through its official interface. Start the native server on loopback:

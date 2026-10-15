@@ -1,3 +1,5 @@
+//go:build linux
+
 package host
 
 import (
@@ -65,7 +67,10 @@ func TestExistingProviderSyncPreservesNativeConfigAndOpaqueModels(t *testing.T) 
 	s, writes := existingProviderFixture(t)
 	var snapshot providerSnapshot
 	w := call(t, s, "GET", "/v1/provider-settings", nil)
-	if w.Code != 200 || strings.Contains(w.Body.String(), "DO-NOT-LEAK") || strings.Contains(w.Body.String(), "https:") {
+	if w.Code != 200 {
+		t.Fatalf("provider snapshot unavailable: status %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "DO-NOT-LEAK") || strings.Contains(w.Body.String(), "https:") {
 		t.Fatal("native private configuration leaked")
 	}
 	json.Unmarshal(w.Body.Bytes(), &snapshot)
@@ -129,19 +134,24 @@ func TestExistingProviderCannotSyncUnchosenModelsOrArbitraryID(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			s, writes := existingProviderFixture(t)
 			var snapshot providerSnapshot
-			json.Unmarshal(call(t, s, "GET", "/v1/provider-settings", nil).Body.Bytes(), &snapshot)
+			response := call(t, s, "GET", "/v1/provider-settings", nil)
+			if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &snapshot) != nil {
+				t.Fatalf("provider snapshot unavailable: status %d", response.Code)
+			}
 			in := map[string]any{"requestId": "invalid", "preset": "existing", "providerId": "custom-native", "key": "", "models": []string{"vendor/model"}, "expectedRevision": snapshot.Revision}
+			wantStatus := 400
 			switch kind {
 			case "unselected":
 				in["models"] = []string{"vendor/unselected"}
 			case "foreign":
 				in["providerId"] = "not-configured"
+				wantStatus = 409
 			case "path":
 				in["providerId"] = "../escape"
 			}
 			w := call(t, s, "POST", "/v1/provider-settings", in)
-			if w.Code < 400 || *writes != 0 {
-				t.Fatal("unapproved existing selection accepted")
+			if w.Code != wantStatus || *writes != 0 {
+				t.Fatal("unapproved existing selection did not reach its validation boundary", w.Code, *writes)
 			}
 		})
 	}
