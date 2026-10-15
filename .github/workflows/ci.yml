@@ -1,7 +1,8 @@
 name: Go Host CI
 on:
+  workflow_dispatch:
   pull_request:
-    branches: [main, awf/go-v1, awf/linux-v1, codex/pi-110-health]
+    branches: [main, awf/go-v1, awf/linux-v1, codex/pi-110-health, codex/dash-magpie-provider]
   push:
     branches: [main, awf/go-v1, awf/linux-v1, codex/pi-110-health]
 permissions:
