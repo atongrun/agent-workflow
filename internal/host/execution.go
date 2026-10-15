@@ -144,9 +144,17 @@ func (s *Server) monitor(id string) {
 				} else {
 					marked := false
 					var dispatchRequest node.JobRequest
+					var checkedTarget *targetPreflight
+					if target := t.Execution.Target; target != nil {
+						bound := *t
+						bound.ProjectID, bound.NodeID = target.ProjectID, target.NodeID
+						bound.Repository, bound.RepositoryID = target.Repository, target.RepositoryID
+						bound.TargetRevision = target.Revision
+						checkedTarget = s.preflightTarget(context.Background(), t, &bound)
+					}
 					markErr := s.store.Update(func(st *core.State) error {
 						cur := st.Tasks[id]
-						if cur.DeletedAt != nil || cur.LifecycleRevision != t.LifecycleRevision || cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.DispatchAttempted || cur.Execution.CancelRequested {
+						if cur == nil || cur.DeletedAt != nil || cur.LifecycleRevision != t.LifecycleRevision || cur.Execution == nil || cur.Execution.RequestID != t.Execution.RequestID || cur.Execution.DispatchAttempted || cur.Execution.CancelRequested {
 							return nil
 						}
 						// Newly reserved runs must revalidate after queueing/restart,
@@ -156,9 +164,12 @@ func (s *Server) monitor(id string) {
 							bound := *cur
 							bound.ProjectID, bound.NodeID = target.ProjectID, target.NodeID
 							bound.Repository, bound.RepositoryID = target.Repository, target.RepositoryID
-							if err := s.validateTarget(&bound); err != nil {
+							bound.TargetRevision = target.Revision
+							if err := checkedTarget.validate(cur, &bound); err != nil {
 								return err
 							}
+						} else if checkedTarget != nil {
+							return fail("target_changed", "execution target changed during node verification", 409)
 						}
 						// Shared-plan consumption can change while this task is queued.
 						left := remainingSeconds(cur)

@@ -42,6 +42,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	// Probe outside Store.Update: the Worker verifies this task via Host GET.
 	// Holding the store lock during the callback would deadlock that verification.
 	var checkedPreparation *failedPreparationProof
+	var checkedTarget *targetPreflight
 	var checkedSourceSHA string
 	var checkedTargetRevision int
 	var checkedLifecycleRevision int
@@ -70,6 +71,14 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				if err == nil && status == http.StatusOK {
 					checkedPreparation = verifyFailedPreparation(task, &job)
 				}
+			}
+		}
+	}
+	if op == "start" || op == "rework" {
+		snapshot := s.store.Snapshot()
+		if snapshot.Requests[in.RequestID] == nil {
+			if task := snapshot.Tasks[id]; task != nil {
+				checkedTarget = s.preflightTarget(r.Context(), task, task)
 			}
 		}
 	}
@@ -174,6 +183,9 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			if err := s.prepareExecution(st, t, in.RequestID, in.Revision, op == "rework", in.ExpectedTargetRevision, checkedPreparation); err != nil {
 				return err
 			}
+			if err := checkedTarget.validate(t, t); err != nil {
+				return err
+			}
 		case "execution/cancel":
 			if t.Execution == nil || !executionActive(t) {
 				return fail("no_execution", "no active execution to cancel", 409)
@@ -254,6 +266,9 @@ func executionActive(t *core.Task) bool {
 	}
 	return true
 }
+
+// State-only preparation: the public action validates its outside-lock node
+// preflight in the same reservation, and monitor rechecks before first dispatch.
 func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string, revision int, rework bool, expectedTargetRevision *int, preparation ...*failedPreparationProof) error {
 	if t.DeletedAt != nil {
 		return fail("task_deleted", "restore this task before execution", 409)
@@ -281,7 +296,7 @@ func (s *Server) prepareExecution(st *core.State, t *core.Task, requestID string
 	if !taskPiIdle(t) {
 		return fail("role_busy", "wait for Pi and its pending dialogs to settle before starting execution", 409)
 	}
-	if err := s.validateTarget(t); err != nil {
+	if err := s.validateTargetConfig(t); err != nil {
 		return err
 	}
 
