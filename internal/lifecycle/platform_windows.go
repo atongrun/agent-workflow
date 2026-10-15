@@ -143,6 +143,13 @@ func lockFile(p string) (*os.File, error) {
 	}
 	return f, nil
 }
+func isTransientStartupCleanupError(err error) bool {
+	const (
+		errorSharingViolation syscall.Errno = 32
+		errorLockViolation    syscall.Errno = 33
+	)
+	return errors.Is(err, errorSharingViolation) || errors.Is(err, errorLockViolation)
+}
 func detach(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008 | 0x00000200, HideWindow: true}
 }

@@ -141,6 +141,19 @@ func createStartup(root string, p Startup) error {
 	return writePrivateJSON(startupPath(root), p)
 }
 func clearStartup(root, id string) error {
+	// A Windows reader can briefly deny deletion, and another lifecycle caller
+	// can hold startup.lock. Reacquire the lock and recheck the exact identity on
+	// every retry; other failures and an expired retry budget remain fail-closed.
+	deadline := time.Now().Add(time.Second)
+	for {
+		e := clearStartupOnce(root, id)
+		if !isTransientStartupCleanupError(e) || !time.Now().Before(deadline) {
+			return e
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+func clearStartupOnce(root, id string) error {
 	guard, e := lockFile(filepath.Join(root, "startup.lock"))
 	if e != nil {
 		return e
