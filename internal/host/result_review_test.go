@@ -46,6 +46,33 @@ func terminalReviewFixture(t *testing.T, s *Server, task *core.Task, status stri
 	}
 	s.applyJob(task.ID, &node.Job{ID: "result-job", TaskID: task.ID, RequestID: "result-run", SessionID: "ses_executor", Status: status, Summary: "Model claims push and all tests passed", Evidence: fixtureResultEvidence(task.Branch)}, 0)
 }
+func TestResultReviewPeriodicSelectorQueuesWithoutAnAgentEvent(t *testing.T) {
+	s := testServer(t)
+	task := createTask(t, s, "periodic-result-routing")
+	if err := s.store.Update(func(st *core.State) error {
+		current := st.Tasks[task.ID]
+		current.Status = "reporting"
+		current.Execution = &core.Execution{RequestID: "periodic-result", JobID: "periodic-job", Status: "completed"}
+		current.Sessions["architect"].Busy = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// No applyJob, beginExecutionSummary or Pi event is used: the periodic
+	// routing read must discover the result and preserve the busy-session fence.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		state := s.store.Snapshot()
+		if req := state.Requests["result-periodic-result"]; req != nil {
+			if req.Status != "queued" || req.Dispatched || state.Tasks[task.ID].Execution.ResultReview.SessionID != task.Sessions["architect"].ID {
+				t.Fatal("periodic result delivery crossed the original-session fence")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("periodic selector did not queue the terminal result")
+}
 func TestResultReviewQueuesWhileBusyAndDeduplicatesTerminal(t *testing.T) {
 	s, task, _, log, _ := piControlFixture(t, "")
 	terminalReviewFixture(t, s, task, "completed", true)

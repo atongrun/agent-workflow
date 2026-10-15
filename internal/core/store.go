@@ -137,6 +137,24 @@ func (s *Store) Update(fn func(*State) error) error {
 	}
 	return nil
 }
+// PendingExecutionResultIDs reads only routing fields under the lock. Idle
+// delivery checks must not clone every task's native history and evidence.
+func (s *Store) PendingExecutionResultIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := []string{}
+	for id, task := range s.state.Tasks {
+		if task.DeletedAt != nil || (task.Status != "reporting" && task.Status != "review") || task.Execution == nil {
+			continue
+		}
+		switch task.Execution.Status {
+		case "completed", "failed", "cancelled":
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func (s *Store) Snapshot() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
