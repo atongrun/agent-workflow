@@ -57,12 +57,8 @@ func OfflineIdle(cfg Config) (*os.File, error) {
 	}
 	s := &Server{cfg: cfg, jobsDir: filepath.Join(cfg.StateDir, "jobs"), jobs: map[string]*record{}, projects: map[string]*project{}}
 	fail := func(e error) (*os.File, error) { lock.Close(); return nil, e }
-	for id, p := range cfg.Projects {
-		clean, e := filepath.EvalSymlinks(filepath.Clean(p))
-		if e != nil {
-			return fail(e)
-		}
-		s.projects[id] = &project{id: id, workspace: clean}
+	if e := s.configureProjects(); e != nil {
+		return fail(e)
 	}
 	entries, e := os.ReadDir(s.jobsDir)
 	if e != nil {
