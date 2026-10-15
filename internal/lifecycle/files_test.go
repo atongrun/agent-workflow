@@ -7,7 +7,24 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/atongrun/agent-workflow/internal/privatefile"
 )
+
+func mustWritePrivateFixture(t *testing.T, path string, b []byte) {
+	t.Helper()
+	f, err := privatefile.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err = f.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func mustWriteFixture(t *testing.T, path string, b []byte) {
 	t.Helper()

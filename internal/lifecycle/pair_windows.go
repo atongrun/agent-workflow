@@ -7,6 +7,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"github.com/atongrun/agent-workflow/internal/privatefile"
 )
 
 func systemSSH() (string, error) {
@@ -66,7 +68,7 @@ func writeNodeToken(root, path, token string) error {
 	encrypted := unsafe.Slice(output.Data, output.Size)
 	// CREATE_NEW semantics: never replace an identity, including an interrupted
 	// file or one concurrently created after the user reviewed the plan.
-	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, e := privatefile.Create(path)
 	if e != nil {
 		return errors.New("credential destination already exists or cannot be created; nothing was overwritten")
 	}

@@ -81,9 +81,7 @@ func TestPermissionWindowsProgramRootDACLNeverChanges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(path, "fixture.txt"), []byte("synthetic"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		mustWritePrivateFixture(t, filepath.Join(path, "fixture.txt"), []byte("synthetic"))
 		for _, p := range []string{filepath.Dir(path), path, filepath.Join(path, "fixture.txt")} {
 			if err := checkPrivatePath(p); err != nil {
 				t.Fatalf("private path not atomically protected: %v", err)

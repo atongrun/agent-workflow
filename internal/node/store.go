@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/atongrun/agent-workflow/internal/privatefile"
 )
 
 func (s *Server) persist(r *record) error {
@@ -14,7 +16,7 @@ func (s *Server) persist(r *record) error {
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err == nil {
 		var f *os.File
-		f, err = os.CreateTemp(s.jobsDir, ".job-*")
+		f, err = privatefile.CreateTemp(s.jobsDir, ".job-")
 		if err == nil {
 			name := f.Name()
 			defer os.Remove(name)

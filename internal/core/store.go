@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/atongrun/agent-workflow/internal/privatefile"
 )
 
 type Store struct {
@@ -72,7 +74,7 @@ func (s *Store) persist() error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".state-*")
+	f, err := privatefile.CreateTemp(filepath.Dir(s.path), ".state-")
 	if err != nil {
 		return err
 	}

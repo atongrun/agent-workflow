@@ -240,7 +240,7 @@ func TestReadRuntimeRejectsUnsafeTargets(t *testing.T) {
 			if _, err := managedDirectory(root, "private"); err != nil {
 				t.Fatal(err)
 			}
-			if err := writeJSON(runtimePath(root), Runtime{URL: address, Token: strings.Repeat("a", 64), Version: "v1.2.3"}); err != nil {
+			if err := writePrivateJSON(runtimePath(root), Runtime{URL: address, Token: strings.Repeat("a", 64), Version: "v1.2.3"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := readRuntime(root); err == nil {
@@ -252,14 +252,14 @@ func TestReadRuntimeRejectsUnsafeTargets(t *testing.T) {
 	if _, err := managedDirectory(root, "private"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(runtimePath(root), Runtime{URL: "http://127.0.0.1:1234", Token: "short", Version: "v1.2.3"}); err != nil {
+	if err := writePrivateJSON(runtimePath(root), Runtime{URL: "http://127.0.0.1:1234", Token: "short", Version: "v1.2.3"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readRuntime(root); err == nil {
 		t.Fatal("invalid control token accepted")
 	}
 	want := Runtime{URL: "http://127.0.0.1:1234", Token: strings.Repeat("a", 64), Version: "v1.2.3"}
-	if err := writeJSON(runtimePath(root), want); err != nil {
+	if err := writePrivateJSON(runtimePath(root), want); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := readRuntime(root); err != nil || got != want {

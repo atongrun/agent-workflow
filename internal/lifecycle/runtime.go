@@ -138,7 +138,7 @@ func createStartup(root string, p Startup) error {
 	if e = noPendingStartup(root); e != nil {
 		return e
 	}
-	return writeJSON(startupPath(root), p)
+	return writePrivateJSON(startupPath(root), p)
 }
 func clearStartup(root, id string) error {
 	guard, e := lockFile(filepath.Join(root, "startup.lock"))
@@ -496,7 +496,7 @@ func serve(root string) error {
 		return e
 	}
 	r := Runtime{LaunchID: pending.LaunchID, URL: "http://" + ctrl.Addr().String(), Token: controlToken, Version: Version}
-	if e = writeJSON(runtimePath(root), r); e != nil {
+	if e = writePrivateJSON(runtimePath(root), r); e != nil {
 		return e
 	}
 	defer func() {

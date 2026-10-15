@@ -73,9 +73,7 @@ func TestWindowsPairingDPAPIContract(t *testing.T) {
 				t.Fatal(e)
 			}
 			path := filepath.Join(root, "node-token.dpapi")
-			if e := os.WriteFile(path, protectFixture(t, tc.plain, tc.entropy), 0600); e != nil {
-				t.Fatal(e)
-			}
+			mustWritePrivateFixture(t, path, protectFixture(t, tc.plain, tc.entropy))
 			got, e := readNodeToken(path)
 			if tc.ok {
 				if e != nil || got != tc.plain {
@@ -203,14 +201,12 @@ func TestWindowsExternalCredentialRequiresPrivateFileAndParent(t *testing.T) {
 				t.Fatal(e)
 			}
 			folder := filepath.Join(root, "paired")
-			if e := os.Mkdir(folder, 0700); e != nil {
+			if e := createPrivateDirectory(folder); e != nil {
 				t.Fatal(e)
 			}
 			path := filepath.Join(folder, "node-token.dpapi")
 			encrypted := protectFixture(t, strings.Repeat("AB0123CD", 8), "AWF Windows node pairing v1")
-			if e := os.WriteFile(path, encrypted, 0600); e != nil {
-				t.Fatal(e)
-			}
+			mustWritePrivateFixture(t, path, encrypted)
 			if _, e := readNodeToken(path); e != nil {
 				t.Fatalf("private external fixture rejected: %v", e)
 			}
@@ -226,16 +222,18 @@ func TestWindowsExternalCredentialRequiresPrivateFileAndParent(t *testing.T) {
 	}
 }
 
-// A standalone Windows Host does not secure an arbitrary dataDir via POSIX
-// mode bits. Verify real files created by core.Open inherit a deliberately
-// protected fixture root, and that replacements and nested directories retain
-// that DACL. The managed Windows node establishes this boundary itself.
+// A standalone Windows Host requires an operator-provided safe dataDir. Owner
+// SIDs do not inherit from parent directories. Provision the synthetic Host
+// directory explicitly, then verify real state/lock creation and replacement.
 func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
 	root := privatePermissionFixtureRoot(t)
 	if e := privateRoot(root); e != nil {
 		t.Fatal(e)
 	}
 	hostDir := filepath.Join(root, "host-fixture")
+	if e := createPrivateDirectory(hostDir); e != nil {
+		t.Fatal(e)
+	}
 	store, e := core.Open(hostDir)
 	if e != nil {
 		t.Fatal(e)
@@ -254,7 +252,10 @@ func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
 		t.Fatalf("replacement Host state DACL: %v", e)
 	}
 	planning := filepath.Join(hostDir, "planning", "task-fixture")
-	if e = os.MkdirAll(planning, 0700); e != nil {
+	if e = createPrivateDirectory(filepath.Dir(planning)); e != nil {
+		t.Fatal(e)
+	}
+	if e = createPrivateDirectory(planning); e != nil {
 		t.Fatal(e)
 	}
 	jobs, e := managedDirectory(root, "state", "jobs")
@@ -262,14 +263,17 @@ func TestWindowsPrivateRootProtectsInheritedStateAndDirectories(t *testing.T) {
 		t.Fatal(e)
 	}
 	record := filepath.Join(jobs, "fixture.json")
-	if e = writeJSON(record, map[string]string{"fixture": "not a real job"}); e != nil {
+	if e = writePrivateJSON(record, map[string]string{"fixture": "not a real job"}); e != nil {
 		t.Fatal(e)
 	}
 	pointer := filepath.Join(root, "current.json")
 	if e = writeJSON(pointer, Pointer{Version: "v1.2.3"}); e != nil {
 		t.Fatal(e)
 	}
-	for _, path := range []string{hostDir, filepath.Dir(planning), planning, filepath.Dir(jobs), jobs, record, pointer} {
+	if e = checkProgramPath(pointer); e != nil {
+		t.Fatal(e)
+	}
+	for _, path := range []string{hostDir, filepath.Join(hostDir, "host.lock"), filepath.Dir(planning), planning, filepath.Dir(jobs), jobs, record} {
 		if e = checkPrivatePath(path); e != nil {
 			logWindowsPermissionMetadata(t, path)
 			t.Fatalf("inherited fixture DACL for %s: %v", filepath.Base(path), e)

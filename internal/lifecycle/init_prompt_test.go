@@ -255,7 +255,7 @@ func TestInitWithoutFlagsPreservesExistingIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := []byte("inert existing encrypted identity")
-	mustWriteFixture(t, c.CredentialFile, identity)
+	mustWritePrivateFixture(t, c.CredentialFile, identity)
 	answers := strings.Join([]string{"", c.Node.Projects["acceptance"], c.OpenCodeBinary, "", "", "n", "yes", "yes"}, "\n") + "\n"
 	var out bytes.Buffer
 	if err := initialize(root, nil, strings.NewReader(answers), &out); err != nil {
