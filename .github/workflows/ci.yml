@@ -42,9 +42,28 @@ jobs:
           go vet -mod=readonly ./...
           go test -mod=readonly -race -count=1 -timeout=5m ./...
       - name: Current Linux command binaries
+        env:
+          CGO_ENABLED: '0'
         run: |
           mkdir -p "$RUNNER_TEMP/go-host-bin"
           go build -mod=readonly -trimpath -o "$RUNNER_TEMP/go-host-bin/awf" ./cmd/awf
           go build -mod=readonly -trimpath -o "$RUNNER_TEMP/go-host-bin/awf-node" ./cmd/awf-node
       - name: Portable package and bootstrap contracts
         run: python3 scripts/test_package_windows.py
+      - name: Package tested Linux binaries
+        env:
+          BUILD_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git rev-parse HEAD > "$RUNNER_TEMP/go-host-bin/SOURCE_COMMIT"
+          printf '%s\n' "$BUILD_HEAD_COMMIT" > "$RUNNER_TEMP/go-host-bin/HEAD_COMMIT"
+          tar -czf "$RUNNER_TEMP/go-host-build.tar.gz" -C "$RUNNER_TEMP/go-host-bin" .
+          cd "$RUNNER_TEMP"
+          sha256sum go-host-build.tar.gz > go-host-build.sha256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: go-host-linux-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/go-host-build.tar.gz
+            ${{ runner.temp }}/go-host-build.sha256
+          retention-days: 1
+          if-no-files-found: error

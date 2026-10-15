@@ -2,6 +2,8 @@ name: Go Host release checks
 # Opt-in native Windows checks on the exact selected branch/tag commit.
 # Does not publish assets, install the product, update a channel or deploy.
 on:
+  pull_request:
+    branches: [codex/dash-magpie-provider]
   workflow_dispatch:
 permissions:
   contents: read
@@ -54,3 +56,24 @@ jobs:
           foreach ($name in @('install', 'channel', 'entry', 'install_context', 'install_path', 'fresh_install', 'install_progress')) {
             & "./scripts/test_$name.ps1"
           }
+      - name: Package tested Windows binaries
+        shell: pwsh
+        env:
+          BUILD_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'source identity unavailable' }
+          [IO.File]::WriteAllText("$env:RUNNER_TEMP/SOURCE_COMMIT", "$source`n")
+          [IO.File]::WriteAllText("$env:RUNNER_TEMP/HEAD_COMMIT", "$env:BUILD_HEAD_COMMIT`n")
+          Compress-Archive -Path "$env:RUNNER_TEMP/awf.exe", "$env:RUNNER_TEMP/awf-node.exe", "$env:RUNNER_TEMP/SOURCE_COMMIT", "$env:RUNNER_TEMP/HEAD_COMMIT" -DestinationPath "$env:RUNNER_TEMP/go-host-windows.zip"
+          $hash = (Get-FileHash "$env:RUNNER_TEMP/go-host-windows.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$env:RUNNER_TEMP/go-host-windows.sha256", "$hash  go-host-windows.zip`n")
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: go-host-windows-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/go-host-windows.zip
+            ${{ runner.temp }}/go-host-windows.sha256
+          retention-days: 1
+          if-no-files-found: error
