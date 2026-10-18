@@ -157,6 +157,54 @@ func TestExistingProviderCannotSyncUnchosenModelsOrArbitraryID(t *testing.T) {
 	}
 }
 
+func TestSyncDeepSeekThinkingOffMetadataOnlyWhenCatalogSupportsNone(t *testing.T) {
+	s, _, _ := providerFixture(t)
+	s.http.Transport = providerTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/models" {
+			return nil, errors.New("unexpected request")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"data":[
+			{"id":"custom/deepseek-v4-pro","context_window":1000,"max_output_tokens":500,"reasoning":true,"reasoning_levels":["none","low"],"modalities":{"input":["text"]}},
+			{"id":"custom/deepseek-flash","context_window":1000,"max_output_tokens":500,"reasoning":true,"reasoning_levels":["low"],"modalities":{"input":["text"]}},
+			{"id":"custom/qwen-max","context_window":1000,"max_output_tokens":500,"reasoning":true,"reasoning_levels":["none"],"modalities":{"input":["text"]}},
+			{"id":"custom/deepseek-v4-pro/child","context_window":1000,"max_output_tokens":500,"reasoning":true,"reasoning_levels":["none"],"modalities":{"input":["text"]}}
+		]}`)), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+	})
+	result := s.syncProviderModels(t.Context(), providerReceipt{RequestID: "deepseek", Preset: "existing", ProviderID: "custom", Models: []string{"deepseek-v4-pro"}})
+	for _, status := range result {
+		if status != "synced" {
+			t.Fatal(result)
+		}
+	}
+	for _, dir := range []string{s.cfg.PiAgentDir, s.cfg.ContentPiAgentDir, s.cfg.ContentDurablePiAgentDir} {
+		var root struct {
+			Providers map[string]struct {
+				Models []struct {
+					ID               string            `json:"id"`
+					ThinkingLevelMap map[string]string `json:"thinkingLevelMap"`
+					Compat           map[string]any    `json:"compat"`
+				} `json:"models"`
+			} `json:"providers"`
+		}
+		body, err := os.ReadFile(filepath.Join(dir, "models.json"))
+		if err != nil || json.Unmarshal(body, &root) != nil {
+			t.Fatal(err)
+		}
+		for _, model := range root.Providers["magpie"].Models {
+			switch model.ID {
+			case "custom/deepseek-v4-pro":
+				if model.ThinkingLevelMap["off"] != "none" || model.Compat["thinkingFormat"] != "openai" || model.Compat["supportsReasoningEffort"] != true {
+					t.Fatalf("missing DeepSeek off metadata: %+v", model)
+				}
+			case "custom/deepseek-flash", "custom/qwen-max", "custom/deepseek-v4-pro/child":
+				if model.ThinkingLevelMap != nil || model.Compat != nil {
+					t.Fatalf("unexpected metadata for %s: %+v", model.ID, model)
+				}
+			}
+		}
+	}
+}
+
 func TestNativeModalitiesMalformedFailsWithoutCatalogWrites(t *testing.T) {
 	for _, shape := range []string{`["text"]`, `{"input":"image"}`, `{"input":[1]}`} {
 		t.Run(shape, func(t *testing.T) {
