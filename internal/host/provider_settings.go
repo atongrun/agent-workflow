@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type providerPreset struct {
 var providerPresets = []providerPreset{{"zhipu", "智谱 · 按量 API"}, {"zai", "Z.ai · 按量 API"}, {"openai", "OpenAI"}, {"anthropic", "Anthropic"}, {"google", "Google Gemini"}, {"deepseek", "DeepSeek"}, {"xai", "xAI"}, {"moonshot", "Kimi · Global"}, {"moonshot-cn", "Kimi · China"}, {"minimax", "MiniMax · Global"}, {"minimax-cn", "MiniMax · China"}, {"openrouter", "OpenRouter"}, {"qwen", "Qwen · Global"}, {"qwen-cn", "Qwen · China"}}
 var providerModelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 var providerRequestID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+var deepSeekThinkingOffModelID = regexp.MustCompile(`^[^/]+/(deepseek-v4-pro|deepseek-flash)$`)
 
 type providerInput struct {
 	ProviderID       string   `json:"providerId,omitempty"`
@@ -530,12 +532,13 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 	defer res.Body.Close()
 	var catalog struct {
 		Data []struct {
-			ID         string `json:"id"`
-			Name       string `json:"display_name"`
-			Context    int    `json:"context_window"`
-			Output     int    `json:"max_output_tokens"`
-			Reasoning  bool   `json:"reasoning"`
-			Modalities struct {
+			ID              string   `json:"id"`
+			Name            string   `json:"display_name"`
+			Context         int      `json:"context_window"`
+			Output          int      `json:"max_output_tokens"`
+			Reasoning       bool     `json:"reasoning"`
+			ReasoningLevels []string `json:"reasoning_levels"`
+			Modalities      struct {
 				Input  []string `json:"input"`
 				Output []string `json:"output"`
 			} `json:"modalities"`
@@ -619,7 +622,14 @@ func (s *Server) syncProviderModels(ctx context.Context, receipt providerReceipt
 			}
 			// Catalog titles are vendor-controlled free text. Persist only the
 			// selected model identity, never an echoed credential in a title.
-			models = append(models, map[string]any{"id": m.ID, "name": m.ID, "reasoning": m.Reasoning, "input": input, "contextWindow": m.Context, "maxTokens": m.Output})
+			entry := map[string]any{"id": m.ID, "name": m.ID, "reasoning": m.Reasoning, "input": input, "contextWindow": m.Context, "maxTokens": m.Output}
+			// Pi's native OpenAI adapter requires an explicit off mapping.
+			// Use declared gateway capability; reasoning=true alone is insufficient.
+			if deepSeekThinkingOffModelID.MatchString(m.ID) && m.Reasoning && slices.Contains(m.ReasoningLevels, "none") {
+				entry["thinkingLevelMap"] = map[string]any{"off": "none"}
+				entry["compat"] = map[string]any{"thinkingFormat": "openai", "supportsReasoningEffort": true}
+			}
+			models = append(models, entry)
 		}
 		if !valid {
 			continue
