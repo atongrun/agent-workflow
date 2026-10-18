@@ -269,6 +269,9 @@ func TestWorkerChildFixture(t *testing.T) {
 			if mode == "pi-1.1.0" {
 				version = "1.1.0"
 			}
+			if mode == "pi-1.0.4" {
+				version = "1.0.4"
+			}
 			if mode == "wrong-version" {
 				version = "not-pinned"
 			}
@@ -321,6 +324,32 @@ func TestManagedWorkerPi110HealthKeepsActualSDKVersion(t *testing.T) {
 	response := publicCall(w.Handler(), "GET", "/health", "", fixtureToken)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"durableVersion":"1.1.0"`) {
 		t.Fatal("actual SDK health version lost", response.Code, response.Body.String())
+	}
+}
+
+func TestManagedWorkerPi130HealthKeepsActualSDKVersion(t *testing.T) {
+	cfg, storage, runtime := workerFixtureConfig(t, "ready")
+	w, err := startWorkerFixture(t, cfg, storage, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(context.Background())
+	response := publicCall(w.Handler(), "GET", "/health", "", fixtureToken)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"durableVersion":"1.3.0"`) {
+		t.Fatal("actual SDK health version lost", response.Code, response.Body.String())
+	}
+}
+
+func TestManagedWorkerPi104RollbackHealthKeepsActualSDKVersion(t *testing.T) {
+	cfg, storage, runtime := workerFixtureConfig(t, "pi-1.0.4")
+	w, err := startWorkerFixture(t, cfg, storage, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(context.Background())
+	response := publicCall(w.Handler(), "GET", "/health", "", fixtureToken)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"durableVersion":"1.0.4"`) {
+		t.Fatal("rollback SDK health version lost", response.Code, response.Body.String())
 	}
 }
 

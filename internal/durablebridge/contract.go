@@ -6,7 +6,7 @@ import "encoding/json"
 // schemas remain PRIVATE-owned.
 const (
 	ProtocolVersion       = 1
-	DurableVersion        = "1.0.4"
+	DurableVersion        = "1.3.0"
 	PublicPrefix          = "/v1/content"
 	OwnerHeader           = "X-AWF-Owner"
 	MaxRequestBytes       = 128 * 1024
@@ -21,9 +21,10 @@ const (
 )
 
 // Exact PRIVATE SDK pins; wire-v1 schema validation remains independent.
-// Keep the previous release available for an atomic runtime rollback.
+// Earlier releases remain wire-compatible rollback readers only: a 1.3.0
+// nested-tool record must never be handed to an older runtime for execution.
 func supportedDurableVersion(version string) bool {
-	return version == DurableVersion || version == "1.1.0"
+	return version == DurableVersion || version == "1.1.0" || version == "1.0.4"
 }
 
 type SubmitInput struct {
