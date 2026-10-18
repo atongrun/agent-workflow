@@ -4,6 +4,7 @@ package host
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
