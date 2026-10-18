@@ -86,30 +86,8 @@ func run(args []string) (runErr error) {
 			}()
 		}
 		server := &http.Server{Addr: cfg.Listen, Handler: composeHostHandler(app.Handler(), content), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
-		workerFailure := make(chan error, 1)
-		go func() {
-			select {
-			case <-ctx.Done():
-			case <-workerDone:
-				if ctx.Err() == nil {
-					workerFailure <- durablebridge.ErrWorkerExited
-				}
-			}
-			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			_ = server.Shutdown(shutdown)
-		}()
 		fmt.Fprintf(os.Stderr, "AWF Host listening on %s\n", cfg.Listen)
-		err = server.ListenAndServe()
-		if err == http.ErrServerClosed {
-			select {
-			case err := <-workerFailure:
-				return err
-			default:
-			}
-			return nil
-		}
-		return err
+		return serveHost(ctx, server, server.ListenAndServe, workerDone, 10*time.Second)
 	case "request":
 		if len(args) < 3 {
 			return fmt.Errorf("usage: awf request METHOD /v1/path [JSON]")
@@ -154,6 +132,62 @@ func run(args []string) (runErr error) {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+type hostShutdownResult struct {
+	err          error
+	workerExited bool
+}
+
+// serveHost waits for HTTP draining before run returns and its deferred worker
+// cleanup can release the single Durable lease. On a bounded drain timeout it
+// force-closes client connections, returns that failure, and lets service
+// control-group cleanup finish any handler that refused request cancellation.
+func serveHost(ctx context.Context, server *http.Server, serve func() error, workerDone <-chan struct{}, timeout time.Duration) error {
+	trigger, stop := context.WithCancel(ctx)
+	defer stop()
+	stopped := make(chan hostShutdownResult, 1)
+	go func() {
+		result := hostShutdownResult{}
+		select {
+		case <-trigger.Done():
+		case <-workerDone:
+			result.workerExited = ctx.Err() == nil
+		}
+		shutdown, cancel := context.WithTimeout(context.Background(), timeout)
+		err := server.Shutdown(shutdown)
+		timedOut := errors.Is(err, context.DeadlineExceeded)
+		cancel()
+		if timedOut {
+			if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+				err = errors.Join(err, closeErr)
+			}
+		}
+		if errors.Is(err, http.ErrServerClosed) && !timedOut {
+			err = nil
+		}
+		result.err = err
+		stopped <- result
+	}()
+
+	serveErr := serve()
+	// A listener failure has no signal or worker transition to wake the
+	// shutdown goroutine. Stop it and join before returning to deferred close.
+	stop()
+	result := <-stopped
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		if result.err != nil {
+			return errors.Join(serveErr, result.err)
+		}
+		return serveErr
+	}
+	if result.err != nil {
+		return result.err
+	}
+	if result.workerExited {
+		return durablebridge.ErrWorkerExited
+	}
+	return nil
 }
 
 // Native content and the existing Host share one listener while retaining

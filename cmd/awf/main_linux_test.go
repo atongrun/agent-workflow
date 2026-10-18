@@ -46,7 +46,7 @@ func TestOneHostListenerKeepsNativeContentCredentialScope(t *testing.T) {
 			t.Error("authentication was not kept at Host boundary")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"version":1,"durableVersion":"1.0.4","ready":true}`))
+		w.Write([]byte(`{"version":1,"durableVersion":"1.3.0","ready":true}`))
 	}), ReadHeaderTimeout: time.Second}
 	go native.Serve(listener)
 	defer native.Close()
