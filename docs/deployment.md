@@ -138,6 +138,10 @@ A configured list replaces the loopback default: loopback is not implicitly allo
 
 Keep the Windows firewall/Tailscale ACL restricted to the verified private interface and control Host source as well. The application check is an additional restriction and does not depend on the global Windows firewall default. Verify both permitted control-Host access and rejection from another peer on the actual target before treating deployment as accepted.
 
+### Bot listener and WorkBuddy
+
+The Host can bind a second listener for owner bots. It uses the same source-IP and bearer pattern as the node, with a dedicated token per caller, and it does not replace `listen` or `/v1`. WorkBuddy is selected on the node with `"executor": "workbuddy"` and a loopback `workBuddyUrl`; the node does not start the daemon. Configuration, auto-start defaults, and the MCP path are in [bot dispatch](bot-dispatch.md). This document does not record that those listeners have been enabled on a machine.
+
 Project IDs must map to explicit existing absolute directories on both machines. These paths can differ between machines. The node sends directory scope on native instance routes and keeps one active job per project. A directory allowlist is routing control, not an OS sandbox. Native OpenCode permissions still require action in its interface; bound native questions can use the authenticated Host API when Host, node and Pi extension versions match.
 
 The Host supplies repository/branch/plan instructions to the agent; it never creates directories as a substitute for Git setup, and does not perform Git itself. Initially use a dedicated user-approved acceptance workspace, not an arbitrary existing business repository.

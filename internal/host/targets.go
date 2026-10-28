@@ -73,7 +73,7 @@ func (s *Server) targetCatalog(ctx context.Context, nodeID string) ([]targetView
 	}
 	return targets, status
 }
-func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
+func (s *Server) collectTargets(ctx context.Context) ([]targetView, []targetNodeView) {
 	targets := []targetView{}
 	nodes := []targetNodeView{}
 	var mu sync.Mutex
@@ -82,7 +82,7 @@ func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			found, status := s.targetCatalog(r.Context(), id)
+			found, status := s.targetCatalog(ctx, id)
 			mu.Lock()
 			defer mu.Unlock()
 			targets = append(targets, found...)
@@ -97,6 +97,11 @@ func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
 		return targets[i].NodeID < targets[j].NodeID
 	})
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeID < nodes[j].NodeID })
+	return targets, nodes
+}
+
+func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
+	targets, nodes := s.collectTargets(r.Context())
 	writeJSON(w, 200, map[string]any{"targets": targets, "nodes": nodes})
 }
 
@@ -137,7 +142,7 @@ func (s *Server) validateTargetConfig(t *core.Task) error {
 
 type targetIdentity struct {
 	TaskID, ProjectID, NodeID, Repository, RepositoryID string
-	TargetRevision, LifecycleRevision                 int
+	TargetRevision, LifecycleRevision                   int
 }
 
 func targetIdentityOf(t *core.Task) targetIdentity {

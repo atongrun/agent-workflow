@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -87,7 +88,27 @@ func run(args []string) (runErr error) {
 		}
 		server := &http.Server{Addr: cfg.Listen, Handler: composeHostHandler(app.Handler(), content), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 		fmt.Fprintf(os.Stderr, "AWF Host listening on %s\n", cfg.Listen)
-		return serveHost(ctx, server, server.ListenAndServe, workerDone, 10*time.Second)
+		serve := server.ListenAndServe
+		if cfg.Bot != nil {
+			botListener, err := net.Listen("tcp", cfg.Bot.Listen)
+			if err != nil {
+				return err
+			}
+			botServer := &http.Server{Handler: app.BotHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+			fmt.Fprintf(os.Stderr, "AWF bot API listening on %s\n", cfg.Bot.Listen)
+			serve = func() error {
+				errCh := make(chan error, 2)
+				go func() { errCh <- server.ListenAndServe() }()
+				go func() { errCh <- botServer.Serve(botListener) }()
+				err := <-errCh
+				shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = server.Shutdown(shutdown)
+				_ = botServer.Shutdown(shutdown)
+				return err
+			}
+		}
+		return serveHost(ctx, server, serve, workerDone, 10*time.Second)
 	case "request":
 		if len(args) < 3 {
 			return fmt.Errorf("usage: awf request METHOD /v1/path [JSON]")

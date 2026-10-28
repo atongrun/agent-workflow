@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/atongrun/agent-workflow/internal/executor"
 	"github.com/atongrun/agent-workflow/internal/opencode"
 )
 
@@ -28,11 +29,11 @@ type project struct {
 	managed        bool
 	mu             sync.Mutex
 	wake           chan struct{}
-	events         *opencode.Events
+	events         executor.EventReader
 }
 type Server struct {
 	cfg          Config
-	native       *opencode.Client
+	native       executor.Driver
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
@@ -76,8 +77,12 @@ func New(cfg Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.OpenCodeModel.Validate(); err != nil {
-		return nil, err
+	if cfg.Executor == "" || cfg.Executor == "opencode" {
+		if err := cfg.OpenCodeModel.Validate(); err != nil {
+			return nil, err
+		}
+	} else if cfg.OpenCodeModel != nil {
+		return nil, errors.New("openCodeModel applies only to the opencode executor")
 	}
 	if cfg.OpenCodeModel != nil {
 		copy := *cfg.OpenCodeModel
@@ -95,7 +100,7 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = time.Second
 	}
-	native, err := opencode.New(opencode.Config{URL: cfg.OpenCodeURL, Username: cfg.OpenCodeUsername, Password: cfg.OpenCodePassword, HTTPClient: cfg.HTTPClient})
+	native, err := openExecutor(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +269,7 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	h, err := s.native.Health(r.Context())
-	out := map[string]any{"available": s.fault() == nil, "reachable": err == nil && h.Healthy, "version": h.Version, "projects": len(s.projects)}
+	out := map[string]any{"available": s.fault() == nil, "reachable": err == nil && h.Healthy, "version": h.Version, "executor": s.native.Kind(), "projects": len(s.projects)}
 	if err != nil {
 		out["error"] = err.Error()
 	}

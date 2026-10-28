@@ -3,7 +3,7 @@
 The core source implementation is not a production acceptance claim. Track these separately:
 
 1. Configure and authenticate Pi on the actual control machine, with scoped workspace/model access
-2. Run OpenCode and the Go node on actual native Windows, not WSL or a cross-build substitute
+2. Run the configured executor (OpenCode, or WorkBuddy when selected) and the Go node on actual native Windows, not WSL or a cross-build substitute
 3. Deploy Host/protected application proxy through the existing approved production route without disturbing other services
 4. Complete a user-approved tiny real coding task, test/artifact evidence, same-Pi result reporting and cancellation/reconnect/duplicate-submission acceptance
 5. Complete desktop and narrow-screen UI checks against the existing private application

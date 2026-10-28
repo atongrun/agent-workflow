@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -40,6 +41,28 @@ type Config struct {
 	InternalURL              string                `json:"internalUrl"`
 	Projects                 map[string]string     `json:"projects"`
 	Nodes                    map[string]NodeConfig `json:"nodes"`
+	// Bot is the Tailscale listener for owner bots. Nil keeps the dashboard listener unchanged.
+	Bot *BotConfig `json:"bot,omitempty"`
+}
+
+// BotConfig is the bot-facing listener. It is a separate bind address from Listen
+// so the dashboard proxy can keep forwarding only /v1.
+type BotConfig struct {
+	Listen           string                     `json:"listen"`
+	AllowedSourceIPs []string                   `json:"allowedSourceIPs,omitempty"`
+	Callers          map[string]BotCallerConfig `json:"callers"`
+}
+
+// BotCallerConfig is one bot identity. AutoStart nil means auto-start (the bot default).
+// A project entry overrides that caller for one configured project.
+type BotCallerConfig struct {
+	TokenEnv  string                      `json:"tokenEnv"`
+	AutoStart *bool                       `json:"autoStart,omitempty"`
+	Projects  map[string]BotProjectConfig `json:"projects,omitempty"`
+}
+
+type BotProjectConfig struct {
+	AutoStart *bool `json:"autoStart,omitempty"`
 }
 type Server struct {
 	providerMu        sync.Mutex
@@ -57,6 +80,10 @@ type Server struct {
 	clients     map[string]*pi.Client
 	dispatches  map[string]*sync.Mutex
 	monitors    map[string]bool
+	botCallers  []botCaller
+	botSources  map[netip.Addr]struct{}
+	mcpSessions map[string]struct{}
+	mcpMu       sync.Mutex
 	http        *http.Client
 	stop        chan struct{}
 	once        sync.Once
@@ -139,11 +166,15 @@ func New(c Config) (*Server, error) {
 			return nil, errors.New("node token environment must contain at least 24 characters")
 		}
 	}
+	callers, sources, err := botIdentity(c, token, extension)
+	if err != nil {
+		return nil, err
+	}
 	st, err := core.Open(c.DataDir)
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: c, store: st, token: token, extensionToken: extension, clients: map[string]*pi.Client{}, monitors: map[string]bool{}, http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, stop: make(chan struct{})}
+	s := &Server{cfg: c, store: st, token: token, extensionToken: extension, clients: map[string]*pi.Client{}, monitors: map[string]bool{}, botCallers: callers, botSources: sources, mcpSessions: map[string]struct{}{}, http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, stop: make(chan struct{})}
 	err = st.Update(func(state *core.State) error {
 		if state.Settings.PiDefaultModel == (core.PiModel{}) {
 			state.Settings.PiDefaultModel = core.Defaults().PiDefaultModel

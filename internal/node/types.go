@@ -1,5 +1,6 @@
-// Package node accepts durable execution jobs and adapts them to native OpenCode
-// sessions. A completed job is an observed native turn, never a review verdict.
+// Package node accepts durable execution jobs and adapts them to one local coding
+// executor. OpenCode is the default. WorkBuddy is the other built-in plugin.
+// A completed job is an observed native turn, never a review verdict.
 package node
 
 import (
@@ -20,8 +21,13 @@ type Config struct {
 	OpenCodeURL      string                   `json:"openCodeUrl"`
 	OpenCodeUsername string                   `json:"openCodeUsername,omitempty"`
 	OpenCodePassword string                   `json:"openCodePassword,omitempty"`
-	HTTPClient       *http.Client             `json:"-"`
-	PollInterval     time.Duration            `json:"-"`
+	// Executor selects the local coding daemon. Empty means opencode.
+	Executor                string        `json:"executor,omitempty"`
+	WorkBuddyURL            string        `json:"workBuddyUrl,omitempty"`
+	WorkBuddyPassword       string        `json:"workBuddyPassword,omitempty"`
+	WorkBuddyPermissionMode string        `json:"workBuddyPermissionMode,omitempty"`
+	HTTPClient              *http.Client  `json:"-"`
+	PollInterval            time.Duration `json:"-"`
 }
 
 type WorkspaceInput struct {
