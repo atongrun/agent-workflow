@@ -258,8 +258,11 @@ func (s *Server) botCreateTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail("invalid_task", "title is required", http.StatusBadRequest))
 		return
 	}
+	snapshot := s.store.Snapshot()
 	auto := caller.autoStart(in.ProjectID)
-	if auto {
+	// Existing receipts must be replayable even if the caller's policy changed.
+	// reserveRequest still verifies the operation and payload fingerprint.
+	if auto && snapshot.Requests[in.RequestID] == nil {
 		if in.ProjectID == "" || in.NodeID == "" || !validRepository(in.Repository, in.RepositoryID) {
 			writeError(w, fail("target_required", "auto-start requires a configured project, node, and canonical repository", http.StatusBadRequest))
 			return
@@ -270,7 +273,6 @@ func (s *Server) botCreateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	taskID := taskIDFromRequest(in.RequestID)
-	snapshot := s.store.Snapshot()
 	if prev := snapshot.Requests[in.RequestID]; prev != nil {
 		taskID = prev.TaskID
 	}
