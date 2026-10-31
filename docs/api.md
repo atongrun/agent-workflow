@@ -224,3 +224,7 @@ Native conversation reads return `task_deleted` (409) while deleted; after
 explicit restore, history can be read without activation. Explicit `pi/resume`
 or an authorized message action resumes the original native session.
 There is no hard-purge endpoint.
+
+## Bot listener
+
+Bot dispatch is a separate Tailscale bind with its own bearer tokens and source allowlist. It is not mounted on the dashboard listener, so existing `/v1` proxy behavior is unchanged. Routes are `GET /bot/v1/targets`, `GET /bot/v1/projects`, `GET /bot/v1/tasks`, `POST /bot/v1/tasks`, `GET /bot/v1/tasks/:id`, `GET /bot/v1/tasks/:id/events` (SSE, or `?view=snapshot` / `Accept: application/json` for a page), `POST /bot/v1/tasks/:id/questions/:questionId/reply`, and `POST /bot/v1/tasks/:id/cancel`. The same listener serves streamable-HTTP MCP at `/mcp`. There is no delete and no arbitrary RPC. `requestId` idempotency and the refusal to auto-replay an uncertain result are the existing Host rules. Auto-start is per caller and per project and defaults to on for bot callers only. See [bot dispatch](bot-dispatch.md).

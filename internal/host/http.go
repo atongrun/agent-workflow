@@ -253,9 +253,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	sum := sha256.Sum256([]byte("awf-task:" + in.RequestID))
-	rawID := hex.EncodeToString(sum[:16])
-	taskID := rawID[:8] + "-" + rawID[8:12] + "-" + rawID[12:16] + "-" + rawID[16:20] + "-" + rawID[20:]
+	taskID := taskIDFromRequest(in.RequestID)
 	if prev := s.store.Snapshot().Requests[in.RequestID]; prev != nil {
 		taskID = prev.TaskID
 	}
@@ -386,3 +384,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func mustJSON(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+
+func taskIDFromRequest(requestID string) string {
+	sum := sha256.Sum256([]byte("awf-task:" + requestID))
+	rawID := hex.EncodeToString(sum[:16])
+	return rawID[:8] + "-" + rawID[8:12] + "-" + rawID[12:16] + "-" + rawID[16:20] + "-" + rawID[20:]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@atongrun/awf-pi",
+  "private": true,
+  "description": "AWF tools for one Pi planning session. The Host still launches this file with a task-scoped token.",
+  "keywords": ["pi-package"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./awf.ts"]
+  }
+}

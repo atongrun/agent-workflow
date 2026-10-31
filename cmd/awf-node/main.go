@@ -1,5 +1,7 @@
-// awf-node connects an authenticated AWF host to an existing native OpenCode
-// server. It does not install tools or run a shell, Git, PowerShell, or WSL.
+// awf-node connects an authenticated AWF host to one local coding executor.
+// The default executor is an existing OpenCode server. executor "workbuddy"
+// uses a loopback CodeBuddy/WorkBuddy daemon instead. The node does not install
+// tools or run a shell, Git, PowerShell, or WSL.
 package main
 
 import (
@@ -53,6 +55,9 @@ func run() error {
 	}
 	if v := os.Getenv("OPENCODE_SERVER_PASSWORD"); v != "" {
 		cfg.OpenCodePassword = v
+	}
+	if v := os.Getenv("WORKBUDDY_PASSWORD"); v != "" {
+		cfg.WorkBuddyPassword = v
 	}
 	if *listen != "" {
 		cfg.ListenAddress = *listen

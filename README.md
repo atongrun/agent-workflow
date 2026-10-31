@@ -1,8 +1,12 @@
 # Agent Workflow (AWF)
 
-AWF is a small personal control plane: a Go Host adapts native Pi sessions to a protected web client, and a Go node sends explicitly authorized work to native OpenCode. The web interface lives in its existing application repository; this repository contains no frontend or private handoff material.
+AWF is a small personal control plane: a Go Host adapts native Pi sessions to a protected web client, and a Go node sends explicitly authorized coding work to a pluggable local executor. OpenCode is the default executor. WorkBuddy is the other built-in executor. The web interface lives in its existing application repository; this repository contains no frontend or private handoff material.
 
-This is a new implementation on the current main baseline. Historical `archive/final` and tags are preserved. The retired runtime is not restored.
+## Active branch
+
+Development continues on `codex/dash-magpie-provider` and branches cut from it. The `main` branch is stale: its README describes the project as terminated, and that description is wrong. This tree is the current Host, node, and Pi extension. Do not treat `main` as the product baseline.
+
+Historical `archive/final` and tags are preserved. The retired runtime is not restored. Bot dispatch and the executor plugin are described in [bot dispatch](docs/bot-dispatch.md).
 
 ## Status
 
@@ -28,7 +32,7 @@ The optional native Pi test uses `AWF_PI_BINARY=/absolute/path/to/pi go test ./i
 
 1. Install and authenticate Pi and OpenCode using their official instructions. Keep model credentials on their respective machines. Never assume credentials or workspace identities transfer between machines.
 2. Configure existing, dedicated project workspaces and separate Host, extension and node secrets. See [deployment](docs/deployment.md). The workspace allowlist routes jobs; native tool permissions and OS access still govern what each agent can do.
-3. Run `awf host --config host.json` on the control machine. Run native `opencode serve` and `awf-node -config node.json` on the execution machine. Windows does not require WSL.
+3. Run `awf host --config host.json` on the control machine. On the execution machine run `awf-node -config node.json` and the selected local daemon: `opencode serve` for the default executor, or a loopback `codebuddy --serve` when `executor` is `workbuddy`. Windows does not require WSL. Bot callers use the separate Tailscale listener in [bot dispatch](docs/bot-dispatch.md); they do not replace the dashboard `/v1` flow.
 4. Put the Host behind the existing authenticated application server and protected tunnel. Browser clients never receive Host/node tokens. See the [API contract](docs/api.md).
 5. Create a task with a title, converse with its restricted planning Pi, and ask Pi to propose the plan using `awf_plan`. Explicitly save an existing repository/configured execution target, confirm the current plan revision, then explicitly start that target revision. Completion of a native OpenCode turn returns real evidence to that same Pi session. Pi explains the result and submits a structured Done or Needs Changes conclusion. There is no separate reviewer in the default initial flow; Git merge remains independently unknown unless verified by an agent.
 

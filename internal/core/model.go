@@ -200,6 +200,10 @@ type Task struct {
 	Budget             Budget              `json:"budget"`
 	LastError          string              `json:"lastError,omitempty"`
 	GitMerged          *bool               `json:"gitMerged"`
+	// Caller and Dispatch record bot admission. Empty caller means a dashboard task.
+	// Dispatch is "auto" or "manual" and is fixed at creation.
+	Caller   string `json:"caller,omitempty"`
+	Dispatch string `json:"dispatch,omitempty"`
 }
 type Request struct {
 	SessionID  string          `json:"sessionId,omitempty"`
