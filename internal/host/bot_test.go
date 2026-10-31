@@ -153,9 +153,20 @@ func TestBotManualProjectAndSourceGuard(t *testing.T) {
 	if w := botCall(t, s, "nope", "GET", "/bot/v1/targets", "100.64.0.8:9", nil); w.Code != 401 {
 		t.Fatalf("auth %d", w.Code)
 	}
-	w := botCall(t, s, token, "POST", "/bot/v1/tasks", "100.64.0.8:9", botCreateInput{RequestID: "manual-1", Title: "Draft", ProjectID: "manual", NodeID: "n", Repository: "example/repository", Goal: "later"})
+	manual := botCreateInput{RequestID: "manual-1", Title: "Draft", ProjectID: "manual"}
+	w := botCall(t, s, token, "POST", "/bot/v1/tasks", "100.64.0.8:9", manual)
 	if w.Code != 202 || strings.Contains(w.Body.String(), `"execution"`) {
 		t.Fatalf("manual start %d %s", w.Code, w.Body.String())
+	}
+	// Replaying a manual receipt must not require a plan after the policy flips.
+	for i := range s.botCallers {
+		if s.botCallers[i].ID == "grokbot" {
+			s.botCallers[i].Policy.Projects["manual"] = BotProjectConfig{AutoStart: boolPtr(true)}
+		}
+	}
+	replayed := botCall(t, s, token, "POST", "/bot/v1/tasks", "100.64.0.8:9", manual)
+	if replayed.Code != 202 || replayed.Body.String() != w.Body.String() {
+		t.Fatalf("manual receipt replay %d %s", replayed.Code, replayed.Body.String())
 	}
 	time.Sleep(40 * time.Millisecond)
 	if posts.Load() != 0 {
@@ -211,6 +222,50 @@ func TestBotMCPUsesTheSameAdmission(t *testing.T) {
 	s.BotHandler().ServeHTTP(rec, req)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "notifications/awf/event") && !strings.Contains(rec.Body.String(), `"result"`) {
 		t.Fatalf("stream %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMCPStreamDoesNotReplayInitialEvents(t *testing.T) {
+	var posts atomic.Int32
+	s := botServer(t, &posts, "127.0.0.1:7072", nil)
+	token := strings.Repeat("b", 32)
+	created := botCall(t, s, token, "POST", "/bot/v1/tasks", "127.0.0.1:9", botCreateInput{
+		RequestID: "mcp-manual", Title: "Draft", ProjectID: "manual",
+	})
+	if created.Code != 202 {
+		t.Fatalf("create %d %s", created.Code, created.Body.String())
+	}
+	init := botMCP(t, s, token, "", "127.0.0.1:9", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	session := init.Header().Get("Mcp-Session-Id")
+	if init.Code != 200 || session == "" {
+		t.Fatalf("initialize %d %s", init.Code, init.Body.String())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"stream_events","arguments":{"taskId":"`+taskIDFromRequest("mcp-manual")+`","after":0}}}`))
+	req = req.WithContext(ctx)
+	req.RemoteAddr = "127.0.0.1:9"
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Mcp-Session-Id", session)
+	req.Header.Set("Accept", "text/event-stream")
+	rec := &stopAfterSecondFlush{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+	s.BotHandler().ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "task.updated") || strings.Contains(rec.Body.String(), "notifications/awf/event") {
+		t.Fatalf("initial events were replayed: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+type stopAfterSecondFlush struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+	flushes int
+}
+
+func (s *stopAfterSecondFlush) Flush() {
+	s.ResponseRecorder.Flush()
+	s.flushes++
+	if s.flushes == 2 {
+		s.cancel()
 	}
 }
 
