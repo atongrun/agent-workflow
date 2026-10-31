@@ -316,8 +316,11 @@ func (s *Server) mcpStreamEvents(w http.ResponseWriter, r *http.Request, caller 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	after := fields.After
-	writeMCPEvent(w, map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": mcpText(s.eventPage(fields.TaskID, after), false)})
+	page, sequence := s.eventPage(fields.TaskID, after)
+	writeMCPEvent(w, map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": mcpText(page, false)})
 	flusher.Flush()
+	// The initial result already contains events through sequence.
+	after = sequence
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	heartbeat := time.NewTicker(15 * time.Second)
@@ -348,7 +351,7 @@ func (s *Server) mcpStreamEvents(w http.ResponseWriter, r *http.Request, caller 
 	}
 }
 
-func (s *Server) eventPage(id string, after int64) string {
+func (s *Server) eventPage(id string, after int64) (string, int64) {
 	replay := s.store.ReplayAfter(id, after)
 	reset := after > replay.Sequence || (replay.First > 0 && after > 0 && after < replay.First-1)
 	events := replay.Events
@@ -356,7 +359,7 @@ func (s *Server) eventPage(id string, after int64) string {
 		events = []core.Event{}
 	}
 	b, _ := json.Marshal(map[string]any{"events": events, "sequence": replay.Sequence, "reset": reset})
-	return string(b)
+	return string(b), replay.Sequence
 }
 
 type rpcMessage struct {
